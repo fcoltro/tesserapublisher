@@ -1,0 +1,24 @@
+# Node dependencies
+node_modules/
+.svelte-kit/
+build/
+dist/
+
+# Rust/Cargo
+target/
+src-tauri/target/
+Cargo.lock
+
+# Tauri build artifacts
+src-tauri/gen/
+
+# Environment / OS
+.DS_Store
+Thumbs.db
+.env
+.env.*
+!.env.example
+
+# Local tooling / scratch
+.remember/
+test_out.txt
