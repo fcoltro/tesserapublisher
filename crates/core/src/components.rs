@@ -18,6 +18,8 @@ pub struct Document {
     pub spread_gap: f32,
     /// Default margins and columns for new pages.
     pub guides: crate::layout::PageGuides,
+    /// Vertical rhythm text frames can lock onto.
+    pub baseline_grid: crate::layout::BaselineGrid,
 }
 
 impl Default for Document {
@@ -32,6 +34,7 @@ impl Default for Document {
             facing_pages: true,
             spread_gap: 60.0,
             guides: crate::layout::PageGuides::default(),
+            baseline_grid: crate::layout::BaselineGrid::default(),
         }
     }
 }
@@ -361,6 +364,13 @@ pub struct TextContent {
     pub font_family: Option<String>,
     /// CSS-style numeric weight, where 400 is regular and 700 is bold.
     pub font_weight: f32,
+    /// Lock every line onto the document's baseline grid.
+    ///
+    /// When set, `line_height` stops determining where lines land: leading
+    /// opens up to a whole number of grid increments and the first baseline is
+    /// pushed down onto a rung. Set per frame, because a pull quote usually
+    /// wants to break the rhythm that body copy keeps.
+    pub snap_to_baseline: bool,
 }
 
 impl Default for TextContent {
@@ -372,6 +382,7 @@ impl Default for TextContent {
             align: TextAlignment::Start,
             font_family: None,
             font_weight: 400.0,
+            snap_to_baseline: false,
         }
     }
 }

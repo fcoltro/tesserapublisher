@@ -1151,6 +1151,41 @@ impl AppState {
             .ok_or_else(|| format!("entity {entity_index} is not a frame"))
     }
 
+    /// Turns baseline-grid locking on or off for one text frame.
+    ///
+    /// Per frame rather than per document because a pull quote or a heading
+    /// usually wants to break the rhythm the body copy keeps.
+    pub fn set_frame_baseline_snap(
+        &self,
+        entity_index: u32,
+        enabled: bool,
+    ) -> Result<(), String> {
+        let mut world = self.world.write().map_err(|e| e.to_string())?;
+        let mut entity = world
+            .get_entity_mut(Entity::from_raw(entity_index))
+            .map_err(|_| format!("entity {entity_index} not found"))?;
+
+        let Some(mut text) = entity.get_mut::<TextContent>() else {
+            return Err(format!("entity {entity_index} is not a text frame"));
+        };
+        text.snap_to_baseline = enabled;
+        drop(world);
+
+        self.increment_scene_revision();
+        Ok(())
+    }
+
+    /// Whether a text frame locks to the baseline grid.
+    pub fn frame_baseline_snap(&self, entity_index: u32) -> Result<bool, String> {
+        let world = self.world.read().map_err(|e| e.to_string())?;
+        world
+            .get_entity(Entity::from_raw(entity_index))
+            .map_err(|_| format!("entity {entity_index} not found"))?
+            .get::<TextContent>()
+            .map(|text| text.snap_to_baseline)
+            .ok_or_else(|| format!("entity {entity_index} is not a text frame"))
+    }
+
     /// Replaces a path frame's bezier outline.
     pub fn set_frame_path(&self, entity_index: u32, svg: String) -> Result<BoundingBox, String> {
         let mut world = self.world.write().map_err(|e| e.to_string())?;
@@ -1406,6 +1441,90 @@ mod tests {
             .hit_test(50.0, 50.0)
             .expect("Hit test should run");
         assert_eq!(misses.len(), 0);
+    }
+
+    fn text_frame(app_state: &AppState) -> u32 {
+        app_state
+            .spawn_frame(
+                None,
+                "Body".to_string(),
+                FrameType::Text,
+                Transform::default(),
+                Size { width: 200.0, height: 300.0 },
+                Style::default(),
+                Some("Body copy".to_string()),
+            )
+            .expect("should spawn a text frame")
+    }
+
+    #[test]
+    fn baseline_snapping_is_off_until_switched_on() {
+        // Off by default: turning the grid on for every frame at once would
+        // reflow an existing document the moment a grid is configured.
+        let app_state = AppState::new();
+        let id = text_frame(&app_state);
+
+        assert!(!app_state.frame_baseline_snap(id).unwrap());
+
+        app_state.set_frame_baseline_snap(id, true).unwrap();
+        assert!(app_state.frame_baseline_snap(id).unwrap());
+
+        app_state.set_frame_baseline_snap(id, false).unwrap();
+        assert!(!app_state.frame_baseline_snap(id).unwrap());
+    }
+
+    #[test]
+    fn toggling_baseline_snap_redraws() {
+        // Snapping changes where every glyph lands, so the scene must recompile.
+        let app_state = AppState::new();
+        let id = text_frame(&app_state);
+        let before = app_state.get_scene_revision();
+
+        app_state.set_frame_baseline_snap(id, true).unwrap();
+
+        assert!(app_state.get_scene_revision() > before);
+    }
+
+    #[test]
+    fn only_text_frames_can_snap_to_the_baseline() {
+        let app_state = AppState::new();
+        let rect = app_state
+            .spawn_frame(
+                None,
+                "Box".to_string(),
+                FrameType::Rectangle,
+                Transform::default(),
+                Size { width: 50.0, height: 50.0 },
+                Style::default(),
+                None,
+            )
+            .unwrap();
+
+        assert!(app_state.set_frame_baseline_snap(rect, true).is_err());
+        assert!(app_state.frame_baseline_snap(rect).is_err());
+    }
+
+    #[test]
+    fn a_missing_entity_is_reported_rather_than_panicking() {
+        let app_state = AppState::new();
+
+        assert!(app_state.set_frame_baseline_snap(9_999, true).is_err());
+    }
+
+    #[test]
+    fn the_baseline_grid_round_trips_through_document_settings() {
+        // The grid rides on Document, so the existing settings command carries
+        // it without needing an IPC path of its own.
+        let app_state = AppState::new();
+        let mut settings = app_state.get_document_settings();
+        settings.baseline_grid = BaselineGrid { increment: 14.0, start: 2.0, visible: true };
+
+        app_state.set_document_settings(settings).unwrap();
+
+        let stored = app_state.get_document_settings().baseline_grid;
+        assert_eq!(stored.increment, 14.0);
+        assert_eq!(stored.start, 2.0);
+        assert!(stored.visible);
     }
 
     #[test]

@@ -112,6 +112,118 @@ mod tests {
         assert!(has_selection);
     }
 
+    /// Spawns a text frame at a point and returns its entity id.
+    fn text_frame_at(app_state: &AppState, x: f32, y: f32) -> u32 {
+        app_state
+            .spawn_frame(
+                None,
+                "Body".to_string(),
+                FrameType::Text,
+                Transform {
+                    position: Position { x, y },
+                    rotation: 0.0,
+                    scale_x: 1.0,
+                    scale_y: 1.0,
+                },
+                Size { width: 200.0, height: 300.0 },
+                Style::default(),
+                Some("Body copy".to_string()),
+            )
+            .expect("should spawn a text frame")
+    }
+
+    fn compile(app_state: &AppState) -> RenderScene {
+        let world = app_state.world.read().unwrap();
+        let camera = app_state.get_camera();
+        SceneCompiler::compile(&world, None, 1, &camera)
+    }
+
+    fn baseline_of(scene: &RenderScene, frame_id: u32) -> Option<[f32; 2]> {
+        scene.elements.iter().find_map(|el| match el {
+            RenderElement::TextBlock { id, baseline, .. } if *id == frame_id => Some(*baseline),
+            _ => None,
+        })?
+    }
+
+    #[test]
+    fn a_snapping_frame_takes_the_grid_of_the_page_it_sits_on() {
+        // Page 1 is a recto, so it starts at x = page_width. Its grid origin is
+        // the top margin, which is what makes text on facing pages line up.
+        let app_state = AppState::new();
+        let settings = app_state.get_document_settings();
+        let page_x = settings.width;
+        let expected_origin = settings.guides.margin_top;
+        let increment = settings.baseline_grid.increment;
+
+        let id = text_frame_at(&app_state, page_x + 60.0, 100.0);
+        app_state.set_frame_baseline_snap(id, true).unwrap();
+
+        assert_eq!(
+            baseline_of(&compile(&app_state), id),
+            Some([increment, expected_origin])
+        );
+    }
+
+    #[test]
+    fn a_frame_that_does_not_snap_carries_no_grid() {
+        let app_state = AppState::new();
+        let page_x = app_state.get_document_settings().width;
+        let id = text_frame_at(&app_state, page_x + 60.0, 100.0);
+
+        assert_eq!(baseline_of(&compile(&app_state), id), None);
+    }
+
+    #[test]
+    fn a_frame_on_the_pasteboard_has_no_grid_to_snap_to() {
+        // Deliberate: a frame with no page beneath it keeps its natural leading
+        // rather than borrowing the nearest page's rhythm, which would make it
+        // reflow the moment it were dragged across the spine.
+        let app_state = AppState::new();
+        let id = text_frame_at(&app_state, -400.0, 100.0);
+        app_state.set_frame_baseline_snap(id, true).unwrap();
+
+        assert_eq!(baseline_of(&compile(&app_state), id), None);
+    }
+
+    #[test]
+    fn a_disabled_grid_leaves_snapping_frames_alone() {
+        // A zero increment is a value a user can type into the panel; it must
+        // not reach the painter as a live grid.
+        let app_state = AppState::new();
+        let mut settings = app_state.get_document_settings();
+        let page_x = settings.width;
+        settings.baseline_grid.increment = 0.0;
+        app_state.set_document_settings(settings).unwrap();
+
+        let id = text_frame_at(&app_state, page_x + 60.0, 100.0);
+        app_state.set_frame_baseline_snap(id, true).unwrap();
+
+        assert_eq!(baseline_of(&compile(&app_state), id), None);
+    }
+
+    #[test]
+    fn the_grid_is_drawn_only_when_it_is_visible() {
+        // Snapping and drawing are independent, so a designer can work against
+        // an invisible grid.
+        let app_state = AppState::new();
+
+        let chrome_grid = |scene: &RenderScene| {
+            scene.elements.iter().find_map(|el| match el {
+                RenderElement::PageChrome { baseline_grid, .. } => Some(*baseline_grid),
+                _ => None,
+            })
+        };
+
+        assert_eq!(chrome_grid(&compile(&app_state)), Some(None), "hidden by default");
+
+        let mut settings = app_state.get_document_settings();
+        settings.baseline_grid.visible = true;
+        let expected = [settings.guides.margin_top, settings.baseline_grid.increment];
+        app_state.set_document_settings(settings).unwrap();
+
+        assert_eq!(chrome_grid(&compile(&app_state)), Some(Some(expected)));
+    }
+
     #[test]
     fn compiled_scenes_paint_without_a_gpu() {
         // Guards the compiler/painter contract: every RenderElement the compiler

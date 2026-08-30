@@ -4,10 +4,21 @@ use std::collections::HashMap;
 
 use tessera_core::{
     geometry, AppliedMaster, BelongsTo, BoundingBox, Document, Frame, FrameType, GuideAxis, Layer,
-    MasterOverride, Page,
-    PageGuides, PathData, RulerGuide, Size, SnapResult, Style, TextContent, TextThread, Transform,
-    ZIndex,
+    MasterOverride, Page, PageGuides, PagePlacement, PathData, RulerGuide, Size, SnapResult, Style,
+    TextContent, TextThread, Transform, ZIndex,
 };
+
+/// The baseline-grid origin of the page a point falls on.
+///
+/// A frame parked on the pasteboard between pages has no grid to lock onto, so
+/// this returns `None` and the frame keeps its natural leading rather than
+/// silently snapping to whichever page happens to be nearest.
+fn grid_origin_at(pages: &[(PagePlacement, f32)], x: f32, y: f32) -> Option<f32> {
+    pages.iter().find_map(|(placement, origin)| {
+        let (x0, y0, x1, y1) = placement.trim_rect();
+        (x >= x0 && x <= x1 && y >= y0 && y <= y1).then_some(*origin)
+    })
+}
 
 /// Primitive renderable elements compiled from the ECS state
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,6 +75,13 @@ pub enum RenderElement {
         font_weight: f32,
         /// When threaded, the story's id and this frame's index in the chain.
         story: Option<[u32; 2]>,
+        /// Baseline grid this frame locks onto, as `[increment, origin_y]`.
+        ///
+        /// Resolved here rather than in the painter because the origin depends
+        /// on which page the frame sits over, and only the scene compiler knows
+        /// the page layout. `None` for a frame that does not snap, or one
+        /// floating on the pasteboard with no page beneath it.
+        baseline: Option<[f32; 2]>,
         fill_color: [f32; 4],
         is_selected: bool,
     },
@@ -84,6 +102,12 @@ pub enum RenderElement {
         /// Vertical extent of the columns, matching the margin box.
         column_top: f32,
         column_bottom: f32,
+        /// Visible baseline grid as `[origin_y, increment]`.
+        ///
+        /// Carried as two numbers rather than a list of lines so a long page
+        /// does not put hundreds of coordinates through serialisation on every
+        /// recompile; the painter expands them.
+        baseline_grid: Option<[f32; 2]>,
     },
     /// A user-placed ruler guide, spanning the visible pasteboard.
     GuideLine {
@@ -221,9 +245,15 @@ impl SceneCompiler {
             page_entities.push((1, None, None));
         }
 
+        // Page geometry is kept so a text frame can later resolve which page's
+        // baseline grid it belongs to.
+        let baseline_grid = document.baseline_grid;
+        let mut page_grids: Vec<(PagePlacement, f32)> = Vec::new();
+
         for (page_number, guides, _) in &page_entities {
             let placement = spread_layout.place(*page_number);
             let guides = guides.unwrap_or(document.guides);
+            page_grids.push((placement, baseline_grid.origin_for(&placement, &guides)));
 
             elements.push(RenderElement::PageSurface {
                 page_number: placement.page_number,
@@ -251,6 +281,8 @@ impl SceneCompiler {
                     .collect(),
                 column_top: my0,
                 column_bottom: my1,
+                baseline_grid: (baseline_grid.visible && baseline_grid.is_active())
+                    .then(|| [baseline_grid.origin_for(&placement, &guides), baseline_grid.increment]),
             });
         }
 
@@ -523,6 +555,20 @@ impl SceneCompiler {
                         .as_ref()
                         .map(|t| t.font_weight)
                         .unwrap_or(400.0);
+                    let snaps = f
+                        .text_content
+                        .as_ref()
+                        .is_some_and(|t| t.snap_to_baseline);
+                    let baseline = (snaps && baseline_grid.is_active())
+                        .then(|| {
+                            grid_origin_at(
+                                &page_grids,
+                                f.transform.position.x,
+                                f.transform.position.y,
+                            )
+                        })
+                        .flatten()
+                        .map(|origin| [baseline_grid.increment, origin]);
 
                     elements.push(RenderElement::TextBlock {
                         id: f.id,
@@ -538,6 +584,7 @@ impl SceneCompiler {
                         font_family,
                         font_weight,
                         story: story_refs.get(&f.id).copied(),
+                        baseline,
                         fill_color: f.style.fill_color,
                         is_selected: is_sel,
                     });

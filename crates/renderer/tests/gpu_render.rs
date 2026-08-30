@@ -329,6 +329,21 @@ fn ink_coverage(pixels: &[u8]) -> usize {
 }
 
 fn text_block(text: &str, font_size: f32) -> RenderElement {
+    text_block_with(text, font_size, None)
+}
+
+/// The topmost row carrying ink, or `None` for a blank render.
+fn first_inked_row(pixels: &[u8]) -> Option<u32> {
+    (0..HEIGHT).find(|y| {
+        (0..WIDTH).any(|x| {
+            let p = pixel(pixels, x, *y);
+            p[0] > 90 || p[1] > 90 || p[2] > 90
+        })
+    })
+}
+
+/// A text block that optionally locks to a baseline grid `[increment, origin]`.
+fn text_block_with(text: &str, font_size: f32, baseline: Option<[f32; 2]>) -> RenderElement {
     RenderElement::TextBlock {
         id: 1,
         name: "Copy".to_string(),
@@ -343,9 +358,46 @@ fn text_block(text: &str, font_size: f32) -> RenderElement {
         font_family: None,
         font_weight: 400.0,
         story: None,
+        baseline,
         fill_color: [1.0, 1.0, 1.0, 1.0],
         is_selected: false,
     }
+}
+
+#[test]
+fn baseline_snapping_moves_glyphs_down_onto_the_grid() {
+    // The end-to-end proof that the grid's *phase* reaches the canvas, not just
+    // its rhythm: the frame sits at y = 2, so a 10pt line's baseline lands near
+    // y = 12. On a 20pt grid starting at 0 the next rung is 20, so every glyph
+    // must be pushed down — and never up, which would lift text out of frame.
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+
+    let mut render = |baseline| {
+        renderer
+            .render_to_pixels(
+                &unit_scene(vec![text_block_with("Hlo", 10.0, baseline)]),
+                Viewport::full(WIDTH as f64, HEIGHT as f64),
+            )
+            .expect("render should succeed")
+    };
+
+    let natural = render(None);
+    let snapped = render(Some([20.0, 0.0]));
+
+    let natural_top = first_inked_row(&natural).expect("text should be drawn");
+    let snapped_top = first_inked_row(&snapped).expect("text should still be drawn");
+
+    assert!(
+        snapped_top > natural_top,
+        "snapped top row {snapped_top} should sit below natural {natural_top}"
+    );
+    assert_eq!(
+        ink_coverage(&natural) > 0,
+        ink_coverage(&snapped) > 0,
+        "snapping must move the text, not erase it"
+    );
 }
 
 #[test]
@@ -448,6 +500,7 @@ fn threaded_scene(story_text: &str) -> RenderScene {
         font_family: None,
         font_weight: 400.0,
         story: Some([1, index]),
+        baseline: None,
         fill_color: [1.0, 1.0, 1.0, 1.0],
         is_selected: false,
     };

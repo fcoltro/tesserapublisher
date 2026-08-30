@@ -20,6 +20,18 @@
     is_left: boolean;
   };
 
+  /// The document's vertical rhythm for typography.
+  type BaselineGrid = { increment: number; start: number; visible: boolean };
+
+  /// Document settings, mirrored from the Rust `Document` component.
+  ///
+  /// Only the fields the UI reads are named; the rest ride along untouched so
+  /// a round trip through `set_document_settings` cannot drop them.
+  type DocumentSettings = {
+    baseline_grid: BaselineGrid;
+    [key: string]: unknown;
+  };
+
   /// Geometry returned by the snapping pass.
   type SnappedGeometry = { geometry: FrameGeometry; snapped: boolean };
 
@@ -181,6 +193,11 @@
   let isSnapped = $state(false);
   /// When set, the next click threads the selected frame into the one clicked.
   let isThreading = $state(false);
+  let documentSettings = $state<DocumentSettings | null>(null);
+  let baselineGrid = $state<BaselineGrid>({ increment: 12, start: 0, visible: false });
+  /// Whether the selected text frame locks to the grid. False for anything
+  /// that is not a text frame.
+  let selectionSnapsToBaseline = $state(false);
 
   const TOOLS: { id: Tool; label: string; key: string }[] = [
     { id: "Select", label: "Select", key: "V" },
@@ -254,14 +271,17 @@
 
   async function fetchScene() {
     try {
-      const [hist, cam, placements] = await Promise.all([
+      const [hist, cam, placements, settings] = await Promise.all([
         invoke<HistoryStatus>("get_history_status"),
         invoke<Camera>("get_camera_state"),
         invoke<PagePlacement[]>("get_page_placements"),
+        invoke<DocumentSettings>("get_document_settings"),
       ]);
       historyStatus = hist;
       camera = cam;
       pages = placements;
+      documentSettings = settings;
+      baselineGrid = settings.baseline_grid;
       await syncViewport();
       await requestRender();
     } catch (err) {
@@ -669,6 +689,58 @@
     }
   }
 
+  /// Writes a change to the document's baseline grid.
+  ///
+  /// The grid rides on the whole `Document`, so the stored settings are spread
+  /// back in rather than rebuilt — otherwise a round trip here would silently
+  /// reset margins, bleed and page size to their defaults.
+  async function applyBaselineGrid(patch: Partial<BaselineGrid>) {
+    if (!documentSettings) return;
+    const grid = { ...baselineGrid, ...patch };
+    baselineGrid = grid;
+    try {
+      await invoke("set_document_settings", {
+        settings: { ...documentSettings, baseline_grid: grid },
+      });
+      documentSettings = { ...documentSettings, baseline_grid: grid };
+      await requestRender();
+    } catch (err) {
+      console.warn("could not update the baseline grid:", err);
+    }
+  }
+
+  /// Locks the selected text frame to the baseline grid, or releases it.
+  async function toggleSelectionBaselineSnap() {
+    if (selectedEntityId === null) return;
+    const enabled = !selectionSnapsToBaseline;
+    try {
+      await invoke("set_frame_baseline_snap", { entityId: selectedEntityId, enabled });
+      selectionSnapsToBaseline = enabled;
+      await requestRender();
+    } catch (err) {
+      // Not a text frame; the toggle stays off rather than lying about state.
+      console.warn("could not toggle baseline snapping:", err);
+      selectionSnapsToBaseline = false;
+    }
+  }
+
+  // Reading the toggle back from the backend keeps it honest when the
+  // selection changes, including for frames that cannot snap at all.
+  $effect(() => {
+    const id = selectedEntityId;
+    if (id === null) {
+      selectionSnapsToBaseline = false;
+      return;
+    }
+    invoke<boolean>("get_frame_baseline_snap", { entityId: id })
+      .then((snaps) => {
+        if (selectedEntityId === id) selectionSnapsToBaseline = snaps;
+      })
+      .catch(() => {
+        if (selectedEntityId === id) selectionSnapsToBaseline = false;
+      });
+  });
+
   /// Threads the selected frame into `target`, continuing its story there.
   async function threadSelectionInto(target: number) {
     if (selectedEntityId === null || selectedEntityId === target) return;
@@ -914,6 +986,37 @@
           </button>
           <button class="chip" onclick={() => addGuideAtCursor(false)} title="Horizontal guide at cursor">
             + H Guide
+          </button>
+        </span>
+
+        <span class="doc-group">
+          <label class="chip-toggle">
+            <input
+              type="checkbox"
+              checked={baselineGrid.visible}
+              onchange={(e) =>
+                applyBaselineGrid({ visible: e.currentTarget.checked })}
+            />
+            Baseline
+          </label>
+          <label class="chip-field" title="Distance between baselines">
+            <input
+              type="number"
+              min="1"
+              step="0.5"
+              value={baselineGrid.increment}
+              onchange={(e) =>
+                applyBaselineGrid({ increment: Number(e.currentTarget.value) })}
+            />
+          </label>
+          <button
+            class="chip"
+            class:active={selectionSnapsToBaseline}
+            disabled={selectedEntityId === null}
+            onclick={toggleSelectionBaselineSnap}
+            title="Lock the selected text frame's lines to the baseline grid"
+          >
+            {selectionSnapsToBaseline ? "On Grid" : "Lock to Grid"}
           </button>
         </span>
 
@@ -1399,6 +1502,28 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 6px;
     cursor: pointer;
+  }
+
+  /* A chip that holds a numeric field, sized so a two- or three-digit value
+     fits without the toolbar reflowing as the number changes. */
+  .chip-field {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.35rem;
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+  }
+
+  .chip-field input {
+    width: 3.4rem;
+    padding: 0.1rem 0.2rem;
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+    color: #cbd5e1;
+    background: transparent;
+    border: none;
+    outline: none;
   }
 
   .chip:hover:not(:disabled) {

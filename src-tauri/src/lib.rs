@@ -540,6 +540,24 @@ fn snap_frame_geometry(
 }
 
 /// Clears snap feedback when a gesture ends.
+/// Turns baseline-grid locking on or off for one text frame.
+///
+/// The grid itself rides on `Document`, so it is configured through
+/// `set_document_settings`; only the per-frame opt-in needs a command.
+#[tauri::command]
+fn set_frame_baseline_snap(
+    entity_id: u32,
+    enabled: bool,
+    state: State<AppState>,
+) -> Result<(), String> {
+    state.set_frame_baseline_snap(entity_id, enabled)
+}
+
+#[tauri::command]
+fn get_frame_baseline_snap(entity_id: u32, state: State<AppState>) -> Result<bool, String> {
+    state.frame_baseline_snap(entity_id)
+}
+
 #[tauri::command]
 fn clear_active_snap(state: State<AppState>) {
     state.clear_active_snap();
@@ -596,7 +614,9 @@ pub fn run() {
             remove_ruler_guide,
             list_ruler_guides,
             snap_frame_geometry,
-            clear_active_snap
+            clear_active_snap,
+            set_frame_baseline_snap,
+            get_frame_baseline_snap
         ])
         .on_window_event(|window, event| {
             // Keeping the swapchain in step with the window avoids a stretched

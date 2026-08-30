@@ -15,6 +15,7 @@ use parley::{
 // Re-exported so consumers of the renderer do not need a direct dependency on
 // tessera-core just to name an alignment.
 pub use tessera_core::TextAlignment;
+use tessera_core::BaselineGrid;
 use vello::kurbo::Affine;
 use vello::peniko::{Color, Fill};
 use vello::Scene;
@@ -29,6 +30,22 @@ fn to_parley_alignment(value: TextAlignment) -> Alignment {
     }
 }
 
+/// The line height parley should use for a style.
+///
+/// Without a grid, leading stays a multiple of the font size — the convention
+/// the document model uses. With one, it becomes an absolute distance so every
+/// line is spaced a whole number of increments apart.
+fn line_height_for(style: &TextStyle, font_size: f32) -> parley::LineHeight {
+    match style.baseline_increment {
+        Some(increment) if increment > 0.0 => {
+            let grid = BaselineGrid { increment, start: 0.0, visible: false };
+            let natural = font_size * style.line_height.max(0.1);
+            parley::LineHeight::Absolute(grid.snapped_leading(natural))
+        }
+        _ => parley::LineHeight::FontSizeRelative(style.line_height.max(0.1)),
+    }
+}
+
 /// Type settings for one text frame.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextStyle {
@@ -40,6 +57,13 @@ pub struct TextStyle {
     pub font_family: Option<String>,
     /// CSS-style numeric weight, where 400 is regular and 700 is bold.
     pub font_weight: f32,
+    /// Locks leading onto a baseline grid of this increment.
+    ///
+    /// When set, `line_height` no longer decides line spacing: the natural
+    /// leading is rounded up to a whole number of increments so every baseline
+    /// lands on a rung. Positioning the *first* baseline is the caller's job,
+    /// since only it knows where the frame sits relative to the grid origin.
+    pub baseline_increment: Option<f32>,
 }
 
 impl Default for TextStyle {
@@ -50,6 +74,7 @@ impl Default for TextStyle {
             align: TextAlignment::Start,
             font_family: None,
             font_weight: 400.0,
+            baseline_increment: None,
         }
     }
 }
@@ -65,6 +90,11 @@ pub struct ShapedText {
     /// This is what drives InDesign's overset-text indicator and, later, the
     /// preflight check for it.
     pub is_overset: bool,
+    /// Distance from the layout's top to the first line's baseline.
+    ///
+    /// The caller adds this to the frame's y to find where the first baseline
+    /// falls in document space, which is what baseline-grid snapping needs.
+    pub first_baseline: f32,
 }
 
 impl ShapedText {
@@ -112,12 +142,9 @@ impl TextEngine {
     ) -> ShapedText {
         let mut builder = self.layouts.ranged_builder(&mut self.fonts, text, 1.0, true);
 
-        builder.push_default(StyleProperty::FontSize(style.font_size.max(1.0)));
-        // Parley expresses line height as a multiple of font size, which matches
-        // the leading convention used throughout the document model.
-        builder.push_default(StyleProperty::LineHeight(parley::LineHeight::FontSizeRelative(
-            style.line_height.max(0.1),
-        )));
+        let font_size = style.font_size.max(1.0);
+        builder.push_default(StyleProperty::FontSize(font_size));
+        builder.push_default(StyleProperty::LineHeight(line_height_for(style, font_size)));
         builder.push_default(StyleProperty::FontWeight(parley::FontWeight::new(
             style.font_weight,
         )));
@@ -135,12 +162,18 @@ impl TextEngine {
 
         let content_height = layout.height();
         let content_width = layout.width();
+        let first_baseline = layout
+            .lines()
+            .next()
+            .map(|line| line.metrics().baseline)
+            .unwrap_or(0.0);
 
         ShapedText {
             layout,
             content_height,
             content_width,
             is_overset: frame_height > 0.0 && content_height > frame_height,
+            first_baseline,
         }
     }
 
@@ -457,6 +490,155 @@ mod tests {
             wide[0].end > narrow[0].end,
             "a wider frame fits more text in the same height"
         );
+    }
+
+    fn baselines_of(shaped: &ShapedText) -> Vec<f32> {
+        shaped.layout().lines().map(|l| l.metrics().baseline).collect()
+    }
+
+    #[test]
+    fn a_baseline_grid_spaces_lines_a_whole_increment_apart() {
+        // The decisive property: 16pt at 1.4 leading is 22.4pt naturally, which
+        // must open to exactly two 12pt rungs — 24pt — once the grid is on.
+        let mut engine = TextEngine::new();
+        let text = "one two three four five six seven eight nine ten eleven";
+
+        let style = TextStyle {
+            font_size: 16.0,
+            line_height: 1.4,
+            baseline_increment: Some(12.0),
+            ..Default::default()
+        };
+        let shaped = engine.shape(text, &style, 80.0, 2000.0);
+        let baselines = baselines_of(&shaped);
+
+        assert!(baselines.len() >= 3, "need several lines to compare gaps");
+        for pair in baselines.windows(2) {
+            assert!(
+                (pair[1] - pair[0] - 24.0).abs() < 1e-3,
+                "gap was {}",
+                pair[1] - pair[0]
+            );
+        }
+    }
+
+    #[test]
+    fn without_a_grid_lines_drift_off_the_rhythm() {
+        // The contrast that makes the grid worth having: the same type set
+        // without one lands between rungs, so columns fall out of register.
+        // (Parley rounds line heights, so the natural gap is not exactly
+        // font_size * line_height — only that it is not a whole increment.)
+        let mut engine = TextEngine::new();
+        let text = "one two three four five six seven eight nine ten eleven";
+        let style = TextStyle { font_size: 16.0, line_height: 1.4, ..Default::default() };
+
+        let baselines = baselines_of(&engine.shape(text, &style, 80.0, 2000.0));
+
+        assert!(baselines.len() >= 3);
+        let gap = baselines[1] - baselines[0];
+        assert!(gap > 0.0);
+        assert!(
+            (gap / 12.0 - (gap / 12.0).round()).abs() > 1e-3,
+            "gap {gap} happens to sit on the grid, so this proves nothing"
+        );
+    }
+
+    #[test]
+    fn a_grid_never_tightens_leading() {
+        // Snapping may only open text up. If it could tighten, lines set looser
+        // than the grid would collide once the grid was switched on.
+        let mut engine = TextEngine::new();
+        let text = "one two three four five six seven eight nine ten eleven";
+
+        for increment in [4.0, 8.0, 12.0, 30.0] {
+            let natural = TextStyle { font_size: 16.0, line_height: 1.4, ..Default::default() };
+            let snapped = TextStyle { baseline_increment: Some(increment), ..natural.clone() };
+
+            let loose = engine.shape(text, &natural, 80.0, 2000.0).content_height;
+            let gridded = engine.shape(text, &snapped, 80.0, 2000.0).content_height;
+
+            assert!(gridded >= loose - 1e-3, "increment {increment} tightened the text");
+        }
+    }
+
+    #[test]
+    fn type_smaller_than_the_increment_still_takes_a_full_rung() {
+        let mut engine = TextEngine::new();
+        let text = "one two three four five six seven eight nine ten eleven";
+        let style = TextStyle {
+            font_size: 8.0,
+            line_height: 1.0,
+            baseline_increment: Some(12.0),
+            ..Default::default()
+        };
+
+        let baselines = baselines_of(&engine.shape(text, &style, 60.0, 2000.0));
+
+        assert!(baselines.len() >= 3);
+        for pair in baselines.windows(2) {
+            assert!((pair[1] - pair[0] - 12.0).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn a_gridded_frame_holds_fewer_lines() {
+        // The cost of the grid, made explicit: opening leading up means a frame
+        // of fixed height fits less of the story.
+        let mut engine = TextEngine::new();
+        let story = "The quick brown fox jumps over the lazy dog. ".repeat(8);
+        let natural = TextStyle { font_size: 16.0, line_height: 1.4, ..Default::default() };
+        let gridded = TextStyle { baseline_increment: Some(12.0), ..natural.clone() };
+
+        let loose = engine.flow(&story, &natural, &[(120.0, 100.0), (120.0, 4000.0)]);
+        let snapped = engine.flow(&story, &gridded, &[(120.0, 100.0), (120.0, 4000.0)]);
+
+        assert!(
+            snapped[0].line_count <= loose[0].line_count,
+            "grid: {}, natural: {}",
+            snapped[0].line_count,
+            loose[0].line_count
+        );
+    }
+
+    #[test]
+    fn the_first_baseline_is_reported_for_snapping() {
+        // The painter needs this to know where the block's first line actually
+        // sits before deciding how far to push it onto a rung.
+        let mut engine = TextEngine::new();
+        let shaped = engine.shape("Hello", &TextStyle::default(), 400.0, 100.0);
+
+        assert!(shaped.first_baseline > 0.0, "a baseline sits below the layout top");
+        assert!(shaped.first_baseline <= shaped.content_height);
+    }
+
+    #[test]
+    fn empty_text_still_reports_a_usable_first_baseline() {
+        // An empty frame keeps one zero-width line, so it has a real baseline —
+        // which is what lets an empty gridded frame sit on a rung rather than
+        // jumping when the first character is typed.
+        let mut engine = TextEngine::new();
+        let shaped = engine.shape("", &TextStyle::default(), 200.0, 100.0);
+
+        assert!(shaped.first_baseline.is_finite());
+        assert!(shaped.first_baseline >= 0.0);
+    }
+
+    #[test]
+    fn a_non_positive_increment_leaves_leading_alone() {
+        // Guards the value a user can type into the grid panel.
+        let mut engine = TextEngine::new();
+        let text = "one two three four five six seven eight";
+        let style = |inc| TextStyle {
+            font_size: 16.0,
+            line_height: 1.4,
+            baseline_increment: inc,
+            ..Default::default()
+        };
+
+        let off = engine.shape(text, &style(None), 80.0, 2000.0).content_height;
+        let zero = engine.shape(text, &style(Some(0.0)), 80.0, 2000.0).content_height;
+
+        assert!((off - zero).abs() < 1e-3);
     }
 
     #[test]

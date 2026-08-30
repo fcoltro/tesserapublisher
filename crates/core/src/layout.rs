@@ -202,6 +202,101 @@ impl PageGuides {
     }
 }
 
+/// A vertical rhythm that typography can lock onto, in document units.
+///
+/// The grid is a ladder of evenly spaced baselines. A text frame with
+/// `snap_to_baseline` set has every line pulled onto the nearest rung *below*
+/// where it naturally fell, which is what keeps columns and facing pages in
+/// register with one another.
+///
+/// The origin is per page, measured from the top margin, so pages with
+/// different margins still start their text at the same optical position and
+/// a spread reads as one ruled sheet.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BaselineGrid {
+    /// Distance between consecutive baselines. Zero or less disables the grid.
+    pub increment: f32,
+    /// Offset from the top margin down to the first baseline.
+    pub start: f32,
+    /// Whether the grid is drawn on the canvas. Snapping is independent of this
+    /// so a designer can work against an invisible grid.
+    pub visible: bool,
+}
+
+impl Default for BaselineGrid {
+    fn default() -> Self {
+        Self {
+            increment: 12.0,
+            start: 0.0,
+            visible: false,
+        }
+    }
+}
+
+impl BaselineGrid {
+    /// Whether the grid can be snapped to at all.
+    ///
+    /// A non-positive increment would make every rung the same line, so it is
+    /// treated as "no grid" rather than as an error.
+    pub fn is_active(&self) -> bool {
+        self.increment > 0.0
+    }
+
+    /// The y of the first baseline on a page, in document units.
+    ///
+    /// Measured from the page's top margin, so the grid inherits any per-page
+    /// margin override rather than assuming the document default.
+    pub fn origin_for(&self, page: &PagePlacement, guides: &PageGuides) -> f32 {
+        let (_, content_top, _, _) = guides.content_rect(page);
+        content_top + self.start
+    }
+
+    /// Leading rounded up to a whole number of increments.
+    ///
+    /// Rounding is always upward: locking to the grid may open text up but
+    /// never tightens it, so lines cannot be pushed into collision. Type set
+    /// looser than one increment simply takes as many rungs as it needs.
+    pub fn snapped_leading(&self, natural_leading: f32) -> f32 {
+        if !self.is_active() {
+            return natural_leading;
+        }
+        let rungs = (natural_leading / self.increment).ceil().max(1.0);
+        rungs * self.increment
+    }
+
+    /// How far a baseline must move down to land on the grid.
+    ///
+    /// Always non-negative: a baseline is pushed to the next rung at or below
+    /// its natural position, matching how print layout tools align to a grid.
+    /// A baseline already exactly on a rung does not move.
+    pub fn shift_onto_grid(&self, origin: f32, baseline: f32) -> f32 {
+        if !self.is_active() {
+            return 0.0;
+        }
+        let offset = baseline - origin;
+        let rungs = (offset / self.increment).ceil();
+        let target = origin + rungs * self.increment;
+        (target - baseline).max(0.0)
+    }
+
+    /// The baselines falling within `[top, bottom]`, for drawing the grid.
+    ///
+    /// Bounded so a malformed increment cannot produce an unbounded list.
+    pub fn lines_between(&self, origin: f32, top: f32, bottom: f32) -> Vec<f32> {
+        if !self.is_active() || bottom <= top {
+            return Vec::new();
+        }
+        let first_rung = ((top - origin) / self.increment).ceil();
+        let mut lines = Vec::new();
+        let mut y = origin + first_rung * self.increment;
+        while y <= bottom && lines.len() < 10_000 {
+            lines.push(y);
+            y += self.increment;
+        }
+        lines
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,6 +457,127 @@ mod tests {
 
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0], (left, right));
+    }
+
+    #[test]
+    fn the_grid_starts_at_the_top_margin() {
+        // Origin is per page, so a page with a deeper top margin starts lower —
+        // that is what keeps pages with different margins optically aligned.
+        let page = layout().place(1);
+        let guides = PageGuides { margin_top: 40.0, ..Default::default() };
+        let grid = BaselineGrid { increment: 12.0, start: 0.0, visible: true };
+
+        assert_eq!(grid.origin_for(&page, &guides), page.y + 40.0);
+    }
+
+    #[test]
+    fn the_start_offset_pushes_the_first_baseline_down() {
+        let page = layout().place(1);
+        let guides = PageGuides { margin_top: 40.0, ..Default::default() };
+        let grid = BaselineGrid { increment: 12.0, start: 6.0, visible: true };
+
+        assert_eq!(grid.origin_for(&page, &guides), page.y + 46.0);
+    }
+
+    #[test]
+    fn leading_rounds_up_to_a_whole_increment() {
+        // The decisive rule: 16pt type at 1.4 leading is 22.4pt, which must
+        // open up to two 12pt rungs rather than tightening to one.
+        let grid = BaselineGrid { increment: 12.0, start: 0.0, visible: true };
+
+        assert_eq!(grid.snapped_leading(22.4), 24.0);
+        assert_eq!(grid.snapped_leading(12.0), 12.0, "an exact fit does not grow");
+        assert_eq!(grid.snapped_leading(12.1), 24.0);
+    }
+
+    #[test]
+    fn leading_never_tightens() {
+        // Type set looser than the grid takes more rungs; it is never squeezed
+        // back down, which would push lines into collision.
+        let grid = BaselineGrid { increment: 12.0, start: 0.0, visible: true };
+
+        assert!(grid.snapped_leading(30.0) >= 30.0);
+        assert_eq!(grid.snapped_leading(30.0), 36.0);
+    }
+
+    #[test]
+    fn leading_smaller_than_the_increment_takes_one_full_rung() {
+        // 9pt type on a 12pt grid is set at 12pt, not at its natural leading.
+        let grid = BaselineGrid { increment: 12.0, start: 0.0, visible: true };
+
+        assert_eq!(grid.snapped_leading(10.8), 12.0);
+        assert_eq!(grid.snapped_leading(0.5), 12.0);
+    }
+
+    #[test]
+    fn a_baseline_is_pushed_down_to_the_next_rung() {
+        let grid = BaselineGrid { increment: 12.0, start: 0.0, visible: true };
+
+        // Origin 100, rungs at 100, 112, 124. A baseline at 115 goes to 124.
+        assert_eq!(grid.shift_onto_grid(100.0, 115.0), 9.0);
+    }
+
+    #[test]
+    fn a_baseline_already_on_a_rung_does_not_move() {
+        let grid = BaselineGrid { increment: 12.0, start: 0.0, visible: true };
+
+        assert_eq!(grid.shift_onto_grid(100.0, 112.0), 0.0);
+    }
+
+    #[test]
+    fn a_baseline_above_the_origin_is_pulled_down_onto_it() {
+        // A frame sitting above the top margin still has its first line land on
+        // the grid rather than being left floating.
+        let grid = BaselineGrid { increment: 12.0, start: 0.0, visible: true };
+
+        assert_eq!(grid.shift_onto_grid(100.0, 95.0), 5.0);
+    }
+
+    #[test]
+    fn the_shift_is_never_upward() {
+        // Text must not be dragged up out of its frame to reach a rung.
+        let grid = BaselineGrid { increment: 12.0, start: 0.0, visible: true };
+
+        for baseline in [95.0, 100.0, 101.0, 111.9, 112.0, 200.0] {
+            assert!(grid.shift_onto_grid(100.0, baseline) >= 0.0);
+        }
+    }
+
+    #[test]
+    fn grid_lines_cover_a_range() {
+        let grid = BaselineGrid { increment: 10.0, start: 0.0, visible: true };
+        let lines = grid.lines_between(100.0, 100.0, 130.0);
+
+        assert_eq!(lines, vec![100.0, 110.0, 120.0, 130.0]);
+    }
+
+    #[test]
+    fn grid_lines_start_inside_the_range_when_the_origin_is_above_it() {
+        let grid = BaselineGrid { increment: 10.0, start: 0.0, visible: true };
+        let lines = grid.lines_between(0.0, 25.0, 45.0);
+
+        assert_eq!(lines, vec![30.0, 40.0], "no rung may fall outside the range");
+    }
+
+    #[test]
+    fn an_inverted_range_yields_no_lines() {
+        let grid = BaselineGrid { increment: 10.0, start: 0.0, visible: true };
+
+        assert!(grid.lines_between(0.0, 50.0, 20.0).is_empty());
+    }
+
+    #[test]
+    fn a_non_positive_increment_disables_the_grid() {
+        // Guards the degenerate settings a user can type into the panel: every
+        // rung would be the same line, and lines_between would not terminate.
+        for increment in [0.0, -12.0] {
+            let grid = BaselineGrid { increment, start: 0.0, visible: true };
+
+            assert!(!grid.is_active());
+            assert_eq!(grid.snapped_leading(22.4), 22.4, "leading passes through");
+            assert_eq!(grid.shift_onto_grid(0.0, 37.0), 0.0, "nothing to snap to");
+            assert!(grid.lines_between(0.0, 0.0, 1000.0).is_empty());
+        }
     }
 
     #[test]

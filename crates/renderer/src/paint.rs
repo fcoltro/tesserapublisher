@@ -12,6 +12,7 @@ use vello::Scene;
 use crate::scene::{RenderElement, RenderScene};
 use crate::text::{TextEngine, TextStyle, ThreadSlice};
 use std::collections::HashMap;
+use tessera_core::BaselineGrid;
 
 /// The sub-rectangle of the render surface that the document is drawn into.
 ///
@@ -73,6 +74,7 @@ fn story_style(render_scene: &RenderScene, story_id: u32) -> TextStyle {
                 align,
                 font_family,
                 font_weight,
+                baseline,
                 ..
             } if *id == story_id => Some(TextStyle {
                 font_size: *font_size,
@@ -80,6 +82,9 @@ fn story_style(render_scene: &RenderScene, story_id: u32) -> TextStyle {
                 align: *align,
                 font_family: font_family.clone(),
                 font_weight: *font_weight,
+                // The head's grid governs the whole chain: a story must not
+                // change its rhythm partway through.
+                baseline_increment: baseline.map(|[increment, _]| increment),
             }),
             _ => None,
         })
@@ -222,6 +227,7 @@ pub fn paint_into(&mut self, scene: &mut Scene, render_scene: &RenderScene, view
                 columns,
                 column_top,
                 column_bottom,
+                baseline_grid,
                 ..
             } => {
                 // Guide colours follow the conventions of print layout tools so
@@ -287,6 +293,28 @@ pub fn paint_into(&mut self, scene: &mut Scene, render_scene: &RenderScene, view
                             &Line::new(
                                 (column[1] as f64, *column_top as f64),
                                 (column[1] as f64, *column_bottom as f64),
+                            ),
+                        );
+                    }
+                }
+
+                // The baseline grid is drawn last and faintest of the page
+                // chrome: it is the densest set of lines on the page, so it has
+                // to sit behind the margins and columns visually rather than
+                // competing with them.
+                if let Some([origin, increment]) = baseline_grid {
+                    let baseline_color = Color::new([0.4, 0.7, 0.85, 0.35]);
+                    let grid = BaselineGrid { increment: *increment, start: 0.0, visible: true };
+
+                    for y in grid.lines_between(*origin, *column_top, *column_bottom) {
+                        scene.stroke(
+                            &hairline,
+                            camera,
+                            baseline_color,
+                            None,
+                            &Line::new(
+                                (margins[0] as f64, y as f64),
+                                (margins[2] as f64, y as f64),
                             ),
                         );
                     }
@@ -384,6 +412,7 @@ pub fn paint_into(&mut self, scene: &mut Scene, render_scene: &RenderScene, view
                 font_family,
                 font_weight,
                 story,
+                baseline,
                 fill_color,
                 is_selected,
                 ..
@@ -394,6 +423,7 @@ pub fn paint_into(&mut self, scene: &mut Scene, render_scene: &RenderScene, view
                     align: *align,
                     font_family: font_family.clone(),
                     font_weight: *font_weight,
+                    baseline_increment: baseline.map(|[increment, _]| increment),
                 };
 
                 // A threaded frame shows only its slice of the story; an
@@ -411,9 +441,20 @@ pub fn paint_into(&mut self, scene: &mut Scene, render_scene: &RenderScene, view
                 let shaped = self.text.shape(&body, &style, *width, *height);
                 let is_overset = shaped.is_overset || threaded_overset;
 
+                // Snapped leading keeps lines a whole increment apart, but the
+                // block as a whole still has to be nudged so its first baseline
+                // lands on a rung rather than merely being correctly spaced.
+                let grid_shift = baseline
+                    .map(|[increment, origin]| {
+                        let grid = BaselineGrid { increment, start: 0.0, visible: false };
+                        grid.shift_onto_grid(origin, *y + shaped.first_baseline)
+                    })
+                    .unwrap_or(0.0);
+
                 // Text is laid out in the frame's local space, so the glyph
                 // transform translates local origin to the frame's corner.
-                let placement = camera * Affine::translate((*x as f64, *y as f64));
+                let placement =
+                    camera * Affine::translate((*x as f64, (*y + grid_shift) as f64));
                 self.text
                     .draw(scene, &shaped, placement, color_from_rgba(*fill_color));
 
