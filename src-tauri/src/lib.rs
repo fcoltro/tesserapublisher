@@ -362,6 +362,29 @@ fn commit_frame_geometry(
     state.commit_frame_geometry(entity_id, old_transform, old_size, new_transform, new_size)
 }
 
+/// Reads a frame's paint settings for the inspector.
+#[tauri::command]
+fn get_frame_style(entity_id: u32, state: State<AppState>) -> Result<Style, String> {
+    state.get_frame_style(entity_id)
+}
+
+/// Live path for inspector edits; does not record history.
+#[tauri::command]
+fn set_frame_style(entity_id: u32, style: Style, state: State<AppState>) -> Result<(), String> {
+    state.set_frame_style(entity_id, style)
+}
+
+/// Records a finished style edit as a single undoable action.
+#[tauri::command]
+fn commit_frame_style(
+    entity_id: u32,
+    before: Style,
+    after: Style,
+    state: State<AppState>,
+) -> Result<HistoryStatus, String> {
+    state.commit_frame_style(entity_id, before, after)
+}
+
 /// Replaces a path frame's bezier outline.
 #[tauri::command]
 fn set_frame_path(entity_id: u32, svg: String, state: State<AppState>) -> Result<(), String> {
@@ -597,6 +620,9 @@ pub fn run() {
             set_frame_geometry,
             commit_frame_geometry,
             set_frame_path,
+            get_frame_style,
+            set_frame_style,
+            commit_frame_style,
             get_document_settings,
             set_document_settings,
             get_page_placements,

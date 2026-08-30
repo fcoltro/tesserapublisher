@@ -1186,6 +1186,66 @@ impl AppState {
             .ok_or_else(|| format!("entity {entity_index} is not a text frame"))
     }
 
+    /// Reads a frame's paint settings.
+    pub fn get_frame_style(&self, entity_index: u32) -> Result<Style, String> {
+        let world = self.world.read().map_err(|e| e.to_string())?;
+        world
+            .get_entity(Entity::from_raw(entity_index))
+            .map_err(|_| format!("entity {entity_index} not found"))?
+            .get::<Style>()
+            .cloned()
+            .ok_or_else(|| format!("entity {entity_index} has no style"))
+    }
+
+    /// Applies paint settings directly, without recording history.
+    ///
+    /// This is the live path behind an inspector scrub, and it is the reason
+    /// the setter and the commit are separate: dragging stroke width across
+    /// forty pixels must not leave forty entries on the undo stack.
+    pub fn set_frame_style(&self, entity_index: u32, style: Style) -> Result<(), String> {
+        let mut world = self.world.write().map_err(|e| e.to_string())?;
+        let mut entity = world
+            .get_entity_mut(Entity::from_raw(entity_index))
+            .map_err(|_| format!("entity {entity_index} not found"))?;
+
+        let Some(mut slot) = entity.get_mut::<Style>() else {
+            return Err(format!("entity {entity_index} has no style"));
+        };
+        *slot = style;
+        drop(world);
+
+        self.increment_scene_revision();
+        Ok(())
+    }
+
+    /// Records a finished style edit as one undoable action.
+    ///
+    /// `old_style` is the value captured when the gesture began. An edit that
+    /// changed nothing is dropped rather than pushed, so a stray click on a
+    /// colour swatch does not leave a no-op entry on the undo stack.
+    pub fn commit_frame_style(
+        &self,
+        entity_index: u32,
+        old_style: Style,
+        new_style: Style,
+    ) -> Result<HistoryStatus, String> {
+        if old_style == new_style {
+            return self.get_history_status();
+        }
+
+        self.set_frame_style(entity_index, new_style.clone())?;
+
+        let mut history = self.history.lock().map_err(|e| e.to_string())?;
+        history.push(HistoryAction::UpdateStyle {
+            entity_index,
+            old_style,
+            new_style,
+        });
+        drop(history);
+
+        self.get_history_status()
+    }
+
     /// Replaces a path frame's bezier outline.
     pub fn set_frame_path(&self, entity_index: u32, svg: String) -> Result<BoundingBox, String> {
         let mut world = self.world.write().map_err(|e| e.to_string())?;
@@ -1689,6 +1749,67 @@ mod tests {
                 Some("Story text".to_string()),
             )
             .expect("spawn should succeed")
+    }
+
+    #[test]
+    fn set_frame_style_updates_without_touching_history() {
+        let app_state = AppState::new();
+        let id = spawn_test_rect(&app_state);
+        let depth = app_state.get_history_status().unwrap().undo_count;
+
+        let mut style = app_state.get_frame_style(id).expect("frame should have a style");
+        style.fill_color = [1.0, 0.0, 0.0, 1.0];
+        app_state.set_frame_style(id, style).expect("set should succeed");
+
+        assert_eq!(
+            app_state.get_frame_style(id).unwrap().fill_color,
+            [1.0, 0.0, 0.0, 1.0]
+        );
+        assert_eq!(
+            app_state.get_history_status().unwrap().undo_count,
+            depth,
+            "the live path must not push an undo entry per tick"
+        );
+    }
+
+    #[test]
+    fn commit_frame_style_is_undoable() {
+        let app_state = AppState::new();
+        let id = spawn_test_rect(&app_state);
+
+        let old = app_state.get_frame_style(id).unwrap();
+        let new = Style {
+            fill_color: [0.0, 1.0, 0.0, 1.0],
+            ..old.clone()
+        };
+        app_state
+            .commit_frame_style(id, old.clone(), new)
+            .expect("commit should succeed");
+        assert_eq!(
+            app_state.get_frame_style(id).unwrap().fill_color,
+            [0.0, 1.0, 0.0, 1.0]
+        );
+
+        app_state.undo().unwrap();
+        assert_eq!(app_state.get_frame_style(id).unwrap(), old);
+    }
+
+    #[test]
+    fn commit_frame_style_drops_a_gesture_that_changed_nothing() {
+        let app_state = AppState::new();
+        let id = spawn_test_rect(&app_state);
+        let style = app_state.get_frame_style(id).unwrap();
+        let depth = app_state.get_history_status().unwrap().undo_count;
+
+        app_state
+            .commit_frame_style(id, style.clone(), style)
+            .expect("a no-op commit is not an error");
+
+        assert_eq!(
+            app_state.get_history_status().unwrap().undo_count,
+            depth,
+            "a click that changed nothing must not leave an undo entry"
+        );
     }
 
     #[test]

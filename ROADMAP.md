@@ -129,8 +129,8 @@ phase needs to edit; almost none of it is reachable from the interface. See
 
 **Backend prerequisites discovered during planning** — these must land first:
 
-- [ ] Mutation commands for `Style` (get/set/commit). `HistoryAction::UpdateStyle`
-  already exists at `crates/core/src/history.rs:38` with no producer.
+- [x] Mutation commands for `Style` (get/set/commit), wired to the existing
+  `HistoryAction::UpdateStyle`, which until now had no producer.
 - [ ] Mutation commands for `TextContent` (get/set/commit) plus a new
   `HistoryAction::UpdateText` variant.
 - [ ] Structure commands: layer visibility, layer lock, frame z-index, rename,
