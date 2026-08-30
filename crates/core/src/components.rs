@@ -70,6 +70,10 @@ pub enum FrameType {
     Ellipse,
     Text,
     Image,
+    /// A straight segment from the frame box's top-left to its bottom-right.
+    Line,
+    /// An arbitrary bezier outline, carried by a [`PathData`] component.
+    Path,
 }
 
 /// Frame entity component
@@ -161,32 +165,13 @@ impl BoundingBox {
         }
     }
 
-    /// Computes an AABB from a Transform and Size
+    /// Computes a rectangular AABB from a Transform and Size.
+    ///
+    /// Kept for callers that have no frame type to hand. Prefer
+    /// [`crate::geometry::frame_bounds`], which is exact for ellipses, lines and
+    /// paths rather than assuming a rectangle.
     pub fn from_transform_and_size(transform: &Transform, size: &Size) -> Self {
-        let w = size.width * transform.scale_x.abs();
-        let h = size.height * transform.scale_y.abs();
-
-        if transform.rotation == 0.0 {
-            Self::new(
-                transform.position.x,
-                transform.position.y,
-                transform.position.x + w,
-                transform.position.y + h,
-            )
-        } else {
-            // Compute rotated bounding box
-            let cos_a = transform.rotation.cos().abs();
-            let sin_a = transform.rotation.sin().abs();
-            let bb_w = w * cos_a + h * sin_a;
-            let bb_h = w * sin_a + h * cos_a;
-
-            Self::new(
-                transform.position.x,
-                transform.position.y,
-                transform.position.x + bb_w,
-                transform.position.y + bb_h,
-            )
-        }
+        crate::geometry::frame_bounds(FrameType::Rectangle, transform, size, None)
     }
 
     /// Checks if a 2D point (e.g. mouse click) lies inside the bounding box
@@ -246,12 +231,47 @@ impl Default for Style {
     }
 }
 
-/// Text content component for Text frames
+/// Bezier outline for [`FrameType::Path`] frames, as an SVG path string.
+///
+/// Storing the outline as SVG keeps it serializable for save files and the IPC
+/// bridge; `kurbo::BezPath::from_svg` turns it back into geometry on demand.
+#[derive(Component, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PathData {
+    pub svg: String,
+}
+
+impl Default for PathData {
+    fn default() -> Self {
+        Self {
+            svg: "M 0 0 L 100 0 L 100 100 Z".to_string(),
+        }
+    }
+}
+
+/// Paragraph alignment for text frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TextAlignment {
+    /// Left for left-to-right text, right for right-to-left.
+    #[default]
+    Start,
+    Center,
+    /// Right for left-to-right text, left for right-to-left.
+    End,
+    Justify,
+}
+
+/// Text content and type settings for Text frames.
 #[derive(Component, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextContent {
     pub text: String,
     pub font_size: f32,
+    /// Leading, as a multiple of font size.
     pub line_height: f32,
+    pub align: TextAlignment,
+    /// Preferred family name; `None` uses the system default.
+    pub font_family: Option<String>,
+    /// CSS-style numeric weight, where 400 is regular and 700 is bold.
+    pub font_weight: f32,
 }
 
 impl Default for TextContent {
@@ -260,6 +280,9 @@ impl Default for TextContent {
             text: "Double click to edit text".to_string(),
             font_size: 16.0,
             line_height: 1.4,
+            align: TextAlignment::Start,
+            font_family: None,
+            font_weight: 400.0,
         }
     }
 }

@@ -18,8 +18,16 @@ im = { version = "15", features = ["serde"] }
 kurbo = { version = "0.13", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tauri = { version = "2", features = [] }
+# macos-private-api is required for transparent windows on macOS, which is how
+# native vello content shows through the webview. It is inert on other platforms.
+tauri = { version = "2", features = ["macos-private-api"] }
 tauri-build = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+pollster = "0.4"
+raw-window-handle = "0.6"
+# default-features are off so that vello does not pull in wgpu/default, which
+# would force the dx12 backend on. Backends are chosen per-platform in the
+# renderer crate instead.
+vello = { version = "0.10", default-features = false, features = ["wgpu"] }
 tessera-core = { path = "crates/core" }
 tessera-renderer = { path = "crates/renderer" }

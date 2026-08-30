@@ -1,8 +1,8 @@
 use bevy_ecs::world::World;
 use serde::{Deserialize, Serialize};
 use tessera_core::{
-    BelongsTo, BoundingBox, Document, Frame, FrameType, Layer, Page, Size, Style, TextContent,
-    Transform, ZIndex,
+    geometry, BelongsTo, BoundingBox, Document, Frame, FrameType, Layer, Page, PathData, Size,
+    Style, TextContent, Transform, ZIndex,
 };
 
 /// Primitive renderable elements compiled from the ECS state
@@ -55,7 +55,28 @@ pub enum RenderElement {
         text: String,
         font_size: f32,
         line_height: f32,
+        align: tessera_core::TextAlignment,
+        font_family: Option<String>,
+        font_weight: f32,
         fill_color: [f32; 4],
+        is_selected: bool,
+    },
+    /// An arbitrary bezier outline placed by an affine.
+    ///
+    /// Lines and paths share this variant: both are outlines in the frame's
+    /// local space, so the only difference is whether they enclose an area.
+    PathShape {
+        id: u32,
+        name: String,
+        /// The outline in the frame's local space, as an SVG path string.
+        svg: String,
+        /// Affine mapping local space to document space, as kurbo coefficients.
+        transform: [f32; 6],
+        fill_color: [f32; 4],
+        stroke_color: Option<[f32; 4]>,
+        stroke_width: f32,
+        /// Open outlines are stroked only; closed ones are filled first.
+        is_closed: bool,
         is_selected: bool,
     },
     SelectionOverlay {
@@ -86,7 +107,7 @@ impl Default for RenderScene {
     fn default() -> Self {
         Self {
             revision: 0,
-            pasteboard_color: [0.04, 0.06, 0.10, 1.0], // Dark pasteboard
+            pasteboard_color: [0.02, 0.031, 0.067, 1.0], // Dark pasteboard
             page_width: 800.0,
             page_height: 600.0,
             pan_x: 60.0,
@@ -178,6 +199,7 @@ impl SceneCompiler {
             bounding_box: BoundingBox,
             style: Style,
             text_content: Option<TextContent>,
+            path_data: Option<PathData>,
         }
 
         let mut frame_list: Vec<FrameData> = world
@@ -190,6 +212,7 @@ impl SceneCompiler {
                 let bounding_box = e.get::<BoundingBox>()?;
                 let style = e.get::<Style>()?;
                 let text_content = e.get::<TextContent>().cloned();
+                let path_data = e.get::<PathData>().cloned();
 
                 // Check layer visibility
                 if let Some(parent_link) = e.get::<BelongsTo>() {
@@ -207,6 +230,7 @@ impl SceneCompiler {
                     bounding_box: *bounding_box,
                     style: style.clone(),
                     text_content,
+                    path_data,
                 })
             })
             .collect();
@@ -268,6 +292,18 @@ impl SceneCompiler {
                         .as_ref()
                         .map(|t| t.line_height)
                         .unwrap_or(1.4);
+                    let align = f
+                        .text_content
+                        .as_ref()
+                        .map(|t| t.align)
+                        .unwrap_or_default();
+                    let font_family =
+                        f.text_content.as_ref().and_then(|t| t.font_family.clone());
+                    let font_weight = f
+                        .text_content
+                        .as_ref()
+                        .map(|t| t.font_weight)
+                        .unwrap_or(400.0);
 
                     elements.push(RenderElement::TextBlock {
                         id: f.id,
@@ -279,7 +315,36 @@ impl SceneCompiler {
                         text,
                         font_size,
                         line_height,
+                        align,
+                        font_family,
+                        font_weight,
                         fill_color: f.style.fill_color,
+                        is_selected: is_sel,
+                    });
+                }
+                FrameType::Line | FrameType::Path => {
+                    // Both are outlines in local space; the affine carries the
+                    // position, scale and rotation across to the painter.
+                    let outline =
+                        geometry::local_outline(f.frame.frame_type, &f.size, f.path_data.as_ref());
+                    let coeffs = geometry::frame_affine(&f.transform, &f.size).as_coeffs();
+
+                    elements.push(RenderElement::PathShape {
+                        id: f.id,
+                        name: f.frame.name.clone(),
+                        svg: outline.to_svg(),
+                        transform: [
+                            coeffs[0] as f32,
+                            coeffs[1] as f32,
+                            coeffs[2] as f32,
+                            coeffs[3] as f32,
+                            coeffs[4] as f32,
+                            coeffs[5] as f32,
+                        ],
+                        fill_color: f.style.fill_color,
+                        stroke_color: f.style.stroke_color,
+                        stroke_width: f.style.stroke_width.max(1.0),
+                        is_closed: f.frame.frame_type == FrameType::Path,
                         is_selected: is_sel,
                     });
                 }
@@ -324,7 +389,7 @@ impl SceneCompiler {
 
         RenderScene {
             revision,
-            pasteboard_color: [0.04, 0.06, 0.10, 1.0],
+            pasteboard_color: [0.02, 0.031, 0.067, 1.0],
             page_width: doc_width,
             page_height: doc_height,
             pan_x: camera.pan_x,

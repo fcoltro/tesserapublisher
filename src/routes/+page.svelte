@@ -2,6 +2,32 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
 
+  /// The active editing tool. Creation tools drag out a new frame; Select
+  /// picks and moves existing ones.
+  type Tool = "Select" | "Rectangle" | "Ellipse" | "Line" | "Text";
+
+  /// What the current pointer gesture is doing.
+  type DragMode = "none" | "pan" | "create" | "move" | "resize";
+
+  /// A frame's geometry as carried over the IPC bridge.
+  type FrameGeometry = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    rotation: number;
+    scale_x: number;
+    scale_y: number;
+  };
+
+  // Live status of the Rust-side vello pipeline.
+  type RendererInfo = {
+    engine: string;
+    backend: string;
+    is_ready: boolean;
+    supports_webgpu: boolean;
+  };
+
   // Types for compiled render elements
   type RenderElement =
     | {
@@ -95,11 +121,11 @@
   }
 
   // Svelte 5 Runes for reactive state
-  let canvasEl = $state<HTMLCanvasElement | null>(null);
-  let renderEngineMode = $state("WebGPU Initializing...");
+  // The document is painted by vello on a native GPU surface behind the
+  // webview; this element only reserves the layout box for it.
+  let viewportEl = $state<HTMLDivElement | null>(null);
+  let renderEngineMode = $state("Starting Vello...");
   let isWebGpuActive = $state(false);
-
-  let currentScene = $state<RenderScene | null>(null);
   let camera = $state<Camera>({
     pan_x: 60,
     pan_y: 60,
@@ -122,6 +148,26 @@
   let mouseScreenY = $state(0);
   let isMiddlePanning = $state(false);
   let isSpacePressed = $state(false);
+
+  // Tool and gesture state
+  let activeTool = $state<Tool>("Select");
+  let dragMode = $state<DragMode>("none");
+  let dragEntityId = $state<number | null>(null);
+  let dragBefore = $state<FrameGeometry | null>(null);
+  let dragStartDoc = { x: 0, y: 0 };
+  /// Geometry of the selected frame, kept so resize handles can be located
+  /// without an IPC round trip on every mouse move.
+  let selectedGeometry = $state<FrameGeometry | null>(null);
+  /// Which corner is being dragged, and the document-space point it pivots about.
+  let resizeAnchor = { x: 0, y: 0 };
+
+  const TOOLS: { id: Tool; label: string; key: string }[] = [
+    { id: "Select", label: "Select", key: "V" },
+    { id: "Rectangle", label: "Rectangle", key: "R" },
+    { id: "Ellipse", label: "Ellipse", key: "E" },
+    { id: "Line", label: "Line", key: "L" },
+    { id: "Text", label: "Text", key: "T" },
+  ];
   let panStartScreenX = $state(0);
   let panStartScreenY = $state(0);
 
@@ -147,228 +193,85 @@
     amber: [0.96, 0.62, 0.14, 0.95],
   };
 
-  async function initWebGpuContext() {
-    if (typeof navigator !== "undefined" && "gpu" in navigator) {
-      try {
-        const adapter = await (navigator as any).gpu.requestAdapter();
-        if (adapter) {
-          const device = await adapter.requestDevice();
-          if (device) {
-            isWebGpuActive = true;
-            renderEngineMode = "WebGPU Accelerated (Vello Scene)";
-            return;
-          }
-        }
-      } catch (err) {
-        console.warn("WebGPU initialization note:", err);
-      }
+  /// Reports the canvas rectangle to Rust in physical pixels.
+  ///
+  /// The GPU surface spans the whole window, so Rust needs the DOM rect to know
+  /// where to place and clip the document.
+  async function syncViewport() {
+    if (!viewportEl) return;
+    const rect = viewportEl.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    await invoke("set_viewport_rect", {
+      x: rect.left * dpr,
+      y: rect.top * dpr,
+      width: rect.width * dpr,
+      height: rect.height * dpr,
+    });
+  }
+
+  /// Paints one frame. Called after state or camera changes, never on a timer.
+  async function requestRender() {
+    try {
+      await invoke<boolean>("render_frame", { selectedId: selectedEntityId });
+    } catch (err) {
+      console.warn("render_frame failed:", err);
     }
-    renderEngineMode = "Vector Engine (Vello Pipeline)";
+  }
+
+  async function initRenderer() {
+    try {
+      const info = await invoke<RendererInfo>("init_renderer");
+      isWebGpuActive = info.is_ready;
+      renderEngineMode = info.is_ready
+        ? `${info.engine} on ${info.backend}`
+        : `Renderer unavailable: ${info.backend}`;
+    } catch (err) {
+      isWebGpuActive = false;
+      renderEngineMode = `Renderer unavailable: ${err}`;
+    }
   }
 
   async function fetchScene() {
     try {
-      const [scene, hist, cam] = await Promise.all([
-        invoke<RenderScene>("compile_render_scene", {
-          selectedId: selectedEntityId,
-        }),
+      const [hist, cam] = await Promise.all([
         invoke<HistoryStatus>("get_history_status"),
         invoke<Camera>("get_camera_state"),
       ]);
-      currentScene = scene;
       historyStatus = hist;
       camera = cam;
-      drawScene(scene, cam);
+      await syncViewport();
+      await requestRender();
     } catch (err) {
-      // Offline fallback
+      // Backend not reachable yet.
     }
-  }
-
-  function drawScene(scene: RenderScene, cam: Camera) {
-    if (!canvasEl) return;
-    const ctx = canvasEl.getContext("2d");
-    if (!ctx) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    const rect = canvasEl.getBoundingClientRect();
-    const width = rect.width;
-    const height = rect.height;
-
-    if (canvasEl.width !== width * dpr || canvasEl.height !== height * dpr) {
-      canvasEl.width = width * dpr;
-      canvasEl.height = height * dpr;
-    }
-
-    ctx.save();
-    ctx.scale(dpr, dpr);
-
-    // 1. Dark Pasteboard Background
-    ctx.fillStyle = "#070a12";
-    ctx.fillRect(0, 0, width, height);
-
-    // Pasteboard grid (screen space)
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.03)";
-    ctx.lineWidth = 1;
-    for (let x = 0; x < width; x += 24) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
-      ctx.stroke();
-    }
-    for (let y = 0; y < height; y += 24) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-      ctx.stroke();
-    }
-
-    // 2. Camera Viewport Transformation (Pan & Zoom)
-    ctx.save();
-    ctx.translate(cam.pan_x, cam.pan_y);
-    ctx.scale(cam.zoom, cam.zoom);
-
-    // Render Compiled Scene in Document Coordinates
-    for (const el of scene.elements) {
-      switch (el.type) {
-        case "PageSurface": {
-          // Drop Shadow
-          ctx.save();
-          ctx.shadowColor = "rgba(0, 0, 0, 0.7)";
-          ctx.shadowBlur = el.shadow_blur / cam.zoom;
-          ctx.shadowOffsetX = 0;
-          ctx.shadowOffsetY = 6 / cam.zoom;
-
-          // White Paper Sheet
-          ctx.fillStyle = "#ffffff";
-          ctx.fillRect(el.x, el.y, el.width, el.height);
-          ctx.restore();
-
-          // Page Outline
-          ctx.strokeStyle = "rgba(0, 0, 0, 0.15)";
-          ctx.lineWidth = 1 / cam.zoom;
-          ctx.strokeRect(el.x, el.y, el.width, el.height);
-
-          // Bleed Margin (Magenta dash)
-          ctx.save();
-          ctx.strokeStyle = "rgba(236, 72, 153, 0.6)";
-          ctx.lineWidth = 1 / cam.zoom;
-          ctx.setLineDash([4 / cam.zoom, 4 / cam.zoom]);
-          ctx.strokeRect(
-            el.x - el.bleed * 2,
-            el.y - el.bleed * 2,
-            el.width + el.bleed * 4,
-            el.height + el.bleed * 4
-          );
-          ctx.restore();
-
-          // Page Dimension Tag
-          ctx.fillStyle = "#94a3b8";
-          ctx.font = `${Math.max(10, 11 / cam.zoom)}px system-ui, sans-serif`;
-          ctx.fillText(`Page ${el.page_number} (${el.width} × ${el.height} pt)`, el.x, el.y - 8 / cam.zoom);
-          break;
-        }
-
-        case "RectShape": {
-          ctx.save();
-          const fill = el.fill_color;
-          ctx.fillStyle = `rgba(${fill[0] * 255}, ${fill[1] * 255}, ${fill[2] * 255}, ${fill[3]})`;
-
-          ctx.beginPath();
-          ctx.roundRect(el.x, el.y, el.width, el.height, el.corner_radius);
-          ctx.fill();
-
-          if (el.stroke_color) {
-            const strk = el.stroke_color;
-            ctx.strokeStyle = `rgba(${strk[0] * 255}, ${strk[1] * 255}, ${strk[2] * 255}, ${strk[3]})`;
-            ctx.lineWidth = el.stroke_width / cam.zoom;
-            ctx.stroke();
-          }
-
-          ctx.fillStyle = "#ffffff";
-          ctx.font = `bold ${Math.max(9, 11)}px system-ui, sans-serif`;
-          ctx.fillText(`#${el.id} ${el.name}`, el.x + 8, el.y + 18);
-          ctx.restore();
-          break;
-        }
-
-        case "EllipseShape": {
-          ctx.save();
-          const fill = el.fill_color;
-          ctx.fillStyle = `rgba(${fill[0] * 255}, ${fill[1] * 255}, ${fill[2] * 255}, ${fill[3]})`;
-
-          ctx.beginPath();
-          ctx.ellipse(el.cx, el.cy, el.rx, el.ry, el.rotation, 0, Math.PI * 2);
-          ctx.fill();
-
-          if (el.stroke_color) {
-            const strk = el.stroke_color;
-            ctx.strokeStyle = `rgba(${strk[0] * 255}, ${strk[1] * 255}, ${strk[2] * 255}, ${strk[3]})`;
-            ctx.lineWidth = el.stroke_width / cam.zoom;
-            ctx.stroke();
-          }
-
-          ctx.fillStyle = "#ffffff";
-          ctx.font = `bold ${Math.max(9, 11)}px system-ui, sans-serif`;
-          ctx.textAlign = "center";
-          ctx.fillText(`#${el.id} ${el.name}`, el.cx, el.cy);
-          ctx.restore();
-          break;
-        }
-
-        case "TextBlock": {
-          ctx.save();
-          const fill = el.fill_color;
-          ctx.fillStyle = `rgba(${fill[0] * 255}, ${fill[1] * 255}, ${fill[2] * 255}, 0.15)`;
-          ctx.strokeStyle = `rgba(${fill[0] * 255}, ${fill[1] * 255}, ${fill[2] * 255}, 0.7)`;
-          ctx.lineWidth = 1 / cam.zoom;
-          ctx.setLineDash([3 / cam.zoom, 3 / cam.zoom]);
-
-          ctx.fillRect(el.x, el.y, el.width, el.height);
-          ctx.strokeRect(el.x, el.y, el.width, el.height);
-
-          ctx.fillStyle = "#ffffff";
-          ctx.font = `${el.font_size}px system-ui, sans-serif`;
-          ctx.fillText(el.text, el.x + 8, el.y + el.font_size + 6);
-          ctx.restore();
-          break;
-        }
-
-        case "SelectionOverlay": {
-          ctx.save();
-          ctx.strokeStyle = "#38bdf8";
-          ctx.lineWidth = 2 / cam.zoom;
-          ctx.shadowColor = "rgba(56, 189, 248, 0.8)";
-          ctx.shadowBlur = 10 / cam.zoom;
-          ctx.strokeRect(el.min_x, el.min_y, el.max_x - el.min_x, el.max_y - el.min_y);
-
-          // Corner Anchor Nodes
-          ctx.fillStyle = "#ffffff";
-          const nodeSize = 8 / cam.zoom;
-          for (const node of el.corner_nodes) {
-            ctx.fillRect(node[0] - nodeSize / 2, node[1] - nodeSize / 2, nodeSize, nodeSize);
-            ctx.strokeRect(node[0] - nodeSize / 2, node[1] - nodeSize / 2, nodeSize, nodeSize);
-          }
-          ctx.restore();
-          break;
-        }
-      }
-    }
-
-    ctx.restore(); // Restore Camera
-    ctx.restore(); // Restore Base
   }
 
   // Camera & Mouse Interactions
+
+  /// Converts a pointer event into document coordinates.
+  ///
+  /// This mirrors Camera::screen_to_document in Rust; keeping the arithmetic
+  /// here avoids an IPC round trip on every mouse move.
+  function toDocumentSpace(e: MouseEvent): { x: number; y: number } | null {
+    const rect = viewportEl?.getBoundingClientRect();
+    if (!rect) return null;
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
+    return {
+      x: (screenX - camera.pan_x) / camera.zoom,
+      y: (screenY - camera.pan_y) / camera.zoom,
+    };
+  }
+
   async function handleWheel(e: WheelEvent) {
     e.preventDefault();
-    const rect = canvasEl?.getBoundingClientRect();
+    const rect = viewportEl?.getBoundingClientRect();
     if (!rect) return;
 
     const screenX = e.clientX - rect.left;
     const screenY = e.clientY - rect.top;
 
     if (e.ctrlKey || e.metaKey) {
-      // Zoom centered at mouse cursor
       const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
       camera = await invoke<Camera>("zoom_camera", {
         screenX,
@@ -376,104 +279,355 @@
         factor: zoomFactor,
       });
     } else {
-      // Pan
-      const dx = -e.deltaX;
-      const dy = -e.deltaY;
-      camera = await invoke<Camera>("pan_camera", { dx, dy });
+      camera = await invoke<Camera>("pan_camera", {
+        dx: -e.deltaX,
+        dy: -e.deltaY,
+      });
     }
-
-    if (currentScene) {
-      drawScene(currentScene, camera);
-    }
+    await requestRender();
   }
 
-  function handleMouseDown(e: MouseEvent) {
+  /// Default size for a shape created by a click rather than a drag.
+  const CLICK_CREATE_SIZE = 120;
+  /// Half-extent of a selection handle in screen pixels, matching the renderer.
+  const HANDLE_PX = 6;
+
+  /// The four corners of a frame in document space.
+  function cornersOf(g: FrameGeometry): { x: number; y: number }[] {
+    const w = g.width * g.scale_x;
+    const h = g.height * g.scale_y;
+    return [
+      { x: g.x, y: g.y },
+      { x: g.x + w, y: g.y },
+      { x: g.x + w, y: g.y + h },
+      { x: g.x, y: g.y + h },
+    ];
+  }
+
+  /// Finds which selection handle a document-space point is grabbing, if any.
+  ///
+  /// Rotated frames are excluded: resizing them along screen axes would shear
+  /// the result, so they fall through to a move instead.
+  function handleUnderCursor(
+    g: FrameGeometry,
+    doc: { x: number; y: number },
+  ): number | null {
+    if (g.rotation !== 0) return null;
+
+    const tolerance = HANDLE_PX / camera.zoom;
+    const corners = cornersOf(g);
+    for (let i = 0; i < corners.length; i++) {
+      if (
+        Math.abs(corners[i].x - doc.x) <= tolerance &&
+        Math.abs(corners[i].y - doc.y) <= tolerance
+      ) {
+        return i;
+      }
+    }
+    return null;
+  }
+
+  async function handleMouseDown(e: MouseEvent) {
+    // Space or middle button always pans, whatever tool is active.
     if (e.button === 1 || isSpacePressed) {
+      dragMode = "pan";
       isMiddlePanning = true;
       panStartScreenX = e.clientX;
       panStartScreenY = e.clientY;
       e.preventDefault();
+      return;
+    }
+    if (e.button !== 0) return;
+
+    const doc = toDocumentSpace(e);
+    if (!doc) return;
+    dragStartDoc = doc;
+
+    if (activeTool === "Select") {
+      await beginMoveGesture(e, doc);
+      return;
+    }
+    await beginCreateGesture(doc);
+  }
+
+  /// Starts dragging out a new shape of the active tool's type.
+  async function beginCreateGesture(doc: { x: number; y: number }) {
+    try {
+      const id = await invoke<number>("spawn_frame", {
+        name: `${activeTool} ${Date.now() % 10000}`,
+        frameType: activeTool,
+        x: doc.x,
+        y: doc.y,
+        width: 1,
+        height: 1,
+        fillColor: COLOR_MAP[selectedColorPreset],
+        text: activeTool === "Text" ? textContent : null,
+      });
+
+      dragMode = "create";
+      dragEntityId = id;
+      selectedEntityId = id;
+      dragBefore = await invoke<FrameGeometry>("get_frame_geometry", { entityId: id });
+      await fetchScene();
+    } catch (err) {
+      console.warn("could not start shape:", err);
+      dragMode = "none";
+    }
+  }
+
+  /// Selects whatever is under the cursor and prepares to move it.
+  async function beginMoveGesture(e: MouseEvent, doc: { x: number; y: number }) {
+    const rect = viewportEl?.getBoundingClientRect();
+    if (!rect) return;
+
+    try {
+      // Grabbing a handle of the current selection takes priority over
+      // selecting whatever sits underneath it.
+      if (selectedEntityId !== null && selectedGeometry) {
+        const corner = handleUnderCursor(selectedGeometry, doc);
+        if (corner !== null) {
+          const opposite = cornersOf(selectedGeometry)[(corner + 2) % 4];
+          resizeAnchor = opposite;
+          dragMode = "resize";
+          dragEntityId = selectedEntityId;
+          dragBefore = selectedGeometry;
+          return;
+        }
+      }
+
+      const hit = await invoke<number | null>("raycast_select_entity", {
+        screenX: e.clientX - rect.left,
+        screenY: e.clientY - rect.top,
+      });
+      selectedEntityId = hit;
+
+      if (hit === null) {
+        selectedGeometry = null;
+        dragMode = "none";
+        await requestRender();
+        return;
+      }
+
+      dragMode = "move";
+      dragEntityId = hit;
+      dragBefore = await invoke<FrameGeometry>("get_frame_geometry", { entityId: hit });
+      selectedGeometry = dragBefore;
+      await requestRender();
+    } catch (err) {
+      dragMode = "none";
     }
   }
 
   async function handleMouseMove(e: MouseEvent) {
-    const rect = canvasEl?.getBoundingClientRect();
+    const rect = viewportEl?.getBoundingClientRect();
     if (!rect) return;
     mouseScreenX = Math.round(e.clientX - rect.left);
     mouseScreenY = Math.round(e.clientY - rect.top);
 
-    if (isMiddlePanning) {
+    if (dragMode === "pan") {
       const dx = e.clientX - panStartScreenX;
       const dy = e.clientY - panStartScreenY;
       panStartScreenX = e.clientX;
       panStartScreenY = e.clientY;
-
       camera = await invoke<Camera>("pan_camera", { dx, dy });
-      if (currentScene) drawScene(currentScene, camera);
+      await requestRender();
+      return;
     }
-  }
 
-  function handleMouseUp(e: MouseEvent) {
-    if (e.button === 1 || isMiddlePanning) {
-      isMiddlePanning = false;
+    if (dragMode === "none" || dragEntityId === null || !dragBefore) return;
+
+    const doc = toDocumentSpace(e);
+    if (!doc) return;
+
+    // Live geometry updates deliberately skip the history stack; the whole
+    // gesture is committed as one entry on mouse up.
+    let next: FrameGeometry;
+    if (dragMode === "create") {
+      next = {
+        ...dragBefore,
+        x: Math.min(dragStartDoc.x, doc.x),
+        y: Math.min(dragStartDoc.y, doc.y),
+        width: Math.max(Math.abs(doc.x - dragStartDoc.x), 1),
+        height: Math.max(Math.abs(doc.y - dragStartDoc.y), 1),
+      };
+    } else if (dragMode === "resize") {
+      // The opposite corner stays pinned while the grabbed one follows the
+      // cursor, so the frame rescales about the anchor.
+      next = {
+        ...dragBefore,
+        x: Math.min(resizeAnchor.x, doc.x),
+        y: Math.min(resizeAnchor.y, doc.y),
+        width: Math.max(Math.abs(doc.x - resizeAnchor.x) / dragBefore.scale_x, 1),
+        height: Math.max(Math.abs(doc.y - resizeAnchor.y) / dragBefore.scale_y, 1),
+      };
+    } else {
+      next = {
+        ...dragBefore,
+        x: dragBefore.x + (doc.x - dragStartDoc.x),
+        y: dragBefore.y + (doc.y - dragStartDoc.y),
+      };
     }
-  }
-
-  async function handleCanvasClick(e: MouseEvent) {
-    if (isMiddlePanning) return;
-    const rect = canvasEl?.getBoundingClientRect();
-    if (!rect) return;
-
-    const screenX = e.clientX - rect.left;
-    const screenY = e.clientY - rect.top;
 
     try {
-      const selected = await invoke<number | null>("raycast_select_entity", {
-        screenX,
-        screenY,
-      });
-      selectedEntityId = selected;
-      await fetchScene();
+      await invoke("set_frame_geometry", { entityId: dragEntityId, geometry: next });
+      await requestRender();
     } catch (err) {
-      //
+      // The entity may have been removed mid-drag.
     }
   }
 
+  async function handleMouseUp(e: MouseEvent) {
+    if (dragMode === "pan") {
+      dragMode = "none";
+      isMiddlePanning = false;
+      return;
+    }
+
+    if (dragMode === "none" || dragEntityId === null || !dragBefore) {
+      dragMode = "none";
+      return;
+    }
+
+    try {
+      let after = await invoke<FrameGeometry>("get_frame_geometry", {
+        entityId: dragEntityId,
+      });
+
+      // A click with no drag would leave a 1x1 sliver, so give it a usable size.
+      if (dragMode === "create" && after.width <= 2 && after.height <= 2) {
+        after = { ...after, width: CLICK_CREATE_SIZE, height: CLICK_CREATE_SIZE * 0.6 };
+        await invoke("set_frame_geometry", { entityId: dragEntityId, geometry: after });
+      }
+
+      historyStatus = await invoke<HistoryStatus>("commit_frame_geometry", {
+        entityId: dragEntityId,
+        before: dragBefore,
+        after,
+      });
+    } catch (err) {
+      console.warn("could not commit gesture:", err);
+    }
+
+    dragMode = "none";
+    dragEntityId = null;
+    dragBefore = null;
+    if (selectedEntityId !== null) {
+      try {
+        selectedGeometry = await invoke<FrameGeometry>("get_frame_geometry", {
+          entityId: selectedEntityId,
+        });
+      } catch (err) {
+        selectedGeometry = null;
+      }
+    }
+
+    // Creation tools revert to Select so the next click does not stack shapes.
+    if (activeTool !== "Select") activeTool = "Select";
+    await fetchScene();
+  }
+
+  /// Selection is handled on mouse down so a drag can begin immediately; this
+  /// exists to swallow the trailing click event.
+  async function handleCanvasClick(_e: MouseEvent) {}
+
+  /// Keyboard navigation for the viewport.
+  ///
+  /// Arrow keys nudge the selected frame when there is one, and pan the view
+  /// otherwise — the convention layout tools use. Shift takes a coarser step.
+  async function handleViewportKeyDown(e: KeyboardEvent) {
+    const step = e.shiftKey ? 10 : 1;
+    let dx = 0;
+    let dy = 0;
+
+    switch (e.key) {
+      case "ArrowLeft":
+        dx = -step;
+        break;
+      case "ArrowRight":
+        dx = step;
+        break;
+      case "ArrowUp":
+        dy = -step;
+        break;
+      case "ArrowDown":
+        dy = step;
+        break;
+      case "+":
+      case "=":
+        await zoomIn();
+        e.preventDefault();
+        return;
+      case "-":
+      case "_":
+        await zoomOut();
+        e.preventDefault();
+        return;
+      default:
+        return;
+    }
+
+    e.preventDefault();
+
+    if (selectedEntityId === null) {
+      // Nothing selected: pan the view instead, in screen pixels.
+      camera = await invoke<Camera>("pan_camera", { dx: -dx * 20, dy: -dy * 20 });
+      await requestRender();
+      return;
+    }
+
+    try {
+      const before = await invoke<FrameGeometry>("get_frame_geometry", {
+        entityId: selectedEntityId,
+      });
+      const after = { ...before, x: before.x + dx, y: before.y + dy };
+      // Each nudge is its own undoable step, matching how layout tools behave.
+      historyStatus = await invoke<HistoryStatus>("commit_frame_geometry", {
+        entityId: selectedEntityId,
+        before,
+        after,
+      });
+      await requestRender();
+    } catch (err) {
+      console.warn("nudge failed:", err);
+    }
+  }
+
+
   async function zoomIn() {
-    if (!canvasEl) return;
-    const rect = canvasEl.getBoundingClientRect();
+    if (!viewportEl) return;
+    const rect = viewportEl.getBoundingClientRect();
     camera = await invoke<Camera>("zoom_camera", {
       screenX: rect.width / 2,
       screenY: rect.height / 2,
       factor: 1.25,
     });
-    if (currentScene) drawScene(currentScene, camera);
+    await requestRender();
   }
 
   async function zoomOut() {
-    if (!canvasEl) return;
-    const rect = canvasEl.getBoundingClientRect();
+    if (!viewportEl) return;
+    const rect = viewportEl.getBoundingClientRect();
     camera = await invoke<Camera>("zoom_camera", {
       screenX: rect.width / 2,
       screenY: rect.height / 2,
       factor: 0.8,
     });
-    if (currentScene) drawScene(currentScene, camera);
+    await requestRender();
   }
 
   async function fitPageView() {
-    if (!canvasEl) return;
-    const rect = canvasEl.getBoundingClientRect();
+    if (!viewportEl) return;
+    const rect = viewportEl.getBoundingClientRect();
     camera = await invoke<Camera>("fit_page_view", {
       viewportWidth: rect.width,
       viewportHeight: rect.height,
     });
-    if (currentScene) drawScene(currentScene, camera);
+    await requestRender();
   }
 
   async function resetCamera() {
     camera = await invoke<Camera>("reset_camera");
-    if (currentScene) drawScene(currentScene, camera);
+    await requestRender();
   }
 
   async function spawnNewFrame() {
@@ -525,13 +679,35 @@
   }
 
   onMount(() => {
-    initWebGpuContext();
-    fetchScene();
+    // The surface is sized to the window, so it must be created after the
+    // canvas element has been laid out.
+    (async () => {
+      await initRenderer();
+      await fetchScene();
+    })();
 
-    const interval = setInterval(fetchScene, 400);
+    // The viewport box moves whenever the window or panels resize.
+    const observer = new ResizeObserver(() => {
+      syncViewport().then(requestRender);
+    });
+    if (viewportEl) observer.observe(viewportEl);
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === "Space") isSpacePressed = true;
+
+      // Tool shortcuts are ignored while typing into a field.
+      const target = e.target as HTMLElement | null;
+      const typing =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.isContentEditable;
+      if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+
+      const tool = TOOLS.find((t) => t.key === e.key.toUpperCase());
+      if (tool) {
+        activeTool = tool.id;
+        e.preventDefault();
+      }
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code === "Space") isSpacePressed = false;
@@ -542,7 +718,7 @@
     window.addEventListener("resize", fetchScene);
 
     return () => {
-      clearInterval(interval);
+      observer.disconnect();
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("resize", fetchScene);
@@ -615,25 +791,53 @@
           {#if selectedEntityId !== null}
             <span class="selection-tag">Selected Frame #{selectedEntityId}</span>
           {:else}
-            <span class="status-idle">Click element to select • Drag / Wheel to navigate</span>
+            <span class="status-idle">
+              {activeTool === "Select"
+                ? "Click to select • Drag to move • Wheel to navigate"
+                : `Drag on the canvas to draw a ${activeTool.toLowerCase()}`}
+            </span>
           {/if}
         </div>
       </div>
 
+      <div class="tool-palette" role="toolbar" aria-label="Editing tools">
+        {#each TOOLS as tool (tool.id)}
+          <button
+            class="tool-button"
+            class:active={activeTool === tool.id}
+            aria-pressed={activeTool === tool.id}
+            title="{tool.label} ({tool.key})"
+            onclick={() => (activeTool = tool.id)}
+          >
+            {tool.label}<span class="tool-key">{tool.key}</span>
+          </button>
+        {/each}
+      </div>
+
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="canvas-container {isSpacePressed || isMiddlePanning ? 'panning' : ''}">
-        <canvas
-          bind:this={canvasEl}
+        <!-- role="application" is correct here: this is a custom widget that
+             handles its own pointer and keyboard input. Svelte's a11y rules
+             classify the role as non-interactive, hence the suppressions. -->
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <div
+          class="gpu-viewport"
+          role="application"
+          tabindex="0"
+          aria-label="Document viewport. Arrow keys pan the view, plus and minus zoom."
+          bind:this={viewportEl}
           onwheel={handleWheel}
           onmousedown={handleMouseDown}
           onmousemove={handleMouseMove}
           onmouseup={handleMouseUp}
           onclick={handleCanvasClick}
-        ></canvas>
+          onkeydown={handleViewportKeyDown}
+        ></div>
       </div>
 
       <div class="canvas-footer">
-        <span>💡 <strong>Navigation Shortcuts:</strong> <code>Ctrl + Wheel</code> to Zoom centered on cursor • <code>Trackpad Swipe</code> / <code>Wheel</code> to Pan • <code>Space + Drag</code> for Pan tool.</span>
+        <span>💡 <strong>Tools:</strong> <code>V</code> Select • <code>R</code> Rectangle • <code>E</code> Ellipse • <code>L</code> Line • <code>T</code> Text — <strong>Navigation:</strong> <code>Ctrl + Wheel</code> to Zoom centered on cursor • <code>Trackpad Swipe</code> / <code>Wheel</code> to Pan • <code>Space + Drag</code> for Pan tool.</span>
       </div>
     </div>
 
@@ -729,11 +933,18 @@
 </main>
 
 <style>
+  /* The window is transparent so the native vello surface behind the webview
+     shows through. Vello clears the full surface to the pasteboard colour, so
+     that — not a CSS background — is what fills the window. */
+  :global(html) {
+    background: transparent;
+  }
+
   :global(body) {
     margin: 0;
     padding: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    background-color: #050811;
+    background: transparent;
     color: #f1f5f9;
     overflow-x: hidden;
   }
@@ -941,8 +1152,12 @@
   }
 
   /* Canvas Panel */
+  /* Transparent all the way down to .gpu-viewport, otherwise the card would
+     paint over the GPU surface that is layered behind the webview. */
   .canvas-panel {
     min-height: 540px;
+    background: transparent;
+    backdrop-filter: none;
   }
 
   .canvas-header {
@@ -1008,6 +1223,7 @@
     border-radius: 10px;
     overflow: hidden;
     border: 1px solid rgba(255, 255, 255, 0.1);
+    background: transparent;
     cursor: default;
   }
 
@@ -1015,10 +1231,49 @@
     cursor: grab;
   }
 
-  canvas {
+  .gpu-viewport {
     width: 100%;
     height: 100%;
     display: block;
+    background: transparent;
+  }
+
+  .tool-palette {
+    display: flex;
+    gap: 0.4rem;
+    margin-bottom: 0.6rem;
+    flex-wrap: wrap;
+  }
+
+  .tool-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.7rem;
+    font-size: 0.8rem;
+    color: #cbd5e1;
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  .tool-button:hover {
+    border-color: rgba(56, 189, 248, 0.5);
+  }
+
+  .tool-button.active {
+    background: rgba(56, 189, 248, 0.18);
+    border-color: #38bdf8;
+    color: #e0f2fe;
+  }
+
+  .tool-key {
+    font-size: 0.68rem;
+    opacity: 0.6;
+    border: 1px solid currentColor;
+    border-radius: 3px;
+    padding: 0 0.25rem;
   }
 
   .canvas-footer {

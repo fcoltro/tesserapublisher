@@ -21,3 +21,5 @@ tauri-plugin-opener = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 bevy_ecs = { workspace = true }
+# Used only to name the surface target type when handing the window to the renderer.
+vello = { workspace = true }

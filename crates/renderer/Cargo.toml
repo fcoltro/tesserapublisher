@@ -12,3 +12,24 @@ bevy_ecs = { workspace = true }
 kurbo = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+vello = { workspace = true }
+pollster = { workspace = true }
+raw-window-handle = { workspace = true }
+parley = "0.11"
+
+# wgpu is declared per-platform purely to select graphics backends. The code
+# uses vello's re-export (`vello::wgpu`) rather than importing it directly, so
+# there is no risk of the two resolving to different versions.
+#
+# On Windows the dx12 backend is deliberately excluded: wgpu-hal 29 compiles its
+# D3D12 allocator against windows 0.62, while tauri 2.11 pins windows ^0.61, and
+# the two cannot coexist. Vulkan is the primary Windows backend as a result,
+# with GLES as the fallback.
+[target.'cfg(windows)'.dependencies]
+wgpu = { version = "29", default-features = false, features = ["std", "wgsl", "vulkan", "gles"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+wgpu = { version = "29", default-features = false, features = ["std", "wgsl", "metal"] }
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+wgpu = { version = "29", default-features = false, features = ["std", "wgsl", "vulkan", "gles"] }

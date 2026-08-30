@@ -8,6 +8,7 @@ description = "Tessera Publish Core - ECS State, Documents, Entities, History, a
 
 [dependencies]
 bevy_ecs = { workspace = true }
+kurbo = { workspace = true }
 im = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -1,9 +1,11 @@
 pub mod camera;
 pub mod components;
+pub mod geometry;
 pub mod history;
 
 pub use camera::*;
 pub use components::*;
+pub use geometry::*;
 pub use history::*;
 
 use bevy_ecs::prelude::*;
@@ -230,6 +232,25 @@ impl AppState {
         style: Style,
         text: Option<String>,
     ) -> Result<u32, String> {
+        self.spawn_frame_with_path(parent_layer, name, frame_type, transform, size, style, text, None)
+    }
+
+    /// Spawns a frame, optionally carrying a bezier outline.
+    ///
+    /// Bounds come from the frame's real geometry, so an ellipse or path is not
+    /// treated as its rectangular box.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_frame_with_path(
+        &self,
+        parent_layer: Option<Entity>,
+        name: String,
+        frame_type: FrameType,
+        transform: Transform,
+        size: Size,
+        style: Style,
+        text: Option<String>,
+        path: Option<PathData>,
+    ) -> Result<u32, String> {
         let mut world = self.world.write().map_err(|e| e.to_string())?;
 
         // 1. Resolve target layer before spawning
@@ -243,7 +264,7 @@ impl AppState {
                 .map(|e| e.id())
         };
 
-        let bb = BoundingBox::from_transform_and_size(&transform, &size);
+        let bb = crate::geometry::frame_bounds(frame_type, &transform, &size, path.as_ref());
         let z_idx = ZIndex(0);
 
         let frame_comp = Frame {
@@ -267,10 +288,13 @@ impl AppState {
             None
         };
 
+        if let Some(path_data) = path.clone() {
+            entity_cmd.insert(path_data);
+        }
+
         let text_comp = text.map(|t| TextContent {
             text: t,
-            font_size: 16.0,
-            line_height: 1.4,
+            ..Default::default()
         });
 
         if let Some(t_comp) = &text_comp {
@@ -310,7 +334,23 @@ impl AppState {
                 let z = e.get::<ZIndex>().copied().unwrap_or(ZIndex(0));
                 let bb = e.get::<BoundingBox>()?;
 
-                if bb.contains_point(px, py) {
+                // Broad phase on the AABB, then an exact test against the real
+                // outline so a click in an ellipse's corner does not select it.
+                let hit = bb.contains_point(px, py)
+                    && match (e.get::<Transform>(), e.get::<Size>()) {
+                        (Some(transform), Some(size)) => crate::geometry::frame_contains_point(
+                            frame.frame_type,
+                            transform,
+                            size,
+                            e.get::<PathData>(),
+                            px,
+                            py,
+                        ),
+                        // Without geometry components the AABB is all we have.
+                        _ => true,
+                    };
+
+                if hit {
                     Some(HitTestResult {
                         entity_id: e.id().index(),
                         name: frame.name.clone(),
@@ -327,6 +367,166 @@ impl AppState {
         // Sort by ZIndex descending (topmost element first)
         hits.sort_by(|a, b| b.z_index.cmp(&a.z_index));
         Ok(hits)
+    }
+
+    /// Reads a frame's current transform and size.
+    ///
+    /// The frontend captures this at the start of a drag so the completed
+    /// gesture can be committed as a single undoable delta.
+    pub fn get_frame_geometry(&self, entity_index: u32) -> Result<(Transform, Size), String> {
+        let world = self.world.read().map_err(|e| e.to_string())?;
+        let entity = world
+            .get_entity(Entity::from_raw(entity_index))
+            .map_err(|_| format!("entity {entity_index} not found"))?;
+
+        let transform = entity
+            .get::<Transform>()
+            .copied()
+            .ok_or_else(|| format!("entity {entity_index} has no transform"))?;
+        let size = entity
+            .get::<Size>()
+            .copied()
+            .ok_or_else(|| format!("entity {entity_index} has no size"))?;
+        Ok((transform, size))
+    }
+
+    /// Applies a transform and size directly, without recording history.
+    ///
+    /// This is the live path used while a drag is in flight: it must not push
+    /// an undo entry per mouse move, or one gesture would fill the stack.
+    pub fn set_frame_geometry(
+        &self,
+        entity_index: u32,
+        transform: Transform,
+        size: Size,
+    ) -> Result<BoundingBox, String> {
+        let mut world = self.world.write().map_err(|e| e.to_string())?;
+        let bounds = Self::apply_geometry(&mut world, entity_index, transform, size)?;
+        drop(world);
+        self.increment_scene_revision();
+        Ok(bounds)
+    }
+
+    /// Records a finished drag as one undoable action.
+    ///
+    /// `old_*` are the values captured when the gesture began. A gesture that
+    /// changed nothing is dropped rather than pushed, so a stray click does not
+    /// leave a no-op entry on the undo stack.
+    pub fn commit_frame_geometry(
+        &self,
+        entity_index: u32,
+        old_transform: Transform,
+        old_size: Size,
+        new_transform: Transform,
+        new_size: Size,
+    ) -> Result<HistoryStatus, String> {
+        let transform_changed = old_transform != new_transform;
+        let size_changed = old_size != new_size;
+
+        if !transform_changed && !size_changed {
+            return self.get_history_status();
+        }
+
+        let mut world = self.world.write().map_err(|e| e.to_string())?;
+        let old_bounds = crate::geometry::frame_bounds(
+            Self::frame_type_of(&world, entity_index)?,
+            &old_transform,
+            &old_size,
+            None,
+        );
+        let new_bounds = Self::apply_geometry(&mut world, entity_index, new_transform, new_size)?;
+        drop(world);
+
+        let mut history = self.history.lock().map_err(|e| e.to_string())?;
+        if transform_changed {
+            history.push(HistoryAction::UpdateTransform {
+                entity_index,
+                old_transform,
+                new_transform,
+                old_bounding_box: old_bounds,
+                new_bounding_box: new_bounds,
+            });
+        }
+        if size_changed {
+            history.push(HistoryAction::UpdateSize {
+                entity_index,
+                old_size,
+                new_size,
+                old_bounding_box: old_bounds,
+                new_bounding_box: new_bounds,
+            });
+        }
+        drop(history);
+
+        self.increment_scene_revision();
+        self.get_history_status()
+    }
+
+    /// Writes geometry onto an entity and refreshes its bounds from real shape.
+    fn apply_geometry(
+        world: &mut World,
+        entity_index: u32,
+        transform: Transform,
+        size: Size,
+    ) -> Result<BoundingBox, String> {
+        let frame_type = Self::frame_type_of(world, entity_index)?;
+        let path = world
+            .get_entity(Entity::from_raw(entity_index))
+            .ok()
+            .and_then(|e| e.get::<PathData>().cloned());
+        let bounds = crate::geometry::frame_bounds(frame_type, &transform, &size, path.as_ref());
+
+        let mut entity = world
+            .get_entity_mut(Entity::from_raw(entity_index))
+            .map_err(|_| format!("entity {entity_index} not found"))?;
+        if let Some(mut slot) = entity.get_mut::<Transform>() {
+            *slot = transform;
+        }
+        if let Some(mut slot) = entity.get_mut::<Size>() {
+            *slot = size;
+        }
+        if let Some(mut slot) = entity.get_mut::<BoundingBox>() {
+            *slot = bounds;
+        }
+        Ok(bounds)
+    }
+
+    fn frame_type_of(world: &World, entity_index: u32) -> Result<FrameType, String> {
+        world
+            .get_entity(Entity::from_raw(entity_index))
+            .map_err(|_| format!("entity {entity_index} not found"))?
+            .get::<Frame>()
+            .map(|frame| frame.frame_type)
+            .ok_or_else(|| format!("entity {entity_index} is not a frame"))
+    }
+
+    /// Replaces a path frame's bezier outline.
+    pub fn set_frame_path(&self, entity_index: u32, svg: String) -> Result<BoundingBox, String> {
+        let mut world = self.world.write().map_err(|e| e.to_string())?;
+        let (transform, size) = {
+            let entity = world
+                .get_entity(Entity::from_raw(entity_index))
+                .map_err(|_| format!("entity {entity_index} not found"))?;
+            (
+                entity.get::<Transform>().copied().unwrap_or_default(),
+                entity.get::<Size>().copied().unwrap_or_default(),
+            )
+        };
+        let frame_type = Self::frame_type_of(&world, entity_index)?;
+        let path = PathData { svg };
+        let bounds = crate::geometry::frame_bounds(frame_type, &transform, &size, Some(&path));
+
+        let mut entity = world
+            .get_entity_mut(Entity::from_raw(entity_index))
+            .map_err(|_| format!("entity {entity_index} not found"))?;
+        entity.insert(path);
+        if let Some(mut slot) = entity.get_mut::<BoundingBox>() {
+            *slot = bounds;
+        }
+        drop(world);
+
+        self.increment_scene_revision();
+        Ok(bounds)
     }
 
     /// Performs an Undo operation restoring the ECS World to its prior state
@@ -598,6 +798,174 @@ mod tests {
         // Frame is restored
         let tree = app_state.get_document_tree().unwrap();
         assert_eq!(tree.pages[0].layers[0].frames.len(), 1);
+    }
+
+    /// Spawns one rectangle and returns its entity index.
+    fn spawn_test_rect(app_state: &AppState) -> u32 {
+        app_state
+            .spawn_frame(
+                None,
+                "Drag Target".to_string(),
+                FrameType::Rectangle,
+                Transform {
+                    position: Position { x: 10.0, y: 10.0 },
+                    rotation: 0.0,
+                    scale_x: 1.0,
+                    scale_y: 1.0,
+                },
+                Size { width: 100.0, height: 50.0 },
+                Style::default(),
+                None,
+            )
+            .expect("spawn should succeed")
+    }
+
+    #[test]
+    fn live_drag_updates_geometry_without_touching_history() {
+        // A drag in flight must not push an entry per mouse move.
+        let app_state = AppState::new();
+        let id = spawn_test_rect(&app_state);
+        // Spawning is itself undoable, so compare against the post-spawn depth.
+        let baseline = app_state.get_history_status().unwrap().undo_count;
+        let (mut transform, size) = app_state.get_frame_geometry(id).unwrap();
+
+        for step in 1..=10 {
+            transform.position.x = 10.0 + step as f32;
+            app_state.set_frame_geometry(id, transform, size).unwrap();
+        }
+
+        let status = app_state.get_history_status().unwrap();
+        assert_eq!(status.undo_count, baseline, "live drag should not record history");
+
+        let (moved, _) = app_state.get_frame_geometry(id).unwrap();
+        assert_eq!(moved.position.x, 20.0);
+    }
+
+    #[test]
+    fn committing_a_drag_records_one_undoable_action() {
+        let app_state = AppState::new();
+        let id = spawn_test_rect(&app_state);
+        let baseline = app_state.get_history_status().unwrap().undo_count;
+        let (old_transform, old_size) = app_state.get_frame_geometry(id).unwrap();
+
+        let new_transform = Transform {
+            position: Position { x: 200.0, y: 120.0 },
+            ..old_transform
+        };
+        app_state
+            .commit_frame_geometry(id, old_transform, old_size, new_transform, old_size)
+            .unwrap();
+
+        assert_eq!(
+            app_state.get_history_status().unwrap().undo_count,
+            baseline + 1,
+            "a completed drag should add exactly one entry"
+        );
+
+        app_state.undo().unwrap();
+        let (restored, _) = app_state.get_frame_geometry(id).unwrap();
+        assert_eq!(restored.position.x, 10.0, "undo should restore the origin");
+
+        app_state.redo().unwrap();
+        let (redone, _) = app_state.get_frame_geometry(id).unwrap();
+        assert_eq!(redone.position.x, 200.0, "redo should reapply the move");
+    }
+
+    #[test]
+    fn a_gesture_that_changed_nothing_records_nothing() {
+        let app_state = AppState::new();
+        let id = spawn_test_rect(&app_state);
+        let baseline = app_state.get_history_status().unwrap().undo_count;
+        let (transform, size) = app_state.get_frame_geometry(id).unwrap();
+
+        app_state
+            .commit_frame_geometry(id, transform, size, transform, size)
+            .unwrap();
+
+        assert_eq!(app_state.get_history_status().unwrap().undo_count, baseline);
+    }
+
+    #[test]
+    fn resizing_updates_the_bounding_box() {
+        let app_state = AppState::new();
+        let id = spawn_test_rect(&app_state);
+        let (transform, _) = app_state.get_frame_geometry(id).unwrap();
+
+        let bounds = app_state
+            .set_frame_geometry(id, transform, Size { width: 400.0, height: 200.0 })
+            .unwrap();
+
+        assert!((bounds.width() - 400.0).abs() < 1e-3);
+        assert!((bounds.height() - 200.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn hit_testing_an_ellipse_rejects_its_bounding_box_corners() {
+        // The point of precise hit testing: the AABB corner is not the shape.
+        let app_state = AppState::new();
+        app_state
+            .spawn_frame(
+                None,
+                "Circle".to_string(),
+                FrameType::Ellipse,
+                Transform {
+                    position: Position { x: 0.0, y: 0.0 },
+                    rotation: 0.0,
+                    scale_x: 1.0,
+                    scale_y: 1.0,
+                },
+                Size { width: 100.0, height: 100.0 },
+                Style::default(),
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(app_state.hit_test(50.0, 50.0).unwrap().len(), 1, "centre should hit");
+        assert!(app_state.hit_test(2.0, 2.0).unwrap().is_empty(), "corner should miss");
+    }
+
+    #[test]
+    fn path_frames_hit_test_against_their_outline() {
+        let app_state = AppState::new();
+        app_state
+            .spawn_frame_with_path(
+                None,
+                "Triangle".to_string(),
+                FrameType::Path,
+                Transform::default(),
+                Size { width: 100.0, height: 100.0 },
+                Style::default(),
+                None,
+                Some(PathData { svg: "M 0 0 L 0 100 L 100 100 Z".to_string() }),
+            )
+            .unwrap();
+
+        assert_eq!(app_state.hit_test(20.0, 80.0).unwrap().len(), 1);
+        assert!(app_state.hit_test(90.0, 10.0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn replacing_a_path_outline_refreshes_bounds() {
+        let app_state = AppState::new();
+        let id = app_state
+            .spawn_frame_with_path(
+                None,
+                "Shape".to_string(),
+                FrameType::Path,
+                Transform::default(),
+                Size { width: 100.0, height: 100.0 },
+                Style::default(),
+                None,
+                Some(PathData { svg: "M 0 0 L 10 0 L 10 10 Z".to_string() }),
+            )
+            .unwrap();
+
+        let bounds = app_state
+            .set_frame_path(id, "M 0 0 L 80 0 L 80 40 Z".to_string())
+            .unwrap();
+
+        assert!((bounds.width() - 80.0).abs() < 1e-3);
+        assert!((bounds.height() - 40.0).abs() < 1e-3);
     }
 
     #[test]
