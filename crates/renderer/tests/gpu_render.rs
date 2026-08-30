@@ -6,7 +6,9 @@
 //! headless CI runners without Vulkan/Metal — but when an adapter exists, a
 //! regression in the paint or GPU layer shows up here as wrong pixels.
 
-use tessera_renderer::{RenderElement, RenderScene, TextAlignment, VelloHeadless, Viewport};
+use tessera_renderer::{
+    RenderElement, RenderScene, Story, TextAlignment, VelloHeadless, Viewport,
+};
 
 const WIDTH: u32 = 64;
 const HEIGHT: u32 = 64;
@@ -340,6 +342,7 @@ fn text_block(text: &str, font_size: f32) -> RenderElement {
         align: TextAlignment::Start,
         font_family: None,
         font_weight: 400.0,
+        story: None,
         fill_color: [1.0, 1.0, 1.0, 1.0],
         is_selected: false,
     }
@@ -425,5 +428,99 @@ fn overset_text_is_marked_on_the_canvas() {
         r > 150 && g < 110 && b < 110,
         "expected the red overset marker, got {:?}",
         [r, g, b]
+    );
+}
+
+
+/// Builds a two-frame threaded story laid side by side.
+fn threaded_scene(story_text: &str) -> RenderScene {
+    let frame = |id: u32, x: f32, index: u32| RenderElement::TextBlock {
+        id,
+        name: format!("Frame {id}"),
+        x,
+        y: 2.0,
+        width: 28.0,
+        height: 30.0,
+        text: String::new(),
+        font_size: 8.0,
+        line_height: 1.1,
+        align: TextAlignment::Start,
+        font_family: None,
+        font_weight: 400.0,
+        story: Some([1, index]),
+        fill_color: [1.0, 1.0, 1.0, 1.0],
+        is_selected: false,
+    };
+
+    let mut scene = unit_scene(vec![frame(1, 2.0, 0), frame(2, 34.0, 1)]);
+    scene.stories = vec![Story {
+        id: 1,
+        text: story_text.to_string(),
+        frames: vec![[28.0, 30.0], [28.0, 30.0]],
+    }];
+    scene
+}
+
+#[test]
+fn a_threaded_story_paints_into_both_frames() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+
+    // Enough text that the first frame cannot hold it all.
+    let pixels = renderer
+        .render_to_pixels(
+            &threaded_scene("alpha beta gamma delta epsilon zeta eta theta iota kappa"),
+            Viewport::full(WIDTH as f64, HEIGHT as f64),
+        )
+        .expect("render should succeed");
+
+    // Count ink in each frame's half of the surface.
+    let ink_in = |x0: u32, x1: u32| {
+        let mut count = 0;
+        for y in 0..HEIGHT {
+            for x in x0..x1 {
+                let [r, g, b, _] = pixel(&pixels, x, y);
+                if r > 90 || g > 90 || b > 90 {
+                    count += 1;
+                }
+            }
+        }
+        count
+    };
+
+    assert!(ink_in(2, 30) > 20, "the first frame should carry text");
+    assert!(
+        ink_in(34, 62) > 20,
+        "the overflow must continue into the second frame"
+    );
+}
+
+#[test]
+fn a_short_story_leaves_the_second_frame_empty() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+
+    let pixels = renderer
+        .render_to_pixels(
+            &threaded_scene("hi"),
+            Viewport::full(WIDTH as f64, HEIGHT as f64),
+        )
+        .expect("render should succeed");
+
+    let mut second_frame_ink = 0;
+    for y in 0..HEIGHT {
+        for x in 34..62 {
+            let [r, g, b, _] = pixel(&pixels, x, y);
+            if r > 90 || g > 90 || b > 90 {
+                second_frame_ink += 1;
+            }
+        }
+    }
+
+    assert!(
+        second_frame_ink < 10,
+        "a story that fits frame one must not spill, got {second_frame_ink}"
     );
 }

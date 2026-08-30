@@ -278,7 +278,13 @@ fn render_frame(
         let world = state.world.read().map_err(|e| e.to_string())?;
         let rev = state.get_scene_revision();
         let camera = state.get_camera();
-        tessera_renderer::SceneCompiler::compile(&world, selected_id, rev, &camera)
+        tessera_renderer::SceneCompiler::compile_with_snap(
+            &world,
+            selected_id,
+            rev,
+            &camera,
+            state.get_active_snap(),
+        )
     };
     host.render(&scene)
 }
@@ -363,6 +369,182 @@ fn set_frame_path(entity_id: u32, svg: String, state: State<AppState>) -> Result
     Ok(())
 }
 
+// --- Phase 3: document architecture -------------------------------------
+
+#[tauri::command]
+fn get_document_settings(state: State<AppState>) -> tessera_core::Document {
+    state.get_document_settings()
+}
+
+#[tauri::command]
+fn set_document_settings(
+    settings: tessera_core::Document,
+    state: State<AppState>,
+) -> Result<(), String> {
+    state.set_document_settings(settings)
+}
+
+#[tauri::command]
+fn get_page_placements(state: State<AppState>) -> Vec<tessera_core::PagePlacement> {
+    state.page_placements()
+}
+
+#[tauri::command]
+fn add_page(state: State<AppState>) -> Result<u32, String> {
+    state.add_page()
+}
+
+#[tauri::command]
+fn remove_page(page_number: u32, state: State<AppState>) -> Result<u32, String> {
+    state.remove_page(page_number)
+}
+
+// --- Master pages --------------------------------------------------------
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MasterPageSummary {
+    pub id: u32,
+    pub name: String,
+    pub prefix: String,
+}
+
+#[tauri::command]
+fn create_master_page(
+    name: String,
+    prefix: String,
+    state: State<AppState>,
+) -> Result<u32, String> {
+    state.create_master_page(name, prefix)
+}
+
+#[tauri::command]
+fn list_master_pages(state: State<AppState>) -> Vec<MasterPageSummary> {
+    state
+        .master_pages()
+        .into_iter()
+        .map(|(id, master)| MasterPageSummary {
+            id,
+            name: master.name,
+            prefix: master.prefix,
+        })
+        .collect()
+}
+
+#[tauri::command]
+fn apply_master_to_page(
+    page_number: u32,
+    master_id: u32,
+    state: State<AppState>,
+) -> Result<(), String> {
+    state.apply_master_to_page(page_number, master_id)
+}
+
+#[tauri::command]
+fn detach_master_from_page(page_number: u32, state: State<AppState>) -> Result<(), String> {
+    state.detach_master_from_page(page_number)
+}
+
+#[tauri::command]
+fn override_master_item(
+    page_number: u32,
+    master_frame_id: u32,
+    state: State<AppState>,
+) -> Result<u32, String> {
+    state.override_master_item(page_number, master_frame_id)
+}
+
+// --- Text threading ------------------------------------------------------
+
+#[tauri::command]
+fn thread_text_frames(from: u32, to: u32, state: State<AppState>) -> Result<(), String> {
+    state.thread_text_frames(from, to)
+}
+
+#[tauri::command]
+fn unthread_text_frame(from: u32, state: State<AppState>) -> Result<(), String> {
+    state.unthread_text_frame(from)
+}
+
+#[tauri::command]
+fn get_text_story_chain(entity_id: u32, state: State<AppState>) -> Vec<u32> {
+    state.text_story_chain(entity_id)
+}
+
+// --- Guides and snapping -------------------------------------------------
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RulerGuideSummary {
+    pub id: u32,
+    pub is_vertical: bool,
+    pub position: f32,
+}
+
+#[tauri::command]
+fn add_ruler_guide(
+    is_vertical: bool,
+    position: f32,
+    state: State<AppState>,
+) -> Result<u32, String> {
+    let axis = if is_vertical {
+        tessera_core::GuideAxis::Vertical
+    } else {
+        tessera_core::GuideAxis::Horizontal
+    };
+    state.add_ruler_guide(axis, position)
+}
+
+#[tauri::command]
+fn remove_ruler_guide(entity_id: u32, state: State<AppState>) -> Result<(), String> {
+    state.remove_ruler_guide(entity_id)
+}
+
+#[tauri::command]
+fn list_ruler_guides(state: State<AppState>) -> Vec<RulerGuideSummary> {
+    state
+        .ruler_guides()
+        .into_iter()
+        .map(|(id, guide)| RulerGuideSummary {
+            id,
+            is_vertical: guide.axis == tessera_core::GuideAxis::Vertical,
+            position: guide.position,
+        })
+        .collect()
+}
+
+/// Geometry corrected by snapping, plus which lines caught it.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SnappedGeometry {
+    pub geometry: FrameGeometry,
+    pub snapped: bool,
+}
+
+/// Snaps proposed drag geometry without writing it to the document.
+#[tauri::command]
+fn snap_frame_geometry(
+    entity_id: u32,
+    geometry: FrameGeometry,
+    threshold_px: Option<f32>,
+    state: State<AppState>,
+) -> Result<SnappedGeometry, String> {
+    let (transform, size) = geometry.split();
+    let zoom = state.get_camera().zoom;
+    let threshold = threshold_px.unwrap_or(tessera_core::DEFAULT_SNAP_THRESHOLD_PX);
+
+    let (snapped_transform, result) =
+        state.snap_frame_geometry(entity_id, transform, size, zoom, threshold)?;
+
+    Ok(SnappedGeometry {
+        geometry: FrameGeometry::join(snapped_transform, size),
+        snapped: result.is_snapped(),
+    })
+}
+
+/// Clears snap feedback when a gesture ends.
+#[tauri::command]
+fn clear_active_snap(state: State<AppState>) {
+    state.clear_active_snap();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -396,7 +578,25 @@ pub fn run() {
             get_frame_geometry,
             set_frame_geometry,
             commit_frame_geometry,
-            set_frame_path
+            set_frame_path,
+            get_document_settings,
+            set_document_settings,
+            get_page_placements,
+            add_page,
+            remove_page,
+            create_master_page,
+            list_master_pages,
+            apply_master_to_page,
+            detach_master_from_page,
+            override_master_item,
+            thread_text_frames,
+            unthread_text_frame,
+            get_text_story_chain,
+            add_ruler_guide,
+            remove_ruler_guide,
+            list_ruler_guides,
+            snap_frame_geometry,
+            clear_active_snap
         ])
         .on_window_event(|window, event| {
             // Keeping the swapchain in step with the window avoids a stretched

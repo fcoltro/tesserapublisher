@@ -175,6 +175,97 @@ impl TextEngine {
     }
 }
 
+/// One frame's share of a threaded story.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ThreadSlice {
+    /// Byte range of the story shown in this frame.
+    pub start: usize,
+    pub end: usize,
+    /// Lines this frame displays.
+    pub line_count: usize,
+    /// True when the story ran out of frames before it ran out of text.
+    pub is_overset: bool,
+}
+
+impl ThreadSlice {
+    /// The text this frame displays, borrowed from the story.
+    pub fn text<'a>(&self, story: &'a str) -> &'a str {
+        story.get(self.start..self.end).unwrap_or("")
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.start >= self.end
+    }
+}
+
+impl TextEngine {
+    /// Flows a story through a chain of linked frames.
+    ///
+    /// Each frame takes as many whole lines as fit its height, and the
+    /// remainder carries to the next — the behaviour that makes an article run
+    /// across columns and pages. Only the last frame can be overset, and only
+    /// when the chain runs out before the text does.
+    ///
+    /// `frames` gives each frame's width and height in order.
+    pub fn flow(&mut self, story: &str, style: &TextStyle, frames: &[(f32, f32)]) -> Vec<ThreadSlice> {
+        let mut slices = Vec::with_capacity(frames.len());
+        let mut cursor = 0usize;
+
+        for (index, (width, height)) in frames.iter().enumerate() {
+            if cursor >= story.len() {
+                // The story ended earlier in the chain; later frames are empty.
+                slices.push(ThreadSlice {
+                    start: story.len(),
+                    end: story.len(),
+                    line_count: 0,
+                    is_overset: false,
+                });
+                continue;
+            }
+
+            let remainder = &story[cursor..];
+            let shaped = self.shape(remainder, style, *width, *height);
+            let is_last = index + 1 == frames.len();
+
+            let mut consumed = 0usize;
+            let mut used_height = 0.0f32;
+            let mut line_count = 0usize;
+
+            for line in shaped.layout().lines() {
+                let metrics = line.metrics();
+                // A frame takes whole lines only: a line that would be clipped
+                // in half belongs to the next frame instead.
+                if used_height + metrics.line_height > *height && line_count > 0 {
+                    break;
+                }
+                used_height += metrics.line_height;
+                consumed = line.text_range().end;
+                line_count += 1;
+            }
+
+            // A frame too short for even one line would stall the chain, so it
+            // always takes at least the first line.
+            if line_count == 0 {
+                if let Some(first) = shaped.layout().lines().next() {
+                    consumed = first.text_range().end;
+                    line_count = 1;
+                }
+            }
+
+            let end = (cursor + consumed).min(story.len());
+            slices.push(ThreadSlice {
+                start: cursor,
+                end,
+                line_count,
+                is_overset: is_last && end < story.len(),
+            });
+            cursor = end;
+        }
+
+        slices
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,6 +357,106 @@ mod tests {
         let shaped = engine.shape("some text here", &TextStyle::default(), 0.0, 0.0);
 
         assert!(shaped.line_count() >= 1);
+    }
+
+
+    #[test]
+    fn a_story_flows_across_two_frames() {
+        // The core of threading: text that overflows the first frame must
+        // continue in the second rather than being lost.
+        let mut engine = TextEngine::new();
+        let story = "The quick brown fox jumps over the lazy dog. ".repeat(10);
+
+        let slices = engine.flow(&story, &TextStyle::default(), &[(120.0, 40.0), (120.0, 400.0)]);
+
+        assert_eq!(slices.len(), 2);
+        assert!(!slices[0].is_empty());
+        assert!(!slices[1].is_empty());
+        assert_eq!(slices[0].end, slices[1].start, "the chain must not skip text");
+    }
+
+    #[test]
+    fn threaded_slices_cover_the_whole_story_without_overlap() {
+        let mut engine = TextEngine::new();
+        let story = "word ".repeat(120);
+
+        let slices = engine.flow(&story, &TextStyle::default(), &[(100.0, 60.0), (100.0, 60.0), (100.0, 4000.0)]);
+
+        assert_eq!(slices[0].start, 0);
+        for pair in slices.windows(2) {
+            assert_eq!(pair[0].end, pair[1].start, "slices must be contiguous");
+        }
+        assert_eq!(
+            slices.last().unwrap().end,
+            story.len(),
+            "a long enough final frame should consume the story"
+        );
+    }
+
+    #[test]
+    fn only_the_last_frame_reports_overset() {
+        let mut engine = TextEngine::new();
+        let story = "word ".repeat(400);
+
+        let slices = engine.flow(&story, &TextStyle::default(), &[(100.0, 40.0), (100.0, 40.0)]);
+
+        assert!(!slices[0].is_overset, "a full mid-chain frame is not overset");
+        assert!(slices[1].is_overset, "the chain ran out before the story did");
+    }
+
+    #[test]
+    fn a_story_that_fits_leaves_later_frames_empty() {
+        let mut engine = TextEngine::new();
+        let slices = engine.flow("short", &TextStyle::default(), &[(500.0, 500.0), (500.0, 500.0)]);
+
+        assert!(!slices[0].is_empty());
+        assert!(slices[1].is_empty());
+        assert!(!slices[1].is_overset);
+    }
+
+    #[test]
+    fn a_frame_too_short_for_a_line_still_advances() {
+        // Guards against an infinite chain: a frame with almost no height must
+        // take at least one line rather than passing everything along forever.
+        let mut engine = TextEngine::new();
+        let story = "word ".repeat(20);
+
+        let slices = engine.flow(&story, &TextStyle::default(), &[(100.0, 1.0), (100.0, 4000.0)]);
+
+        assert!(!slices[0].is_empty(), "the first frame must consume something");
+        assert!(slices[0].end > 0);
+    }
+
+    #[test]
+    fn slice_text_reads_back_from_the_story() {
+        let mut engine = TextEngine::new();
+        let story = "alpha beta gamma delta epsilon zeta";
+
+        let slices = engine.flow(story, &TextStyle::default(), &[(60.0, 30.0), (500.0, 500.0)]);
+        let rejoined: String = slices.iter().map(|s| s.text(story)).collect();
+
+        assert_eq!(rejoined, story, "the frames together must show the whole story");
+    }
+
+    #[test]
+    fn an_empty_chain_produces_no_slices() {
+        let mut engine = TextEngine::new();
+        assert!(engine.flow("text", &TextStyle::default(), &[]).is_empty());
+    }
+
+    #[test]
+    fn narrower_frames_take_less_of_the_story() {
+        let mut engine = TextEngine::new();
+        let story = "The quick brown fox jumps over the lazy dog. ".repeat(6);
+        let style = TextStyle::default();
+
+        let wide = engine.flow(&story, &style, &[(400.0, 60.0), (400.0, 4000.0)]);
+        let narrow = engine.flow(&story, &style, &[(80.0, 60.0), (80.0, 4000.0)]);
+
+        assert!(
+            wide[0].end > narrow[0].end,
+            "a wider frame fits more text in the same height"
+        );
     }
 
     #[test]

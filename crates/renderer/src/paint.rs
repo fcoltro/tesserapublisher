@@ -5,12 +5,13 @@
 //! tested without a wgpu device and reused unchanged by any presentation
 //! target (a window surface, an offscreen texture, or a future WASM host).
 
-use vello::kurbo::{Affine, BezPath, Ellipse, Rect, RoundedRect, Stroke};
+use vello::kurbo::{Affine, BezPath, Ellipse, Line, Rect, RoundedRect, Stroke};
 use vello::peniko::{Color, Fill};
 use vello::Scene;
 
 use crate::scene::{RenderElement, RenderScene};
-use crate::text::{TextEngine, TextStyle};
+use crate::text::{TextEngine, TextStyle, ThreadSlice};
+use std::collections::HashMap;
 
 /// The sub-rectangle of the render surface that the document is drawn into.
 ///
@@ -54,6 +55,35 @@ pub fn color_from_rgba(rgba: [f32; 4]) -> Color {
 /// zooming never require recompiling the ECS into a new [`RenderScene`].
 pub fn camera_affine(pan_x: f32, pan_y: f32, zoom: f32) -> Affine {
     Affine::translate((pan_x as f64, pan_y as f64)) * Affine::scale(zoom as f64)
+}
+
+/// The type settings of the frame that starts a story.
+///
+/// Every frame in a chain shares the head's settings, so the story reflows
+/// consistently rather than changing size partway through.
+fn story_style(render_scene: &RenderScene, story_id: u32) -> TextStyle {
+    render_scene
+        .elements
+        .iter()
+        .find_map(|element| match element {
+            RenderElement::TextBlock {
+                id,
+                font_size,
+                line_height,
+                align,
+                font_family,
+                font_weight,
+                ..
+            } if *id == story_id => Some(TextStyle {
+                font_size: *font_size,
+                line_height: *line_height,
+                align: *align,
+                font_family: font_family.clone(),
+                font_weight: *font_weight,
+            }),
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 /// Composes a rotation about an element's own centre onto `base`.
@@ -111,6 +141,15 @@ pub fn paint_into(&mut self, scene: &mut Scene, render_scene: &RenderScene, view
         scene.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &viewport.rect());
     }
 
+    // Each story is flowed once, not once per frame: a chain of N frames would
+    // otherwise cost N shaping passes over the whole story.
+    let mut flows: HashMap<u32, Vec<ThreadSlice>> = HashMap::new();
+    for story in &render_scene.stories {
+        let style = story_style(render_scene, story.id);
+        let frames: Vec<(f32, f32)> = story.frames.iter().map(|f| (f[0], f[1])).collect();
+        flows.insert(story.id, self.text.flow(&story.text, &style, &frames));
+    }
+
     let camera = Affine::translate((viewport.x, viewport.y))
         * camera_affine(render_scene.pan_x, render_scene.pan_y, render_scene.zoom);
     // Selection chrome should stay a constant thickness on screen regardless of
@@ -149,6 +188,109 @@ pub fn paint_into(&mut self, scene: &mut Scene, render_scene: &RenderScene, view
                     None,
                     &rect,
                 );
+            }
+
+            RenderElement::GuideLine {
+                is_vertical,
+                position,
+                is_active,
+                ..
+            } => {
+                // A snapped guide brightens so the user can see what caught it.
+                let color = if *is_active {
+                    Color::new([0.2, 0.95, 0.75, 1.0])
+                } else {
+                    Color::new([0.25, 0.75, 0.95, 0.7])
+                };
+                let width = if *is_active { 2.0 } else { 1.0 } / zoom;
+
+                // Guides run the full extent of the visible document area. The
+                // viewport clip keeps this from painting over the DOM chrome.
+                let span = 100_000.0;
+                let line = if *is_vertical {
+                    Line::new((*position as f64, -span), (*position as f64, span))
+                } else {
+                    Line::new((-span, *position as f64), (span, *position as f64))
+                };
+                scene.stroke(&Stroke::new(width), camera, color, None, &line);
+            }
+
+            RenderElement::PageChrome {
+                bleed,
+                slug,
+                margins,
+                columns,
+                column_top,
+                column_bottom,
+                ..
+            } => {
+                // Guide colours follow the conventions of print layout tools so
+                // the meaning of each line is recognisable at a glance.
+                let bleed_color = Color::new([0.85, 0.25, 0.25, 0.9]);
+                let slug_color = Color::new([0.35, 0.55, 0.9, 0.9]);
+                let margin_color = Color::new([0.95, 0.3, 0.75, 0.9]);
+                let column_color = Color::new([0.65, 0.45, 0.95, 0.75]);
+
+                // Guides are drawn a constant width on screen regardless of zoom.
+                let hairline = Stroke::new(1.0 / zoom);
+
+                if slug != bleed {
+                    scene.stroke(
+                        &hairline,
+                        camera,
+                        slug_color,
+                        None,
+                        &Rect::new(slug[0] as f64, slug[1] as f64, slug[2] as f64, slug[3] as f64),
+                    );
+                }
+                scene.stroke(
+                    &hairline,
+                    camera,
+                    bleed_color,
+                    None,
+                    &Rect::new(bleed[0] as f64, bleed[1] as f64, bleed[2] as f64, bleed[3] as f64),
+                );
+                scene.stroke(
+                    &hairline,
+                    camera,
+                    margin_color,
+                    None,
+                    &Rect::new(
+                        margins[0] as f64,
+                        margins[1] as f64,
+                        margins[2] as f64,
+                        margins[3] as f64,
+                    ),
+                );
+
+                // Only the gutters between columns need drawing: the outer edges
+                // are already the margin box.
+                for (index, column) in columns.iter().enumerate() {
+                    if index > 0 {
+                        scene.stroke(
+                            &hairline,
+                            camera,
+                            column_color,
+                            None,
+                            &Line::new(
+                                (column[0] as f64, *column_top as f64),
+                                (column[0] as f64, *column_bottom as f64),
+                            ),
+                        );
+                    }
+                    if index + 1 < columns.len() {
+                        scene.stroke(
+                            &hairline,
+                            camera,
+                            column_color,
+                            None,
+                            &Line::new(
+                                (column[1] as f64, *column_top as f64),
+                                (column[1] as f64, *column_bottom as f64),
+                            ),
+                        );
+                    }
+                }
             }
 
             RenderElement::RectShape {
@@ -241,6 +383,7 @@ pub fn paint_into(&mut self, scene: &mut Scene, render_scene: &RenderScene, view
                 align,
                 font_family,
                 font_weight,
+                story,
                 fill_color,
                 is_selected,
                 ..
@@ -252,7 +395,21 @@ pub fn paint_into(&mut self, scene: &mut Scene, render_scene: &RenderScene, view
                     font_family: font_family.clone(),
                     font_weight: *font_weight,
                 };
-                let shaped = self.text.shape(text, &style, *width, *height);
+
+                // A threaded frame shows only its slice of the story; an
+                // unthreaded one shows its own text.
+                let (body, threaded_overset) = match story.and_then(|[story_id, index]| {
+                    let slices = flows.get(&story_id)?;
+                    let story = render_scene.stories.iter().find(|s| s.id == story_id)?;
+                    let slice = slices.get(index as usize)?;
+                    Some((slice.text(&story.text).to_string(), slice.is_overset))
+                }) {
+                    Some((body, overset)) => (body, overset),
+                    None => (text.clone(), false),
+                };
+
+                let shaped = self.text.shape(&body, &style, *width, *height);
+                let is_overset = shaped.is_overset || threaded_overset;
 
                 // Text is laid out in the frame's local space, so the glyph
                 // transform translates local origin to the frame's corner.
@@ -262,7 +419,7 @@ pub fn paint_into(&mut self, scene: &mut Scene, render_scene: &RenderScene, view
 
                 // Overset text gets the red marker layout tools use, so the
                 // condition is visible on the canvas rather than only in a panel.
-                if shaped.is_overset {
+                if is_overset {
                     let marker = Rect::new(
                         (*x + *width) as f64 - 10.0,
                         (*y + *height) as f64 - 10.0,
@@ -279,7 +436,7 @@ pub fn paint_into(&mut self, scene: &mut Scene, render_scene: &RenderScene, view
                 }
 
                 // An empty frame would otherwise be invisible and unclickable.
-                if text.is_empty() || *is_selected {
+                if body.is_empty() || *is_selected {
                     let rect = Rect::new(
                         *x as f64,
                         *y as f64,

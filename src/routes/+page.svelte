@@ -9,6 +9,20 @@
   /// What the current pointer gesture is doing.
   type DragMode = "none" | "pan" | "create" | "move" | "resize";
 
+  /// A page's placement on the pasteboard.
+  type PagePlacement = {
+    page_number: number;
+    spread_index: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    is_left: boolean;
+  };
+
+  /// Geometry returned by the snapping pass.
+  type SnappedGeometry = { geometry: FrameGeometry; snapped: boolean };
+
   /// A frame's geometry as carried over the IPC bridge.
   type FrameGeometry = {
     x: number;
@@ -161,6 +175,13 @@
   /// Which corner is being dragged, and the document-space point it pivots about.
   let resizeAnchor = { x: 0, y: 0 };
 
+  // Phase 3 document state
+  let pages = $state<PagePlacement[]>([]);
+  let snapEnabled = $state(true);
+  let isSnapped = $state(false);
+  /// When set, the next click threads the selected frame into the one clicked.
+  let isThreading = $state(false);
+
   const TOOLS: { id: Tool; label: string; key: string }[] = [
     { id: "Select", label: "Select", key: "V" },
     { id: "Rectangle", label: "Rectangle", key: "R" },
@@ -233,12 +254,14 @@
 
   async function fetchScene() {
     try {
-      const [hist, cam] = await Promise.all([
+      const [hist, cam, placements] = await Promise.all([
         invoke<HistoryStatus>("get_history_status"),
         invoke<Camera>("get_camera_state"),
+        invoke<PagePlacement[]>("get_page_placements"),
       ]);
       historyStatus = hist;
       camera = cam;
+      pages = placements;
       await syncViewport();
       await requestRender();
     } catch (err) {
@@ -399,6 +422,15 @@
         screenX: e.clientX - rect.left,
         screenY: e.clientY - rect.top,
       });
+
+      // While linking, a click picks the frame the story continues into
+      // rather than changing the selection.
+      if (isThreading && hit !== null) {
+        await threadSelectionInto(hit);
+        dragMode = "none";
+        return;
+      }
+
       selectedEntityId = hit;
 
       if (hit === null) {
@@ -469,7 +501,19 @@
     }
 
     try {
-      await invoke("set_frame_geometry", { entityId: dragEntityId, geometry: next });
+      // Snapping runs on the proposed geometry before it is written, so the
+      // frame lands on the guide rather than being corrected afterwards.
+      let target = next;
+      if (snapEnabled && dragMode !== "create") {
+        const result = await invoke<SnappedGeometry>("snap_frame_geometry", {
+          entityId: dragEntityId,
+          geometry: next,
+        });
+        target = result.geometry;
+        isSnapped = result.snapped;
+      }
+
+      await invoke("set_frame_geometry", { entityId: dragEntityId, geometry: target });
       await requestRender();
     } catch (err) {
       // The entity may have been removed mid-drag.
@@ -511,6 +555,8 @@
     dragMode = "none";
     dragEntityId = null;
     dragBefore = null;
+    isSnapped = false;
+    await invoke("clear_active_snap");
     if (selectedEntityId !== null) {
       try {
         selectedGeometry = await invoke<FrameGeometry>("get_frame_geometry", {
@@ -592,6 +638,49 @@
     }
   }
 
+
+  async function addPage() {
+    try {
+      await invoke("add_page");
+      await fetchScene();
+    } catch (err) {
+      console.warn("could not add page:", err);
+    }
+  }
+
+  async function removeLastPage() {
+    if (pages.length <= 1) return;
+    try {
+      await invoke("remove_page", { pageNumber: pages.length });
+      await fetchScene();
+    } catch (err) {
+      console.warn("could not remove page:", err);
+    }
+  }
+
+  /// Adds a ruler guide through the current cursor position.
+  async function addGuideAtCursor(isVertical: boolean) {
+    const position = isVertical ? mouseDocX : mouseDocY;
+    try {
+      await invoke("add_ruler_guide", { isVertical, position });
+      await requestRender();
+    } catch (err) {
+      console.warn("could not add guide:", err);
+    }
+  }
+
+  /// Threads the selected frame into `target`, continuing its story there.
+  async function threadSelectionInto(target: number) {
+    if (selectedEntityId === null || selectedEntityId === target) return;
+    try {
+      await invoke("thread_text_frames", { from: selectedEntityId, to: target });
+      isThreading = false;
+      await fetchScene();
+    } catch (err) {
+      console.warn("could not thread frames:", err);
+      isThreading = false;
+    }
+  }
 
   async function zoomIn() {
     if (!viewportEl) return;
@@ -798,6 +887,50 @@
             </span>
           {/if}
         </div>
+      </div>
+
+      <div class="doc-bar">
+        <span class="doc-group">
+          <strong>{pages.length}</strong>
+          {pages.length === 1 ? "page" : "pages"}
+          <button class="chip" onclick={addPage} title="Add a page">+ Page</button>
+          <button
+            class="chip"
+            onclick={removeLastPage}
+            disabled={pages.length <= 1}
+            title="Remove the last page"
+          >
+            − Page
+          </button>
+        </span>
+
+        <span class="doc-group">
+          <label class="chip-toggle">
+            <input type="checkbox" bind:checked={snapEnabled} />
+            Snap
+          </label>
+          <button class="chip" onclick={() => addGuideAtCursor(true)} title="Vertical guide at cursor">
+            + V Guide
+          </button>
+          <button class="chip" onclick={() => addGuideAtCursor(false)} title="Horizontal guide at cursor">
+            + H Guide
+          </button>
+        </span>
+
+        <span class="doc-group">
+          <button
+            class="chip"
+            class:active={isThreading}
+            disabled={selectedEntityId === null}
+            onclick={() => (isThreading = !isThreading)}
+            title="Link the selected text frame into another"
+          >
+            {isThreading ? "Click target frame…" : "Link Text"}
+          </button>
+          {#if isSnapped}
+            <span class="snap-flag">snapped</span>
+          {/if}
+        </span>
       </div>
 
       <div class="tool-palette" role="toolbar" aria-label="Editing tools">
@@ -1236,6 +1369,56 @@
     height: 100%;
     display: block;
     background: transparent;
+  }
+
+  .doc-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 0.6rem;
+    font-size: 0.78rem;
+    color: #94a3b8;
+  }
+
+  .doc-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .chip,
+  .chip-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.55rem;
+    font-size: 0.75rem;
+    color: #cbd5e1;
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    cursor: pointer;
+  }
+
+  .chip:hover:not(:disabled) {
+    border-color: rgba(56, 189, 248, 0.5);
+  }
+
+  .chip:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .chip.active {
+    background: rgba(56, 189, 248, 0.2);
+    border-color: #38bdf8;
+    color: #e0f2fe;
+  }
+
+  .snap-flag {
+    color: #34d399;
+    font-weight: 600;
   }
 
   .tool-palette {

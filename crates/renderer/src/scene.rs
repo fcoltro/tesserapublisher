@@ -1,8 +1,12 @@
 use bevy_ecs::world::World;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
 use tessera_core::{
-    geometry, BelongsTo, BoundingBox, Document, Frame, FrameType, Layer, Page, PathData, Size,
-    Style, TextContent, Transform, ZIndex,
+    geometry, AppliedMaster, BelongsTo, BoundingBox, Document, Frame, FrameType, GuideAxis, Layer,
+    MasterOverride, Page,
+    PageGuides, PathData, RulerGuide, Size, SnapResult, Style, TextContent, TextThread, Transform,
+    ZIndex,
 };
 
 /// Primitive renderable elements compiled from the ECS state
@@ -58,8 +62,37 @@ pub enum RenderElement {
         align: tessera_core::TextAlignment,
         font_family: Option<String>,
         font_weight: f32,
+        /// When threaded, the story's id and this frame's index in the chain.
+        story: Option<[u32; 2]>,
         fill_color: [f32; 4],
         is_selected: bool,
+    },
+    /// Non-printing guides for one page: bleed, margins and columns.
+    ///
+    /// These are drawn under the page's content and never appear in output;
+    /// they exist so a designer can see the live area while working.
+    PageChrome {
+        page_number: u32,
+        /// Bleed box `[x0, y0, x1, y1]`, outside the trim.
+        bleed: [f32; 4],
+        /// Slug box, outside the bleed. Equal to `bleed` when no slug is set.
+        slug: [f32; 4],
+        /// Margin box, inside the trim.
+        margins: [f32; 4],
+        /// Horizontal extent `[x0, x1]` of each column within the margins.
+        columns: Vec<[f32; 2]>,
+        /// Vertical extent of the columns, matching the margin box.
+        column_top: f32,
+        column_bottom: f32,
+    },
+    /// A user-placed ruler guide, spanning the visible pasteboard.
+    GuideLine {
+        entity_id: u32,
+        /// True for a vertical guide at a fixed x.
+        is_vertical: bool,
+        position: f32,
+        /// Highlighted while a dragged object is snapped to it.
+        is_active: bool,
     },
     /// An arbitrary bezier outline placed by an affine.
     ///
@@ -89,6 +122,20 @@ pub enum RenderElement {
     },
 }
 
+/// A story: text flowing through a chain of threaded frames.
+///
+/// The story is carried once, alongside the geometry of every frame in its
+/// chain, so the painter can flow it in one pass rather than re-deriving the
+/// chain from each frame.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Story {
+    /// Entity id of the frame that starts the chain, used as the story's id.
+    pub id: u32,
+    pub text: String,
+    /// Width and height of each frame in the chain, in order.
+    pub frames: Vec<[f32; 2]>,
+}
+
 /// Compiled render scene ready for GPU/canvas execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RenderScene {
@@ -101,6 +148,8 @@ pub struct RenderScene {
     pub zoom: f32,
     pub elements: Vec<RenderElement>,
     pub total_frames: usize,
+    /// Threaded stories referenced by `TextBlock` elements.
+    pub stories: Vec<Story>,
 }
 
 impl Default for RenderScene {
@@ -115,6 +164,7 @@ impl Default for RenderScene {
             zoom: 1.0,
             elements: Vec::new(),
             total_frames: 0,
+            stories: Vec::new(),
         }
     }
 }
@@ -129,51 +179,103 @@ impl SceneCompiler {
         revision: u64,
         camera: &tessera_core::Camera,
     ) -> RenderScene {
+        Self::compile_with_snap(world, selected_id, revision, camera, None)
+    }
+
+    /// Compiles a scene, highlighting any guides the active gesture snapped to.
+    pub fn compile_with_snap(
+        world: &World,
+        selected_id: Option<u32>,
+        revision: u64,
+        camera: &tessera_core::Camera,
+        active_snap: Option<SnapResult>,
+    ) -> RenderScene {
         let mut elements = Vec::new();
 
-        // 1. Get Document & Page configurations
-        let mut doc_width = 800.0;
-        let mut doc_height = 600.0;
-        let mut doc_bleed = 3.0;
-
-        for e in world.iter_entities() {
-            if let Some(doc) = e.get::<Document>() {
-                doc_width = doc.width;
-                doc_height = doc.height;
-                doc_bleed = doc.bleed;
-                break;
-            }
-        }
-
-        // 2. Render Page Surface(s) (white paper canvas on top of dark pasteboard)
-        let page_entities: Vec<_> = world
+        // 1. Document settings drive every page's placement.
+        let document = world
             .iter_entities()
-            .filter_map(|e| e.get::<Page>().map(|p| (e.id(), p.clone())))
+            .find_map(|e| e.get::<Document>().cloned())
+            .unwrap_or_default();
+        let doc_width = document.width;
+        let doc_height = document.height;
+        let doc_bleed = document.bleed;
+        let spread_layout = document.spread_layout();
+
+        // 2. Pages sit on the pasteboard where the spread layout puts them.
+        let mut page_entities: Vec<_> = world
+            .iter_entities()
+            .filter_map(|e| {
+                e.get::<Page>().map(|p| {
+                    (
+                        p.page_number,
+                        e.get::<PageGuides>().copied(),
+                        e.get::<AppliedMaster>().map(|m| m.0),
+                    )
+                })
+            })
             .collect();
+        page_entities.sort_by_key(|(number, _, _)| *number);
 
         if page_entities.is_empty() {
-            // Default fallback page
+            page_entities.push((1, None, None));
+        }
+
+        for (page_number, guides, _) in &page_entities {
+            let placement = spread_layout.place(*page_number);
+            let guides = guides.unwrap_or(document.guides);
+
             elements.push(RenderElement::PageSurface {
-                page_number: 1,
-                x: 40.0,
-                y: 40.0,
-                width: doc_width,
-                height: doc_height,
+                page_number: placement.page_number,
+                x: placement.x,
+                y: placement.y,
+                width: placement.width,
+                height: placement.height,
                 bleed: doc_bleed,
                 shadow_blur: 15.0,
             });
-        } else {
-            for (_, page) in &page_entities {
-                elements.push(RenderElement::PageSurface {
-                    page_number: page.page_number,
-                    x: 40.0,
-                    y: 40.0,
-                    width: page.width,
-                    height: page.height,
-                    bleed: doc_bleed,
-                    shadow_blur: 15.0,
-                });
-            }
+
+            let (bx0, by0, bx1, by1) = placement.bleed_rect(doc_bleed);
+            let (sx0, sy0, sx1, sy1) = placement.bleed_rect(doc_bleed + document.slug);
+            let (mx0, my0, mx1, my1) = guides.content_rect(&placement);
+
+            elements.push(RenderElement::PageChrome {
+                page_number: placement.page_number,
+                bleed: [bx0, by0, bx1, by1],
+                slug: [sx0, sy0, sx1, sy1],
+                margins: [mx0, my0, mx1, my1],
+                columns: guides
+                    .column_ranges(&placement)
+                    .into_iter()
+                    .map(|(x0, x1)| [x0, x1])
+                    .collect(),
+                column_top: my0,
+                column_bottom: my1,
+            });
+        }
+
+        // Ruler guides sit above the page chrome but below content.
+        for entity in world.iter_entities() {
+            let Some(guide) = entity.get::<RulerGuide>() else {
+                continue;
+            };
+            let is_vertical = guide.axis == GuideAxis::Vertical;
+            let is_active = active_snap
+                .and_then(|snap| {
+                    if is_vertical {
+                        snap.snapped_vertical
+                    } else {
+                        snap.snapped_horizontal
+                    }
+                })
+                .is_some_and(|line| (line.position - guide.position).abs() < 1e-3);
+
+            elements.push(RenderElement::GuideLine {
+                entity_id: entity.id().index(),
+                is_vertical,
+                position: guide.position,
+                is_active,
+            });
         }
 
         // 3. Discover active visible layers
@@ -234,6 +336,123 @@ impl SceneCompiler {
                 })
             })
             .collect();
+
+        // Master items are inherited onto each page that applies a master.
+        // They are stored page-local, so each is offset to the page it appears
+        // on, and any item overridden locally is skipped so it is not drawn twice.
+        for (page_number, _, applied_master) in &page_entities {
+            let Some(master) = applied_master else {
+                continue;
+            };
+            let placement = spread_layout.place(*page_number);
+
+            let page_entity = world
+                .iter_entities()
+                .find(|e| e.get::<Page>().is_some_and(|p| p.page_number == *page_number))
+                .map(|e| e.id());
+
+            let overridden: Vec<_> = world
+                .iter_entities()
+                .filter_map(|e| e.get::<MasterOverride>())
+                .filter(|o| Some(o.page) == page_entity)
+                .map(|o| o.source)
+                .collect();
+
+            for entity in world.iter_entities() {
+                if entity.get::<BelongsTo>().map(|b| b.0) != Some(*master) {
+                    continue;
+                }
+                if overridden.contains(&entity.id()) {
+                    continue;
+                }
+                let (Some(frame), Some(transform), Some(size), Some(style)) = (
+                    entity.get::<Frame>(),
+                    entity.get::<Transform>(),
+                    entity.get::<Size>(),
+                    entity.get::<Style>(),
+                ) else {
+                    continue;
+                };
+
+                let placed = Transform {
+                    position: tessera_core::Position {
+                        x: transform.position.x + placement.x,
+                        y: transform.position.y + placement.y,
+                    },
+                    ..*transform
+                };
+                let path_data = entity.get::<PathData>().cloned();
+                let bounding_box = geometry::frame_bounds(
+                    frame.frame_type,
+                    &placed,
+                    size,
+                    path_data.as_ref(),
+                );
+
+                frame_list.push(FrameData {
+                    // Inherited items are not directly selectable, so they
+                    // carry the master item's id purely for identification.
+                    id: entity.id().index(),
+                    frame: frame.clone(),
+                    transform: placed,
+                    size: *size,
+                    // Masters sit behind page content, as in any layout tool.
+                    z_index: i32::MIN + entity.get::<ZIndex>().copied().unwrap_or_default().0,
+                    bounding_box,
+                    style: style.clone(),
+                    text_content: entity.get::<TextContent>().cloned(),
+                    path_data,
+                });
+            }
+        }
+
+        // Build the threaded stories before emitting elements, so each text
+        // frame can be tagged with its place in a chain.
+        let mut stories: Vec<Story> = Vec::new();
+        let mut story_refs: HashMap<u32, [u32; 2]> = HashMap::new();
+
+        for entity in world.iter_entities() {
+            let Some(thread) = entity.get::<TextThread>() else {
+                continue;
+            };
+            if !thread.is_head() {
+                continue;
+            }
+
+            let head_id = entity.id().index();
+            let text = entity
+                .get::<TextContent>()
+                .map(|t| t.text.clone())
+                .unwrap_or_default();
+
+            let mut frames = Vec::new();
+            let mut cursor = Some(entity.id());
+            let mut index = 0u32;
+            while let Some(current) = cursor {
+                let Ok(current_entity) = world.get_entity(current) else {
+                    break;
+                };
+                let size = current_entity.get::<Size>().copied().unwrap_or_default();
+                let transform = current_entity.get::<Transform>().copied().unwrap_or_default();
+                frames.push([
+                    size.width * transform.scale_x,
+                    size.height * transform.scale_y,
+                ]);
+                story_refs.insert(current.index(), [head_id, index]);
+
+                index += 1;
+                if index > 10_000 {
+                    break;
+                }
+                cursor = current_entity.get::<TextThread>().and_then(|t| t.next);
+            }
+
+            stories.push(Story {
+                id: head_id,
+                text,
+                frames,
+            });
+        }
 
         frame_list.sort_by(|a, b| a.z_index.cmp(&b.z_index));
         let total_frames = frame_list.len();
@@ -318,6 +537,7 @@ impl SceneCompiler {
                         align,
                         font_family,
                         font_weight,
+                        story: story_refs.get(&f.id).copied(),
                         fill_color: f.style.fill_color,
                         is_selected: is_sel,
                     });
@@ -397,6 +617,7 @@ impl SceneCompiler {
             zoom: camera.zoom,
             elements,
             total_frames,
+            stories,
         }
     }
 }

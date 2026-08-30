@@ -8,17 +8,42 @@ pub struct Document {
     pub width: f32,
     pub height: f32,
     pub dpi: f32,
+    /// Extra printed area beyond the trim, so a cut that drifts still lands on ink.
     pub bleed: f32,
+    /// Working area outside the bleed for printer marks and notes.
+    pub slug: f32,
+    /// When true, pages pair across a spine after the first.
+    pub facing_pages: bool,
+    /// Vertical gap between spreads on the pasteboard.
+    pub spread_gap: f32,
+    /// Default margins and columns for new pages.
+    pub guides: crate::layout::PageGuides,
 }
 
 impl Default for Document {
     fn default() -> Self {
         Self {
             title: "Untitled Document".to_string(),
-            width: 800.0,
-            height: 600.0,
+            width: 595.0,
+            height: 842.0,
             dpi: 300.0,
             bleed: 3.0,
+            slug: 0.0,
+            facing_pages: true,
+            spread_gap: 60.0,
+            guides: crate::layout::PageGuides::default(),
+        }
+    }
+}
+
+impl Document {
+    /// The spread arrangement implied by these document settings.
+    pub fn spread_layout(&self) -> crate::layout::SpreadLayout {
+        crate::layout::SpreadLayout {
+            facing_pages: self.facing_pages,
+            page_width: self.width,
+            page_height: self.height,
+            spread_gap: self.spread_gap,
         }
     }
 }
@@ -245,6 +270,70 @@ impl Default for PathData {
         Self {
             svg: "M 0 0 L 100 0 L 100 100 Z".to_string(),
         }
+    }
+}
+
+/// Marks an entity as a master page: a template other pages inherit from.
+///
+/// Master pages live in their own hierarchy rather than the document's page
+/// sequence, and their frames are stored in *page-local* coordinates so the
+/// same master can be applied to any page wherever it sits on the pasteboard.
+#[derive(Component, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MasterPage {
+    pub name: String,
+    /// Short label shown on page thumbnails, e.g. "A".
+    pub prefix: String,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Default for MasterPage {
+    fn default() -> Self {
+        Self {
+            name: "A-Master".to_string(),
+            prefix: "A".to_string(),
+            width: 595.0,
+            height: 842.0,
+        }
+    }
+}
+
+/// Links a document page to the master page it inherits from.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AppliedMaster(pub Entity);
+
+/// Marks a frame as a local override of an inherited master item.
+///
+/// Overriding breaks the link for that one item: it becomes an ordinary,
+/// editable frame on the page, while the rest of the master still applies.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MasterOverride {
+    /// The master frame this was promoted from.
+    pub source: Entity,
+    /// The page the override belongs to.
+    pub page: Entity,
+}
+
+/// Links a text frame to the frames before and after it in a story.
+///
+/// A story is a doubly-linked chain of text frames. Text that overflows one
+/// frame continues in `next`, which is what lets an article run across
+/// columns, pages and spreads.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TextThread {
+    pub previous: Option<Entity>,
+    pub next: Option<Entity>,
+}
+
+impl TextThread {
+    /// True when this frame starts a story.
+    pub fn is_head(&self) -> bool {
+        self.previous.is_none()
+    }
+
+    /// True when this frame ends a story.
+    pub fn is_tail(&self) -> bool {
+        self.next.is_none()
     }
 }
 
