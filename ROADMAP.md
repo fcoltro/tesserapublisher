@@ -133,7 +133,7 @@ phase needs to edit; almost none of it is reachable from the interface. See
   `HistoryAction::UpdateStyle`, which until now had no producer.
 - [x] Mutation commands for `TextContent` (get/set/commit) plus the new
   `HistoryAction::UpdateText` variant.
-- [ ] Structure commands: layer visibility, layer lock, frame z-index, rename,
+- [x] Structure commands: layer visibility, layer lock, frame z-index, rename,
   delete (undoable via `DespawnFrame`).
 - [ ] **`TextContent` has no `tracking` field.** Required by the Typography
   Inspector below. Component change, then renderer support in `text.rs`.

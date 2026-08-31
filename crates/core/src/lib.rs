@@ -1186,6 +1186,113 @@ impl AppState {
             .ok_or_else(|| format!("entity {entity_index} is not a text frame"))
     }
 
+    /// Shows or hides a whole layer.
+    ///
+    /// The renderer already skips layers whose `is_visible` is false, so this
+    /// setter is the entire feature.
+    pub fn set_layer_visibility(&self, layer_index: u32, visible: bool) -> Result<(), String> {
+        let mut world = self.world.write().map_err(|e| e.to_string())?;
+        let mut entity = world
+            .get_entity_mut(Entity::from_raw(layer_index))
+            .map_err(|_| format!("entity {layer_index} not found"))?;
+
+        let Some(mut layer) = entity.get_mut::<Layer>() else {
+            return Err(format!("entity {layer_index} is not a layer"));
+        };
+        layer.is_visible = visible;
+        drop(world);
+
+        self.increment_scene_revision();
+        Ok(())
+    }
+
+    /// Locks or unlocks a layer against selection and editing.
+    pub fn set_layer_locked(&self, layer_index: u32, locked: bool) -> Result<(), String> {
+        let mut world = self.world.write().map_err(|e| e.to_string())?;
+        let mut entity = world
+            .get_entity_mut(Entity::from_raw(layer_index))
+            .map_err(|_| format!("entity {layer_index} not found"))?;
+
+        let Some(mut layer) = entity.get_mut::<Layer>() else {
+            return Err(format!("entity {layer_index} is not a layer"));
+        };
+        layer.is_locked = locked;
+        drop(world);
+
+        self.increment_scene_revision();
+        Ok(())
+    }
+
+    /// Restacks a frame within its layer.
+    pub fn set_frame_z_index(&self, entity_index: u32, z: i32) -> Result<(), String> {
+        let mut world = self.world.write().map_err(|e| e.to_string())?;
+        let mut entity = world
+            .get_entity_mut(Entity::from_raw(entity_index))
+            .map_err(|_| format!("entity {entity_index} not found"))?;
+
+        let Some(mut slot) = entity.get_mut::<ZIndex>() else {
+            return Err(format!("entity {entity_index} has no z-index"));
+        };
+        slot.0 = z;
+        drop(world);
+
+        self.increment_scene_revision();
+        Ok(())
+    }
+
+    /// Renames a frame, as shown in the Layers panel.
+    pub fn rename_frame(&self, entity_index: u32, name: String) -> Result<(), String> {
+        let mut world = self.world.write().map_err(|e| e.to_string())?;
+        let mut entity = world
+            .get_entity_mut(Entity::from_raw(entity_index))
+            .map_err(|_| format!("entity {entity_index} not found"))?;
+
+        let Some(mut frame) = entity.get_mut::<Frame>() else {
+            return Err(format!("entity {entity_index} is not a frame"));
+        };
+        frame.name = name;
+        drop(world);
+
+        self.increment_scene_revision();
+        Ok(())
+    }
+
+    /// Deletes a frame, recording enough of it to be restored by undo.
+    pub fn delete_frame(&self, entity_index: u32) -> Result<HistoryStatus, String> {
+        let mut world = self.world.write().map_err(|e| e.to_string())?;
+        let entity = world
+            .get_entity(Entity::from_raw(entity_index))
+            .map_err(|_| format!("entity {entity_index} not found"))?;
+
+        let Some(frame) = entity.get::<Frame>().cloned() else {
+            return Err(format!("entity {entity_index} is not a frame"));
+        };
+        let snapshot = EntitySnapshotData {
+            entity_index,
+            frame,
+            transform: entity.get::<Transform>().copied().unwrap_or_default(),
+            size: entity.get::<Size>().copied().unwrap_or_default(),
+            z_index: entity.get::<ZIndex>().copied().unwrap_or_default(),
+            bounding_box: entity.get::<BoundingBox>().copied().unwrap_or_default(),
+            style: entity.get::<Style>().cloned().unwrap_or_default(),
+            parent: entity.get::<BelongsTo>().map(|p| p.0.index()),
+            text_content: entity.get::<TextContent>().cloned(),
+        };
+
+        world
+            .get_entity_mut(Entity::from_raw(entity_index))
+            .map_err(|_| format!("entity {entity_index} not found"))?
+            .despawn();
+        drop(world);
+
+        let mut history = self.history.lock().map_err(|e| e.to_string())?;
+        history.push(HistoryAction::DespawnFrame(snapshot));
+        drop(history);
+
+        self.increment_scene_revision();
+        self.get_history_status()
+    }
+
     /// Reads a text frame's content and type settings.
     pub fn get_frame_text(&self, entity_index: u32) -> Result<TextContent, String> {
         let world = self.world.read().map_err(|e| e.to_string())?;
@@ -1867,6 +1974,96 @@ mod tests {
             depth,
             "a click that changed nothing must not leave an undo entry"
         );
+    }
+
+    #[test]
+    fn hiding_a_layer_shows_up_in_the_document_tree() {
+        let app_state = AppState::new();
+        let tree = app_state.get_document_tree().unwrap();
+        let layer_id = tree.pages[0].layers[0].id;
+
+        app_state.set_layer_visibility(layer_id, false).unwrap();
+
+        let tree = app_state.get_document_tree().unwrap();
+        assert!(!tree.pages[0].layers[0].is_visible);
+    }
+
+    #[test]
+    fn locking_a_layer_shows_up_in_the_document_tree() {
+        let app_state = AppState::new();
+        let tree = app_state.get_document_tree().unwrap();
+        let layer_id = tree.pages[0].layers[0].id;
+
+        app_state.set_layer_locked(layer_id, true).unwrap();
+
+        let tree = app_state.get_document_tree().unwrap();
+        assert!(tree.pages[0].layers[0].is_locked);
+    }
+
+    #[test]
+    fn set_frame_z_index_restacks_the_frame() {
+        let app_state = AppState::new();
+        let id = spawn_test_rect(&app_state);
+
+        app_state.set_frame_z_index(id, 7).unwrap();
+
+        let tree = app_state.get_document_tree().unwrap();
+        let frame = tree.pages[0].layers[0]
+            .frames
+            .iter()
+            .find(|f| f.id == id)
+            .expect("frame should be in the tree");
+        assert_eq!(frame.z_index, 7);
+    }
+
+    #[test]
+    fn rename_frame_changes_the_name_in_the_tree() {
+        let app_state = AppState::new();
+        let id = spawn_test_rect(&app_state);
+
+        app_state.rename_frame(id, "Renamed".to_string()).unwrap();
+
+        let tree = app_state.get_document_tree().unwrap();
+        let frame = tree.pages[0].layers[0]
+            .frames
+            .iter()
+            .find(|f| f.id == id)
+            .expect("frame should be in the tree");
+        assert_eq!(frame.name, "Renamed");
+    }
+
+    #[test]
+    fn delete_frame_removes_it_and_undo_brings_it_back() {
+        let app_state = AppState::new();
+        let id = spawn_test_rect(&app_state);
+        let before = app_state.get_document_tree().unwrap().pages[0].layers[0]
+            .frames
+            .len();
+
+        app_state.delete_frame(id).unwrap();
+        assert_eq!(
+            app_state.get_document_tree().unwrap().pages[0].layers[0]
+                .frames
+                .len(),
+            before - 1
+        );
+
+        app_state.undo().unwrap();
+        assert_eq!(
+            app_state.get_document_tree().unwrap().pages[0].layers[0]
+                .frames
+                .len(),
+            before,
+            "undo must restore the deleted frame"
+        );
+    }
+
+    #[test]
+    fn structure_commands_reject_a_frame_that_is_not_a_layer() {
+        let app_state = AppState::new();
+        let id = spawn_test_rect(&app_state);
+
+        assert!(app_state.set_layer_visibility(id, false).is_err());
     }
 
     #[test]

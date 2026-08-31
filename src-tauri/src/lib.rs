@@ -363,6 +363,40 @@ fn commit_frame_geometry(
     state.commit_frame_geometry(entity_id, old_transform, old_size, new_transform, new_size)
 }
 
+/// Shows or hides a layer from the Layers panel.
+#[tauri::command]
+fn set_layer_visibility(
+    layer_id: u32,
+    visible: bool,
+    state: State<AppState>,
+) -> Result<(), String> {
+    state.set_layer_visibility(layer_id, visible)
+}
+
+/// Locks or unlocks a layer from the Layers panel.
+#[tauri::command]
+fn set_layer_locked(layer_id: u32, locked: bool, state: State<AppState>) -> Result<(), String> {
+    state.set_layer_locked(layer_id, locked)
+}
+
+/// Restacks a frame within its layer.
+#[tauri::command]
+fn set_frame_z_index(entity_id: u32, z: i32, state: State<AppState>) -> Result<(), String> {
+    state.set_frame_z_index(entity_id, z)
+}
+
+/// Renames a frame.
+#[tauri::command]
+fn rename_frame(entity_id: u32, name: String, state: State<AppState>) -> Result<(), String> {
+    state.rename_frame(entity_id, name)
+}
+
+/// Deletes a frame. Undoable.
+#[tauri::command]
+fn delete_frame(entity_id: u32, state: State<AppState>) -> Result<HistoryStatus, String> {
+    state.delete_frame(entity_id)
+}
+
 /// Reads a text frame's content and type settings for the inspector.
 #[tauri::command]
 fn get_frame_text(entity_id: u32, state: State<AppState>) -> Result<TextContent, String> {
@@ -654,6 +688,11 @@ pub fn run() {
             get_frame_text,
             set_frame_text,
             commit_frame_text,
+            set_layer_visibility,
+            set_layer_locked,
+            set_frame_z_index,
+            rename_frame,
+            delete_frame,
             get_document_settings,
             set_document_settings,
             get_page_placements,
