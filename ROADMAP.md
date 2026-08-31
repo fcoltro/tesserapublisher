@@ -135,8 +135,9 @@ phase needs to edit; almost none of it is reachable from the interface. See
   `HistoryAction::UpdateText` variant.
 - [x] Structure commands: layer visibility, layer lock, frame z-index, rename,
   delete (undoable via `DespawnFrame`).
-- [ ] **`TextContent` has no `tracking` field.** Required by the Typography
-  Inspector below. Component change, then renderer support in `text.rs`.
+- [x] **`TextContent.tracking`** added, in thousandths of an em (the unit
+  layout tools use), resolved against font size and passed to parley as
+  letter spacing. Already reachable through the text commands above.
 - [x] **`Style.corner_radius`** added. The renderer already drew a
   `RoundedRect` but was fed a hardcoded 6.0, so every rectangle in the app
   was rounded whether or not anyone asked. Rectangles are now square by

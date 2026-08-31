@@ -57,6 +57,8 @@ pub struct TextStyle {
     pub font_family: Option<String>,
     /// CSS-style numeric weight, where 400 is regular and 700 is bold.
     pub font_weight: f32,
+    /// Letter spacing in thousandths of an em.
+    pub tracking: f32,
     /// Locks leading onto a baseline grid of this increment.
     ///
     /// When set, `line_height` no longer decides line spacing: the natural
@@ -74,6 +76,7 @@ impl Default for TextStyle {
             align: TextAlignment::Start,
             font_family: None,
             font_weight: 400.0,
+            tracking: 0.0,
             baseline_increment: None,
         }
     }
@@ -148,6 +151,13 @@ impl TextEngine {
         builder.push_default(StyleProperty::FontWeight(parley::FontWeight::new(
             style.font_weight,
         )));
+        // Tracking is authored per mille of the em, so it has to be resolved
+        // against the resolved font size before parley sees it in px.
+        if style.tracking != 0.0 {
+            builder.push_default(StyleProperty::LetterSpacing(
+                style.tracking / 1000.0 * font_size,
+            ));
+        }
         if let Some(family) = &style.font_family {
             builder.push_default(StyleProperty::FontFamily(parley::FontFamily::named(
                 family.as_str(),
@@ -311,6 +321,90 @@ mod tests {
         assert!(shaped.line_count() >= 1);
         assert!(shaped.content_height > 0.0);
         assert!(!shaped.is_overset);
+    }
+
+    #[test]
+    fn positive_tracking_pushes_a_line_wider() {
+        // Tracking has to reach parley, not just sit in the style struct. The
+        // observable proof is that the same string in the same frame needs more
+        // lines once the letters are spaced apart.
+        let mut engine = TextEngine::new();
+        let text = "The quick brown fox jumps over the lazy dog";
+
+        let tight = engine.shape(text, &TextStyle::default(), 260.0, 500.0);
+        let loose = engine.shape(
+            text,
+            &TextStyle {
+                tracking: 600.0,
+                ..Default::default()
+            },
+            260.0,
+            500.0,
+        );
+
+        assert!(
+            loose.line_count() > tight.line_count(),
+            "tracked text should wrap sooner: tight {} lines, loose {} lines",
+            tight.line_count(),
+            loose.line_count()
+        );
+    }
+
+    #[test]
+    fn tracking_is_proportional_to_the_font_size() {
+        // Authored per mille of the em, so doubling the size must double the
+        // spacing. Otherwise tracking set on a heading would not survive a
+        // change of size.
+        let mut engine = TextEngine::new();
+        let text = "AVAWA";
+
+        let small = engine.shape(
+            text,
+            &TextStyle {
+                font_size: 20.0,
+                tracking: 100.0,
+                ..Default::default()
+            },
+            10_000.0,
+            500.0,
+        );
+        let small_untracked = engine.shape(
+            text,
+            &TextStyle {
+                font_size: 20.0,
+                ..Default::default()
+            },
+            10_000.0,
+            500.0,
+        );
+        let large = engine.shape(
+            text,
+            &TextStyle {
+                font_size: 40.0,
+                tracking: 100.0,
+                ..Default::default()
+            },
+            10_000.0,
+            500.0,
+        );
+        let large_untracked = engine.shape(
+            text,
+            &TextStyle {
+                font_size: 40.0,
+                ..Default::default()
+            },
+            10_000.0,
+            500.0,
+        );
+
+        let small_delta = small.content_width - small_untracked.content_width;
+        let large_delta = large.content_width - large_untracked.content_width;
+
+        assert!(small_delta > 0.0, "tracking must widen the line");
+        assert!(
+            (large_delta - small_delta * 2.0).abs() < 0.5,
+            "doubling the font size should double the added spacing: {small_delta} then {large_delta}"
+        );
     }
 
     #[test]

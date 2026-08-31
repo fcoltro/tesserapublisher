@@ -74,6 +74,7 @@ fn story_style(render_scene: &RenderScene, story_id: u32) -> TextStyle {
                 align,
                 font_family,
                 font_weight,
+                tracking,
                 baseline,
                 ..
             } if *id == story_id => Some(TextStyle {
@@ -82,6 +83,7 @@ fn story_style(render_scene: &RenderScene, story_id: u32) -> TextStyle {
                 align: *align,
                 font_family: font_family.clone(),
                 font_weight: *font_weight,
+                tracking: *tracking,
                 // The head's grid governs the whole chain: a story must not
                 // change its rhythm partway through.
                 baseline_increment: baseline.map(|[increment, _]| increment),
@@ -411,6 +413,7 @@ pub fn paint_into(&mut self, scene: &mut Scene, render_scene: &RenderScene, view
                 align,
                 font_family,
                 font_weight,
+                tracking,
                 story,
                 baseline,
                 fill_color,
@@ -423,6 +426,7 @@ pub fn paint_into(&mut self, scene: &mut Scene, render_scene: &RenderScene, view
                     align: *align,
                     font_family: font_family.clone(),
                     font_weight: *font_weight,
+                    tracking: *tracking,
                     baseline_increment: baseline.map(|[increment, _]| increment),
                 };
 

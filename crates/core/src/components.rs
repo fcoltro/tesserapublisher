@@ -369,6 +369,12 @@ pub struct TextContent {
     pub font_family: Option<String>,
     /// CSS-style numeric weight, where 400 is regular and 700 is bold.
     pub font_weight: f32,
+    /// Letter spacing in thousandths of an em, the unit layout tools use.
+    ///
+    /// Expressed relative to the em rather than in absolute units so that
+    /// changing the font size keeps the spacing visually proportional, which
+    /// is what a typographer setting tracking expects.
+    pub tracking: f32,
     /// Lock every line onto the document's baseline grid.
     ///
     /// When set, `line_height` stops determining where lines land: leading
@@ -387,6 +393,7 @@ impl Default for TextContent {
             align: TextAlignment::Start,
             font_family: None,
             font_weight: 400.0,
+            tracking: 0.0,
             snap_to_baseline: false,
         }
     }

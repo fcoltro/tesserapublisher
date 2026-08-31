@@ -73,6 +73,8 @@ pub enum RenderElement {
         align: tessera_core::TextAlignment,
         font_family: Option<String>,
         font_weight: f32,
+        /// Letter spacing in thousandths of an em.
+        tracking: f32,
         /// When threaded, the story's id and this frame's index in the chain.
         story: Option<[u32; 2]>,
         /// Baseline grid this frame locks onto, as `[increment, origin_y]`.
@@ -555,6 +557,11 @@ impl SceneCompiler {
                         .as_ref()
                         .map(|t| t.font_weight)
                         .unwrap_or(400.0);
+                    let tracking = f
+                        .text_content
+                        .as_ref()
+                        .map(|t| t.tracking)
+                        .unwrap_or(0.0);
                     let snaps = f
                         .text_content
                         .as_ref()
@@ -583,6 +590,7 @@ impl SceneCompiler {
                         align,
                         font_family,
                         font_weight,
+                        tracking,
                         story: story_refs.get(&f.id).copied(),
                         baseline,
                         fill_color: f.style.fill_color,
