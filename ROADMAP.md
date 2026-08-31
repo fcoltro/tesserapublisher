@@ -191,9 +191,12 @@ until the editing surface is proven. Revisit after Phase 4.4.
 # Phase 5: Asset Management & Color Engine — NOT STARTED
 
 ## 1. Image Linking & Proxy Rendering
-- [ ] `ImageFrame` component for raster graphics (JPG, PNG, TIFF).
-- [ ] Asset linking by absolute path, loaded dynamically — never embedded.
-- [ ] Proxy generator: low-res cached preview for canvas rendering.
+- [x] `ImageSource` component for raster graphics (JPG, PNG, TIFF, WebP).
+- [x] Asset linking by absolute path, loaded dynamically — never embedded.
+- [~] Proxy generator. Images over 2048px on the long edge are downscaled on
+  decode and cached in memory, and a file rewritten on disk is re-read rather
+  than served stale. Not yet a *disk* proxy cache, so the downscale is repeated
+  on each application start.
 - [ ] Asset Manager panel: link status (Missing / Modified / OK), effective PPI.
 
 ## 2. Clipping Paths & Image Masking

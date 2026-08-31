@@ -6,9 +6,10 @@
 //! target (a window surface, an offscreen texture, or a future WASM host).
 
 use vello::kurbo::{Affine, BezPath, Ellipse, Line, Rect, RoundedRect, Stroke};
-use vello::peniko::{Color, Fill};
+use vello::peniko::{Color, Fill, ImageBrush};
 use vello::Scene;
 
+use crate::images::ImageCache;
 use crate::scene::{RenderElement, RenderScene};
 use crate::text::{TextEngine, TextStyle, ThreadSlice};
 use std::collections::HashMap;
@@ -113,6 +114,9 @@ fn rotated_about(base: Affine, rotation: f32, cx: f64, cy: f64) -> Affine {
 #[derive(Default)]
 pub struct Painter {
     text: TextEngine,
+    /// Decoded image proxies. Owned here for the same reason as the font
+    /// database: decoding is far too expensive to repeat every frame.
+    images: ImageCache,
 }
 
 impl Painter {
@@ -133,6 +137,11 @@ impl Painter {
     /// Access to the text engine, for measuring without painting.
     pub fn text_engine(&mut self) -> &mut TextEngine {
         &mut self.text
+    }
+
+    /// Access to the image cache, for link status without painting.
+    pub fn image_cache(&mut self) -> &mut ImageCache {
+        &mut self.images
     }
 
 /// Paints into an existing scene, resetting it first.
@@ -319,6 +328,105 @@ pub fn paint_into(&mut self, scene: &mut Scene, render_scene: &RenderScene, view
                                 (margins[2] as f64, y as f64),
                             ),
                         );
+                    }
+                }
+            }
+
+            RenderElement::ImageFrame {
+                x,
+                y,
+                width,
+                height,
+                rotation,
+                path,
+                fit,
+                ..
+            } => {
+                let box_rect =
+                    Rect::new(*x as f64, *y as f64, (*x + *width) as f64, (*y + *height) as f64);
+                let transform = rotated_about(
+                    camera,
+                    *rotation,
+                    (*x + *width / 2.0) as f64,
+                    (*y + *height / 2.0) as f64,
+                );
+
+                match self.images.get(path) {
+                    Some(image) => {
+                        let (iw, ih) = (image.width as f64, image.height as f64);
+                        let (bw, bh) = (*width as f64, *height as f64);
+
+                        // Fill covers the box and crops; Fit shows everything
+                        // and leaves margin; Stretch abandons the aspect ratio.
+                        let (sx, sy) = if iw <= 0.0 || ih <= 0.0 {
+                            (1.0, 1.0)
+                        } else {
+                            match fit {
+                                tessera_core::ImageFit::Stretch => (bw / iw, bh / ih),
+                                tessera_core::ImageFit::Fit => {
+                                    let s = (bw / iw).min(bh / ih);
+                                    (s, s)
+                                }
+                                tessera_core::ImageFit::Fill => {
+                                    let s = (bw / iw).max(bh / ih);
+                                    (s, s)
+                                }
+                            }
+                        };
+
+                        // Centred in the box, so a crop takes from both edges
+                        // rather than always from the right and bottom.
+                        let tx = *x as f64 + (bw - iw * sx) / 2.0;
+                        let ty = *y as f64 + (bh - ih * sy) / 2.0;
+
+                        // The frame is the crop the designer drew, so anything
+                        // outside it must not paint.
+                        scene.push_clip_layer(Fill::NonZero, transform, &box_rect);
+                        let brush = ImageBrush::new((*image).clone());
+                        scene.draw_image(
+                            brush.as_ref(),
+                            transform
+                                * Affine::translate((tx, ty))
+                                * Affine::scale_non_uniform(sx, sy),
+                        );
+                        scene.pop_layer();
+                    }
+                    None => {
+                        // A broken link is drawn, not skipped: a silently empty
+                        // frame is how a missing photograph reaches print.
+                        scene.fill(
+                            Fill::NonZero,
+                            transform,
+                            Color::from_rgba8(40, 26, 30, 255),
+                            None,
+                            &box_rect,
+                        );
+                        scene.stroke(
+                            &Stroke::new(1.5),
+                            transform,
+                            Color::from_rgba8(248, 113, 113, 220),
+                            None,
+                            &box_rect,
+                        );
+                        // Crossed diagonals, the universal "no image here".
+                        for line in [
+                            Line::new(
+                                (box_rect.x0, box_rect.y0),
+                                (box_rect.x1, box_rect.y1),
+                            ),
+                            Line::new(
+                                (box_rect.x1, box_rect.y0),
+                                (box_rect.x0, box_rect.y1),
+                            ),
+                        ] {
+                            scene.stroke(
+                                &Stroke::new(1.0),
+                                transform,
+                                Color::from_rgba8(248, 113, 113, 160),
+                                None,
+                                &line,
+                            );
+                        }
                     }
                 }
             }

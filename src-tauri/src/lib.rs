@@ -364,6 +364,93 @@ fn commit_frame_geometry(
     state.commit_frame_geometry(entity_id, old_transform, old_size, new_transform, new_size)
 }
 
+/// One linked image, as the asset panel needs to show it.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AssetSummary {
+    pub entity_id: u32,
+    pub path: String,
+    pub file_name: String,
+    pub natural_width: u32,
+    pub natural_height: u32,
+    /// Width the image occupies on the page, in points.
+    pub placed_width: f32,
+    /// Resolution the image actually prints at, given that placed width.
+    pub effective_ppi: f32,
+    pub fit: tessera_core::ImageFit,
+    /// "Ok" when the file resolves, "Missing" when it does not.
+    pub status: String,
+}
+
+/// Places an image file on the page, sized to its natural aspect ratio.
+///
+/// Dimensions are probed rather than decoded: the aspect ratio is all that is
+/// needed to size the frame, and decoding a large scan just to read its header
+/// would stall the placement.
+#[tauri::command]
+fn place_image(
+    path: String,
+    x: f32,
+    y: f32,
+    max_edge: Option<f32>,
+    state: State<AppState>,
+) -> Result<u32, String> {
+    let (width, height) = tessera_renderer::images::probe_dimensions(&path)?;
+    state.place_image(path, width, height, x, y, max_edge.unwrap_or(420.0))
+}
+
+/// Reads a frame's image link.
+#[tauri::command]
+fn get_image_source(
+    entity_id: u32,
+    state: State<AppState>,
+) -> Result<tessera_core::ImageSource, String> {
+    state.get_image_source(entity_id)
+}
+
+/// Changes how an image maps into its frame box.
+#[tauri::command]
+fn set_image_fit(
+    entity_id: u32,
+    fit: tessera_core::ImageFit,
+    state: State<AppState>,
+) -> Result<(), String> {
+    state.set_image_fit(entity_id, fit)
+}
+
+/// Points an existing image frame at a different file, keeping its box.
+#[tauri::command]
+fn relink_image(entity_id: u32, path: String, state: State<AppState>) -> Result<(), String> {
+    let (width, height) = tessera_renderer::images::probe_dimensions(&path)?;
+    state.relink_image(entity_id, path, width, height)
+}
+
+/// Every linked image, with the resolution it resolves to on the page.
+#[tauri::command]
+fn list_linked_assets(state: State<AppState>) -> Vec<AssetSummary> {
+    state
+        .linked_images()
+        .into_iter()
+        .map(|(entity_id, source, placed_width)| AssetSummary {
+            entity_id,
+            file_name: std::path::Path::new(&source.path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| source.path.clone()),
+            effective_ppi: source.effective_ppi(placed_width),
+            status: if std::path::Path::new(&source.path).is_file() {
+                "Ok".to_string()
+            } else {
+                "Missing".to_string()
+            },
+            placed_width,
+            path: source.path,
+            natural_width: source.natural_width,
+            natural_height: source.natural_height,
+            fit: source.fit,
+        })
+        .collect()
+}
+
 /// Shows or hides a layer from the Layers panel.
 #[tauri::command]
 fn set_layer_visibility(
@@ -689,6 +776,11 @@ pub fn run() {
             get_frame_text,
             set_frame_text,
             commit_frame_text,
+            place_image,
+            get_image_source,
+            set_image_fit,
+            relink_image,
+            list_linked_assets,
             set_layer_visibility,
             set_layer_locked,
             set_frame_z_index,

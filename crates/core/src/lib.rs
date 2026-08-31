@@ -1186,6 +1186,151 @@ impl AppState {
             .ok_or_else(|| format!("entity {entity_index} is not a text frame"))
     }
 
+    /// Places a linked image, sized to its natural aspect ratio.
+    ///
+    /// `max_edge` bounds the placed size so a 6000-pixel photograph does not
+    /// arrive filling the pasteboard; the aspect ratio is preserved, so the
+    /// frame is the shape of the picture rather than a square to crop later.
+    pub fn place_image(
+        &self,
+        path: String,
+        natural_width: u32,
+        natural_height: u32,
+        x: f32,
+        y: f32,
+        max_edge: f32,
+    ) -> Result<u32, String> {
+        if natural_width == 0 || natural_height == 0 {
+            return Err(format!("{path} has no pixels"));
+        }
+
+        let (nw, nh) = (natural_width as f32, natural_height as f32);
+        let scale = (max_edge / nw.max(nh)).min(1.0);
+        let size = Size {
+            width: (nw * scale).max(1.0),
+            height: (nh * scale).max(1.0),
+        };
+
+        let name = std::path::Path::new(&path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Image".to_string());
+
+        let entity_index = self.spawn_frame(
+            None,
+            name,
+            FrameType::Image,
+            Transform {
+                position: Position { x, y },
+                rotation: 0.0,
+                scale_x: 1.0,
+                scale_y: 1.0,
+            },
+            size,
+            Style {
+                // A picture frame has no fill of its own; the photograph is
+                // the fill, and a stroke would print as an unwanted keyline.
+                stroke_color: None,
+                ..Default::default()
+            },
+            None,
+        )?;
+
+        let mut world = self.world.write().map_err(|e| e.to_string())?;
+        world
+            .get_entity_mut(Entity::from_raw(entity_index))
+            .map_err(|_| format!("entity {entity_index} not found"))?
+            .insert(ImageSource {
+                path,
+                natural_width,
+                natural_height,
+                fit: ImageFit::default(),
+            });
+        drop(world);
+
+        self.increment_scene_revision();
+        Ok(entity_index)
+    }
+
+    /// Reads a frame's image link.
+    pub fn get_image_source(&self, entity_index: u32) -> Result<ImageSource, String> {
+        let world = self.world.read().map_err(|e| e.to_string())?;
+        world
+            .get_entity(Entity::from_raw(entity_index))
+            .map_err(|_| format!("entity {entity_index} not found"))?
+            .get::<ImageSource>()
+            .cloned()
+            .ok_or_else(|| format!("entity {entity_index} has no image link"))
+    }
+
+    /// Changes how an image maps into its frame box.
+    pub fn set_image_fit(&self, entity_index: u32, fit: ImageFit) -> Result<(), String> {
+        let mut world = self.world.write().map_err(|e| e.to_string())?;
+        let mut entity = world
+            .get_entity_mut(Entity::from_raw(entity_index))
+            .map_err(|_| format!("entity {entity_index} not found"))?;
+
+        let Some(mut source) = entity.get_mut::<ImageSource>() else {
+            return Err(format!("entity {entity_index} has no image link"));
+        };
+        source.fit = fit;
+        drop(world);
+
+        self.increment_scene_revision();
+        Ok(())
+    }
+
+    /// Points an existing image frame at a different file.
+    ///
+    /// The frame keeps its box: relinking is how a designer swaps a low-res
+    /// placeholder for the final scan without redoing the layout.
+    pub fn relink_image(
+        &self,
+        entity_index: u32,
+        path: String,
+        natural_width: u32,
+        natural_height: u32,
+    ) -> Result<(), String> {
+        let mut world = self.world.write().map_err(|e| e.to_string())?;
+        let mut entity = world
+            .get_entity_mut(Entity::from_raw(entity_index))
+            .map_err(|_| format!("entity {entity_index} not found"))?;
+
+        let Some(mut source) = entity.get_mut::<ImageSource>() else {
+            return Err(format!("entity {entity_index} has no image link"));
+        };
+        source.path = path;
+        source.natural_width = natural_width;
+        source.natural_height = natural_height;
+        drop(world);
+
+        self.increment_scene_revision();
+        Ok(())
+    }
+
+    /// Every linked image in the document, with the width it is placed at.
+    ///
+    /// The placed width is what turns a link into a resolution figure, which
+    /// is the number an asset panel and a preflight check both need.
+    pub fn linked_images(&self) -> Vec<(u32, ImageSource, f32)> {
+        let Ok(world) = self.world.read() else {
+            return Vec::new();
+        };
+        world
+            .iter_entities()
+            .filter_map(|e| {
+                let source = e.get::<ImageSource>()?;
+                let size = e.get::<Size>()?;
+                let transform = e.get::<Transform>()?;
+                Some((
+                    e.id().index(),
+                    source.clone(),
+                    size.width * transform.scale_x,
+                ))
+            })
+            .collect()
+    }
+
     /// Shows or hides a whole layer.
     ///
     /// The renderer already skips layers whose `is_visible` is false, so this
@@ -1974,6 +2119,121 @@ mod tests {
             depth,
             "a click that changed nothing must not leave an undo entry"
         );
+    }
+
+    #[test]
+    fn placing_an_image_keeps_its_aspect_ratio() {
+        let app_state = AppState::new();
+        // A 4000x3000 photograph is 4:3; bounded to 400 it must land at 400x300.
+        let id = app_state
+            .place_image("/photos/hero.jpg".to_string(), 4000, 3000, 20.0, 30.0, 400.0)
+            .expect("placing should succeed");
+
+        let (transform, size) = app_state.get_frame_geometry(id).unwrap();
+        assert_eq!(transform.position.x, 20.0);
+        assert_eq!(transform.position.y, 30.0);
+        assert_eq!(size.width, 400.0);
+        assert_eq!(size.height, 300.0);
+    }
+
+    #[test]
+    fn a_small_image_is_placed_at_its_natural_size() {
+        // Bounding must never scale an image up: a 64px icon placed at 400
+        // would be blurry, and nobody asked for that.
+        let app_state = AppState::new();
+        let id = app_state
+            .place_image("/icons/mark.png".to_string(), 64, 64, 0.0, 0.0, 400.0)
+            .unwrap();
+
+        let (_, size) = app_state.get_frame_geometry(id).unwrap();
+        assert_eq!(size.width, 64.0);
+        assert_eq!(size.height, 64.0);
+    }
+
+    #[test]
+    fn placing_an_image_names_the_frame_after_the_file() {
+        let app_state = AppState::new();
+        let id = app_state
+            .place_image("/photos/cover-final.tif".to_string(), 100, 100, 0.0, 0.0, 400.0)
+            .unwrap();
+
+        let tree = app_state.get_document_tree().unwrap();
+        let frame = tree.pages[0].layers[0]
+            .frames
+            .iter()
+            .find(|f| f.id == id)
+            .unwrap();
+        assert_eq!(frame.name, "cover-final.tif");
+    }
+
+    #[test]
+    fn an_image_with_no_pixels_is_rejected() {
+        let app_state = AppState::new();
+        assert!(app_state
+            .place_image("/photos/broken.jpg".to_string(), 0, 0, 0.0, 0.0, 400.0)
+            .is_err());
+    }
+
+    #[test]
+    fn effective_ppi_falls_as_an_image_is_enlarged() {
+        // The prepress number: a 1200px image across 288pt (4 inches) is
+        // 300 PPI, and doubling the placed width halves that.
+        let source = ImageSource {
+            path: "/photos/hero.jpg".to_string(),
+            natural_width: 1200,
+            natural_height: 800,
+            fit: ImageFit::Fill,
+        };
+
+        assert!((source.effective_ppi(288.0) - 300.0).abs() < 0.01);
+        assert!((source.effective_ppi(576.0) - 150.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn relinking_keeps_the_frame_box() {
+        let app_state = AppState::new();
+        let id = app_state
+            .place_image("/photos/draft.jpg".to_string(), 400, 400, 10.0, 10.0, 200.0)
+            .unwrap();
+        let (_, before) = app_state.get_frame_geometry(id).unwrap();
+
+        app_state
+            .relink_image(id, "/photos/final.tif".to_string(), 6000, 6000)
+            .unwrap();
+
+        let (_, after) = app_state.get_frame_geometry(id).unwrap();
+        assert_eq!(before, after, "a relink must not resize the layout");
+
+        let source = app_state.get_image_source(id).unwrap();
+        assert_eq!(source.path, "/photos/final.tif");
+        assert_eq!(source.natural_width, 6000);
+    }
+
+    #[test]
+    fn linked_images_reports_every_link_with_its_placed_width() {
+        let app_state = AppState::new();
+        app_state
+            .place_image("/photos/a.jpg".to_string(), 800, 600, 0.0, 0.0, 400.0)
+            .unwrap();
+        app_state
+            .place_image("/photos/b.png".to_string(), 200, 200, 0.0, 0.0, 400.0)
+            .unwrap();
+        // A shape is not a link and must not appear.
+        spawn_test_rect(&app_state);
+
+        let links = app_state.linked_images();
+        assert_eq!(links.len(), 2);
+        assert!(links.iter().any(|(_, s, w)| s.path == "/photos/a.jpg" && *w == 400.0));
+        assert!(links.iter().any(|(_, s, w)| s.path == "/photos/b.png" && *w == 200.0));
+    }
+
+    #[test]
+    fn image_commands_reject_a_frame_with_no_link() {
+        let app_state = AppState::new();
+        let id = spawn_test_rect(&app_state);
+
+        assert!(app_state.get_image_source(id).is_err());
+        assert!(app_state.set_image_fit(id, ImageFit::Fit).is_err());
     }
 
     #[test]

@@ -1,3 +1,4 @@
+pub mod images;
 pub mod gpu;
 pub mod paint;
 pub mod scene;
@@ -416,6 +417,54 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, RenderElement::RectShape { width, .. } if *width == 40.0)),
             "an unapplied master must not render"
+        );
+    }
+
+    #[test]
+    fn a_linked_image_compiles_to_an_image_element() {
+        let app_state = AppState::new();
+        let id = app_state
+            .place_image("/photos/hero.jpg".to_string(), 1200, 800, 40.0, 40.0, 300.0)
+            .unwrap();
+
+        let scene = compile(&app_state);
+        let found = scene.elements.iter().find_map(|e| match e {
+            RenderElement::ImageFrame {
+                id: found,
+                path,
+                natural_width,
+                ..
+            } if *found == id => Some((path.clone(), *natural_width)),
+            _ => None,
+        });
+
+        assert_eq!(found, Some(("/photos/hero.jpg".to_string(), 1200)));
+    }
+
+    #[test]
+    fn an_image_frame_with_no_link_still_draws_its_box() {
+        // The placeholder a designer drags out before choosing a photograph
+        // has to be visible, or the frame would vanish until it is filled.
+        let app_state = AppState::new();
+        let id = app_state
+            .spawn_frame(
+                None,
+                "Empty picture box".to_string(),
+                FrameType::Image,
+                Transform::default(),
+                Size { width: 120.0, height: 90.0 },
+                Style::default(),
+                None,
+            )
+            .unwrap();
+
+        let scene = compile(&app_state);
+        assert!(
+            scene
+                .elements
+                .iter()
+                .any(|e| matches!(e, RenderElement::RectShape { id: f, .. } if *f == id)),
+            "an unlinked image frame should fall back to a plain box"
         );
     }
 

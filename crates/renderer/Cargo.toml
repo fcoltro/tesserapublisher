@@ -16,6 +16,10 @@ vello = { workspace = true }
 pollster = { workspace = true }
 raw-window-handle = { workspace = true }
 parley = "0.11"
+# Raster decoding for linked images. default-features off keeps the many
+# formats we do not accept (and their dependencies) out of the build; print
+# work is JPEG, PNG and TIFF, with WebP for proxies.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "tiff", "webp"] }
 
 # wgpu is declared per-platform purely to select graphics backends. The code
 # uses vello's re-export (`vello::wgpu`) rather than importing it directly, so

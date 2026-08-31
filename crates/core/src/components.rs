@@ -264,6 +264,54 @@ impl Default for Style {
     }
 }
 
+/// How a linked image maps into the frame box that holds it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ImageFit {
+    /// Scale until the frame is covered, cropping whatever overflows.
+    ///
+    /// The default because it is what a placed photograph almost always wants:
+    /// the frame is the crop the designer drew.
+    #[default]
+    Fill,
+    /// Scale until the whole image is visible, leaving the frame's remainder empty.
+    Fit,
+    /// Ignore the aspect ratio and stretch to the frame exactly.
+    Stretch,
+}
+
+/// A linked raster image.
+///
+/// Only the path is stored. Embedding the pixels would copy a 500 MB scan into
+/// the ECS, into every history snapshot that touches the frame, and into the
+/// save file — so the document references the file on disk and the renderer
+/// loads it on demand.
+#[derive(Component, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImageSource {
+    /// Absolute path to the file on disk.
+    pub path: String,
+    /// Pixel dimensions of the file itself, before any frame scaling.
+    ///
+    /// Kept here so effective resolution can be reported without decoding the
+    /// image again — a preflight check needs this for every link at once.
+    pub natural_width: u32,
+    pub natural_height: u32,
+    pub fit: ImageFit,
+}
+
+impl ImageSource {
+    /// Pixels per inch this image resolves to at a given placed width.
+    ///
+    /// The number prepress cares about: a 300 PPI scan placed at twice its
+    /// natural width prints at 150 PPI, and will look it.
+    pub fn effective_ppi(&self, placed_width: f32) -> f32 {
+        if placed_width <= 0.0 {
+            return 0.0;
+        }
+        // Document units are points, so 72 units make an inch.
+        self.natural_width as f32 / (placed_width / 72.0)
+    }
+}
+
 /// Bezier outline for [`FrameType::Path`] frames, as an SVG path string.
 ///
 /// Storing the outline as SVG keeps it serializable for save files and the IPC

@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use tessera_core::{
-    geometry, AppliedMaster, BelongsTo, BoundingBox, Document, Frame, FrameType, GuideAxis, Layer,
+    geometry, AppliedMaster, BelongsTo, BoundingBox, Document, Frame, FrameType, GuideAxis,
+    ImageSource, Layer,
     MasterOverride, Page, PageGuides, PagePlacement, PathData, RulerGuide, Size, SnapResult, Style,
     TextContent, TextThread, Transform, ZIndex,
 };
@@ -45,6 +46,24 @@ pub enum RenderElement {
         stroke_color: Option<[f32; 4]>,
         stroke_width: f32,
         corner_radius: f32,
+        is_selected: bool,
+    },
+    /// A linked raster image drawn into its frame box.
+    ///
+    /// Carries the path rather than pixels: the painter owns the decode cache,
+    /// so the compiled scene stays cheap to build and cheap to clone.
+    ImageFrame {
+        id: u32,
+        name: String,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        rotation: f32,
+        path: String,
+        natural_width: u32,
+        natural_height: u32,
+        fit: tessera_core::ImageFit,
         is_selected: bool,
     },
     EllipseShape {
@@ -336,6 +355,7 @@ impl SceneCompiler {
             style: Style,
             text_content: Option<TextContent>,
             path_data: Option<PathData>,
+            image: Option<ImageSource>,
         }
 
         let mut frame_list: Vec<FrameData> = world
@@ -349,6 +369,7 @@ impl SceneCompiler {
                 let style = e.get::<Style>()?;
                 let text_content = e.get::<TextContent>().cloned();
                 let path_data = e.get::<PathData>().cloned();
+                let image = e.get::<ImageSource>().cloned();
 
                 // Check layer visibility
                 if let Some(parent_link) = e.get::<BelongsTo>() {
@@ -367,6 +388,7 @@ impl SceneCompiler {
                     style: style.clone(),
                     text_content,
                     path_data,
+                    image,
                 })
             })
             .collect();
@@ -436,6 +458,7 @@ impl SceneCompiler {
                     style: style.clone(),
                     text_content: entity.get::<TextContent>().cloned(),
                     path_data,
+                    image: entity.get::<ImageSource>().cloned(),
                 });
             }
         }
@@ -624,20 +647,39 @@ impl SceneCompiler {
                     });
                 }
                 FrameType::Image => {
-                    elements.push(RenderElement::RectShape {
-                        id: f.id,
-                        name: f.frame.name.clone(),
-                        x: f.transform.position.x,
-                        y: f.transform.position.y,
-                        width: f.size.width * f.transform.scale_x,
-                        height: f.size.height * f.transform.scale_y,
-                        rotation: f.transform.rotation,
-                        fill_color: [0.15, 0.2, 0.3, 1.0],
-                        stroke_color: Some([0.4, 0.6, 0.9, 1.0]),
-                        stroke_width: 1.0,
-                        corner_radius: 4.0,
-                        is_selected: is_sel,
-                    });
+                    // A frame with no link yet still draws its box, so the
+                    // placeholder a designer dragged out is visible before the
+                    // photograph arrives.
+                    match &f.image {
+                        Some(source) => elements.push(RenderElement::ImageFrame {
+                            id: f.id,
+                            name: f.frame.name.clone(),
+                            x: f.transform.position.x,
+                            y: f.transform.position.y,
+                            width: f.size.width * f.transform.scale_x,
+                            height: f.size.height * f.transform.scale_y,
+                            rotation: f.transform.rotation,
+                            path: source.path.clone(),
+                            natural_width: source.natural_width,
+                            natural_height: source.natural_height,
+                            fit: source.fit,
+                            is_selected: is_sel,
+                        }),
+                        None => elements.push(RenderElement::RectShape {
+                            id: f.id,
+                            name: f.frame.name.clone(),
+                            x: f.transform.position.x,
+                            y: f.transform.position.y,
+                            width: f.size.width * f.transform.scale_x,
+                            height: f.size.height * f.transform.scale_y,
+                            rotation: f.transform.rotation,
+                            fill_color: [0.15, 0.2, 0.3, 1.0],
+                            stroke_color: Some([0.4, 0.6, 0.9, 1.0]),
+                            stroke_width: 1.0,
+                            corner_radius: 0.0,
+                            is_selected: is_sel,
+                        }),
+                    }
                 }
             }
 
