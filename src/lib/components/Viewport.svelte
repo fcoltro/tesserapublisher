@@ -546,8 +546,13 @@
     })();
 
     // The viewport box moves whenever the window or panels resize.
+    // Failures are swallowed rather than left as an unhandled rejection: a
+    // resize that arrives before the backend is ready is normal, and the next
+    // one will carry the same rectangle anyway.
     const observer = new ResizeObserver(() => {
-      syncViewport().then(requestRender);
+      syncViewport()
+        .then(requestRender)
+        .catch(() => {});
     });
     if (viewportEl) observer.observe(viewportEl);
 
