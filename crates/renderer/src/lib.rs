@@ -420,6 +420,56 @@ mod tests {
     }
 
     #[test]
+    fn a_rectangle_is_square_unless_its_style_asks_for_rounding() {
+        let app_state = AppState::new();
+        let square = app_state
+            .spawn_frame(
+                None,
+                "Square".to_string(),
+                FrameType::Rectangle,
+                Transform::default(),
+                Size { width: 50.0, height: 50.0 },
+                Style::default(),
+                None,
+            )
+            .unwrap();
+
+        let rounded = app_state
+            .spawn_frame(
+                None,
+                "Rounded".to_string(),
+                FrameType::Rectangle,
+                Transform::default(),
+                Size { width: 60.0, height: 60.0 },
+                Style {
+                    corner_radius: 12.0,
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+
+        let world = app_state.world.read().unwrap();
+        let scene = SceneCompiler::compile(&world, None, 1, &app_state.get_camera());
+
+        let radius_of = |wanted: u32| {
+            scene
+                .elements
+                .iter()
+                .find_map(|e| match e {
+                    RenderElement::RectShape { id, corner_radius, .. } if *id == wanted => {
+                        Some(*corner_radius)
+                    }
+                    _ => None,
+                })
+                .expect("frame should be in the scene")
+        };
+
+        assert_eq!(radius_of(square), 0.0, "a default rectangle must be square");
+        assert_eq!(radius_of(rounded), 12.0, "rounding must come from the style");
+    }
+
+    #[test]
     fn an_overridden_master_item_is_not_drawn_twice() {
         let app_state = AppState::new();
         let master = app_state

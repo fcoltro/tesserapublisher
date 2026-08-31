@@ -137,8 +137,10 @@ phase needs to edit; almost none of it is reachable from the interface. See
   delete (undoable via `DespawnFrame`).
 - [ ] **`TextContent` has no `tracking` field.** Required by the Typography
   Inspector below. Component change, then renderer support in `text.rs`.
-- [ ] **`Style` has no `corner_radius` field.** Required by the Vector
-  Inspector below. Component change, then renderer support in `paint.rs`.
+- [x] **`Style.corner_radius`** added. The renderer already drew a
+  `RoundedRect` but was fed a hardcoded 6.0, so every rectangle in the app
+  was rounded whether or not anyone asked. Rectangles are now square by
+  default and round only when the style says so.
 
 ## 1. State Synchronization (Svelte <-> Rust)
 - [ ] Global Svelte `$state` mirroring selection and active tool.

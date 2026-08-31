@@ -506,7 +506,7 @@ impl SceneCompiler {
                         fill_color: f.style.fill_color,
                         stroke_color: f.style.stroke_color,
                         stroke_width: f.style.stroke_width,
-                        corner_radius: 6.0,
+                        corner_radius: f.style.corner_radius,
                         is_selected: is_sel,
                     });
                 }

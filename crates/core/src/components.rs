@@ -246,6 +246,8 @@ pub struct Style {
     pub stroke_color: Option<[f32; 4]>,
     pub stroke_width: f32,
     pub opacity: f32,
+    /// Corner rounding in document units. Zero draws true square corners.
+    pub corner_radius: f32,
 }
 
 impl Default for Style {
@@ -255,6 +257,9 @@ impl Default for Style {
             stroke_color: Some([0.5, 0.55, 0.95, 1.0]),
             stroke_width: 1.5,
             opacity: 1.0,
+            // Square by default. A rectangle drawn in a layout tool is a
+            // rectangle; rounding is something the user asks for.
+            corner_radius: 0.0,
         }
     }
 }

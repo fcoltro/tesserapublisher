@@ -135,6 +135,7 @@ fn spawn_frame(
         stroke_color: Some([0.4, 0.6, 1.0, 1.0]),
         stroke_width: 1.5,
         opacity: 1.0,
+        ..Default::default()
     };
 
     state.spawn_frame(None, name, f_type, transform, size, style, text)
