@@ -1186,6 +1186,63 @@ impl AppState {
             .ok_or_else(|| format!("entity {entity_index} is not a text frame"))
     }
 
+    /// Reads a text frame's content and type settings.
+    pub fn get_frame_text(&self, entity_index: u32) -> Result<TextContent, String> {
+        let world = self.world.read().map_err(|e| e.to_string())?;
+        world
+            .get_entity(Entity::from_raw(entity_index))
+            .map_err(|_| format!("entity {entity_index} not found"))?
+            .get::<TextContent>()
+            .cloned()
+            .ok_or_else(|| format!("entity {entity_index} is not a text frame"))
+    }
+
+    /// Applies text and type settings directly, without recording history.
+    ///
+    /// The frame's bounding box is deliberately left alone: the box is the
+    /// geometry the user drew, and type reflows inside it. Shaping happens
+    /// when the scene is compiled, so bumping the revision is enough to make
+    /// the change visible.
+    pub fn set_frame_text(&self, entity_index: u32, text: TextContent) -> Result<(), String> {
+        let mut world = self.world.write().map_err(|e| e.to_string())?;
+        let mut entity = world
+            .get_entity_mut(Entity::from_raw(entity_index))
+            .map_err(|_| format!("entity {entity_index} not found"))?;
+
+        let Some(mut slot) = entity.get_mut::<TextContent>() else {
+            return Err(format!("entity {entity_index} is not a text frame"));
+        };
+        *slot = text;
+        drop(world);
+
+        self.increment_scene_revision();
+        Ok(())
+    }
+
+    /// Records a finished text or type edit as one undoable action.
+    pub fn commit_frame_text(
+        &self,
+        entity_index: u32,
+        old_text: TextContent,
+        new_text: TextContent,
+    ) -> Result<HistoryStatus, String> {
+        if old_text == new_text {
+            return self.get_history_status();
+        }
+
+        self.set_frame_text(entity_index, new_text.clone())?;
+
+        let mut history = self.history.lock().map_err(|e| e.to_string())?;
+        history.push(HistoryAction::UpdateText {
+            entity_index,
+            old_text,
+            new_text,
+        });
+        drop(history);
+
+        self.get_history_status()
+    }
+
     /// Reads a frame's paint settings.
     pub fn get_frame_style(&self, entity_index: u32) -> Result<Style, String> {
         let world = self.world.read().map_err(|e| e.to_string())?;
@@ -1810,6 +1867,58 @@ mod tests {
             depth,
             "a click that changed nothing must not leave an undo entry"
         );
+    }
+
+    #[test]
+    fn commit_frame_text_round_trips_through_undo_and_redo() {
+        let app_state = AppState::new();
+        let id = spawn_text_frame(&app_state, "Body");
+
+        let old = app_state
+            .get_frame_text(id)
+            .expect("a text frame should carry text content");
+        let new = TextContent {
+            font_size: 42.0,
+            text: "Changed".to_string(),
+            ..old.clone()
+        };
+
+        app_state
+            .commit_frame_text(id, old.clone(), new.clone())
+            .expect("commit should succeed");
+        assert_eq!(app_state.get_frame_text(id).unwrap().font_size, 42.0);
+
+        app_state.undo().unwrap();
+        assert_eq!(app_state.get_frame_text(id).unwrap(), old);
+
+        app_state.redo().unwrap();
+        assert_eq!(app_state.get_frame_text(id).unwrap(), new);
+    }
+
+    #[test]
+    fn set_frame_text_updates_without_touching_history() {
+        let app_state = AppState::new();
+        let id = spawn_text_frame(&app_state, "Body");
+        let depth = app_state.get_history_status().unwrap().undo_count;
+
+        let mut text = app_state.get_frame_text(id).unwrap();
+        text.font_size = 28.0;
+        app_state.set_frame_text(id, text).expect("set should succeed");
+
+        assert_eq!(app_state.get_frame_text(id).unwrap().font_size, 28.0);
+        assert_eq!(
+            app_state.get_history_status().unwrap().undo_count,
+            depth,
+            "the live path must not push an undo entry per tick"
+        );
+    }
+
+    #[test]
+    fn frame_text_commands_reject_a_frame_that_holds_no_text() {
+        let app_state = AppState::new();
+        let id = spawn_test_rect(&app_state);
+
+        assert!(app_state.get_frame_text(id).is_err());
     }
 
     #[test]

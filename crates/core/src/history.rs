@@ -41,6 +41,11 @@ pub enum HistoryAction {
         old_style: Style,
         new_style: Style,
     },
+    UpdateText {
+        entity_index: u32,
+        old_text: TextContent,
+        new_text: TextContent,
+    },
 }
 
 /// Immutable Undo/Redo stack powered by im::Vector
@@ -172,6 +177,18 @@ impl HistoryStack {
                     }
                 }
             }
+            HistoryAction::UpdateText {
+                entity_index,
+                old_text,
+                ..
+            } => {
+                let entity = Entity::from_raw(*entity_index);
+                if let Ok(mut mut_entity) = world.get_entity_mut(entity) {
+                    if let Some(mut t) = mut_entity.get_mut::<TextContent>() {
+                        *t = old_text.clone();
+                    }
+                }
+            }
         }
     }
 
@@ -240,6 +257,18 @@ impl HistoryStack {
                 if let Ok(mut mut_entity) = world.get_entity_mut(entity) {
                     if let Some(mut s) = mut_entity.get_mut::<Style>() {
                         *s = new_style.clone();
+                    }
+                }
+            }
+            HistoryAction::UpdateText {
+                entity_index,
+                new_text,
+                ..
+            } => {
+                let entity = Entity::from_raw(*entity_index);
+                if let Ok(mut mut_entity) = world.get_entity_mut(entity) {
+                    if let Some(mut t) = mut_entity.get_mut::<TextContent>() {
+                        *t = new_text.clone();
                     }
                 }
             }

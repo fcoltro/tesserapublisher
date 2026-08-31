@@ -131,7 +131,7 @@ phase needs to edit; almost none of it is reachable from the interface. See
 
 - [x] Mutation commands for `Style` (get/set/commit), wired to the existing
   `HistoryAction::UpdateStyle`, which until now had no producer.
-- [ ] Mutation commands for `TextContent` (get/set/commit) plus a new
+- [x] Mutation commands for `TextContent` (get/set/commit) plus the new
   `HistoryAction::UpdateText` variant.
 - [ ] Structure commands: layer visibility, layer lock, frame z-index, rename,
   delete (undoable via `DespawnFrame`).

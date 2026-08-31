@@ -3,7 +3,8 @@ pub mod state;
 
 use serde::{Deserialize, Serialize};
 use state::{
-    AppState, DocumentTreeSnapshot, FrameType, HitTestResult, Position, Size, Style, Transform,
+    AppState, DocumentTreeSnapshot, FrameType, HitTestResult, Position, Size, Style, TextContent,
+    Transform,
 };
 use render_host::RenderHost;
 use tauri::{Manager, State};
@@ -362,6 +363,33 @@ fn commit_frame_geometry(
     state.commit_frame_geometry(entity_id, old_transform, old_size, new_transform, new_size)
 }
 
+/// Reads a text frame's content and type settings for the inspector.
+#[tauri::command]
+fn get_frame_text(entity_id: u32, state: State<AppState>) -> Result<TextContent, String> {
+    state.get_frame_text(entity_id)
+}
+
+/// Live path for typography edits; does not record history.
+#[tauri::command]
+fn set_frame_text(
+    entity_id: u32,
+    text: TextContent,
+    state: State<AppState>,
+) -> Result<(), String> {
+    state.set_frame_text(entity_id, text)
+}
+
+/// Records a finished typography edit as a single undoable action.
+#[tauri::command]
+fn commit_frame_text(
+    entity_id: u32,
+    before: TextContent,
+    after: TextContent,
+    state: State<AppState>,
+) -> Result<HistoryStatus, String> {
+    state.commit_frame_text(entity_id, before, after)
+}
+
 /// Reads a frame's paint settings for the inspector.
 #[tauri::command]
 fn get_frame_style(entity_id: u32, state: State<AppState>) -> Result<Style, String> {
@@ -623,6 +651,9 @@ pub fn run() {
             get_frame_style,
             set_frame_style,
             commit_frame_style,
+            get_frame_text,
+            set_frame_text,
+            commit_frame_text,
             get_document_settings,
             set_document_settings,
             get_page_placements,
