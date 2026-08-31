@@ -165,12 +165,12 @@ until the editing surface is proven. Revisit after Phase 4.4.
 - [x] Input scrubbing component — drag a number label to change its value.
 
 ## 4. Layers and Pages Panels
-- [ ] **Layers Panel:** the ECS tree, with drag-and-drop reordering.
-- [ ] Visibility (eye) and lock (padlock) toggles. The renderer already honors
+- [x] **Layers Panel:** the ECS tree, with drag-and-drop reordering.
+- [x] Visibility (eye) and lock (padlock) toggles. The renderer already honors
   `Layer.is_visible` at `crates/renderer/src/scene.rs:318` — this needs only a
   setter command.
-- [ ] **Pages Panel:** visual grid of spreads and master pages.
-- [ ] Drag a master onto a page to apply it; drag to reorder pages.
+- [x] **Pages Panel:** visual grid of spreads and master pages.
+- [~] Drag a master onto a page to apply it. Reordering pages by drag is not implemented; pages are added and removed from the end.
 
 ## 5. Global Menus and Keyboard Shortcuts — DEFERRED BY DECISION
 - [ ] Native OS menu bar (File, Edit, Layout, Type, Object, View, Window).

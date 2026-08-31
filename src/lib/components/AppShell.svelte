@@ -9,6 +9,8 @@
   import { studio } from "$lib/state.svelte";
   import Viewport from "./Viewport.svelte";
   import Inspector from "./Inspector.svelte";
+  import LayersPanel from "./LayersPanel.svelte";
+  import PagesPanel from "./PagesPanel.svelte";
 
   // The camera controls live in the header but act on the canvas, which owns
   // the element they measure against. Binding the instance is how the header
@@ -63,8 +65,14 @@
   </header>
 
   <div class="viewport-layout">
-    <Viewport bind:this={viewport} />
-    <Inspector />
+    <div class="stage">
+      <Viewport bind:this={viewport} />
+      <PagesPanel />
+    </div>
+    <div class="rail">
+      <Inspector />
+      <LayersPanel />
+    </div>
   </div>
 </main>
 
@@ -263,10 +271,21 @@
   }
 
   /* Viewport Layout */
+  /* Fixed dock slots: the canvas and its pages strip on the left, the
+     inspector and layers rail on the right. */
   .viewport-layout {
     display: grid;
     grid-template-columns: 1fr 340px;
     gap: 1.25rem;
+    align-items: start;
+  }
+
+  .stage,
+  .rail {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    min-width: 0;
   }
 
   @media (max-width: 1080px) {
