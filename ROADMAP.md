@@ -144,7 +144,7 @@ phase needs to edit; almost none of it is reachable from the interface. See
   default and round only when the style says so.
 
 ## 1. State Synchronization (Svelte <-> Rust)
-- [ ] Global Svelte `$state` mirroring selection and active tool.
+- [x] Global Svelte `$state` mirroring selection and active tool.
 - [ ] Tauri `listen` inside `$effect` for backend-initiated changes. Today the
   frontend is pull-only and `src-tauri` never calls `emit`.
 - [ ] Debounced IPC for continuous inputs.
@@ -158,11 +158,11 @@ until the editing surface is proven. Revisit after Phase 4.4.
   since the native Vello surface sits behind a transparent webview.
 
 ## 3. The Context-Aware Property Inspector
-- [ ] Control panel keyed on the selected entity's `frame_type` via `$derived`.
-- [ ] **Typography Inspector** (Text frames only): family, style, size,
+- [x] Control panel keyed on the selected entity's `frame_type` via `$derived`.
+- [x] **Typography Inspector** (Text frames only): family, style, size,
   leading, tracking, paragraph alignment.
-- [ ] **Vector Inspector**: fill, stroke, stroke width, corner radius.
-- [ ] Input scrubbing component — drag a number label to change its value.
+- [x] **Vector Inspector**: fill, stroke, stroke width, corner radius.
+- [x] Input scrubbing component — drag a number label to change its value.
 
 ## 4. Layers and Pages Panels
 - [ ] **Layers Panel:** the ECS tree, with drag-and-drop reordering.

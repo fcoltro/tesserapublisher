@@ -8,7 +8,7 @@
    */
   import { studio } from "$lib/state.svelte";
   import Viewport from "./Viewport.svelte";
-  import SpawnPanel from "./SpawnPanel.svelte";
+  import Inspector from "./Inspector.svelte";
 
   // The camera controls live in the header but act on the canvas, which owns
   // the element they measure against. Binding the instance is how the header
@@ -64,7 +64,7 @@
 
   <div class="viewport-layout">
     <Viewport bind:this={viewport} />
-    <SpawnPanel />
+    <Inspector />
   </div>
 </main>
 
