@@ -120,10 +120,11 @@ These apply to every phase and are not "done" until shipping.
 
 ---
 
-# Phase 4: The DTP Interface & Workspace (Svelte 5) — IN PROGRESS
+# Phase 4: The DTP Interface & Workspace (Svelte 5) — CORE COMPLETE
 
-The backend is far ahead of the UI. The ECS already stores every property this
-phase needs to edit; almost none of it is reachable from the interface. See
+The approved scope — state sync, the property inspector, and the layers and
+pages panels — is built. Docking and native menus remain, deferred by
+decision. See
 `docs/superpowers/specs/2026-08-30-phase4-editing-surface-design.md` and
 `docs/superpowers/plans/2026-08-30-phase4-editing-surface.md`.
 
