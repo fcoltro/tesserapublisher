@@ -197,7 +197,12 @@ until the editing surface is proven. Revisit after Phase 4.4.
   decode and cached in memory, and a file rewritten on disk is re-read rather
   than served stale. Not yet a *disk* proxy cache, so the downscale is repeated
   on each application start.
-- [ ] Asset Manager panel: link status (Missing / Modified / OK), effective PPI.
+- [x] Asset Manager panel: link status and effective PPI, with a warning under
+  300 PPI and a relink action. Uses the native file dialog via
+  `tauri-plugin-dialog`.
+- [~] Link status distinguishes Ok and Missing. "Modified" is not surfaced in
+  the panel; the renderer re-reads a changed file automatically, so a stale
+  image never displays, but the panel does not announce that it happened.
 
 ## 2. Clipping Paths & Image Masking
 - [ ] Clipping masks in Vello so vector shapes mask contained rasters.

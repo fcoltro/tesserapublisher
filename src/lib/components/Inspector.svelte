@@ -13,9 +13,11 @@
   import TransformSection from "./inspector/TransformSection.svelte";
   import VectorSection from "./inspector/VectorSection.svelte";
   import TypographySection from "./inspector/TypographySection.svelte";
+  import ImageSection from "./inspector/ImageSection.svelte";
 
   let frame = $derived(studio.selectedFrame);
   let isText = $derived(frame?.frame_type === "Text");
+  let isImage = $derived(frame?.frame_type === "Image");
 
   const PRESETS: ColorPreset[] = ["cyan", "purple", "emerald", "amber"];
 
@@ -95,6 +97,12 @@
       <VectorSection entityId={frame.id} frameType={frame.frame_type} />
       {#if isText}
         <TypographySection entityId={frame.id} />
+      {/if}
+      {#if isImage}
+        <ImageSection
+          entityId={frame.id}
+          placedWidth={frame.size.width * frame.transform.scale_x}
+        />
       {/if}
     </div>
   {:else}

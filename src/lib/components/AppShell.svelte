@@ -10,6 +10,7 @@
   import Viewport from "./Viewport.svelte";
   import Inspector from "./Inspector.svelte";
   import LayersPanel from "./LayersPanel.svelte";
+  import AssetsPanel from "./AssetsPanel.svelte";
   import PagesPanel from "./PagesPanel.svelte";
 
   // The camera controls live in the header but act on the canvas, which owns
@@ -71,6 +72,7 @@
     </div>
     <div class="rail">
       <Inspector />
+      <AssetsPanel />
       <LayersPanel />
     </div>
   </div>

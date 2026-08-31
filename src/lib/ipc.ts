@@ -26,6 +26,9 @@ export type FrameType = "Rectangle" | "Ellipse" | "Text" | "Image" | "Line" | "P
 
 export type TextAlignment = "Start" | "Center" | "End" | "Justify";
 
+/** How a linked image maps into the frame box that holds it. */
+export type ImageFit = "Fill" | "Fit" | "Stretch";
+
 // ---------------------------------------------------------------------------
 // Component mirrors
 // ---------------------------------------------------------------------------
@@ -81,6 +84,29 @@ export interface TextContent {
   tracking: number;
   /** Lock every line onto the document's baseline grid. */
   snap_to_baseline: boolean;
+}
+
+/** A linked raster image. Only the path is stored, never the pixels. */
+export interface ImageSource {
+  path: string;
+  natural_width: number;
+  natural_height: number;
+  fit: ImageFit;
+}
+
+/** One linked image, as the assets panel shows it. */
+export interface AssetSummary {
+  entity_id: number;
+  path: string;
+  file_name: string;
+  natural_width: number;
+  natural_height: number;
+  /** Width the image occupies on the page, in points. */
+  placed_width: number;
+  /** Resolution the image actually prints at, given that placed width. */
+  effective_ppi: number;
+  fit: ImageFit;
+  status: "Ok" | "Missing";
 }
 
 /** A frame's geometry as carried over the IPC bridge. */
@@ -309,6 +335,24 @@ export const setFrameText = (entityId: number, text: TextContent) =>
 
 export const commitFrameText = (entityId: number, before: TextContent, after: TextContent) =>
   invoke<HistoryStatus>("commit_frame_text", { entityId, before, after });
+
+// ---------------------------------------------------------------------------
+// Commands — linked images
+// ---------------------------------------------------------------------------
+
+export const placeImage = (path: string, x: number, y: number, maxEdge?: number) =>
+  invoke<number>("place_image", { path, x, y, maxEdge });
+
+export const getImageSource = (entityId: number) =>
+  invoke<ImageSource>("get_image_source", { entityId });
+
+export const setImageFit = (entityId: number, fit: ImageFit) =>
+  invoke("set_image_fit", { entityId, fit });
+
+export const relinkImage = (entityId: number, path: string) =>
+  invoke("relink_image", { entityId, path });
+
+export const listLinkedAssets = () => invoke<AssetSummary[]>("list_linked_assets");
 
 // ---------------------------------------------------------------------------
 // Commands — structure

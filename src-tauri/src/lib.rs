@@ -740,6 +740,7 @@ fn clear_active_snap(state: State<AppState>) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         // Register Bevy ECS World wrapped in RwLock as Tauri managed state
         .manage(AppState::new())
         .manage(RenderHost::new())
