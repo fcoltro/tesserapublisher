@@ -145,9 +145,16 @@ phase needs to edit; almost none of it is reachable from the interface. See
 
 ## 1. State Synchronization (Svelte <-> Rust)
 - [x] Global Svelte `$state` mirroring selection and active tool.
-- [ ] Tauri `listen` inside `$effect` for backend-initiated changes. Today the
-  frontend is pull-only and `src-tauri` never calls `emit`.
-- [ ] Debounced IPC for continuous inputs.
+- [~] **Deferred with reason — push events have no producer yet.** Nothing in
+  the backend changes state on its own; every mutation is initiated by a
+  frontend command, so a listener would only hear events triggered by the
+  code that just refreshed. Revisit when Phase 6 preflight runs as a
+  background system and genuinely originates changes.
+- [x] Continuous inputs are handled by the live/commit split rather than a
+  debounce: scrubs stream through `set_*` and record one undo entry via
+  `commit_*` when the gesture ends.
+- [x] Revision-guarded refresh. The document tree is re-pulled only when the
+  scene revision moved, so a camera pan no longer re-renders every panel.
 
 ## 2. Dockable Panel Architecture — DEFERRED BY DECISION
 Fixed, resizable dock slots ship first; true floating/docking is postponed

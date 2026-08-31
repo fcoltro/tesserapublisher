@@ -127,27 +127,47 @@ class StudioState {
   }
 
   /**
-   * Re-reads document state from Rust and repaints.
+   * The scene revision behind the currently held document tree.
    *
-   * Call after any mutation. Pulls the whole document rather than patching,
-   * which is correct but not cheap — Phase 4.7 replaces the blanket pull with
-   * a scene-revision check.
+   * Rust bumps its revision on every mutation, so a matching value proves the
+   * document has not changed and the tree in hand is still correct.
    */
-  async invalidate() {
+  #treeRevision = -1;
+
+  /**
+   * Re-reads state from Rust and repaints.
+   *
+   * Camera and history are always pulled — they are two small reads and they
+   * change for reasons the revision does not track. The document tree is
+   * pulled only when the revision moved, because reassigning it re-renders
+   * every panel bound to it; doing that after a pure camera pan would make
+   * the whole UI churn for nothing.
+   *
+   * Pass `force` after a mutation whose revision bump might race this read.
+   */
+  async invalidate(force = false) {
     try {
-      const [history, camera, pages, settings, tree] = await Promise.all([
+      const [history, camera, revision] = await Promise.all([
         ipc.getHistoryStatus(),
         ipc.getCameraState(),
-        ipc.getPagePlacements(),
-        ipc.getDocumentSettings(),
-        ipc.queryDocumentTree(),
+        ipc.getSceneRevision(),
       ]);
       this.history = history;
       this.camera = camera;
-      this.pages = pages;
-      this.documentSettings = settings;
-      this.baselineGrid = settings.baseline_grid;
-      this.tree = tree;
+
+      if (force || revision !== this.#treeRevision) {
+        const [pages, settings, tree] = await Promise.all([
+          ipc.getPagePlacements(),
+          ipc.getDocumentSettings(),
+          ipc.queryDocumentTree(),
+        ]);
+        this.pages = pages;
+        this.documentSettings = settings;
+        this.baselineGrid = settings.baseline_grid;
+        this.tree = tree;
+        this.#treeRevision = revision;
+      }
+
       await this.repaint();
     } catch {
       // Backend not reachable yet. The next invalidate will pick it up.
