@@ -55,8 +55,19 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
     ui.heading("Properties");
     ui.separator();
 
-    let Some(id) = state.selection else {
+    if state.selection.is_empty() {
         ui.colored_label(Theme::TEXT_MUTED, "No selection");
+        return;
+    }
+
+    // Geometry fields edit one frame. With several selected there is no single
+    // value to show, and silently editing only the first would be worse than
+    // saying so.
+    let Some(id) = state.selection.single() else {
+        ui.colored_label(
+            Theme::TEXT_MUTED,
+            format!("{} objects selected", state.selection.len()),
+        );
         return;
     };
     let Some(frame) = state.document.frame(id).cloned() else {

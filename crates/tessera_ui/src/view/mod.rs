@@ -95,24 +95,21 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
 
             ui.separator();
 
-            let selected = state.selection;
-            let has_selection = selected.is_some();
-            let can_paste = state.clipboard.is_some();
+            let has_selection = !state.selection.is_empty();
+            let can_paste = !state.clipboard.is_empty();
 
             if ui
                 .add_enabled(has_selection, egui::Button::new("Cut"))
                 .clicked()
-                && let Some(id) = selected
             {
-                apply(state, Command::Cut(id));
+                apply(state, Command::CutSelection);
                 ui.close();
             }
             if ui
                 .add_enabled(has_selection, egui::Button::new("Copy"))
                 .clicked()
-                && let Some(id) = selected
             {
-                apply(state, Command::Copy(id));
+                apply(state, Command::CopySelection);
                 ui.close();
             }
             if ui
@@ -125,9 +122,13 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
             if ui
                 .add_enabled(has_selection, egui::Button::new("Duplicate"))
                 .clicked()
-                && let Some(id) = selected
             {
-                apply(state, Command::Duplicate(id));
+                apply(state, Command::DuplicateSelection);
+                ui.close();
+            }
+
+            if ui.button("Select All").clicked() {
+                state.selection.replace_all(state.document.paint_order());
                 ui.close();
             }
 
@@ -136,16 +137,14 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
             if ui
                 .add_enabled(has_selection, egui::Button::new("Delete"))
                 .clicked()
-                && let Some(id) = selected
             {
-                apply(state, Command::DeleteFrame(id));
+                apply(state, Command::DeleteSelection);
                 ui.close();
             }
         });
 
         ui.menu_button("Object", |ui| {
-            let selected = state.selection;
-            let has_selection = selected.is_some();
+            let has_selection = !state.selection.is_empty();
 
             for (label, how) in [
                 ("Bring to Front", ZMove::ToFront),
@@ -156,9 +155,8 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
                 if ui
                     .add_enabled(has_selection, egui::Button::new(label))
                     .clicked()
-                    && let Some(id) = selected
                 {
-                    apply(state, Command::MoveInZ(id, how));
+                    apply(state, Command::MoveSelectionInZ(how));
                     ui.close();
                 }
             }
@@ -200,21 +198,25 @@ fn accelerators(ui: &Ui, state: &mut TesseraApp) {
         apply(state, Command::Undo);
     }
 
-    // Clipboard and object operations, all needing a selection.
     if pressed(cmd, egui::Key::V) {
         apply(state, Command::Paste);
     }
-    let Some(id) = state.selection else {
+    if pressed(cmd, egui::Key::A) {
+        state.selection.replace_all(state.document.paint_order());
+    }
+
+    // Everything below needs something selected.
+    if state.selection.is_empty() {
         return;
-    };
+    }
     if pressed(cmd, egui::Key::X) {
-        apply(state, Command::Cut(id));
+        apply(state, Command::CutSelection);
     }
     if pressed(cmd, egui::Key::C) {
-        apply(state, Command::Copy(id));
+        apply(state, Command::CopySelection);
     }
     if pressed(cmd, egui::Key::D) {
-        apply(state, Command::Duplicate(id));
+        apply(state, Command::DuplicateSelection);
     }
 
     // Z-order, following InDesign's bracket chords.
@@ -225,7 +227,7 @@ fn accelerators(ui: &Ui, state: &mut TesseraApp) {
         (cmd_shift, egui::Key::OpenBracket, ZMove::ToBack),
     ] {
         if pressed(m, key) {
-            apply(state, Command::MoveInZ(id, how));
+            apply(state, Command::MoveSelectionInZ(how));
         }
     }
 }

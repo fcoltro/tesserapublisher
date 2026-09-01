@@ -60,7 +60,7 @@ pub struct TesseraApp {
     pub shaper: Shaper,
 
     pub view: ViewTransform,
-    pub selection: Option<FrameId>,
+    pub selection: crate::selection::Selection,
     pub active_tool: Tool,
     pub drag: Option<Drag>,
     /// The frame being edited on canvas, and its live buffer.
@@ -70,7 +70,8 @@ pub struct TesseraApp {
     pub dirty: bool,
     pub status: Option<Status>,
 
-    pub clipboard: Option<Clipboard>,
+    /// Every copied frame, so cutting four objects pastes four.
+    pub clipboard: Vec<Clipboard>,
     /// The pen tool's path under construction, if any.
     pub pen: Option<crate::pen::PenPath>,
 
@@ -87,14 +88,14 @@ impl TesseraApp {
             history: History::new(UNDO_LIMIT),
             shaper: Shaper::new(),
             view: ViewTransform::default(),
-            selection: None,
+            selection: crate::selection::Selection::default(),
             active_tool: Tool::Select,
             drag: None,
             editing: None,
             current_path: None,
             dirty: false,
             status: None,
-            clipboard: None,
+            clipboard: Vec::new(),
             pen: None,
             fitted: false,
         }
@@ -114,7 +115,7 @@ impl TesseraApp {
     /// inside the document, so nothing else needs replacing alongside it.
     pub fn replace_document(&mut self, document: Document) {
         self.document = document;
-        self.selection = None;
+        self.selection.clear();
         self.editing = None;
         self.drag = None;
     }

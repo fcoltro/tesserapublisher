@@ -55,7 +55,10 @@ fn the_milestone_0_sentence_holds() {
             height: 100.0,
         }),
     );
-    let rect_id = state.selection.expect("the new rectangle is selected");
+    let rect_id = state
+        .selection
+        .single()
+        .expect("the new rectangle is selected");
     apply(
         &mut state,
         Command::SetFill {
@@ -74,7 +77,10 @@ fn the_milestone_0_sentence_holds() {
             height: 60.0,
         }),
     );
-    let text_id = state.selection.expect("the new text frame is selected");
+    let text_id = state
+        .selection
+        .single()
+        .expect("the new text frame is selected");
     apply(
         &mut state,
         Command::SetText {
@@ -166,7 +172,7 @@ fn undo_reaches_back_through_the_whole_session() {
 
     apply(&mut state, Command::AddRectangle(bounds));
     apply(&mut state, Command::AddTextFrame(bounds));
-    let id = state.selection.expect("selected");
+    let id = state.selection.single().expect("selected");
     apply(
         &mut state,
         Command::SetText {
@@ -202,7 +208,7 @@ fn a_document_saved_then_exported_twice_produces_the_same_pdf() {
             height: 40.0,
         }),
     );
-    let id = state.selection.expect("selected");
+    let id = state.selection.single().expect("selected");
     apply(
         &mut state,
         Command::SetText {

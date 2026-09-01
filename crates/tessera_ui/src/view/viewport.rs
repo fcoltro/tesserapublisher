@@ -2,19 +2,23 @@
 
 use eframe::egui_wgpu;
 use egui::{Color32, Rect, Sense, Stroke, Ui};
-use tessera_geometry::{DocPoint, DocRect, ScreenPoint};
+use tessera_document::ids::FrameId;
+use tessera_geometry::{DocPoint, DocRect, ScreenPoint, ViewTransform};
 use tessera_text::edit::EditBuffer;
 
 use crate::app::TesseraApp;
 use crate::camera;
 use crate::command::{Command, apply};
 use crate::theme::Theme;
-use crate::tools::{Drag, Tool};
+use crate::tools::{Drag, DragKind, Tool};
 use crate::view::text_edit;
 use crate::view::vello_host::{self, VelloCallback};
 
 /// Minimum drag, in document units, before a click counts as a drawn frame.
 const MIN_DRAG: f64 = 2.0;
+/// How close, in screen pixels, a click must land to the pen's first anchor
+/// to be read as "close the path" rather than "add another point".
+const PEN_CLOSE_PX: f32 = 10.0;
 
 pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     let size = ui.available_size();
@@ -40,7 +44,6 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
         && let Some(texture_id) = vello_host::prepare_target(render_state, width, height)
     {
         let resolved = tessera_layout::resolve::resolve(&state.document, &mut state.shaper);
-
         let scene = tessera_render::scene::build_scene(
             &resolved,
             scaled_view(state, ppp),
@@ -66,15 +69,15 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
 
     // --- interface overlays, drawn by egui ON TOP of the document
     //
-    // Selection handles, the drag preview and the caret are interface, not
-    // document. Drawing them here rather than in Vello is what guarantees
-    // they can never appear in an exported PDF.
+    // Selection handles, the marquee, the drag preview and the caret are
+    // interface, not document. Drawing them here rather than in Vello is what
+    // guarantees they can never appear in an exported PDF.
     draw_overlays(ui, rect, state);
 }
 
-/// The scene transform in physical pixels, relative to the widget's origin.
-fn scaled_view(state: &TesseraApp, ppp: f32) -> tessera_geometry::ViewTransform {
-    tessera_geometry::ViewTransform {
+/// The scene transform in physical pixels.
+fn scaled_view(state: &TesseraApp, ppp: f32) -> ViewTransform {
+    ViewTransform {
         pan: state.view.pan,
         zoom: state.view.zoom * f64::from(ppp),
     }
@@ -97,33 +100,15 @@ fn doc_pos(state: &TesseraApp, rect: Rect, pos: egui::Pos2) -> DocPoint {
     state.view.screen_to_doc(local(rect, pos))
 }
 
+// --- input -----------------------------------------------------------------
+
 fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
-    // --- text editing takes priority: while a caret is live, keys are text
-    if let Some((id, buffer)) = state.editing.as_mut() {
-        let id = *id;
-        let changed = text_edit::handle_events(ui, buffer);
-        let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape));
-
-        if changed {
-            let text = buffer.story().text.clone();
-            // Live update without an undo entry per keystroke; the whole
-            // editing session becomes one undo step when it ends.
-            if let Some(tessera_document::nodes::FrameKind::Text { story }) =
-                state.document.frame(id).map(|f| f.kind.clone())
-                && let Some(s) = state.document.story_mut(story)
-            {
-                s.text = text;
-            }
-            state.dirty = true;
-        }
-
-        if escaped {
-            state.editing = None;
-        }
+    // Text editing takes priority: while a caret is live, keys are text.
+    if state.editing.is_some() {
+        editing_input(ui, state);
         return;
     }
 
-    // --- tool shortcuts (plain keys only, so menu accelerators cannot clash)
     let (picked_tool, delete_pressed) = ui.input(|i| {
         let picked = i
             .modifiers
@@ -136,20 +121,18 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
     if let Some(tool) = picked_tool {
         state.active_tool = tool;
     }
-    if delete_pressed && let Some(id) = state.selection {
-        apply(state, Command::DeleteFrame(id));
+    if delete_pressed && !state.selection.is_empty() {
+        apply(state, Command::DeleteSelection);
     }
 
     camera_input(ui, response, rect, state);
 
-    let space_held = ui.input(|i| i.key_down(egui::Key::Space));
-    if space_held {
+    if ui.input(|i| i.key_down(egui::Key::Space)) {
         return; // spacebar means pan, never draw
     }
 
     match state.active_tool {
-        Tool::Select => select_gesture(response, rect, state),
-        // The hand tool pans on a plain drag, so it never draws.
+        Tool::Select => select_gesture(ui, response, rect, state),
         Tool::Hand => {
             if response.dragged() {
                 let d = response.drag_delta();
@@ -161,8 +144,34 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
         _ => {}
     }
 
-    if response.double_clicked() {
+    if response.double_clicked() && state.active_tool == Tool::Select {
         begin_text_edit(response, rect, state);
+    }
+}
+
+fn editing_input(ui: &Ui, state: &mut TesseraApp) {
+    let Some((id, buffer)) = state.editing.as_mut() else {
+        return;
+    };
+    let id = *id;
+    let changed = text_edit::handle_events(ui, buffer);
+    let text = changed.then(|| buffer.story().text.clone());
+    let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape));
+
+    if let Some(text) = text {
+        // Live update without an undo entry per keystroke; the whole editing
+        // session became one undo step when it began.
+        if let Some(tessera_document::nodes::FrameKind::Text { story }) =
+            state.document.frame(id).map(|f| f.kind.clone())
+            && let Some(s) = state.document.story_mut(story)
+        {
+            s.text = text;
+        }
+        state.dirty = true;
+    }
+
+    if escaped {
+        state.editing = None;
     }
 }
 
@@ -187,78 +196,136 @@ fn camera_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
     }
 }
 
-fn select_gesture(response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
+// --- selection --------------------------------------------------------------
+
+fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
+    let extend = ui.input(|i| i.modifiers.shift);
+
     if response.drag_started()
         && let Some(pos) = response.interact_pointer_pos()
     {
         let at = doc_pos(state, rect, pos);
-        let hit = state.document.hit_test(at);
-        state.selection = hit;
-        state.drag = hit.and_then(|id| {
-            state.document.frame(id).map(|f| {
-                let mut d = Drag::new(at);
-                d.origin_bounds = Some(f.bounds);
-                d
-            })
-        });
+        match state.document.hit_test(at) {
+            // Dragging a frame that is already selected moves the whole
+            // selection; dragging an unselected one selects it first.
+            Some(hit) => {
+                if !state.selection.contains(hit) {
+                    if extend {
+                        state.selection.add(hit);
+                    } else {
+                        state.selection.set(hit);
+                    }
+                }
+                let origins = state
+                    .selection
+                    .iter()
+                    .filter_map(|id| state.document.frame(id).map(|f| (id, f.bounds)))
+                    .collect();
+                state.drag = Some(Drag::new(at, DragKind::Move { origins }));
+            }
+            // Dragging empty canvas rubber-bands.
+            None => state.drag = Some(Drag::new(at, DragKind::Marquee)),
+        }
     }
 
-    if response.dragged() {
-        if let (Some(drag), Some(pos)) = (state.drag.as_mut(), response.interact_pointer_pos()) {
-            drag.current = state.view.screen_to_doc(local(rect, pos));
+    if response.dragged()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        let at = state.view.screen_to_doc(local(rect, pos));
+        if let Some(drag) = state.drag.as_mut() {
+            drag.current = at;
         }
-        // Live move without recording undo per frame.
-        if let (Some(drag), Some(id)) = (state.drag, state.selection)
-            && let Some(origin) = drag.origin_bounds
+        // Live move, without recording undo per frame.
+        if let Some(Drag {
+            kind: DragKind::Move { origins },
+            ..
+        }) = state.drag.clone()
         {
-            let (dx, dy) = drag.delta();
-            if let Some(f) = state.document.frame_mut(id) {
-                f.bounds = DocRect {
-                    x: origin.x + dx,
-                    y: origin.y + dy,
-                    ..origin
-                };
+            let (dx, dy) = state.drag.as_ref().expect("just matched").delta();
+            for (id, origin) in origins {
+                if let Some(f) = state.document.frame_mut(id) {
+                    f.bounds = DocRect {
+                        x: origin.x + dx,
+                        y: origin.y + dy,
+                        ..origin
+                    };
+                }
             }
         }
     }
 
-    if response.drag_stopped() {
-        // One undo entry for the whole gesture: restore the original, record,
-        // then reapply. Otherwise a single drag would fill the undo stack.
-        if let (Some(drag), Some(id)) = (state.drag.take(), state.selection)
-            && let Some(origin) = drag.origin_bounds
-        {
-            let (dx, dy) = drag.delta();
-            let moved = DocRect {
-                x: origin.x + dx,
-                y: origin.y + dy,
-                ..origin
-            };
-            if let Some(f) = state.document.frame_mut(id) {
-                f.bounds = origin;
+    if response.drag_stopped()
+        && let Some(drag) = state.drag.take()
+    {
+        match drag.kind {
+            DragKind::Move { ref origins } => {
+                // One undo entry for the whole gesture: put everything back,
+                // then apply the move as a single command. Otherwise a drag
+                // would fill the undo stack frame by frame.
+                let (dx, dy) = drag.delta();
+                for (id, origin) in origins {
+                    if let Some(f) = state.document.frame_mut(*id) {
+                        f.bounds = *origin;
+                    }
+                }
+                if dx != 0.0 || dy != 0.0 {
+                    apply(state, Command::TranslateSelection { dx, dy });
+                }
             }
-            apply(state, Command::SetBounds { id, bounds: moved });
+            DragKind::Marquee => {
+                let area = drag.rect();
+                let caught: Vec<FrameId> = state
+                    .document
+                    .paint_order()
+                    .into_iter()
+                    .filter(|id| {
+                        state
+                            .document
+                            .frame(*id)
+                            .is_some_and(|f| area.intersects(f.bounds))
+                    })
+                    .collect();
+                if extend {
+                    for id in caught {
+                        state.selection.add(id);
+                    }
+                } else {
+                    state.selection.replace_all(caught);
+                }
+            }
+            DragKind::Draw => {}
         }
     }
 
     if response.clicked()
         && let Some(pos) = response.interact_pointer_pos()
     {
-        state.selection = state.document.hit_test(doc_pos(state, rect, pos));
+        match state.document.hit_test(doc_pos(state, rect, pos)) {
+            Some(hit) if extend => state.selection.toggle(hit),
+            Some(hit) => state.selection.set(hit),
+            // Clicking empty canvas clears, unless extending.
+            None if !extend => state.selection.clear(),
+            None => {}
+        }
     }
 }
+
+// --- drawing tools ----------------------------------------------------------
 
 fn draw_gesture(response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
     if response.drag_started()
         && let Some(pos) = response.interact_pointer_pos()
     {
-        state.drag = Some(Drag::new(doc_pos(state, rect, pos)));
+        state.drag = Some(Drag::new(doc_pos(state, rect, pos), DragKind::Draw));
     }
 
     if response.dragged()
-        && let (Some(drag), Some(pos)) = (state.drag.as_mut(), response.interact_pointer_pos())
+        && let Some(pos) = response.interact_pointer_pos()
     {
-        drag.current = state.view.screen_to_doc(local(rect, pos));
+        let at = state.view.screen_to_doc(local(rect, pos));
+        if let Some(drag) = state.drag.as_mut() {
+            drag.current = at;
+        }
     }
 
     if response.drag_stopped()
@@ -266,9 +333,9 @@ fn draw_gesture(response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
     {
         let bounds = drag.rect();
 
-        // A line is measured by its length, not by its bounding box: a
-        // perfectly horizontal line has zero height and a box test would
-        // silently discard it.
+        // A line is measured by its length, not its bounding box: a perfectly
+        // horizontal line has zero height, and a box test would silently
+        // discard it.
         let (dx, dy) = drag.delta();
         let too_small = if state.active_tool == Tool::Line {
             dx.hypot(dy) < MIN_DRAG
@@ -284,8 +351,7 @@ fn draw_gesture(response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
             Tool::Ellipse => apply(state, Command::AddEllipse(bounds)),
             Tool::Line => {
                 // Frame-local endpoints, so a line drawn bottom-left to
-                // top-right stays distinct from its mirror image — which a
-                // bounds-only representation would lose.
+                // top-right stays distinct from its mirror image.
                 let mut path = kurbo::BezPath::new();
                 path.move_to((drag.start.x - bounds.x, drag.start.y - bounds.y));
                 path.line_to((drag.current.x - bounds.x, drag.current.y - bounds.y));
@@ -293,7 +359,7 @@ fn draw_gesture(response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
             }
             Tool::Text => {
                 apply(state, Command::AddTextFrame(bounds));
-                if let Some(id) = state.selection {
+                if let Some(id) = state.selection.single() {
                     start_editing(state, id);
                 }
             }
@@ -302,16 +368,14 @@ fn draw_gesture(response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
     }
 }
 
-/// How close, in screen pixels, a click must land to the first anchor to be
-/// read as "close the path" rather than "add another point".
-const PEN_CLOSE_PX: f32 = 10.0;
+// --- the pen ----------------------------------------------------------------
 
-/// The pen: click for a corner, drag for a smooth point, click the first
-/// anchor to close, Enter or Escape to finish an open path.
+/// Click for a corner, drag for a smooth point, click the first anchor to
+/// close, Enter or Escape to finish an open path.
 fn pen_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
     let view = state.view;
-    // A fixed screen distance, converted to document units, so the target
-    // stays the same size on screen at every zoom level.
+    // A fixed screen distance converted to document units, so the close
+    // target stays the same size on screen at every zoom level.
     let close_dist = f64::from(PEN_CLOSE_PX) / view.zoom;
 
     if response.drag_started()
@@ -374,6 +438,8 @@ fn commit_pen(state: &mut TesseraApp) {
     apply(state, Command::AddPath(pen.bounds(), pen.to_bezpath()));
 }
 
+// --- text editing -----------------------------------------------------------
+
 fn begin_text_edit(response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
     let Some(pos) = response.interact_pointer_pos() else {
         return;
@@ -385,12 +451,12 @@ fn begin_text_edit(response: &egui::Response, rect: Rect, state: &mut TesseraApp
         state.document.frame(id).map(|f| f.kind.clone()),
         Some(tessera_document::nodes::FrameKind::Text { .. })
     ) {
-        state.selection = Some(id);
+        state.selection.set(id);
         start_editing(state, id);
     }
 }
 
-fn start_editing(state: &mut TesseraApp, id: tessera_document::ids::FrameId) {
+fn start_editing(state: &mut TesseraApp, id: FrameId) {
     let story = match state.document.frame(id).map(|f| f.kind.clone()) {
         Some(tessera_document::nodes::FrameKind::Text { story }) => story,
         _ => return,
@@ -403,6 +469,8 @@ fn start_editing(state: &mut TesseraApp, id: tessera_document::ids::FrameId) {
     state.history.record(&state.document);
     state.editing = Some((id, buffer));
 }
+
+// --- overlays ---------------------------------------------------------------
 
 fn draw_overlays(ui: &Ui, rect: Rect, state: &TesseraApp) {
     let painter = ui.painter_at(rect);
@@ -421,12 +489,13 @@ fn draw_overlays(ui: &Ui, rect: Rect, state: &TesseraApp) {
         )
     };
 
-    // Selection outline and corner handles.
-    if let Some(bounds) = state
-        .selection
-        .and_then(|id| state.document.frame(id))
-        .map(|f| f.bounds)
-    {
+    // Every selected frame gets an outline; only a lone selection gets
+    // handles, since a multiple selection has nothing single to resize yet.
+    let single = state.selection.single();
+    for id in state.selection.iter() {
+        let Some(bounds) = state.document.frame(id).map(|f| f.bounds) else {
+            continue;
+        };
         let r = doc_rect_to_screen(bounds);
         painter.rect_stroke(
             r,
@@ -434,18 +503,20 @@ fn draw_overlays(ui: &Ui, rect: Rect, state: &TesseraApp) {
             Stroke::new(1.0, Theme::SELECTION),
             egui::StrokeKind::Middle,
         );
-        let h = Theme::HANDLE_SIZE;
-        for corner in [
-            r.left_top(),
-            r.right_top(),
-            r.left_bottom(),
-            r.right_bottom(),
-        ] {
-            painter.rect_filled(
-                Rect::from_center_size(corner, egui::vec2(h, h)),
-                0.0,
-                Theme::SELECTION,
-            );
+        if single == Some(id) {
+            let h = Theme::HANDLE_SIZE;
+            for corner in [
+                r.left_top(),
+                r.right_top(),
+                r.left_bottom(),
+                r.right_bottom(),
+            ] {
+                painter.rect_filled(
+                    Rect::from_center_size(corner, egui::vec2(h, h)),
+                    0.0,
+                    Theme::SELECTION,
+                );
+            }
         }
     }
 
@@ -486,19 +557,32 @@ fn draw_overlays(ui: &Ui, rect: Rect, state: &TesseraApp) {
         }
     }
 
-    // In-progress draw gesture.
-    if let Some(drag) = state.drag
-        && drag.origin_bounds.is_none()
-    {
-        painter.rect_stroke(
-            doc_rect_to_screen(drag.rect()),
-            0.0,
-            Stroke::new(1.0, Theme::ACCENT),
-            egui::StrokeKind::Middle,
-        );
+    // The gesture in progress.
+    if let Some(drag) = &state.drag {
+        match drag.kind {
+            DragKind::Draw => {
+                painter.rect_stroke(
+                    doc_rect_to_screen(drag.rect()),
+                    0.0,
+                    Stroke::new(1.0, Theme::ACCENT),
+                    egui::StrokeKind::Middle,
+                );
+            }
+            DragKind::Marquee => {
+                let r = doc_rect_to_screen(drag.rect());
+                painter.rect_filled(r, 0.0, Theme::SELECTION.gamma_multiply(0.15));
+                painter.rect_stroke(
+                    r,
+                    0.0,
+                    Stroke::new(1.0, Theme::SELECTION),
+                    egui::StrokeKind::Middle,
+                );
+            }
+            DragKind::Move { .. } => {}
+        }
     }
 
-    // Text caret. Blinks off the context's own clock so it needs no timer.
+    // Text caret, blinking off the context's own clock so it needs no timer.
     if let Some((id, _)) = &state.editing
         && let Some(bounds) = state.document.frame(*id).map(|f| f.bounds)
     {
@@ -509,8 +593,7 @@ fn draw_overlays(ui: &Ui, rect: Rect, state: &TesseraApp) {
             Stroke::new(1.0, Theme::ACCENT),
             egui::StrokeKind::Middle,
         );
-        let on = ui.input(|i| i.time).rem_euclid(1.0) < 0.5;
-        if on {
+        if ui.input(|i| i.time).rem_euclid(1.0) < 0.5 {
             painter.line_segment(
                 [r.left_top(), r.left_bottom()],
                 Stroke::new(1.5, Theme::TEXT_PRIMARY),

@@ -246,7 +246,7 @@ mod tests {
         let path = temp("text_cycle.tessera");
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddTextFrame(bounds()));
-        let id = state.selection.expect("selected");
+        let id = state.selection.single().expect("selected");
         apply(
             &mut state,
             Command::SetText {

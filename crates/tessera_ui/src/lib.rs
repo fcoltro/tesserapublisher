@@ -10,6 +10,7 @@ pub mod command;
 pub mod file_ops;
 pub mod icons;
 pub mod pen;
+pub mod selection;
 pub mod theme;
 pub mod tools;
 pub mod view;

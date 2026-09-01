@@ -38,6 +38,17 @@ impl DocRect {
         p.x >= self.x && p.x <= self.x + self.width && p.y >= self.y && p.y <= self.y + self.height
     }
 
+    /// Whether two rectangles overlap at all.
+    ///
+    /// Touching edges count as overlapping, so a marquee dragged exactly to an
+    /// object's edge still catches it.
+    pub fn intersects(&self, other: DocRect) -> bool {
+        self.x <= other.x + other.width
+            && other.x <= self.x + self.width
+            && self.y <= other.y + other.height
+            && other.y <= self.y + self.height
+    }
+
     pub fn to_kurbo(self) -> kurbo::Rect {
         kurbo::Rect::new(self.x, self.y, self.x + self.width, self.y + self.height)
     }
@@ -80,5 +91,77 @@ mod tests {
         };
         let k = r.to_kurbo();
         assert_eq!((k.x0, k.y0, k.x1, k.y1), (10.0, 20.0, 40.0, 60.0));
+    }
+
+    #[test]
+    fn overlapping_rects_intersect() {
+        let a = DocRect {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        let b = DocRect {
+            x: 5.0,
+            y: 5.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        assert!(a.intersects(b));
+        assert!(b.intersects(a), "intersection is symmetric");
+    }
+
+    #[test]
+    fn separated_rects_do_not_intersect() {
+        let a = DocRect {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        let b = DocRect {
+            x: 20.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        assert!(!a.intersects(b));
+    }
+
+    #[test]
+    fn a_contained_rect_intersects_its_container() {
+        let outer = DocRect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+        };
+        let inner = DocRect {
+            x: 10.0,
+            y: 10.0,
+            width: 5.0,
+            height: 5.0,
+        };
+        assert!(outer.intersects(inner));
+    }
+
+    #[test]
+    fn touching_edges_count_as_intersecting() {
+        let a = DocRect {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        let b = DocRect {
+            x: 10.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        assert!(
+            a.intersects(b),
+            "a marquee dragged to an edge must catch it"
+        );
     }
 }

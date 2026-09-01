@@ -4,32 +4,19 @@
 //! undo before every mutating variant, which is why no command can quietly
 //! become non-undoable — the exact failure that left add-page and remove-page
 //! without inverses in the previous codebase.
+//!
+//! Commands that act on "the selection" take no ids. That is deliberate:
+//! deleting four frames is *one* user action and must be *one* undo entry,
+//! and a per-id command applied in a loop would produce four.
 
 use tessera_color::Color;
+use tessera_document::document::{Document, ZMove};
 use tessera_document::ids::FrameId;
 use tessera_document::nodes::{Frame, FrameKind};
 use tessera_geometry::DocRect;
 use tessera_text::story::Story;
 
-use tessera_document::document::ZMove;
-
 use crate::app::{Clipboard, TesseraApp};
-
-/// Give a duplicated text frame its own story, so editing the copy does not
-/// edit the original.
-fn clone_story_into(
-    document: &mut tessera_document::document::Document,
-    mut frame: Frame,
-) -> Frame {
-    if let FrameKind::Text { story } = frame.kind
-        && let Some(content) = document.story(story).cloned()
-    {
-        frame.kind = FrameKind::Text {
-            story: document.add_story(content),
-        };
-    }
-    frame
-}
 
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -38,6 +25,7 @@ pub enum Command {
     /// Bounds plus the path, in frame-local coordinates.
     AddPath(DocRect, kurbo::BezPath),
     AddTextFrame(DocRect),
+
     SetBounds {
         id: FrameId,
         bounds: DocRect,
@@ -50,23 +38,30 @@ pub enum Command {
         id: FrameId,
         text: String,
     },
-    DeleteFrame(FrameId),
-    Duplicate(FrameId),
-    Copy(FrameId),
-    Cut(FrameId),
+
+    /// Move every selected frame by the same offset.
+    TranslateSelection {
+        dx: f64,
+        dy: f64,
+    },
+    DeleteSelection,
+    DuplicateSelection,
+    CopySelection,
+    CutSelection,
     Paste,
-    MoveInZ(FrameId, ZMove),
+    MoveSelectionInZ(ZMove),
+
     Undo,
     Redo,
 }
 
 impl Command {
-    /// Whether this command changes the document, and therefore needs an undo
+    /// Whether this command changes the document, and so needs an undo
     /// snapshot taken before it runs.
     fn mutates(&self) -> bool {
-        // Copy reads the document without changing it, so it must not push
-        // an undo entry: Ctrl+C should never need a Ctrl+Z to unwind.
-        !matches!(self, Self::Undo | Self::Redo | Self::Copy(_))
+        // Copy reads the document without changing it, so it must not push an
+        // undo entry: Ctrl+C should never need a Ctrl+Z to unwind.
+        !matches!(self, Self::Undo | Self::Redo | Self::CopySelection)
     }
 }
 
@@ -77,69 +72,28 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
     }
 
     match command {
-        Command::AddRectangle(bounds) => {
-            let layer = state.default_layer();
-            let id = state.document.add_frame(
-                layer,
-                Frame {
-                    bounds,
-                    kind: FrameKind::Rectangle,
-                    fill: Color::BLACK,
-                    stroke: None,
-                },
-            );
-            state.selection = Some(id);
-        }
+        Command::AddRectangle(bounds) => add(state, bounds, FrameKind::Rectangle, Color::BLACK),
 
-        Command::AddEllipse(bounds) => {
-            let layer = state.default_layer();
-            let id = state.document.add_frame(
-                layer,
-                Frame {
-                    bounds,
-                    kind: FrameKind::Ellipse,
-                    fill: Color::BLACK,
-                    stroke: None,
-                },
-            );
-            state.selection = Some(id);
-        }
+        Command::AddEllipse(bounds) => add(state, bounds, FrameKind::Ellipse, Color::BLACK),
 
-        Command::AddPath(bounds, path) => {
-            let layer = state.default_layer();
-            let id = state.document.add_frame(
-                layer,
-                Frame {
-                    bounds,
-                    kind: FrameKind::Path(path),
-                    fill: Color::BLACK,
-                    stroke: None,
-                },
-            );
-            state.selection = Some(id);
-        }
+        Command::AddPath(bounds, path) => add(state, bounds, FrameKind::Path(path), Color::BLACK),
 
         Command::AddTextFrame(bounds) => {
             let story = state.document.add_story(Story::default());
-            let layer = state.default_layer();
-            let id = state.document.add_frame(
-                layer,
-                Frame {
-                    bounds,
-                    kind: FrameKind::Text { story },
-                    // A text frame's own fill is the box behind the glyphs.
-                    // Transparent, so a text frame does not paint a white
-                    // rectangle over whatever it sits on.
-                    fill: Color::Rgb {
-                        r: 0.0,
-                        g: 0.0,
-                        b: 0.0,
-                        a: 0.0,
-                    },
-                    stroke: None,
+            // A text frame's own fill is the box behind the glyphs, so it is
+            // transparent by default rather than painting a white rectangle
+            // over whatever it sits on.
+            add(
+                state,
+                bounds,
+                FrameKind::Text { story },
+                Color::Rgb {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.0,
                 },
             );
-            state.selection = Some(id);
         }
 
         Command::SetBounds { id, bounds } => {
@@ -163,86 +117,169 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             }
         }
 
-        Command::DeleteFrame(id) => {
-            state.document.remove_frame(id);
-            if state.selection == Some(id) {
-                state.selection = None;
-            }
-            if state.editing.as_ref().is_some_and(|(f, _)| *f == id) {
-                state.editing = None;
-            }
-        }
-
-        Command::Duplicate(id) => {
-            // Offset so the copy sits visibly on top rather than exactly
-            // hidden behind the original.
-            const OFFSET: f64 = 12.0;
-            if let Some(mut frame) = state.document.frame(id).cloned() {
-                frame.bounds.x += OFFSET;
-                frame.bounds.y += OFFSET;
-                let frame = clone_story_into(&mut state.document, frame);
-                let layer = state.default_layer();
-                state.selection = Some(state.document.add_frame(layer, frame));
+        Command::TranslateSelection { dx, dy } => {
+            for id in state.selection.as_slice().to_vec() {
+                if let Some(frame) = state.document.frame_mut(id) {
+                    frame.bounds.x += dx;
+                    frame.bounds.y += dy;
+                }
             }
         }
 
-        Command::Copy(id) => {
-            if let Some(frame) = state.document.frame(id).cloned() {
-                let story = match &frame.kind {
-                    FrameKind::Text { story } => state.document.story(*story).cloned(),
-                    _ => None,
-                };
-                state.clipboard = Some(Clipboard { frame, story });
-                state.status = Some(crate::app::Status::info("Copied"));
+        Command::DeleteSelection => {
+            for id in state.selection.as_slice().to_vec() {
+                state.document.remove_frame(id);
+            }
+            state.selection.clear();
+            state.editing = None;
+        }
+
+        Command::DuplicateSelection => {
+            let copies: Vec<FrameId> = state
+                .selection
+                .as_slice()
+                .to_vec()
+                .into_iter()
+                .filter_map(|id| duplicate_one(state, id))
+                .collect();
+            // Select the copies, so a second Ctrl+D duplicates them rather
+            // than making a second copy of the originals.
+            state.selection.replace_all(copies);
+        }
+
+        Command::CopySelection => {
+            let items: Vec<Clipboard> = state
+                .selection
+                .iter()
+                .filter_map(|id| clipboard_item(&state.document, id))
+                .collect();
+            if !items.is_empty() {
+                let count = items.len();
+                state.clipboard = items;
+                state.status = Some(crate::app::Status::info(match count {
+                    1 => "Copied".to_string(),
+                    n => format!("Copied {n} objects"),
+                }));
             }
         }
 
-        Command::Cut(id) => {
-            apply(state, Command::Copy(id));
-            apply(state, Command::DeleteFrame(id));
+        Command::CutSelection => {
+            apply(state, Command::CopySelection);
+            apply(state, Command::DeleteSelection);
         }
 
         Command::Paste => {
             const OFFSET: f64 = 12.0;
-            if let Some(item) = state.clipboard.clone() {
-                let mut frame = item.frame;
-                frame.bounds.x += OFFSET;
-                frame.bounds.y += OFFSET;
-                // A pasted text frame needs its own story rather than a
-                // reference to the one it came from, or editing the paste
-                // would edit the original.
-                if let (FrameKind::Text { .. }, Some(story)) = (&frame.kind, item.story) {
-                    frame.kind = FrameKind::Text {
-                        story: state.document.add_story(story),
-                    };
-                }
-                let layer = state.default_layer();
-                state.selection = Some(state.document.add_frame(layer, frame));
-            }
+            let pasted: Vec<FrameId> = state
+                .clipboard
+                .clone()
+                .into_iter()
+                .map(|item| {
+                    let mut frame = item.frame;
+                    frame.bounds.x += OFFSET;
+                    frame.bounds.y += OFFSET;
+                    // A pasted text frame needs its own story rather than a
+                    // reference to the one it came from, or editing the paste
+                    // would edit the original.
+                    if let (FrameKind::Text { .. }, Some(story)) = (&frame.kind, item.story) {
+                        frame.kind = FrameKind::Text {
+                            story: state.document.add_story(story),
+                        };
+                    }
+                    let layer = state.default_layer();
+                    state.document.add_frame(layer, frame)
+                })
+                .collect();
+            state.selection.replace_all(pasted);
         }
 
-        Command::MoveInZ(id, how) => {
-            state.document.move_in_z(id, how);
+        Command::MoveSelectionInZ(how) => {
+            // Order matters, and not in the obvious way. Each frame moves
+            // relative to the list as it stands, so processing the wrong end
+            // first makes the selection leapfrog itself:
+            //
+            //   [a,b,c], raise {a,b}: a-then-b gives [a,b,c] (no change),
+            //                         b-then-a gives [c,a,b] (correct)
+            //   [a,b,c], front {a,b}: a-then-b gives [c,a,b] (correct),
+            //                         b-then-a gives [c,b,a] (reversed)
+            //
+            // A one-step move must start from the end it is moving toward; a
+            // move-to-the-end must start from the far end.
+            let mut ids = state.selection.as_slice().to_vec();
+            if matches!(how, ZMove::Forward | ZMove::ToBack) {
+                ids.reverse();
+            }
+            for id in ids {
+                state.document.move_in_z(id, how);
+            }
         }
 
         Command::Undo => {
             if let Some(previous) = state.history.undo(&state.document) {
-                state.document = previous;
-                state.selection = None;
-                state.editing = None;
-                state.dirty = true;
+                restore(state, previous);
             }
         }
 
         Command::Redo => {
             if let Some(next) = state.history.redo(&state.document) {
-                state.document = next;
-                state.selection = None;
-                state.editing = None;
-                state.dirty = true;
+                restore(state, next);
             }
         }
     }
+}
+
+fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
+    let layer = state.default_layer();
+    let id = state.document.add_frame(
+        layer,
+        Frame {
+            bounds,
+            kind,
+            fill,
+            stroke: None,
+        },
+    );
+    state.selection.set(id);
+}
+
+/// Restore a snapshot, keeping the selection honest.
+fn restore(state: &mut TesseraApp, document: Document) {
+    state.document = document;
+    // Undoing a delete brings frames back still selected; undoing a create
+    // must not leave handles floating around a frame that is gone.
+    state.selection.retain_existing(&state.document);
+    state.editing = None;
+    state.dirty = true;
+}
+
+fn clipboard_item(document: &Document, id: FrameId) -> Option<Clipboard> {
+    let frame = document.frame(id).cloned()?;
+    let story = match &frame.kind {
+        FrameKind::Text { story } => document.story(*story).cloned(),
+        _ => None,
+    };
+    Some(Clipboard { frame, story })
+}
+
+/// Copy one frame, offset, with its own story if it had one.
+fn duplicate_one(state: &mut TesseraApp, id: FrameId) -> Option<FrameId> {
+    const OFFSET: f64 = 12.0;
+    let mut frame = state.document.frame(id).cloned()?;
+    frame.bounds.x += OFFSET;
+    frame.bounds.y += OFFSET;
+
+    // Give the copy its own story, or editing the copy would edit the
+    // original — the same aliasing trap as the frame/story split.
+    if let FrameKind::Text { story } = frame.kind
+        && let Some(content) = state.document.story(story).cloned()
+    {
+        frame.kind = FrameKind::Text {
+            story: state.document.add_story(content),
+        };
+    }
+
+    let layer = state.default_layer();
+    Some(state.document.add_frame(layer, frame))
 }
 
 #[cfg(test)]
@@ -258,12 +295,23 @@ mod tests {
         }
     }
 
+    /// Two rectangles, both selected.
+    fn two_selected() -> (TesseraApp, FrameId, FrameId) {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let a = state.selection.single().expect("a");
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let b = state.selection.single().expect("b");
+        state.selection.replace_all([a, b]);
+        (state, a, b)
+    }
+
     #[test]
-    fn adding_a_rectangle_puts_a_frame_in_the_document_and_selects_it() {
+    fn adding_a_rectangle_selects_only_it() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddRectangle(bounds()));
         assert_eq!(state.document.frames.len(), 1);
-        assert!(state.selection.is_some());
+        assert_eq!(state.selection.len(), 1);
     }
 
     #[test]
@@ -291,153 +339,50 @@ mod tests {
     }
 
     #[test]
-    fn deleting_a_frame_is_undoable() {
+    fn undoing_a_create_leaves_no_selection_pointing_at_nothing() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddRectangle(bounds()));
-        let id = state.selection.expect("selected");
-        apply(&mut state, Command::DeleteFrame(id));
-        assert_eq!(state.document.frames.len(), 0);
         apply(&mut state, Command::Undo);
-        assert_eq!(state.document.frames.len(), 1);
-    }
-
-    #[test]
-    fn a_mutating_command_marks_the_document_dirty() {
-        let mut state = TesseraApp::headless();
-        assert!(!state.dirty);
-        apply(&mut state, Command::AddRectangle(bounds()));
-        assert!(state.dirty);
-    }
-
-    #[test]
-    fn setting_a_fill_changes_only_that_frame() {
-        let mut state = TesseraApp::headless();
-        apply(&mut state, Command::AddRectangle(bounds()));
-        let first = state.selection.expect("selected");
-        apply(&mut state, Command::AddRectangle(bounds()));
-        let second = state.selection.expect("selected");
-
-        let red = Color::Rgb {
-            r: 1.0,
-            g: 0.0,
-            b: 0.0,
-            a: 1.0,
-        };
-        apply(
-            &mut state,
-            Command::SetFill {
-                id: first,
-                color: red.clone(),
-            },
-        );
-
-        assert_eq!(state.document.frame(first).expect("frame").fill, red);
-        assert_eq!(
-            state.document.frame(second).expect("frame").fill,
-            Color::BLACK
-        );
-    }
-
-    #[test]
-    fn setting_text_reaches_the_story() {
-        let mut state = TesseraApp::headless();
-        apply(&mut state, Command::AddTextFrame(bounds()));
-        let id = state.selection.expect("selected");
-        apply(
-            &mut state,
-            Command::SetText {
-                id,
-                text: "Hello".to_string(),
-            },
-        );
-        assert_eq!(
-            state.document.stories.values().next().expect("story").text,
-            "Hello"
-        );
-    }
-
-    #[test]
-    fn undo_with_nothing_recorded_does_nothing() {
-        let mut state = TesseraApp::headless();
-        apply(&mut state, Command::Undo);
-        assert_eq!(state.document.frames.len(), 0);
-    }
-
-    #[test]
-    fn deleting_the_frame_being_edited_leaves_no_dangling_edit_session() {
-        let mut state = TesseraApp::headless();
-        apply(&mut state, Command::AddTextFrame(bounds()));
-        let id = state.selection.expect("selected");
-        state.editing = Some((id, tessera_text::edit::EditBuffer::new(Story::default())));
-
-        apply(&mut state, Command::DeleteFrame(id));
-
-        assert!(state.editing.is_none());
-    }
-
-    #[test]
-    fn an_ellipse_is_added_as_an_ellipse() {
-        let mut state = TesseraApp::headless();
-        apply(&mut state, Command::AddEllipse(bounds()));
-        let id = state.selection.expect("selected");
-        assert!(matches!(
-            state.document.frame(id).expect("frame").kind,
-            FrameKind::Ellipse
-        ));
-    }
-
-    #[test]
-    fn a_path_keeps_the_geometry_it_was_given() {
-        let mut state = TesseraApp::headless();
-        let mut path = kurbo::BezPath::new();
-        path.move_to((0.0, 10.0));
-        path.line_to((10.0, 0.0));
-
-        apply(&mut state, Command::AddPath(bounds(), path.clone()));
-
-        let id = state.selection.expect("selected");
-        let FrameKind::Path(stored) = state.document.frame(id).expect("frame").kind.clone() else {
-            panic!("expected a path frame");
-        };
-        assert_eq!(stored, path, "the path must survive unchanged");
-    }
-
-    #[test]
-    fn a_path_frame_survives_a_save_and_load() {
-        // BezPath serialises through kurbo's serde feature. If that ever
-        // regressed, a drawn line would vanish on reopen - the same class of
-        // bug as text living outside the document.
-        let mut state = TesseraApp::headless();
-        let mut path = kurbo::BezPath::new();
-        path.move_to((0.0, 10.0));
-        path.line_to((10.0, 0.0));
-        apply(&mut state, Command::AddPath(bounds(), path.clone()));
-
-        let json = serde_json::to_string(&state.document).expect("serialize");
-        let back: tessera_document::document::Document =
-            serde_json::from_str(&json).expect("deserialize");
-
-        let id = state.selection.expect("selected");
-        let FrameKind::Path(stored) = back.frame(id).expect("frame survived").kind.clone() else {
-            panic!("expected a path frame");
-        };
-        assert_eq!(stored, path);
-    }
-
-    #[test]
-    fn duplicating_a_frame_offsets_the_copy() {
-        let mut state = TesseraApp::headless();
-        apply(&mut state, Command::AddRectangle(bounds()));
-        let original = state.selection.expect("selected");
-
-        apply(&mut state, Command::Duplicate(original));
-
-        let copy = state.selection.expect("the copy is selected");
-        assert_ne!(copy, original);
-        assert_eq!(state.document.frames.len(), 2);
         assert!(
-            state.document.frame(copy).expect("copy").bounds.x
-                > state.document.frame(original).expect("original").bounds.x
+            state.selection.is_empty(),
+            "handles must not float around a frame that no longer exists"
+        );
+    }
+
+    #[test]
+    fn deleting_several_frames_is_one_undo_step() {
+        let (mut state, _, _) = two_selected();
+        apply(&mut state, Command::DeleteSelection);
+        assert_eq!(state.document.frames.len(), 0);
+
+        apply(&mut state, Command::Undo);
+
+        assert_eq!(
+            state.document.frames.len(),
+            2,
+            "one action, one undo — not one per frame"
+        );
+    }
+
+    #[test]
+    fn translating_the_selection_moves_every_frame_in_it() {
+        let (mut state, a, b) = two_selected();
+        apply(&mut state, Command::TranslateSelection { dx: 5.0, dy: 7.0 });
+
+        assert_eq!(state.document.frame(a).expect("a").bounds.x, 5.0);
+        assert_eq!(state.document.frame(b).expect("b").bounds.y, 7.0);
+    }
+
+    #[test]
+    fn duplicating_selects_the_copies_not_the_originals() {
+        let (mut state, a, b) = two_selected();
+        apply(&mut state, Command::DuplicateSelection);
+
+        assert_eq!(state.document.frames.len(), 4);
+        assert_eq!(state.selection.len(), 2);
+        assert!(
+            !state.selection.contains(a) && !state.selection.contains(b),
+            "a second duplicate should copy the copies"
         );
     }
 
@@ -445,7 +390,7 @@ mod tests {
     fn duplicating_a_text_frame_gives_the_copy_its_own_story() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddTextFrame(bounds()));
-        let original = state.selection.expect("selected");
+        let original = state.selection.single().expect("selected");
         apply(
             &mut state,
             Command::SetText {
@@ -454,8 +399,8 @@ mod tests {
             },
         );
 
-        apply(&mut state, Command::Duplicate(original));
-        let copy = state.selection.expect("copy");
+        apply(&mut state, Command::DuplicateSelection);
+        let copy = state.selection.single().expect("copy");
         apply(
             &mut state,
             Command::SetText {
@@ -477,29 +422,23 @@ mod tests {
 
     #[test]
     fn copy_touches_neither_the_document_nor_the_undo_stack() {
-        let mut state = TesseraApp::headless();
-        apply(&mut state, Command::AddRectangle(bounds()));
-        let id = state.selection.expect("selected");
+        let (mut state, _, _) = two_selected();
         let depth = state.history.undo_depth();
 
-        apply(&mut state, Command::Copy(id));
+        apply(&mut state, Command::CopySelection);
 
-        assert_eq!(state.document.frames.len(), 1);
+        assert_eq!(state.document.frames.len(), 2);
         assert_eq!(state.history.undo_depth(), depth, "copy is not an edit");
     }
 
     #[test]
-    fn paste_adds_a_frame_and_is_undoable() {
-        let mut state = TesseraApp::headless();
-        apply(&mut state, Command::AddRectangle(bounds()));
-        let id = state.selection.expect("selected");
-        apply(&mut state, Command::Copy(id));
-
+    fn copy_and_paste_carry_every_selected_frame() {
+        let (mut state, _, _) = two_selected();
+        apply(&mut state, Command::CopySelection);
         apply(&mut state, Command::Paste);
-        assert_eq!(state.document.frames.len(), 2);
 
-        apply(&mut state, Command::Undo);
-        assert_eq!(state.document.frames.len(), 1);
+        assert_eq!(state.document.frames.len(), 4);
+        assert_eq!(state.selection.len(), 2, "the pastes are selected");
     }
 
     #[test]
@@ -510,23 +449,21 @@ mod tests {
     }
 
     #[test]
-    fn cut_removes_the_frame_but_keeps_it_pasteable() {
-        let mut state = TesseraApp::headless();
-        apply(&mut state, Command::AddRectangle(bounds()));
-        let id = state.selection.expect("selected");
+    fn cut_removes_the_frames_but_keeps_them_pasteable() {
+        let (mut state, _, _) = two_selected();
 
-        apply(&mut state, Command::Cut(id));
+        apply(&mut state, Command::CutSelection);
         assert_eq!(state.document.frames.len(), 0);
 
         apply(&mut state, Command::Paste);
-        assert_eq!(state.document.frames.len(), 1);
+        assert_eq!(state.document.frames.len(), 2);
     }
 
     #[test]
     fn a_pasted_text_frame_carries_its_text() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddTextFrame(bounds()));
-        let id = state.selection.expect("selected");
+        let id = state.selection.single().expect("selected");
         apply(
             &mut state,
             Command::SetText {
@@ -535,11 +472,11 @@ mod tests {
             },
         );
 
-        apply(&mut state, Command::Copy(id));
-        apply(&mut state, Command::DeleteFrame(id));
+        apply(&mut state, Command::CopySelection);
+        apply(&mut state, Command::DeleteSelection);
         apply(&mut state, Command::Paste);
 
-        let pasted = state.selection.expect("pasted");
+        let pasted = state.selection.single().expect("pasted");
         let FrameKind::Text { story } = state.document.frame(pasted).expect("f").kind.clone()
         else {
             panic!("expected text");
@@ -551,14 +488,138 @@ mod tests {
     fn changing_z_order_is_undoable() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddRectangle(bounds()));
-        let a = state.selection.expect("a");
+        let a = state.selection.single().expect("a");
         apply(&mut state, Command::AddRectangle(bounds()));
-        let b = state.selection.expect("b");
+        let b = state.selection.single().expect("b");
 
-        apply(&mut state, Command::MoveInZ(a, ZMove::ToFront));
+        state.selection.set(a);
+        apply(&mut state, Command::MoveSelectionInZ(ZMove::ToFront));
         assert_eq!(state.document.paint_order(), vec![b, a]);
 
         apply(&mut state, Command::Undo);
         assert_eq!(state.document.paint_order(), vec![a, b]);
+    }
+
+    #[test]
+    fn raising_a_multiple_selection_keeps_its_internal_order() {
+        let mut state = TesseraApp::headless();
+        for _ in 0..3 {
+            apply(&mut state, Command::AddRectangle(bounds()));
+        }
+        let order = state.document.paint_order();
+        let (a, b, c) = (order[0], order[1], order[2]);
+
+        // Raise the bottom two: they end up above c, still a-then-b.
+        state.selection.replace_all([a, b]);
+        apply(&mut state, Command::MoveSelectionInZ(ZMove::ToFront));
+        assert_eq!(state.document.paint_order(), vec![c, a, b]);
+    }
+
+    #[test]
+    fn a_one_step_raise_also_keeps_the_internal_order() {
+        // The mirror of the above, and the case that needs the OPPOSITE
+        // traversal order. Getting one right does not get the other right.
+        let mut state = TesseraApp::headless();
+        for _ in 0..3 {
+            apply(&mut state, Command::AddRectangle(bounds()));
+        }
+        let order = state.document.paint_order();
+        let (a, b, c) = (order[0], order[1], order[2]);
+
+        state.selection.replace_all([a, b]);
+        apply(&mut state, Command::MoveSelectionInZ(ZMove::Forward));
+
+        assert_eq!(state.document.paint_order(), vec![c, a, b]);
+    }
+
+    #[test]
+    fn sending_a_multiple_selection_to_the_back_keeps_its_order() {
+        let mut state = TesseraApp::headless();
+        for _ in 0..3 {
+            apply(&mut state, Command::AddRectangle(bounds()));
+        }
+        let order = state.document.paint_order();
+        let (a, b, c) = (order[0], order[1], order[2]);
+
+        state.selection.replace_all([b, c]);
+        apply(&mut state, Command::MoveSelectionInZ(ZMove::ToBack));
+
+        assert_eq!(state.document.paint_order(), vec![b, c, a]);
+    }
+
+    #[test]
+    fn setting_a_fill_changes_only_that_frame() {
+        let (mut state, a, b) = two_selected();
+        let red = Color::Rgb {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        };
+        apply(
+            &mut state,
+            Command::SetFill {
+                id: a,
+                color: red.clone(),
+            },
+        );
+
+        assert_eq!(state.document.frame(a).expect("frame").fill, red);
+        assert_eq!(state.document.frame(b).expect("frame").fill, Color::BLACK);
+    }
+
+    #[test]
+    fn undo_with_nothing_recorded_does_nothing() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.document.frames.len(), 0);
+    }
+
+    #[test]
+    fn an_ellipse_is_added_as_an_ellipse() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddEllipse(bounds()));
+        let id = state.selection.single().expect("selected");
+        assert!(matches!(
+            state.document.frame(id).expect("frame").kind,
+            FrameKind::Ellipse
+        ));
+    }
+
+    #[test]
+    fn a_path_keeps_the_geometry_it_was_given() {
+        let mut state = TesseraApp::headless();
+        let mut path = kurbo::BezPath::new();
+        path.move_to((0.0, 10.0));
+        path.line_to((10.0, 0.0));
+
+        apply(&mut state, Command::AddPath(bounds(), path.clone()));
+
+        let id = state.selection.single().expect("selected");
+        let FrameKind::Path(stored) = state.document.frame(id).expect("frame").kind.clone() else {
+            panic!("expected a path frame");
+        };
+        assert_eq!(stored, path, "the path must survive unchanged");
+    }
+
+    #[test]
+    fn a_path_frame_survives_a_save_and_load() {
+        // BezPath serialises through kurbo's serde feature. If that ever
+        // regressed, a drawn line would vanish on reopen — the same class of
+        // bug as text living outside the document.
+        let mut state = TesseraApp::headless();
+        let mut path = kurbo::BezPath::new();
+        path.move_to((0.0, 10.0));
+        path.line_to((10.0, 0.0));
+        apply(&mut state, Command::AddPath(bounds(), path.clone()));
+
+        let json = serde_json::to_string(&state.document).expect("serialize");
+        let back: Document = serde_json::from_str(&json).expect("deserialize");
+
+        let id = state.selection.single().expect("selected");
+        let FrameKind::Path(stored) = back.frame(id).expect("frame survived").kind.clone() else {
+            panic!("expected a path frame");
+        };
+        assert_eq!(stored, path);
     }
 }

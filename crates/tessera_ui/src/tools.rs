@@ -1,5 +1,6 @@
 //! The tool state machine.
 
+use tessera_document::ids::FrameId;
 use tessera_geometry::{DocPoint, DocRect};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -39,7 +40,10 @@ impl Tool {
         }
     }
 
-    /// Whether dragging this tool draws a new frame.
+    /// Whether a single drag draws a whole frame.
+    ///
+    /// The pen is excluded: it builds a path across many clicks and finishes
+    /// on its own terms.
     pub fn draws(self) -> bool {
         matches!(
             self,
@@ -72,27 +76,42 @@ impl Tool {
     ];
 }
 
-/// A gesture in progress. Held in application state rather than in a widget,
-/// because an immediate-mode widget does not survive between frames.
-#[derive(Debug, Clone, Copy)]
+/// What a drag in progress is doing.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DragKind {
+    /// Drawing a new frame.
+    Draw,
+    /// Rubber-band selection over empty canvas.
+    Marquee,
+    /// Moving the selection.
+    ///
+    /// Carries each frame's bounds at the moment the drag began, so the move
+    /// is computed from the origin rather than accumulated per frame — which
+    /// would drift, and would make a single undo entry impossible.
+    Move { origins: Vec<(FrameId, DocRect)> },
+}
+
+/// A gesture in progress.
+///
+/// Held in application state rather than in a widget, because an
+/// immediate-mode widget does not survive between frames.
+#[derive(Debug, Clone)]
 pub struct Drag {
     pub start: DocPoint,
     pub current: DocPoint,
-    /// For a move gesture: the frame's bounds when the drag began, so the move
-    /// is always computed from the origin rather than accumulated per frame.
-    pub origin_bounds: Option<DocRect>,
+    pub kind: DragKind,
 }
 
 impl Drag {
-    pub fn new(start: DocPoint) -> Self {
+    pub fn new(start: DocPoint, kind: DragKind) -> Self {
         Self {
             start,
             current: start,
-            origin_bounds: None,
+            kind,
         }
     }
 
-    /// The normalized rectangle the gesture describes, so dragging up-left
+    /// The normalised rectangle the gesture describes, so dragging up-left
     /// produces the same rectangle as dragging down-right.
     pub fn rect(&self) -> DocRect {
         DocRect {
@@ -114,7 +133,7 @@ mod tests {
 
     #[test]
     fn dragging_down_right_yields_the_expected_rectangle() {
-        let mut d = Drag::new(DocPoint { x: 10.0, y: 20.0 });
+        let mut d = Drag::new(DocPoint { x: 10.0, y: 20.0 }, DragKind::Draw);
         d.current = DocPoint { x: 40.0, y: 60.0 };
         assert_eq!(
             d.rect(),
@@ -129,7 +148,7 @@ mod tests {
 
     #[test]
     fn dragging_up_left_yields_the_same_rectangle() {
-        let mut d = Drag::new(DocPoint { x: 40.0, y: 60.0 });
+        let mut d = Drag::new(DocPoint { x: 40.0, y: 60.0 }, DragKind::Draw);
         d.current = DocPoint { x: 10.0, y: 20.0 };
         assert_eq!(
             d.rect(),
@@ -144,9 +163,19 @@ mod tests {
 
     #[test]
     fn a_drag_that_has_not_moved_has_no_area() {
-        let d = Drag::new(DocPoint { x: 5.0, y: 5.0 });
+        let d = Drag::new(DocPoint { x: 5.0, y: 5.0 }, DragKind::Draw);
         assert_eq!(d.rect().width, 0.0);
         assert_eq!(d.rect().height, 0.0);
+    }
+
+    #[test]
+    fn delta_is_signed_even_though_the_rectangle_is_not() {
+        // A move needs direction; a drawn frame does not. Both read the same
+        // drag, so the two must not be conflated.
+        let mut d = Drag::new(DocPoint { x: 40.0, y: 60.0 }, DragKind::Draw);
+        d.current = DocPoint { x: 10.0, y: 20.0 };
+        assert_eq!(d.delta(), (-30.0, -40.0));
+        assert_eq!(d.rect().width, 30.0);
     }
 
     #[test]
@@ -156,5 +185,16 @@ mod tests {
         unique.sort_by_key(|k| format!("{k:?}"));
         unique.dedup();
         assert_eq!(unique.len(), keys.len());
+    }
+
+    #[test]
+    fn only_the_drag_to_draw_tools_report_that_they_draw() {
+        assert!(Tool::Rectangle.draws());
+        assert!(Tool::Ellipse.draws());
+        assert!(Tool::Line.draws());
+        assert!(Tool::Text.draws());
+        assert!(!Tool::Pen.draws(), "the pen builds a path across clicks");
+        assert!(!Tool::Select.draws());
+        assert!(!Tool::Hand.draws());
     }
 }
