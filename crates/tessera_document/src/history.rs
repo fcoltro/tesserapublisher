@@ -83,6 +83,7 @@ mod tests {
                 height: 10.0,
             },
             kind: FrameKind::Rectangle,
+            rotation: 0.0,
             fill: tessera_color::Color::BLACK,
             stroke: None,
         }

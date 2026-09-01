@@ -30,6 +30,10 @@ pub enum Command {
         id: FrameId,
         bounds: DocRect,
     },
+    SetRotation {
+        id: FrameId,
+        degrees: f64,
+    },
     SetFill {
         id: FrameId,
         color: Color,
@@ -99,6 +103,14 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         Command::SetBounds { id, bounds } => {
             if let Some(frame) = state.document.frame_mut(id) {
                 frame.bounds = bounds;
+            }
+        }
+
+        Command::SetRotation { id, degrees } => {
+            if let Some(frame) = state.document.frame_mut(id) {
+                // Normalised into -180..180 so the inspector never shows
+                // 3600 and a saved document never accumulates whole turns.
+                frame.rotation = (degrees + 180.0).rem_euclid(360.0) - 180.0;
             }
         }
 
@@ -237,6 +249,7 @@ fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
             kind,
             fill,
             stroke: None,
+            rotation: 0.0,
         },
     );
     state.selection.set(id);
@@ -621,5 +634,31 @@ mod tests {
             panic!("expected a path frame");
         };
         assert_eq!(stored, path);
+    }
+
+    #[test]
+    fn rotation_is_normalised_into_a_half_turn_either_way() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let id = state.selection.single().expect("selected");
+
+        for (given, expected) in [(0.0, 0.0), (90.0, 90.0), (370.0, 10.0), (-190.0, 170.0)] {
+            apply(&mut state, Command::SetRotation { id, degrees: given });
+            let got = state.document.frame(id).expect("frame").rotation;
+            assert!(
+                (got - expected).abs() < 1e-9,
+                "{given} normalised to {got}, expected {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn rotating_is_undoable() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let id = state.selection.single().expect("selected");
+        apply(&mut state, Command::SetRotation { id, degrees: 45.0 });
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.document.frame(id).expect("frame").rotation, 0.0);
     }
 }

@@ -40,8 +40,9 @@ true, with the shortfall stated · `[ ]` not started
 Never "done" until shipping; re-checked at the close of every milestone.
 
 - [~] **Save and open never lose data.** Round-trip property tests pass on
-  arbitrary generated documents. There is only format version 1 so far, so the
-  migration chain is untested by construction — the first bump proves it.
+  arbitrary generated documents, and the migration chain is now exercised:
+  format version 2 added frame rotation, and a hand-built version 1 archive is
+  loaded by a test to prove an older document still opens.
 - [x] **Cross-platform build parity.** CI builds and runs the 129-test
   headless suite on Linux, Windows and macOS — **all three green as of
   2026-09-01**. `apps/tessera_app/src/platform/` is empty, so no

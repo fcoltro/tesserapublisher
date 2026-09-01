@@ -40,6 +40,9 @@ pub enum ResolvedKind {
 pub struct ResolvedItem {
     pub frame: FrameId,
     pub bounds: DocRect,
+    /// Clockwise degrees about `bounds.center()`. Both the renderer and the
+    /// PDF writer apply this the same way, from this one value.
+    pub rotation: f64,
     pub kind: ResolvedKind,
 }
 
@@ -95,6 +98,7 @@ pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
         items.push(ResolvedItem {
             frame: id,
             bounds: frame.bounds,
+            rotation: frame.rotation,
             kind,
         });
     }
@@ -117,6 +121,7 @@ mod tests {
                 height: h,
             },
             kind: FrameKind::Rectangle,
+            rotation: 0.0,
             fill: Color::BLACK,
             stroke: None,
         }

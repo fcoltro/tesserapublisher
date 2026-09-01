@@ -46,6 +46,7 @@ fn a_document_with_a_rectangle_round_trips_exactly() {
                 height: 200.0,
             },
             kind: FrameKind::Rectangle,
+            rotation: 0.0,
             fill: Color::Cmyk {
                 c: 0.1,
                 m: 0.2,
@@ -161,6 +162,7 @@ fn any_frame() -> impl Strategy<Value = Frame> {
                 height,
             },
             kind: FrameKind::Rectangle,
+            rotation: 0.0,
             fill,
             stroke: stroke_width.map(|width| Stroke {
                 color: Color::BLACK,
@@ -211,6 +213,7 @@ fn text_survives_a_save_and_load() {
                 height: 40.0,
             },
             kind: FrameKind::Text { story },
+            rotation: 0.0,
             fill: Color::WHITE,
             stroke: None,
         },
@@ -230,4 +233,110 @@ fn text_survives_a_save_and_load() {
         "Hello, Tessera.",
         "the text itself must come back, not just the frame holding it"
     );
+}
+
+#[test]
+fn a_version_1_document_still_opens() {
+    // A hand-built archive in the format as it stood before frames had a
+    // rotation. The migration chain is only real if something actually
+    // travels it, so this fixture is written by hand rather than by the
+    // current writer.
+    use std::io::Write;
+
+    let path = temp_path("legacy_v1.tessera");
+
+    let mut doc = Document::new();
+    let layer = doc.default_layer().expect("layer");
+    let id = doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: 5.0,
+                y: 6.0,
+                width: 70.0,
+                height: 80.0,
+            },
+            kind: FrameKind::Rectangle,
+            rotation: 0.0,
+            fill: Color::BLACK,
+            stroke: None,
+        },
+    );
+
+    // Serialise, then strip every `rotation` key back out to make it a
+    // version 1 file. Walking the tree rather than assuming a shape: the
+    // arenas are slotmaps, whose serialised form is not an object of frames.
+    fn strip_rotation(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                map.remove("rotation");
+                for v in map.values_mut() {
+                    strip_rotation(v);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for v in items {
+                    strip_rotation(v);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut value: serde_json::Value = serde_json::to_value(&doc).expect("to value");
+    strip_rotation(&mut value);
+    let body = serde_json::to_vec(&value).expect("body");
+    assert!(
+        !String::from_utf8_lossy(&body).contains("rotation"),
+        "the fixture must genuinely lack the field"
+    );
+
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut buffer);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("meta.json", options).expect("meta");
+        zip.write_all(br#"{"format_version":1,"app_version":"0.1.0","created":"","modified":""}"#)
+            .expect("meta body");
+        zip.start_file("document.json", options).expect("doc");
+        zip.write_all(&body).expect("doc body");
+        zip.finish().expect("finish");
+    }
+    std::fs::write(&path, buffer.into_inner()).expect("write fixture");
+
+    let loaded = format::load(&path).expect("a version 1 document must still open");
+
+    let frame = loaded.frame(id).expect("frame survived");
+    assert_eq!(frame.bounds.width, 70.0);
+    assert_eq!(
+        frame.rotation, 0.0,
+        "a document written before rotation existed loads as unrotated"
+    );
+}
+
+#[test]
+fn a_rotation_survives_a_save_and_load() {
+    let path = temp_path("rotated.tessera");
+    let mut doc = Document::new();
+    let layer = doc.default_layer().expect("layer");
+    let id = doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 10.0,
+            },
+            kind: FrameKind::Rectangle,
+            rotation: 33.5,
+            fill: Color::BLACK,
+            stroke: None,
+        },
+    );
+
+    format::save(&doc, &path).expect("save");
+    let loaded = format::load(&path).expect("load");
+
+    assert_eq!(loaded.frame(id).expect("frame").rotation, 33.5);
 }

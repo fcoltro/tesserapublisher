@@ -21,6 +21,7 @@ zip.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 tessera_text.workspace = true
 proptest.workspace = true
 # Integration tests in tests/ link only against dev-dependencies, so the

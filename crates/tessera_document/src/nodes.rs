@@ -38,6 +38,16 @@ pub enum FrameKind {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Frame {
     pub bounds: DocRect,
+    /// Clockwise rotation about the frame's centre, in **degrees**.
+    ///
+    /// Degrees because that is what a layout tool shows and what reads
+    /// sensibly in the saved JSON; the conversion to radians happens once, at
+    /// the point of use.
+    ///
+    /// `serde(default)` so documents written before rotation existed load as
+    /// unrotated rather than failing — see the format's migration chain.
+    #[serde(default)]
+    pub rotation: f64,
     pub kind: FrameKind,
     pub fill: Color,
     pub stroke: Option<Stroke>,

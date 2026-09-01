@@ -42,6 +42,7 @@ fn rect_doc(bounds: DocRect, fill: Color) -> ResolvedDocument {
         items: vec![ResolvedItem {
             frame: FrameId::default(),
             bounds,
+            rotation: 0.0,
             kind: ResolvedKind::Rectangle { fill, stroke: None },
         }],
     }
@@ -179,6 +180,7 @@ fn text_puts_dark_pixels_on_the_page() {
                     width: 400.0,
                     height: 60.0,
                 },
+                rotation: 0.0,
                 kind: ResolvedKind::Text {
                     shaped,
                     color: Color::BLACK,
@@ -196,4 +198,39 @@ fn text_puts_dark_pixels_on_the_page() {
         .filter(|p| p[0] < 128 && p[1] < 128 && p[2] < 128)
         .count();
     assert!(dark > 20, "glyphs must actually mark the page, saw {dark}");
+}
+
+#[test]
+#[ignore = "needs a GPU adapter; run with -- --ignored"]
+fn rotating_a_bar_moves_the_pixels_it_covers() {
+    let mut renderer = HeadlessRenderer::new(W, H).expect("adapter");
+
+    // A wide, short bar across the middle: upright it covers the horizontal
+    // centre line and misses the vertical one.
+    let bar = DocRect {
+        x: 10.0,
+        y: 45.0,
+        width: 80.0,
+        height: 10.0,
+    };
+    let upright = build_scene(
+        &rect_doc(bar, Color::BLACK),
+        ViewTransform::default(),
+        page(),
+    );
+    let pixels = renderer.render(&upright).expect("render");
+    assert_eq!(pixel(&pixels, 20, 50), [0, 0, 0], "upright: across");
+    assert_eq!(pixel(&pixels, 50, 20), [255, 255, 255], "upright: not up");
+
+    // Turned a quarter turn about its own centre, those swap.
+    let mut doc = rect_doc(bar, Color::BLACK);
+    doc.items[0].rotation = 90.0;
+    let turned = build_scene(&doc, ViewTransform::default(), page());
+    let pixels = renderer.render(&turned).expect("render");
+    assert_eq!(pixel(&pixels, 50, 20), [0, 0, 0], "turned: up the page");
+    assert_eq!(
+        pixel(&pixels, 20, 50),
+        [255, 255, 255],
+        "turned: not across"
+    );
 }

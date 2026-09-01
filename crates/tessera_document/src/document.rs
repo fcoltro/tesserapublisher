@@ -196,13 +196,23 @@ impl Document {
     }
 
     /// The topmost frame containing the point, or `None`.
+    ///
+    /// A rotated frame is tested by rotating the *point* backwards into the
+    /// frame's own space, rather than by building a rotated polygon. Same
+    /// answer, one line, and it stays correct for any future transform that
+    /// is invertible.
     pub fn hit_test(&self, point: DocPoint) -> Option<FrameId> {
-        self.paint_order().into_iter().rev().find(|id| {
-            self.frames
-                .get(*id)
-                .is_some_and(|f| f.bounds.contains(point))
-        })
+        self.paint_order()
+            .into_iter()
+            .rev()
+            .find(|id| self.frames.get(*id).is_some_and(|f| hits(f, point)))
     }
+}
+
+/// Whether `point` falls inside `frame`, accounting for its rotation.
+fn hits(frame: &Frame, point: DocPoint) -> bool {
+    let local = point.rotated_about(frame.bounds.center(), -frame.rotation);
+    frame.bounds.contains(local)
 }
 
 impl Default for Document {
@@ -227,6 +237,7 @@ mod tests {
                 height: 50.0,
             },
             kind: FrameKind::Rectangle,
+            rotation: 0.0,
             fill: Color::BLACK,
             stroke: None,
         }
@@ -368,5 +379,67 @@ mod tests {
     fn moving_an_unknown_frame_reports_failure_rather_than_panicking() {
         let mut doc = Document::new();
         assert!(!doc.move_in_z(FrameId::default(), ZMove::ToFront));
+    }
+
+    /// A long thin bar, so rotating it moves real area around.
+    fn bar() -> Frame {
+        Frame {
+            bounds: DocRect {
+                x: 0.0,
+                y: 45.0,
+                width: 100.0,
+                height: 10.0,
+            },
+            kind: FrameKind::Rectangle,
+            rotation: 0.0,
+            fill: tessera_color::Color::BLACK,
+            stroke: None,
+        }
+    }
+
+    #[test]
+    fn an_unrotated_frame_hit_tests_as_before() {
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let id = doc.add_frame(layer, bar());
+        assert_eq!(doc.hit_test(DocPoint { x: 50.0, y: 50.0 }), Some(id));
+        assert_eq!(doc.hit_test(DocPoint { x: 50.0, y: 10.0 }), None);
+    }
+
+    #[test]
+    fn rotating_a_frame_moves_where_it_can_be_hit() {
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let id = doc.add_frame(layer, bar());
+
+        // Upright, the bar spans x 0..100 at y 45..55, centred on (50, 50).
+        // Turned a quarter turn it spans y 0..100 at x 45..55.
+        doc.frames.get_mut(id).expect("frame").rotation = 90.0;
+
+        assert_eq!(
+            doc.hit_test(DocPoint { x: 50.0, y: 10.0 }),
+            Some(id),
+            "the bar now reaches up the page"
+        );
+        assert_eq!(
+            doc.hit_test(DocPoint { x: 10.0, y: 50.0 }),
+            None,
+            "and no longer reaches across it"
+        );
+    }
+
+    #[test]
+    fn the_centre_of_a_rotated_frame_is_always_a_hit() {
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let id = doc.add_frame(layer, bar());
+        for angle in [0.0, 17.0, 45.0, 90.0, 180.0, -33.0] {
+            doc.frames.get_mut(id).expect("frame").rotation = angle;
+            assert_eq!(
+                doc.hit_test(DocPoint { x: 50.0, y: 50.0 }),
+                Some(id),
+                "rotation {angle} lost its own centre"
+            );
+        }
     }
 }

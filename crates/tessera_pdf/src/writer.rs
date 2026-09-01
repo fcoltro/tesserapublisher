@@ -179,6 +179,26 @@ fn build_content(
     let mut content = Content::new();
 
     for item in &resolved.items {
+        // A rotated item gets its own graphics state, with the rotation
+        // written as a `cm` matrix about the frame's centre in PDF space.
+        let rotated = item.rotation != 0.0;
+        if rotated {
+            content.save_state();
+            let c = item.bounds.center();
+            let cy = to_pdf_y(page, c.y, 0.0);
+            // PDF's y axis points up, so a clockwise on-screen rotation is
+            // anticlockwise here — hence the negated angle.
+            let (sin, cos) = (-item.rotation).to_radians().sin_cos();
+            content.transform([
+                cos as f32,
+                sin as f32,
+                -sin as f32,
+                cos as f32,
+                (c.x - c.x * cos + cy * sin) as f32,
+                (cy - c.x * sin - cy * cos) as f32,
+            ]);
+        }
+
         match &item.kind {
             ResolvedKind::Rectangle { fill, .. } => {
                 let [r, g, b, _] = fill.to_rgb_f32();
@@ -230,6 +250,10 @@ fn build_content(
             ResolvedKind::Text { shaped, color } => {
                 draw_text(&mut content, page, item.bounds, shaped, color, fonts)?;
             }
+        }
+
+        if rotated {
+            content.restore_state();
         }
     }
 

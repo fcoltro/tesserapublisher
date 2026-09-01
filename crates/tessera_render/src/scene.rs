@@ -36,6 +36,17 @@ pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRe
 
     for item in &resolved.items {
         let rect: Rect = item.bounds.to_kurbo();
+        // Rotation is about the frame's own centre, so it composes as
+        // translate-out, rotate, translate-back — applied before the camera.
+        let transform = if item.rotation == 0.0 {
+            transform
+        } else {
+            let c = item.bounds.center();
+            transform
+                * Affine::translate((c.x, c.y))
+                * Affine::rotate(item.rotation.to_radians())
+                * Affine::translate((-c.x, -c.y))
+        };
 
         match &item.kind {
             ResolvedKind::Rectangle { fill, stroke } => {
@@ -156,6 +167,7 @@ mod tests {
         ResolvedDocument {
             items: vec![ResolvedItem {
                 frame: FrameId::default(),
+                rotation: 0.0,
                 bounds,
                 kind,
             }],
