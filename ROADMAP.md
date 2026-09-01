@@ -114,7 +114,9 @@ threading, swatches, preflight, images, CMYK, print marks.
 
 Making the skeleton pleasant to use. No new file-format surface area.
 
-*Next up. Milestone 0 closed 2026-09-01.*
+> **Status 2026-09-01: code complete, awaiting the manual check.**
+> Every item below is built and tested. As with milestone 0, the boxes stay
+> unticked until a person performs the sentence in the running application.
 
 ### Acceptance
 
@@ -124,16 +126,19 @@ Making the skeleton pleasant to use. No new file-format surface area.
 > Zoom to fit, zoom to selection, and pan with the spacebar. Undo any of it,
 > then redo it.
 
-- [ ] Tool state machine: select, direct-select, rectangle, ellipse, line,
-  pen, text, hand, zoom.
-- [ ] Marquee selection, shift-extend, and select-all.
-- [ ] Transform handles: move, scale from any handle, rotate, with modifier
-  constraints (proportional, from centre, angle snap).
-- [ ] Clipboard, duplicate, and step-and-repeat.
-- [ ] Z-order: bring forward, send backward, to front, to back.
-- [ ] Grouping and ungrouping.
-- [ ] Numeric transform fields with drag-to-scrub.
-- [ ] Every gesture records exactly one undo entry, on completion.
+- [~] Tool state machine: select, rectangle, ellipse, line, pen, text, hand.
+  *Direct-select and zoom tools are not built; the wheel zooms instead.*
+- [x] Marquee selection, shift-extend, and select-all.
+- [~] Transform handles: move, scale from any of eight handles, rotate by
+  dragging outside a corner, with shift for proportional scaling and
+  15-degree rotation snap. *From-centre scaling is not built. Scaling and
+  rotating apply to a single frame; a group moves but does not yet scale.*
+- [~] Clipboard and duplicate. *Step-and-repeat is not built.*
+- [x] Z-order: bring forward, send backward, to front, to back — correct for
+  multiple selections, which needs opposite traversal orders per operation.
+- [x] Grouping and ungrouping, including nested groups.
+- [x] Numeric transform fields with drag-to-scrub, including rotation.
+- [x] Every gesture records exactly one undo entry, on completion.
 
 ---
 

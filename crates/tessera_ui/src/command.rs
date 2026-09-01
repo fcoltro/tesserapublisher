@@ -54,6 +54,8 @@ pub enum Command {
     CutSelection,
     Paste,
     MoveSelectionInZ(ZMove),
+    GroupSelection,
+    UngroupSelection,
 
     Undo,
     Redo,
@@ -131,10 +133,29 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::TranslateSelection { dx, dy } => {
             for id in state.selection.as_slice().to_vec() {
-                if let Some(frame) = state.document.frame_mut(id) {
-                    frame.bounds.x += dx;
-                    frame.bounds.y += dy;
-                }
+                // Goes through the document so a group carries its children.
+                state.document.translate_frame(id, dx, dy);
+            }
+        }
+
+        Command::GroupSelection => {
+            if let Some(group) = state.document.group(state.selection.as_slice()) {
+                state.selection.set(group);
+            }
+        }
+
+        Command::UngroupSelection => {
+            let freed: Vec<_> = state
+                .selection
+                .as_slice()
+                .to_vec()
+                .into_iter()
+                .flat_map(|id| state.document.ungroup(id))
+                .collect();
+            // Selecting the freed children is what lets a second ungroup
+            // reach a nested group without re-selecting by hand.
+            if !freed.is_empty() {
+                state.selection.replace_all(freed);
             }
         }
 
@@ -660,5 +681,97 @@ mod tests {
         apply(&mut state, Command::SetRotation { id, degrees: 45.0 });
         apply(&mut state, Command::Undo);
         assert_eq!(state.document.frame(id).expect("frame").rotation, 0.0);
+    }
+
+    /// Two rectangles apart from each other, both selected.
+    fn two_apart_selected() -> (TesseraApp, FrameId, FrameId) {
+        let mut state = TesseraApp::headless();
+        apply(
+            &mut state,
+            Command::AddRectangle(DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 20.0,
+            }),
+        );
+        let a = state.selection.single().expect("a");
+        apply(
+            &mut state,
+            Command::AddRectangle(DocRect {
+                x: 100.0,
+                y: 0.0,
+                width: 20.0,
+                height: 20.0,
+            }),
+        );
+        let b = state.selection.single().expect("b");
+        state.selection.replace_all([a, b]);
+        (state, a, b)
+    }
+
+    #[test]
+    fn grouping_selects_the_group() {
+        let (mut state, a, b) = two_apart_selected();
+        apply(&mut state, Command::GroupSelection);
+
+        let g = state.selection.single().expect("the group is selected");
+        assert_ne!(g, a);
+        assert_ne!(g, b);
+        assert_eq!(state.document.top_level_order(), vec![g]);
+    }
+
+    #[test]
+    fn grouping_is_undoable() {
+        let (mut state, a, b) = two_apart_selected();
+        apply(&mut state, Command::GroupSelection);
+        apply(&mut state, Command::Undo);
+
+        assert_eq!(state.document.top_level_order(), vec![a, b]);
+    }
+
+    #[test]
+    fn moving_a_selected_group_carries_its_children() {
+        let (mut state, a, b) = two_apart_selected();
+        apply(&mut state, Command::GroupSelection);
+
+        apply(
+            &mut state,
+            Command::TranslateSelection { dx: 10.0, dy: 4.0 },
+        );
+
+        assert_eq!(state.document.frame(a).expect("a").bounds.x, 10.0);
+        assert_eq!(state.document.frame(b).expect("b").bounds.x, 110.0);
+    }
+
+    #[test]
+    fn ungrouping_selects_the_freed_children() {
+        let (mut state, a, b) = two_apart_selected();
+        apply(&mut state, Command::GroupSelection);
+        apply(&mut state, Command::UngroupSelection);
+
+        assert_eq!(state.selection.len(), 2);
+        assert!(state.selection.contains(a));
+        assert!(state.selection.contains(b));
+    }
+
+    #[test]
+    fn deleting_a_group_deletes_what_is_inside_it() {
+        let (mut state, _, _) = two_apart_selected();
+        apply(&mut state, Command::GroupSelection);
+        apply(&mut state, Command::DeleteSelection);
+
+        assert!(
+            state.document.paint_order().is_empty(),
+            "an orphaned child would be an invisible, unselectable object"
+        );
+    }
+
+    #[test]
+    fn grouping_one_frame_does_nothing() {
+        let (mut state, a, _) = two_apart_selected();
+        state.selection.set(a);
+        apply(&mut state, Command::GroupSelection);
+        assert_eq!(state.selection.single(), Some(a), "still just the frame");
     }
 }

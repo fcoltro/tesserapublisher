@@ -33,6 +33,13 @@ pub enum FrameKind {
     /// One variant covers both the line tool and the pen tool; a line is
     /// simply a two-point path.
     Path(kurbo::BezPath),
+    /// A group of frames, treated as one object.
+    ///
+    /// Children are held here and **removed from the layer's own list**, so
+    /// there is exactly one place that owns a frame's position in the paint
+    /// order. Anything else drifts: a child listed in both would paint twice
+    /// and hit-test inconsistently.
+    Group(Vec<FrameId>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

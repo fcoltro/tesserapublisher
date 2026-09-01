@@ -80,6 +80,10 @@ pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
                 })),
             },
 
+            // A group draws nothing of its own, and paint_order already
+            // expanded it into its children, so it never reaches here.
+            FrameKind::Group(_) => continue,
+
             FrameKind::Text { story } => {
                 // A text frame whose story is missing is a broken document,
                 // not a blank frame. Skipping it silently would hide the

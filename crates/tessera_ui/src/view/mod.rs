@@ -146,6 +146,29 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
         ui.menu_button("Object", |ui| {
             let has_selection = !state.selection.is_empty();
 
+            let is_group = state
+                .selection
+                .single()
+                .and_then(|id| state.document.frame(id))
+                .is_some_and(|f| matches!(f.kind, tessera_document::nodes::FrameKind::Group(_)));
+
+            if ui
+                .add_enabled(state.selection.len() >= 2, egui::Button::new("Group"))
+                .clicked()
+            {
+                apply(state, Command::GroupSelection);
+                ui.close();
+            }
+            if ui
+                .add_enabled(is_group, egui::Button::new("Ungroup"))
+                .clicked()
+            {
+                apply(state, Command::UngroupSelection);
+                ui.close();
+            }
+
+            ui.separator();
+
             for (label, how) in [
                 ("Bring to Front", ZMove::ToFront),
                 ("Bring Forward", ZMove::Forward),
@@ -217,6 +240,12 @@ fn accelerators(ui: &Ui, state: &mut TesseraApp) {
     }
     if pressed(cmd, egui::Key::D) {
         apply(state, Command::DuplicateSelection);
+    }
+    // Shift+Ctrl+G before Ctrl+G: the chords overlap.
+    if pressed(cmd_shift, egui::Key::G) {
+        apply(state, Command::UngroupSelection);
+    } else if pressed(cmd, egui::Key::G) {
+        apply(state, Command::GroupSelection);
     }
 
     // Z-order, following InDesign's bracket chords.

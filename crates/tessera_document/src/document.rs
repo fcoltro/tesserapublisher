@@ -5,7 +5,7 @@ use slotmap::SlotMap;
 use tessera_geometry::{DocPoint, DocRect};
 
 use crate::ids::{FrameId, LayerId, PageId, SpreadId, StoryId};
-use crate::nodes::{Frame, Layer, Page, Spread};
+use crate::nodes::{Frame, FrameKind, Layer, Page, Spread};
 use tessera_text::story::Story;
 
 /// Stories are addressed by id and live at the document level, so a threaded
@@ -124,10 +124,13 @@ impl Document {
         id
     }
 
+    /// Remove a frame, and everything inside it if it is a group.
     pub fn remove_frame(&mut self, id: FrameId) {
-        self.frames.remove(id);
-        for layer in self.layers.values_mut() {
-            layer.frames.retain(|f| *f != id);
+        for victim in self.descendants(id) {
+            self.frames.remove(victim);
+            for layer in self.layers.values_mut() {
+                layer.frames.retain(|f| *f != victim);
+            }
         }
         self.revision += 1;
     }
@@ -186,13 +189,198 @@ impl Document {
         true
     }
 
-    /// Back-to-front paint order across every visible layer.
-    pub fn paint_order(&self) -> Vec<FrameId> {
+    /// Back-to-front order of the frames a layer owns directly.
+    ///
+    /// Groups appear as themselves here, not as their children — this is the
+    /// order z-moves and hit-testing work in.
+    pub fn top_level_order(&self) -> Vec<FrameId> {
         self.layer_ids()
             .filter_map(|l| self.layers.get(l))
             .filter(|l| l.visible)
             .flat_map(|l| l.frames.iter().copied())
             .collect()
+    }
+
+    /// Back-to-front paint order, with groups expanded into their children.
+    ///
+    /// A group has no appearance of its own, so it never appears here; only
+    /// the leaves that actually draw do.
+    pub fn paint_order(&self) -> Vec<FrameId> {
+        let mut out = Vec::new();
+        for id in self.top_level_order() {
+            self.push_leaves(id, &mut out);
+        }
+        out
+    }
+
+    fn push_leaves(&self, id: FrameId, out: &mut Vec<FrameId>) {
+        match self.frames.get(id).map(|f| &f.kind) {
+            Some(FrameKind::Group(children)) => {
+                for child in children.clone() {
+                    self.push_leaves(child, out);
+                }
+            }
+            Some(_) => out.push(id),
+            None => {}
+        }
+    }
+
+    /// Every frame inside `id`, including `id` itself.
+    pub fn descendants(&self, id: FrameId) -> Vec<FrameId> {
+        let mut out = vec![id];
+        if let Some(FrameKind::Group(children)) = self.frames.get(id).map(|f| &f.kind) {
+            for child in children.clone() {
+                out.extend(self.descendants(child));
+            }
+        }
+        out
+    }
+
+    /// The bounds a frame occupies — for a group, the union of its children.
+    pub fn effective_bounds(&self, id: FrameId) -> Option<DocRect> {
+        let frame = self.frames.get(id)?;
+        let FrameKind::Group(children) = &frame.kind else {
+            return Some(frame.bounds);
+        };
+        let mut union: Option<DocRect> = None;
+        for child in children {
+            let Some(b) = self.effective_bounds(*child) else {
+                continue;
+            };
+            union = Some(match union {
+                None => b,
+                Some(u) => {
+                    let x0 = u.x.min(b.x);
+                    let y0 = u.y.min(b.y);
+                    let x1 = (u.x + u.width).max(b.x + b.width);
+                    let y1 = (u.y + u.height).max(b.y + b.height);
+                    DocRect {
+                        x: x0,
+                        y: y0,
+                        width: x1 - x0,
+                        height: y1 - y0,
+                    }
+                }
+            });
+        }
+        union
+    }
+
+    /// Move a frame, carrying a group's children with it.
+    pub fn translate_frame(&mut self, id: FrameId, dx: f64, dy: f64) {
+        for leaf in self.descendants(id) {
+            if let Some(f) = self.frames.get_mut(leaf) {
+                f.bounds.x += dx;
+                f.bounds.y += dy;
+            }
+        }
+        self.revision += 1;
+    }
+
+    /// Collect `ids` into a new group, inserted where the frontmost of them
+    /// sat. Returns `None` for fewer than two frames — a group of one is not
+    /// a group.
+    pub fn group(&mut self, ids: &[FrameId]) -> Option<FrameId> {
+        let order = self.top_level_order();
+        let mut members: Vec<FrameId> = order
+            .iter()
+            .copied()
+            .filter(|id| ids.contains(id))
+            .collect();
+        if members.len() < 2 {
+            return None;
+        }
+
+        let layer_id = self.layer_ids().find(|l| {
+            self.layers
+                .get(*l)
+                .is_some_and(|layer| layer.frames.contains(&members[0]))
+        })?;
+        let position = self
+            .layers
+            .get(layer_id)?
+            .frames
+            .iter()
+            .position(|f| Some(f) == members.last())?;
+
+        let bounds = members
+            .iter()
+            .filter_map(|id| self.effective_bounds(*id))
+            .fold(None::<DocRect>, |acc, b| {
+                Some(match acc {
+                    None => b,
+                    Some(u) => {
+                        let x0 = u.x.min(b.x);
+                        let y0 = u.y.min(b.y);
+                        let x1 = (u.x + u.width).max(b.x + b.width);
+                        let y1 = (u.y + u.height).max(b.y + b.height);
+                        DocRect {
+                            x: x0,
+                            y: y0,
+                            width: x1 - x0,
+                            height: y1 - y0,
+                        }
+                    }
+                })
+            })?;
+
+        let group = self.frames.insert(Frame {
+            bounds,
+            kind: FrameKind::Group(std::mem::take(&mut members)),
+            rotation: 0.0,
+            fill: tessera_color::Color::BLACK,
+            stroke: None,
+        });
+
+        let layer = self.layers.get_mut(layer_id)?;
+        // Children leave the layer's list; the group takes their place, at
+        // the frontmost member's position so the stack does not jump.
+        let FrameKind::Group(children) = &self.frames[group].kind else {
+            unreachable!("just inserted a group")
+        };
+        let children = children.clone();
+        // The insertion index must be computed against the list AS IT WILL BE
+        // once the children are gone, not as it is now: removing them shifts
+        // everything after them down.
+        let at = layer
+            .frames
+            .iter()
+            .take(position)
+            .filter(|f| !children.contains(f))
+            .count();
+        layer.frames.retain(|f| !children.contains(f));
+        layer.frames.insert(at.min(layer.frames.len()), group);
+
+        self.revision += 1;
+        Some(group)
+    }
+
+    /// Dissolve a group, returning its children to the layer in its place.
+    pub fn ungroup(&mut self, id: FrameId) -> Vec<FrameId> {
+        let Some(FrameKind::Group(children)) = self.frames.get(id).map(|f| f.kind.clone()) else {
+            return Vec::new();
+        };
+
+        let Some(layer_id) = self.layer_ids().find(|l| {
+            self.layers
+                .get(*l)
+                .is_some_and(|layer| layer.frames.contains(&id))
+        }) else {
+            return Vec::new();
+        };
+
+        if let Some(layer) = self.layers.get_mut(layer_id)
+            && let Some(at) = layer.frames.iter().position(|f| *f == id)
+        {
+            layer.frames.remove(at);
+            for (offset, child) in children.iter().enumerate() {
+                layer.frames.insert(at + offset, *child);
+            }
+        }
+
+        self.frames.remove(id);
+        self.revision += 1;
+        children
     }
 
     /// The topmost frame containing the point, or `None`.
@@ -202,10 +390,20 @@ impl Document {
     /// answer, one line, and it stays correct for any future transform that
     /// is invertible.
     pub fn hit_test(&self, point: DocPoint) -> Option<FrameId> {
-        self.paint_order()
+        // Top level, not paint order: clicking a grouped object selects the
+        // GROUP, which is what grouping is for.
+        self.top_level_order()
             .into_iter()
             .rev()
-            .find(|id| self.frames.get(*id).is_some_and(|f| hits(f, point)))
+            .find(|id| self.hits_anywhere(*id, point))
+    }
+
+    fn hits_anywhere(&self, id: FrameId, point: DocPoint) -> bool {
+        self.descendants(id).into_iter().any(|leaf| {
+            self.frames
+                .get(leaf)
+                .is_some_and(|f| !matches!(f.kind, FrameKind::Group(_)) && hits(f, point))
+        })
     }
 }
 
@@ -441,5 +639,196 @@ mod tests {
                 "rotation {angle} lost its own centre"
             );
         }
+    }
+
+    /// A rectangle at a given position, 20x20.
+    fn at(x: f64, y: f64) -> Frame {
+        Frame {
+            bounds: DocRect {
+                x,
+                y,
+                width: 20.0,
+                height: 20.0,
+            },
+            kind: FrameKind::Rectangle,
+            rotation: 0.0,
+            fill: tessera_color::Color::BLACK,
+            stroke: None,
+        }
+    }
+
+    /// Two rectangles, side by side, in one layer.
+    fn two_apart() -> (Document, FrameId, FrameId) {
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let a = doc.add_frame(layer, at(0.0, 0.0));
+        let b = doc.add_frame(layer, at(100.0, 0.0));
+        (doc, a, b)
+    }
+
+    #[test]
+    fn grouping_needs_at_least_two_frames() {
+        let (mut doc, a, _) = two_apart();
+        assert!(doc.group(&[a]).is_none(), "a group of one is not a group");
+        assert!(doc.group(&[]).is_none());
+    }
+
+    #[test]
+    fn a_group_takes_the_union_of_its_children() {
+        let (mut doc, a, b) = two_apart();
+        let g = doc.group(&[a, b]).expect("grouped");
+        let bounds = doc.effective_bounds(g).expect("bounds");
+        assert_eq!(bounds.x, 0.0);
+        assert_eq!(bounds.width, 120.0, "0..20 and 100..120");
+    }
+
+    #[test]
+    fn grouping_does_not_change_what_is_painted() {
+        let (mut doc, a, b) = two_apart();
+        let before = doc.paint_order();
+        doc.group(&[a, b]).expect("grouped");
+        assert_eq!(
+            doc.paint_order(),
+            before,
+            "a group has no appearance of its own, so the leaves are unchanged"
+        );
+    }
+
+    #[test]
+    fn the_group_replaces_its_children_at_the_top_level() {
+        let (mut doc, a, b) = two_apart();
+        let g = doc.group(&[a, b]).expect("grouped");
+        let top = doc.top_level_order();
+        assert_eq!(top, vec![g], "children leave the layer's own list");
+    }
+
+    #[test]
+    fn clicking_a_grouped_object_selects_the_group() {
+        let (mut doc, a, b) = two_apart();
+        assert_eq!(doc.hit_test(DocPoint { x: 10.0, y: 10.0 }), Some(a));
+
+        let g = doc.group(&[a, b]).expect("grouped");
+
+        assert_eq!(
+            doc.hit_test(DocPoint { x: 10.0, y: 10.0 }),
+            Some(g),
+            "the group answers for its children"
+        );
+        assert_eq!(
+            doc.hit_test(DocPoint { x: 110.0, y: 10.0 }),
+            Some(g),
+            "either child, same answer"
+        );
+    }
+
+    #[test]
+    fn the_gap_between_grouped_objects_is_not_a_hit() {
+        // A group is its children, not their bounding box. Clicking the empty
+        // space between two grouped objects must miss.
+        let (mut doc, a, b) = two_apart();
+        doc.group(&[a, b]).expect("grouped");
+        assert_eq!(doc.hit_test(DocPoint { x: 60.0, y: 10.0 }), None);
+    }
+
+    #[test]
+    fn moving_a_group_carries_its_children() {
+        let (mut doc, a, b) = two_apart();
+        let g = doc.group(&[a, b]).expect("grouped");
+
+        doc.translate_frame(g, 5.0, 7.0);
+
+        assert_eq!(doc.frame(a).expect("a").bounds.x, 5.0);
+        assert_eq!(doc.frame(b).expect("b").bounds.x, 105.0);
+        assert_eq!(doc.frame(a).expect("a").bounds.y, 7.0);
+    }
+
+    #[test]
+    fn ungrouping_returns_the_children_in_place() {
+        let (mut doc, a, b) = two_apart();
+        let g = doc.group(&[a, b]).expect("grouped");
+
+        let freed = doc.ungroup(g);
+
+        assert_eq!(freed, vec![a, b]);
+        assert_eq!(doc.top_level_order(), vec![a, b]);
+        assert!(doc.frame(g).is_none(), "the group itself is gone");
+    }
+
+    #[test]
+    fn grouping_then_ungrouping_restores_the_stack() {
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let a = doc.add_frame(layer, at(0.0, 0.0));
+        let b = doc.add_frame(layer, at(100.0, 0.0));
+        let c = doc.add_frame(layer, at(200.0, 0.0));
+        let before = doc.top_level_order();
+
+        let g = doc.group(&[a, b]).expect("grouped");
+        doc.ungroup(g);
+
+        assert_eq!(doc.top_level_order(), before);
+        assert_eq!(before, vec![a, b, c]);
+    }
+
+    #[test]
+    fn deleting_a_group_deletes_its_children_too() {
+        let (mut doc, a, b) = two_apart();
+        let g = doc.group(&[a, b]).expect("grouped");
+
+        doc.remove_frame(g);
+
+        assert!(
+            doc.frame(a).is_none(),
+            "an orphaned child would be invisible"
+        );
+        assert!(doc.frame(b).is_none());
+        assert!(doc.paint_order().is_empty());
+    }
+
+    #[test]
+    fn ungrouping_something_that_is_not_a_group_does_nothing() {
+        let (mut doc, a, _) = two_apart();
+        assert!(doc.ungroup(a).is_empty());
+        assert!(doc.frame(a).is_some(), "and does not destroy it");
+    }
+
+    #[test]
+    fn a_group_can_be_moved_in_z_as_one_object() {
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let a = doc.add_frame(layer, at(0.0, 0.0));
+        let b = doc.add_frame(layer, at(100.0, 0.0));
+        let c = doc.add_frame(layer, at(200.0, 0.0));
+
+        let g = doc.group(&[a, b]).expect("grouped");
+        assert_eq!(doc.top_level_order(), vec![g, c]);
+
+        doc.move_in_z(g, ZMove::ToFront);
+
+        assert_eq!(doc.top_level_order(), vec![c, g]);
+        assert_eq!(
+            doc.paint_order(),
+            vec![c, a, b],
+            "the children move with it, keeping their order"
+        );
+    }
+
+    #[test]
+    fn nested_groups_report_every_descendant() {
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let a = doc.add_frame(layer, at(0.0, 0.0));
+        let b = doc.add_frame(layer, at(100.0, 0.0));
+        let c = doc.add_frame(layer, at(200.0, 0.0));
+
+        let inner = doc.group(&[a, b]).expect("inner");
+        let outer = doc.group(&[inner, c]).expect("outer");
+
+        let mut found = doc.descendants(outer);
+        found.sort_by_key(|k| format!("{k:?}"));
+        let mut expected = vec![outer, inner, a, b, c];
+        expected.sort_by_key(|k| format!("{k:?}"));
+        assert_eq!(found, expected);
+        assert_eq!(doc.paint_order(), vec![a, b, c], "leaves only, in order");
     }
 }
