@@ -1,10 +1,13 @@
 //! Document and screen coordinate spaces, kept in distinct types.
+//!
+//! Confusing the two is the most common source of defects in a zoomable
+//! canvas, so they are different types and the compiler enforces it.
+//!
+//! Document units are **points** (1/72 inch) throughout — the unit PDF uses,
+//! so export needs no conversion.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn crate_builds() {
-        // Replaced by real tests as each task lands.
-        assert_eq!(2 + 2, 4);
-    }
-}
+pub mod spaces;
+pub mod view;
+
+pub use spaces::{DocPoint, DocRect, ScreenPoint};
+pub use view::ViewTransform;
