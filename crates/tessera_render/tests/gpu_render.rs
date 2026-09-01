@@ -3,14 +3,20 @@
 //! RUN ALONE, IN THE FOREGROUND:
 //!
 //! ```text
-//! cargo test -p tessera_render --test gpu_render
+//! cargo test -p tessera_render --test gpu_render -- --ignored
 //! ```
 //!
-//! Never inside `cargo test --workspace`: two GPU test binaries contending
-//! for the same adapter deadlock, and adapter acquisition hangs
-//! intermittently on this hardware regardless. A hang looks exactly like a
-//! slow compile — if there is no output for two minutes, kill the
-//! `gpu_render-*` binary and any `cargo.exe`, then retry once.
+//! Every test here is `#[ignore]`d, which is what keeps them out of
+//! `cargo test --workspace`. That is deliberate and load-bearing for two
+//! reasons: two GPU test binaries contending for the same adapter deadlock,
+//! and CI runners have no GPU adapter at all. An earlier CI config claimed
+//! `--lib --tests` excluded them — it does not, `--tests` includes
+//! integration tests — so the exclusion now lives in the tests themselves
+//! where it cannot be forgotten.
+//!
+//! A hang looks exactly like a slow compile: if there is no output for two
+//! minutes, kill the `gpu_render-*` binary and any `cargo.exe`, then retry
+//! once.
 
 use tessera_color::Color;
 use tessera_document::ids::FrameId;
@@ -47,6 +53,7 @@ fn pixel(pixels: &[u8], x: usize, y: usize) -> [u8; 3] {
 }
 
 #[test]
+#[ignore = "needs a GPU adapter; run with -- --ignored"]
 fn an_empty_page_renders_white() {
     let mut renderer = HeadlessRenderer::new(W, H).expect("adapter");
     let scene = build_scene(
@@ -61,6 +68,7 @@ fn an_empty_page_renders_white() {
 }
 
 #[test]
+#[ignore = "needs a GPU adapter; run with -- --ignored"]
 fn a_black_rectangle_renders_black_where_it_sits_and_nowhere_else() {
     let mut renderer = HeadlessRenderer::new(W, H).expect("adapter");
     let scene = build_scene(
@@ -90,6 +98,7 @@ fn a_black_rectangle_renders_black_where_it_sits_and_nowhere_else() {
 /// 112 bytes per row must be skipped on read-back. If they are not, the image
 /// shears progressively and a rectangle's lower rows land at the wrong x.
 #[test]
+#[ignore = "needs a GPU adapter; run with -- --ignored"]
 fn read_back_drops_row_padding_rather_than_shearing_the_image() {
     let mut renderer = HeadlessRenderer::new(W, H).expect("adapter");
     let scene = build_scene(
@@ -120,6 +129,7 @@ fn read_back_drops_row_padding_rather_than_shearing_the_image() {
 }
 
 #[test]
+#[ignore = "needs a GPU adapter; run with -- --ignored"]
 fn the_camera_transform_moves_what_is_rendered() {
     let mut renderer = HeadlessRenderer::new(W, H).expect("adapter");
     let doc = rect_doc(
@@ -150,6 +160,7 @@ fn the_camera_transform_moves_what_is_rendered() {
 }
 
 #[test]
+#[ignore = "needs a GPU adapter; run with -- --ignored"]
 fn text_puts_dark_pixels_on_the_page() {
     let mut shaper = tessera_text::shape::Shaper::new();
     let mut story = tessera_text::story::Story::new("HHHH");
