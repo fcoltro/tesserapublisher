@@ -18,6 +18,7 @@ tessera_text.workspace = true
 tessera_color.workspace = true
 tessera_geometry.workspace = true
 egui.workspace = true
+kurbo.workspace = true
 eframe.workspace = true
 egui-wgpu.workspace = true
 vello.workspace = true
@@ -27,9 +28,10 @@ slotmap.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+serde_json.workspace = true
+kurbo.workspace = true
 # Integration tests link only against dev-dependencies.
 tessera_geometry.workspace = true
 tessera_color.workspace = true
 tessera_document.workspace = true
 tessera_layout.workspace = true
-serde_json.workspace = true

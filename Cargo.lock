@@ -3572,6 +3572,7 @@ dependencies = [
 name = "tessera_document"
 version = "0.1.0"
 dependencies = [
+ "kurbo",
  "proptest",
  "serde",
  "serde_json",
@@ -3610,6 +3611,7 @@ dependencies = [
 name = "tessera_layout"
 version = "0.1.0"
 dependencies = [
+ "kurbo",
  "proptest",
  "serde_json",
  "slotmap",
@@ -3623,6 +3625,7 @@ dependencies = [
 name = "tessera_pdf"
 version = "0.1.0"
 dependencies = [
+ "kurbo",
  "pdf-writer",
  "proptest",
  "serde_json",
@@ -3671,6 +3674,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui-wgpu",
+ "kurbo",
  "proptest",
  "rfd",
  "serde_json",

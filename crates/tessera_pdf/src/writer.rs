@@ -203,6 +203,30 @@ fn build_content(
                 content.restore_state();
             }
 
+            ResolvedKind::Path { path, fill, stroke } => {
+                content.save_state();
+                emit_path(&mut content, page, item.bounds, path);
+                match (fill, stroke) {
+                    (Some(f), _) => {
+                        let [r, g, b, _] = f.to_rgb_f32();
+                        content.set_fill_rgb(r, g, b);
+                        content.fill_nonzero();
+                    }
+                    (None, Some(s)) => {
+                        let [r, g, b, _] = s.color.to_rgb_f32();
+                        content.set_stroke_rgb(r, g, b);
+                        content.set_line_width(s.width as f32);
+                        content.stroke();
+                    }
+                    (None, None) => {
+                        // Nothing to paint; the path was still emitted, so
+                        // end it rather than leaving a dangling path object.
+                        content.end_path();
+                    }
+                }
+                content.restore_state();
+            }
+
             ResolvedKind::Text { shaped, color } => {
                 draw_text(&mut content, page, item.bounds, shaped, color, fonts)?;
             }
@@ -210,6 +234,55 @@ fn build_content(
     }
 
     Ok(content.finish().to_vec())
+}
+
+/// Emit a frame-local path into the content stream, in PDF coordinates.
+///
+/// Quadratics are raised to cubics because PDF has no quadratic operator.
+fn emit_path(content: &mut Content, page: DocRect, bounds: DocRect, path: &kurbo::BezPath) {
+    let at = |p: kurbo::Point| {
+        (
+            (bounds.x + p.x) as f32,
+            to_pdf_y(page, bounds.y + p.y, 0.0) as f32,
+        )
+    };
+
+    let mut current = kurbo::Point::ZERO;
+    for el in path.elements() {
+        match *el {
+            kurbo::PathEl::MoveTo(p) => {
+                let (x, y) = at(p);
+                content.move_to(x, y);
+                current = p;
+            }
+            kurbo::PathEl::LineTo(p) => {
+                let (x, y) = at(p);
+                content.line_to(x, y);
+                current = p;
+            }
+            kurbo::PathEl::QuadTo(c, p) => {
+                // Degree elevation: a quadratic (P0, C, P1) is the cubic
+                // (P0, P0 + 2/3(C - P0), P1 + 2/3(C - P1), P1).
+                let c1 = current + (c - current) * (2.0 / 3.0);
+                let c2 = p + (c - p) * (2.0 / 3.0);
+                let (x1, y1) = at(c1);
+                let (x2, y2) = at(c2);
+                let (x, y) = at(p);
+                content.cubic_to(x1, y1, x2, y2, x, y);
+                current = p;
+            }
+            kurbo::PathEl::CurveTo(c1, c2, p) => {
+                let (x1, y1) = at(c1);
+                let (x2, y2) = at(c2);
+                let (x, y) = at(p);
+                content.cubic_to(x1, y1, x2, y2, x, y);
+                current = p;
+            }
+            kurbo::PathEl::ClosePath => {
+                content.close_path();
+            }
+        }
+    }
 }
 
 /// Four cubic segments, the standard circle approximation.

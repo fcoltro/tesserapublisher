@@ -149,7 +149,15 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
 
     match state.active_tool {
         Tool::Select => select_gesture(response, rect, state),
-        Tool::Rectangle | Tool::Text => draw_gesture(response, rect, state),
+        // The hand tool pans on a plain drag, so it never draws.
+        Tool::Hand => {
+            if response.dragged() {
+                let d = response.drag_delta();
+                camera::pan_by(&mut state.view, d.x, d.y);
+            }
+        }
+        t if t.draws() => draw_gesture(response, rect, state),
+        _ => {}
     }
 
     if response.double_clicked() {
@@ -256,18 +264,39 @@ fn draw_gesture(response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
         && let Some(drag) = state.drag.take()
     {
         let bounds = drag.rect();
-        if bounds.width < MIN_DRAG || bounds.height < MIN_DRAG {
+
+        // A line is measured by its length, not by its bounding box: a
+        // perfectly horizontal line has zero height and a box test would
+        // silently discard it.
+        let (dx, dy) = drag.delta();
+        let too_small = if state.active_tool == Tool::Line {
+            dx.hypot(dy) < MIN_DRAG
+        } else {
+            bounds.width < MIN_DRAG || bounds.height < MIN_DRAG
+        };
+        if too_small {
             return; // a click, not a drawn frame
         }
+
         match state.active_tool {
             Tool::Rectangle => apply(state, Command::AddRectangle(bounds)),
+            Tool::Ellipse => apply(state, Command::AddEllipse(bounds)),
+            Tool::Line => {
+                // Frame-local endpoints, so a line drawn bottom-left to
+                // top-right stays distinct from its mirror image — which a
+                // bounds-only representation would lose.
+                let mut path = kurbo::BezPath::new();
+                path.move_to((drag.start.x - bounds.x, drag.start.y - bounds.y));
+                path.line_to((drag.current.x - bounds.x, drag.current.y - bounds.y));
+                apply(state, Command::AddPath(bounds, path));
+            }
             Tool::Text => {
                 apply(state, Command::AddTextFrame(bounds));
                 if let Some(id) = state.selection {
                     start_editing(state, id);
                 }
             }
-            Tool::Select => {}
+            Tool::Select | Tool::Hand => {}
         }
     }
 }

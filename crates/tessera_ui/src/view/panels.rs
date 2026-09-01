@@ -21,8 +21,9 @@ pub fn tool_strip(ui: &mut Ui, state: &mut TesseraApp) {
     });
 }
 
-/// Icons are painted through `egui::Painter` rather than loaded as assets, so
-/// they stay crisp at any DPI and re-tint with the theme.
+/// Icons come from Lucide, painted through `egui::Painter` from path data
+/// rather than loaded as assets — so they stay crisp at any DPI and re-tint
+/// with the theme. See [`crate::icons`].
 fn tool_button(ui: &mut Ui, tool: Tool, active: bool) -> egui::Response {
     let size = Vec2::splat(Theme::TOOL_SIZE);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
@@ -40,44 +41,10 @@ fn tool_button(ui: &mut Ui, tool: Tool, active: bool) -> egui::Response {
         Theme::TEXT_PRIMARY
     };
 
-    let painter = ui.painter();
-    painter.rect_filled(rect, Theme::RADIUS, bg);
-    let c = rect.center();
-    let r = Theme::TOOL_SIZE * 0.25;
-    let stroke = egui::Stroke::new(1.5, fg);
-
-    match tool {
-        // An arrow, drawn as three strokes.
-        Tool::Select => {
-            let tip = egui::pos2(c.x - r * 0.5, c.y - r);
-            painter.line_segment([tip, egui::pos2(c.x - r * 0.5, c.y + r)], stroke);
-            painter.line_segment([tip, egui::pos2(c.x + r, c.y + r * 0.2)], stroke);
-            painter.line_segment(
-                [
-                    egui::pos2(c.x - r * 0.5, c.y + r),
-                    egui::pos2(c.x + r, c.y + r * 0.2),
-                ],
-                stroke,
-            );
-        }
-        // An empty square.
-        Tool::Rectangle => {
-            painter.rect_stroke(
-                egui::Rect::from_center_size(c, Vec2::splat(r * 1.8)),
-                0.0,
-                stroke,
-                egui::StrokeKind::Middle,
-            );
-        }
-        // A serifed "T".
-        Tool::Text => {
-            painter.line_segment(
-                [egui::pos2(c.x - r, c.y - r), egui::pos2(c.x + r, c.y - r)],
-                stroke,
-            );
-            painter.line_segment([egui::pos2(c.x, c.y - r), egui::pos2(c.x, c.y + r)], stroke);
-        }
-    }
+    ui.painter().rect_filled(rect, Theme::RADIUS, bg);
+    // Inset so the 24-unit icon grid does not touch the button edge.
+    let inset = Theme::TOOL_SIZE * 0.22;
+    crate::icons::paint(ui.painter(), rect.shrink(inset), tool.icon(), fg);
 
     response.on_hover_text(format!("{} ({:?})", tool.label(), tool.shortcut()))
 }

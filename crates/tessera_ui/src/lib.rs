@@ -8,6 +8,7 @@ pub mod app;
 pub mod camera;
 pub mod command;
 pub mod file_ops;
+pub mod icons;
 pub mod theme;
 pub mod tools;
 pub mod view;

@@ -15,9 +15,25 @@ pub use tessera_document::document::StoryMap;
 
 #[derive(Debug, Clone)]
 pub enum ResolvedKind {
-    Rectangle { fill: Color, stroke: Option<Stroke> },
-    Ellipse { fill: Color, stroke: Option<Stroke> },
-    Text { shaped: ShapedText, color: Color },
+    Rectangle {
+        fill: Color,
+        stroke: Option<Stroke>,
+    },
+    Ellipse {
+        fill: Color,
+        stroke: Option<Stroke>,
+    },
+    Text {
+        shaped: ShapedText,
+        color: Color,
+    },
+    /// A path in frame-local coordinates. Consumers translate by
+    /// [`ResolvedItem::bounds`]'s origin.
+    Path {
+        path: kurbo::BezPath,
+        fill: Option<Color>,
+        stroke: Option<Stroke>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +65,18 @@ pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
                 fill: frame.fill.clone(),
                 stroke: frame.stroke.clone(),
             },
+            FrameKind::Path(path) => ResolvedKind::Path {
+                path: path.clone(),
+                // An open path with no explicit stroke would be invisible, so
+                // a path frame's fill is treated as its stroke colour when it
+                // has no stroke of its own.
+                fill: None,
+                stroke: Some(frame.stroke.clone().unwrap_or(Stroke {
+                    color: frame.fill.clone(),
+                    width: 1.0,
+                })),
+            },
+
             FrameKind::Text { story } => {
                 // A text frame whose story is missing is a broken document,
                 // not a blank frame. Skipping it silently would hide the

@@ -63,6 +63,24 @@ pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRe
                     );
                 }
             }
+            ResolvedKind::Path { path, fill, stroke } => {
+                // The path is frame-local, so it is placed by translating to
+                // the frame's origin before the camera transform applies.
+                let placed = transform * Affine::translate((item.bounds.x, item.bounds.y));
+                if let Some(f) = fill {
+                    scene.fill(Fill::NonZero, placed, to_peniko(f), None, path);
+                }
+                if let Some(s) = stroke {
+                    scene.stroke(
+                        &KurboStroke::new(s.width),
+                        placed,
+                        to_peniko(&s.color),
+                        None,
+                        path,
+                    );
+                }
+            }
+
             ResolvedKind::Text { shaped, color } => {
                 draw_text(&mut scene, transform, item.bounds, shaped, color);
             }

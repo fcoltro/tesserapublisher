@@ -16,10 +16,22 @@ use crate::app::TesseraApp;
 #[derive(Debug, Clone)]
 pub enum Command {
     AddRectangle(DocRect),
+    AddEllipse(DocRect),
+    /// Bounds plus the path, in frame-local coordinates.
+    AddPath(DocRect, kurbo::BezPath),
     AddTextFrame(DocRect),
-    SetBounds { id: FrameId, bounds: DocRect },
-    SetFill { id: FrameId, color: Color },
-    SetText { id: FrameId, text: String },
+    SetBounds {
+        id: FrameId,
+        bounds: DocRect,
+    },
+    SetFill {
+        id: FrameId,
+        color: Color,
+    },
+    SetText {
+        id: FrameId,
+        text: String,
+    },
     DeleteFrame(FrameId),
     Undo,
     Redo,
@@ -47,6 +59,34 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 Frame {
                     bounds,
                     kind: FrameKind::Rectangle,
+                    fill: Color::BLACK,
+                    stroke: None,
+                },
+            );
+            state.selection = Some(id);
+        }
+
+        Command::AddEllipse(bounds) => {
+            let layer = state.default_layer();
+            let id = state.document.add_frame(
+                layer,
+                Frame {
+                    bounds,
+                    kind: FrameKind::Ellipse,
+                    fill: Color::BLACK,
+                    stroke: None,
+                },
+            );
+            state.selection = Some(id);
+        }
+
+        Command::AddPath(bounds, path) => {
+            let layer = state.default_layer();
+            let id = state.document.add_frame(
+                layer,
+                Frame {
+                    bounds,
+                    kind: FrameKind::Path(path),
                     fill: Color::BLACK,
                     stroke: None,
                 },
@@ -256,5 +296,54 @@ mod tests {
         apply(&mut state, Command::DeleteFrame(id));
 
         assert!(state.editing.is_none());
+    }
+
+    #[test]
+    fn an_ellipse_is_added_as_an_ellipse() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddEllipse(bounds()));
+        let id = state.selection.expect("selected");
+        assert!(matches!(
+            state.document.frame(id).expect("frame").kind,
+            FrameKind::Ellipse
+        ));
+    }
+
+    #[test]
+    fn a_path_keeps_the_geometry_it_was_given() {
+        let mut state = TesseraApp::headless();
+        let mut path = kurbo::BezPath::new();
+        path.move_to((0.0, 10.0));
+        path.line_to((10.0, 0.0));
+
+        apply(&mut state, Command::AddPath(bounds(), path.clone()));
+
+        let id = state.selection.expect("selected");
+        let FrameKind::Path(stored) = state.document.frame(id).expect("frame").kind.clone() else {
+            panic!("expected a path frame");
+        };
+        assert_eq!(stored, path, "the path must survive unchanged");
+    }
+
+    #[test]
+    fn a_path_frame_survives_a_save_and_load() {
+        // BezPath serialises through kurbo's serde feature. If that ever
+        // regressed, a drawn line would vanish on reopen - the same class of
+        // bug as text living outside the document.
+        let mut state = TesseraApp::headless();
+        let mut path = kurbo::BezPath::new();
+        path.move_to((0.0, 10.0));
+        path.line_to((10.0, 0.0));
+        apply(&mut state, Command::AddPath(bounds(), path.clone()));
+
+        let json = serde_json::to_string(&state.document).expect("serialize");
+        let back: tessera_document::document::Document =
+            serde_json::from_str(&json).expect("deserialize");
+
+        let id = state.selection.expect("selected");
+        let FrameKind::Path(stored) = back.frame(id).expect("frame survived").kind.clone() else {
+            panic!("expected a path frame");
+        };
+        assert_eq!(stored, path);
     }
 }

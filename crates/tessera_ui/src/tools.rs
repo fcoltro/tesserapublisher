@@ -7,7 +7,10 @@ pub enum Tool {
     #[default]
     Select,
     Rectangle,
+    Ellipse,
+    Line,
     Text,
+    Hand,
 }
 
 impl Tool {
@@ -15,20 +18,53 @@ impl Tool {
         match self {
             Self::Select => "Select",
             Self::Rectangle => "Rectangle",
+            Self::Ellipse => "Ellipse",
+            Self::Line => "Line",
             Self::Text => "Text",
+            Self::Hand => "Hand",
         }
     }
 
-    /// The single-key shortcut, matching the conventions of layout tools.
+    pub fn icon(self) -> crate::icons::Icon {
+        match self {
+            Self::Select => crate::icons::Icon::Select,
+            Self::Rectangle => crate::icons::Icon::Rectangle,
+            Self::Ellipse => crate::icons::Icon::Ellipse,
+            Self::Line => crate::icons::Icon::Line,
+            Self::Text => crate::icons::Icon::Text,
+            Self::Hand => crate::icons::Icon::Hand,
+        }
+    }
+
+    /// Whether dragging this tool draws a new frame.
+    pub fn draws(self) -> bool {
+        matches!(
+            self,
+            Self::Rectangle | Self::Ellipse | Self::Line | Self::Text
+        )
+    }
+
+    /// The single-key shortcut. These follow InDesign's, which is what a
+    /// layout designer's fingers already know.
     pub fn shortcut(self) -> egui::Key {
         match self {
             Self::Select => egui::Key::V,
             Self::Rectangle => egui::Key::M,
+            Self::Ellipse => egui::Key::L,
+            Self::Line => egui::Key::Backslash,
             Self::Text => egui::Key::T,
+            Self::Hand => egui::Key::H,
         }
     }
 
-    pub const ALL: [Self; 3] = [Self::Select, Self::Rectangle, Self::Text];
+    pub const ALL: [Self; 6] = [
+        Self::Select,
+        Self::Rectangle,
+        Self::Ellipse,
+        Self::Line,
+        Self::Text,
+        Self::Hand,
+    ];
 }
 
 /// A gesture in progress. Held in application state rather than in a widget,
