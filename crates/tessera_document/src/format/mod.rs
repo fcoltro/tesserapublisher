@@ -137,7 +137,6 @@ pub fn rewrite_version_for_test(path: &Path, version: u32) -> Result<(), FormatE
 
 #[cfg(test)]
 mod precision_tests {
-    use super::*;
     use tessera_geometry::DocRect;
 
     /// The exact value the round-trip property test rejected on its first run.
