@@ -156,6 +156,7 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
                 camera::pan_by(&mut state.view, d.x, d.y);
             }
         }
+        Tool::Pen => pen_gesture(ui, response, rect, state),
         t if t.draws() => draw_gesture(response, rect, state),
         _ => {}
     }
@@ -296,9 +297,81 @@ fn draw_gesture(response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
                     start_editing(state, id);
                 }
             }
-            Tool::Select | Tool::Hand => {}
+            Tool::Select | Tool::Hand | Tool::Pen => {}
         }
     }
+}
+
+/// How close, in screen pixels, a click must land to the first anchor to be
+/// read as "close the path" rather than "add another point".
+const PEN_CLOSE_PX: f32 = 10.0;
+
+/// The pen: click for a corner, drag for a smooth point, click the first
+/// anchor to close, Enter or Escape to finish an open path.
+fn pen_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
+    let view = state.view;
+    // A fixed screen distance, converted to document units, so the target
+    // stays the same size on screen at every zoom level.
+    let close_dist = f64::from(PEN_CLOSE_PX) / view.zoom;
+
+    if response.drag_started()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        place_anchor(state, doc_pos(state, rect, pos), close_dist);
+    }
+
+    // Dragging away from a just-placed anchor pulls out its handle, which is
+    // what turns it into a smooth point.
+    if response.dragged()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        let at = view.screen_to_doc(local(rect, pos));
+        if let Some(pen) = state.pen.as_mut()
+            && let Some(anchor) = pen.last_mut()
+        {
+            anchor.handle_out = Some(at);
+        }
+    }
+
+    if response.clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        place_anchor(state, doc_pos(state, rect, pos), close_dist);
+    }
+
+    let finish = ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape));
+    if finish || response.double_clicked() {
+        commit_pen(state);
+    }
+}
+
+fn place_anchor(state: &mut TesseraApp, at: DocPoint, close_dist: f64) {
+    let pen = state.pen.get_or_insert_with(crate::pen::PenPath::default);
+
+    // Clicking the first anchor closes the path — but only once it encloses
+    // an area, since two points enclose nothing.
+    if pen.anchors.len() >= 3
+        && let Some(first) = pen.first_point()
+        && (first.x - at.x).hypot(first.y - at.y) < close_dist
+    {
+        pen.closed = true;
+        commit_pen(state);
+        return;
+    }
+
+    pen.push(crate::pen::Anchor::corner(at));
+}
+
+/// Turn the path under construction into a frame, or discard it if it draws
+/// nothing.
+fn commit_pen(state: &mut TesseraApp) {
+    let Some(pen) = state.pen.take() else {
+        return;
+    };
+    if !pen.is_drawable() {
+        return; // a stray click, not a path
+    }
+    apply(state, Command::AddPath(pen.bounds(), pen.to_bezpath()));
 }
 
 fn begin_text_edit(response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
@@ -373,6 +446,43 @@ fn draw_overlays(ui: &Ui, rect: Rect, state: &TesseraApp) {
                 0.0,
                 Theme::SELECTION,
             );
+        }
+    }
+
+    // The pen's path under construction, with its anchors and handles.
+    if let Some(pen) = &state.pen {
+        let path = pen.to_bezpath_at(0.0, 0.0);
+        let tolerance = 0.25 / state.view.zoom.max(f64::EPSILON);
+        let mut run: Vec<egui::Pos2> = Vec::new();
+        kurbo::flatten(path.iter(), tolerance, |el| match el {
+            kurbo::PathEl::MoveTo(q) => {
+                run.clear();
+                run.push(to_screen(DocPoint { x: q.x, y: q.y }));
+            }
+            kurbo::PathEl::LineTo(q) => run.push(to_screen(DocPoint { x: q.x, y: q.y })),
+            _ => {}
+        });
+        if run.len() > 1 {
+            painter.add(egui::Shape::line(run, Stroke::new(1.0, Theme::ACCENT)));
+        }
+
+        for anchor in &pen.anchors {
+            let c = to_screen(anchor.point);
+            let h = Theme::HANDLE_SIZE * 0.8;
+            painter.rect_filled(
+                Rect::from_center_size(c, egui::vec2(h, h)),
+                0.0,
+                Theme::ACCENT,
+            );
+            // Draw both handles, so a smooth point reads as symmetrical.
+            for handle in [anchor.handle_out, anchor.handle_in()]
+                .into_iter()
+                .flatten()
+            {
+                let hp = to_screen(handle);
+                painter.line_segment([c, hp], Stroke::new(1.0, Theme::TEXT_MUTED));
+                painter.circle_filled(hp, h * 0.4, Theme::TEXT_MUTED);
+            }
         }
     }
 

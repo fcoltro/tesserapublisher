@@ -9,6 +9,7 @@ pub enum Tool {
     Rectangle,
     Ellipse,
     Line,
+    Pen,
     Text,
     Hand,
 }
@@ -20,6 +21,7 @@ impl Tool {
             Self::Rectangle => "Rectangle",
             Self::Ellipse => "Ellipse",
             Self::Line => "Line",
+            Self::Pen => "Pen",
             Self::Text => "Text",
             Self::Hand => "Hand",
         }
@@ -31,6 +33,7 @@ impl Tool {
             Self::Rectangle => crate::icons::Icon::Rectangle,
             Self::Ellipse => crate::icons::Icon::Ellipse,
             Self::Line => crate::icons::Icon::Line,
+            Self::Pen => crate::icons::Icon::Pen,
             Self::Text => crate::icons::Icon::Text,
             Self::Hand => crate::icons::Icon::Hand,
         }
@@ -52,16 +55,18 @@ impl Tool {
             Self::Rectangle => egui::Key::M,
             Self::Ellipse => egui::Key::L,
             Self::Line => egui::Key::Backslash,
+            Self::Pen => egui::Key::P,
             Self::Text => egui::Key::T,
             Self::Hand => egui::Key::H,
         }
     }
 
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Select,
         Self::Rectangle,
         Self::Ellipse,
         Self::Line,
+        Self::Pen,
         Self::Text,
         Self::Hand,
     ];

@@ -71,6 +71,8 @@ pub struct TesseraApp {
     pub status: Option<Status>,
 
     pub clipboard: Option<Clipboard>,
+    /// The pen tool's path under construction, if any.
+    pub pen: Option<crate::pen::PenPath>,
 
     /// Set once the viewport has sized itself and fitted the page.
     pub fitted: bool,
@@ -93,6 +95,7 @@ impl TesseraApp {
             dirty: false,
             status: None,
             clipboard: None,
+            pen: None,
             fitted: false,
         }
     }
