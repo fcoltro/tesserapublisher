@@ -8,9 +8,12 @@
 //! milestone 0 at all.
 
 pub mod document;
+pub mod format;
+pub mod history;
 pub mod ids;
 pub mod nodes;
 
 pub use document::Document;
+pub use history::History;
 pub use ids::{FrameId, LayerId, PageId, SpreadId, StoryId};
 pub use nodes::{Frame, FrameKind, Layer, Page, Spread, Stroke};

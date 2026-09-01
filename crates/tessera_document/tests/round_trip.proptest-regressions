@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 43fbc0268528cd4bbc053d423c43eb699d18a00a3faede12fbad652568f7b61c # shrinks to frames = [Frame { bounds: DocRect { x: 0.0, y: 0.0, width: 1.0, height: 198.12860032553922 }, kind: Rectangle, fill: Rgb { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }, stroke: None }]

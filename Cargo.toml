@@ -53,7 +53,11 @@ unicode-segmentation = "1.13"
 # Document model and format.
 slotmap    = { version = "1.1", features = ["serde"] }
 serde      = { version = "1", features = ["derive"] }
-serde_json = "1"
+# float_roundtrip is REQUIRED, not an optimisation. Without it serde_json
+# parses floats to "best-effort precision" and a saved document comes back
+# with geometry altered in the last bit — silently rewriting the user's work
+# on every save. Found by the round-trip property test on its first run.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 zip        = "8"
 
 # Assets and export.
