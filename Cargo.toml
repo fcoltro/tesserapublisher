@@ -66,6 +66,9 @@ pdf-writer = "0.15"
 subsetter  = "0.2"
 rfd        = "0.17"
 
+# Blocking on async GPU calls in headless rendering.
+pollster = "0.4"
+
 # Errors and testing.
 thiserror = "2"
 proptest  = "1"

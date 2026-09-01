@@ -2984,8 +2984,8 @@ dependencies = [
 name = "tessera_render"
 version = "0.1.0"
 dependencies = [
+ "pollster",
  "proptest",
- "serde_json",
  "tessera_color",
  "tessera_document",
  "tessera_geometry",
