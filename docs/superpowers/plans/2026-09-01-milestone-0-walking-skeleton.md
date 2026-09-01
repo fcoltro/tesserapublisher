@@ -6,7 +6,9 @@
 
 **Architecture:** Nine library crates plus one `eframe` binary, dependencies pointing downward only. The document is an arena of plain serde-serializable structs. Vello renders the document into a texture on the *same* wgpu device egui owns, and egui composites it as an ordinary widget. Text shaping is owned by one crate and consumed by both the renderer and the PDF writer, so the export cannot drift from the screen.
 
-**Tech Stack:** Rust (edition 2024) · egui / eframe 0.35 · wgpu 29.0.4 · vello 0.10 · kurbo 0.13 · parley 0.11 · skrifa 0.44 · slotmap · serde + serde_json · zip · pdf-writer · rfd · proptest
+**Tech Stack:** Rust (edition 2024) · egui / eframe 0.35 · wgpu 29.0.4 · vello 0.10 · kurbo 0.13 · parley 0.11 · skrifa 0.44 · slotmap 1.1 · serde + serde_json 1 · zip 8 · pdf-writer 0.15 · subsetter 0.2 · image 0.25 · rfd 0.17 · thiserror 2 · proptest 1
+
+**The committed `Cargo.toml` is authoritative for versions**, not this line — it was written against the registry, and several guesses here were wrong (see Task 2).
 
 **Spec:** [`docs/superpowers/specs/2026-09-01-tessera-rebuild-design.md`](../specs/2026-09-01-tessera-rebuild-design.md)
 
@@ -282,7 +284,21 @@ The spike crate is **not** committed. It is deleted in Task 2.
 
 ---
 
-### Task 2: Demolition and the workspace skeleton
+### Task 2: Demolition and the workspace skeleton — ✅ COMPLETE (2026-09-01)
+
+17,133 lines removed; ten crates scaffolded; `cargo fmt`, `cargo clippy -D warnings` and 9 tests all green; `tessera_app` runs. **The committed `Cargo.toml` supersedes the manifest below.** Five things differed from what this task assumed:
+
+1. **A dependency cycle.** The spec had `tessera_io` depending on `tessera_document` (for link resolution and packaging) while Task 7's file format calls `tessera_io::atomic::write_atomic` — `document → io → document`, which Cargo rejects. Resolved by making `io` a *lower* crate: filesystem primitives and image decoding only, with no knowledge of the document model. Link staleness and packaging are operations on a document and live above it.
+2. **`zip` is at 8.6.0**, not 2. Note that `cargo info zip` reports `9.0.0-pre3`; a prerelease is not something to pin a build to, so the version came from `cargo add`, which selects the latest stable.
+3. **`pdf-writer` is at 0.15**, not 0.13.
+4. **`tessera_pdf` also needs `tessera_layout`**, since it consumes `ResolvedDocument`. The spec listed only `document, text, color, geometry`.
+5. **`.claude/launch.json` and the four Phase 4 design documents were also removed** — the former launched a Vite dev server that no longer exists, the latter describe the discarded architecture.
+
+The three dependency-direction rules were verified with `cargo tree` rather than assumed: `tessera_pdf` does not reach `tessera_render`; no crate below `tessera_ui` reaches `egui`; no crate below `tessera_render` reaches `wgpu`. All three hold.
+
+---
+
+#### Original task, for reference
 
 **Files:**
 - Delete: `src/`, `src-tauri/`, `crates/core/`, `crates/renderer/`, `package.json`, `package-lock.json`, `svelte.config.js`, `vite.config.ts`, `vitest.config.ts`, `tsconfig.json`, `static/`, `spike/`

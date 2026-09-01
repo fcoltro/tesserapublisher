@@ -1,0 +1,23 @@
+[package]
+name = "tessera_document"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+tessera_text.workspace = true
+tessera_color.workspace = true
+tessera_geometry.workspace = true
+tessera_io.workspace = true
+slotmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+zip.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

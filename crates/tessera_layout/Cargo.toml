@@ -1,0 +1,20 @@
+[package]
+name = "tessera_layout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+tessera_document.workspace = true
+tessera_text.workspace = true
+tessera_color.workspace = true
+tessera_geometry.workspace = true
+slotmap.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+serde_json.workspace = true

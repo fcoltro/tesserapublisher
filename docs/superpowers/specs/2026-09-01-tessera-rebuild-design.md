@@ -110,24 +110,25 @@ crates/
 
   tessera_pdf          PDF/X generation: page tree, content streams, font
                        subsetting, colour conversion, marks and boxes
-                       └── document, text, color, geometry
+                       └── layout, document, text, color, geometry
 
   tessera_render       document to vello::Scene; render to texture, and to pixels
-                       └── document, layout, text, color, geometry
-
-  tessera_io           image decode and proxying, link resolution, packaging
-                       └── document, color, geometry
+                       └── layout, document, text, color, geometry
 
   tessera_layout       grids, guides, columns, baseline grid, snapping,
                        text frame threading and reflow
                        └── document, text, geometry
 
   tessera_document     the document model, undo/redo, AND the .tessera format
-                       └── text, color, geometry
+                       └── text, color, geometry, io
 
   tessera_text         font database, shaping, the story model, and the
                        editable buffer with cursor, selection and IME state
                        └── geometry
+
+  tessera_io           file primitives and image decoding. Knows nothing about
+                       the document model — see the note below
+                       └── color, geometry
 
   tessera_color        RGB / CMYK / Lab, ICC profiles, swatches, spot inks
                        └── (nothing)
@@ -135,6 +136,15 @@ crates/
   tessera_geometry     points, rects, affine transforms, beziers, hit-testing
                        └── (nothing)
 ```
+
+**On `tessera_io`'s position.** An earlier draft had it depending on
+`tessera_document` for link resolution and packaging, while `document`'s file
+format depended on `io` for atomic writes — a dependency cycle Cargo rejects.
+It is resolved by making `io` a *lower* crate than `document`: it owns
+filesystem primitives (atomic write, path handling) and image decoding, and
+has no knowledge of documents. Resolving a link *against a document*, and
+packaging one, are operations on a document and live in `tessera_document`
+and `tessera_ui` respectively, calling down into `io` for the file work.
 
 ### 4.2 Why each crate exists
 
@@ -186,9 +196,12 @@ rasterizes it. Two outputs from one scene builder: a wgpu texture for the
 live viewport, and a CPU pixel buffer for tests and page thumbnails. The
 pixel path is what makes rendering regression-testable without a window.
 
-**`tessera_io`** — image decoding, downscaled proxy generation and caching,
-link resolution and staleness detection, and document packaging (collecting
-links and fonts into a folder).
+**`tessera_io`** — filesystem primitives and image decoding: atomic writes,
+path handling, decoding raster formats, and downscaled proxy generation and
+caching. Deliberately ignorant of the document model, so that
+`tessera_document`'s file format can call down into it without a cycle.
+Deciding *whether* a link is stale, and collecting links and fonts into a
+package, are operations on a document and live above this crate.
 
 **`tessera_pdf`** — generates PDF from the *document*, not from the rendered
 scene. See section 8.

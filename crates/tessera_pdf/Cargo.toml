@@ -1,0 +1,23 @@
+[package]
+name = "tessera_pdf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+tessera_layout.workspace = true
+tessera_document.workspace = true
+tessera_text.workspace = true
+tessera_color.workspace = true
+tessera_geometry.workspace = true
+pdf-writer.workspace = true
+subsetter.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+serde_json.workspace = true
