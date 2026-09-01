@@ -1,0 +1,6 @@
+# Pin the channel so local and CI agree. The first CI run failed on a clippy
+# lint that CI's stable had and the local toolchain did not -- a class of
+# surprise worth removing rather than rediscovering.
+[toolchain]
+channel = "stable"
+components = ["clippy", "rustfmt"]

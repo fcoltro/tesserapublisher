@@ -37,7 +37,11 @@ tessera_ui       = { path = "crates/tessera_ui" }
 
 # Interface. Pinned to 0.35 to match oxiDRAFT, the reference implementation.
 egui      = "0.35"
-eframe    = { version = "0.35", default-features = false, features = ["wgpu"] }
+# Default features, deliberately. Turning them off drops x11, wayland,
+# default_fonts and winit/default -- which makes winit fail to compile on
+# Linux entirely ("the platform you're compiling for is not supported").
+# eframe's defaults do not include glow, so there was nothing to save.
+eframe    = "0.35"
 egui-wgpu = "0.35"
 
 # Document surface. vello 0.10 and egui-wgpu 0.35 both resolve to wgpu 29.0.4 —

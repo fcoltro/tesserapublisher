@@ -179,8 +179,9 @@ fn text_puts_dark_pixels_on_the_page() {
     );
     let pixels = renderer.render(&scene).expect("render");
 
-    let dark = pixels
-        .chunks_exact(4)
+    let (rgba, _) = pixels.as_chunks::<4>();
+    let dark = rgba
+        .iter()
         .filter(|p| p[0] < 128 && p[1] < 128 && p[2] < 128)
         .count();
     assert!(dark > 20, "glyphs must actually mark the page, saw {dark}");
