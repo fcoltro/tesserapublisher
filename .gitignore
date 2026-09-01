@@ -1,0 +1,18 @@
+# Rust
+target/
+
+# Cargo.lock IS committed — this is an application, not a library, and
+# reproducible builds across three platforms depend on it.
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local tooling and scratch
+.remember/
+.code-review-graph/
