@@ -89,6 +89,22 @@ pub enum DragKind {
     /// is computed from the origin rather than accumulated per frame — which
     /// would drift, and would make a single undo entry impossible.
     Move { origins: Vec<(FrameId, DocRect)> },
+    /// Resizing one frame by a handle. Carries the bounds and rotation as
+    /// they were when the drag began, so every frame of the drag is computed
+    /// from the original rather than from the previous frame — which would
+    /// compound rounding into visible drift.
+    Scale {
+        id: FrameId,
+        handle: crate::transform::Handle,
+        origin: DocRect,
+        rotation: f64,
+    },
+    /// Rotating one frame about its centre.
+    Rotate {
+        id: FrameId,
+        center: DocPoint,
+        origin_rotation: f64,
+    },
 }
 
 /// A gesture in progress.

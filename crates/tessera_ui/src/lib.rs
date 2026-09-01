@@ -13,6 +13,7 @@ pub mod pen;
 pub mod selection;
 pub mod theme;
 pub mod tools;
+pub mod transform;
 pub mod view;
 
 pub use app::{Status, TesseraApp};

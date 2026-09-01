@@ -19,6 +19,11 @@ const MIN_DRAG: f64 = 2.0;
 /// How close, in screen pixels, a click must land to the pen's first anchor
 /// to be read as "close the path" rather than "add another point".
 const PEN_CLOSE_PX: f32 = 10.0;
+/// How near a handle a click counts as grabbing it, in screen pixels.
+const HANDLE_GRAB_PX: f32 = 7.0;
+/// Just outside a corner handle, dragging rotates instead of scaling — the
+/// affordance every layout tool uses, and one that needs no extra widget.
+const ROTATE_RING_PX: f32 = 18.0;
 
 pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     let size = ui.available_size();
@@ -196,10 +201,82 @@ fn camera_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
     }
 }
 
+// --- handles ----------------------------------------------------------------
+
+/// Where a handle sits on screen, accounting for the frame's rotation.
+fn handle_screen_pos(
+    state: &TesseraApp,
+    rect: Rect,
+    bounds: DocRect,
+    rotation: f64,
+    handle: crate::transform::Handle,
+) -> egui::Pos2 {
+    let p = handle
+        .position(bounds)
+        .rotated_about(bounds.center(), rotation);
+    let s = state.view.doc_to_screen(p);
+    egui::pos2(rect.min.x + s.x, rect.min.y + s.y)
+}
+
+/// What the pointer is over, for a lone selection: a handle to scale by, or
+/// the ring outside a corner that rotates.
+enum Grab {
+    Scale(crate::transform::Handle),
+    Rotate,
+}
+
+fn grab_at(state: &TesseraApp, rect: Rect, pos: egui::Pos2) -> Option<(FrameId, Grab)> {
+    let id = state.selection.single()?;
+    let frame = state.document.frame(id)?;
+
+    let mut nearest_corner = f32::MAX;
+    for handle in crate::transform::Handle::ALL {
+        let hp = handle_screen_pos(state, rect, frame.bounds, frame.rotation, handle);
+        let d = hp.distance(pos);
+        if d <= HANDLE_GRAB_PX {
+            return Some((id, Grab::Scale(handle)));
+        }
+        if handle.is_corner() {
+            nearest_corner = nearest_corner.min(d);
+        }
+    }
+
+    // Outside a corner, but not far outside.
+    (nearest_corner <= ROTATE_RING_PX).then_some((id, Grab::Rotate))
+}
+
 // --- selection --------------------------------------------------------------
 
 fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
     let extend = ui.input(|i| i.modifiers.shift);
+
+    // A handle wins over the frame beneath it, so a handle sitting on top of
+    // another object still resizes rather than selecting.
+    if response.drag_started()
+        && let Some(pos) = response.interact_pointer_pos()
+        && let Some((id, grab)) = grab_at(state, rect, pos)
+    {
+        let at = doc_pos(state, rect, pos);
+        if let Some(frame) = state.document.frame(id) {
+            state.drag = Some(Drag::new(
+                at,
+                match grab {
+                    Grab::Scale(handle) => DragKind::Scale {
+                        id,
+                        handle,
+                        origin: frame.bounds,
+                        rotation: frame.rotation,
+                    },
+                    Grab::Rotate => DragKind::Rotate {
+                        id,
+                        center: frame.bounds.center(),
+                        origin_rotation: frame.rotation,
+                    },
+                },
+            ));
+        }
+        return;
+    }
 
     if response.drag_started()
         && let Some(pos) = response.interact_pointer_pos()
@@ -235,6 +312,51 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
         if let Some(drag) = state.drag.as_mut() {
             drag.current = at;
         }
+        // Live scale and rotate, each recomputed from the drag's origin.
+        match state.drag.clone() {
+            Some(Drag {
+                kind:
+                    DragKind::Scale {
+                        id,
+                        handle,
+                        origin,
+                        rotation,
+                    },
+                current,
+                ..
+            }) => {
+                let proportional = ui.input(|i| i.modifiers.shift);
+                let bounds =
+                    crate::transform::resize(origin, rotation, handle, current, proportional);
+                if let Some(f) = state.document.frame_mut(id) {
+                    f.bounds = bounds;
+                }
+            }
+            Some(Drag {
+                kind:
+                    DragKind::Rotate {
+                        id,
+                        center,
+                        origin_rotation,
+                    },
+                start,
+                current,
+            }) => {
+                let snap = ui.input(|i| i.modifiers.shift);
+                let degrees = crate::transform::rotation_from_drag(
+                    center,
+                    start,
+                    current,
+                    origin_rotation,
+                    snap,
+                );
+                if let Some(f) = state.document.frame_mut(id) {
+                    f.rotation = degrees;
+                }
+            }
+            _ => {}
+        }
+
         // Live move, without recording undo per frame.
         if let Some(Drag {
             kind: DragKind::Move { origins },
@@ -291,6 +413,44 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
                     }
                 } else {
                     state.selection.replace_all(caught);
+                }
+            }
+            // Put the live preview back, then apply once — so the whole
+            // gesture is a single undo entry rather than one per frame.
+            DragKind::Scale {
+                id,
+                handle,
+                origin,
+                rotation,
+            } => {
+                let proportional = ui.input(|i| i.modifiers.shift);
+                let bounds =
+                    crate::transform::resize(origin, rotation, handle, drag.current, proportional);
+                if let Some(f) = state.document.frame_mut(id) {
+                    f.bounds = origin;
+                }
+                if bounds != origin {
+                    apply(state, Command::SetBounds { id, bounds });
+                }
+            }
+            DragKind::Rotate {
+                id,
+                center,
+                origin_rotation,
+            } => {
+                let snap = ui.input(|i| i.modifiers.shift);
+                let degrees = crate::transform::rotation_from_drag(
+                    center,
+                    drag.start,
+                    drag.current,
+                    origin_rotation,
+                    snap,
+                );
+                if let Some(f) = state.document.frame_mut(id) {
+                    f.rotation = origin_rotation;
+                }
+                if degrees != origin_rotation {
+                    apply(state, Command::SetRotation { id, degrees });
                 }
             }
             DragKind::Draw => {}
@@ -496,23 +656,32 @@ fn draw_overlays(ui: &Ui, rect: Rect, state: &TesseraApp) {
         let Some(bounds) = state.document.frame(id).map(|f| f.bounds) else {
             continue;
         };
-        let r = doc_rect_to_screen(bounds);
-        painter.rect_stroke(
-            r,
-            0.0,
+        // The outline follows the frame's rotation, so it hugs the object
+        // rather than boxing it in an axis-aligned rectangle.
+        let rotation = state.document.frame(id).map_or(0.0, |f| f.rotation);
+        let corners: Vec<egui::Pos2> = [
+            crate::transform::Handle::TopLeft,
+            crate::transform::Handle::TopRight,
+            crate::transform::Handle::BottomRight,
+            crate::transform::Handle::BottomLeft,
+        ]
+        .into_iter()
+        .map(|h| handle_screen_pos(state, rect, bounds, rotation, h))
+        .collect();
+        painter.add(egui::Shape::closed_line(
+            corners,
             Stroke::new(1.0, Theme::SELECTION),
-            egui::StrokeKind::Middle,
-        );
+        ));
+
+        // Handles ride the rotation too, so they stay on the frame's own
+        // corners. Only a lone selection gets them: a multiple selection has
+        // no single frame to resize.
         if single == Some(id) {
             let h = Theme::HANDLE_SIZE;
-            for corner in [
-                r.left_top(),
-                r.right_top(),
-                r.left_bottom(),
-                r.right_bottom(),
-            ] {
+            for handle in crate::transform::Handle::ALL {
+                let pos = handle_screen_pos(state, rect, bounds, rotation, handle);
                 painter.rect_filled(
-                    Rect::from_center_size(corner, egui::vec2(h, h)),
+                    Rect::from_center_size(pos, egui::vec2(h, h)),
                     0.0,
                     Theme::SELECTION,
                 );
@@ -578,7 +747,9 @@ fn draw_overlays(ui: &Ui, rect: Rect, state: &TesseraApp) {
                     egui::StrokeKind::Middle,
                 );
             }
-            DragKind::Move { .. } => {}
+            // A scale or rotate in progress already shows itself: the frame
+            // is being updated live, so there is nothing extra to draw.
+            DragKind::Move { .. } | DragKind::Scale { .. } | DragKind::Rotate { .. } => {}
         }
     }
 
