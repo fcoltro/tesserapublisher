@@ -14,7 +14,10 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 840.0])
             .with_min_inner_size([720.0, 480.0])
-            .with_title("Tessera Publisher"),
+            .with_title("Tessera Publisher")
+            // Take focus on launch. Without this the window can open behind
+            // whatever the user clicked while it was starting.
+            .with_active(true),
         // No WgpuConfiguration: the Task 1 spike established that Vello runs
         // on eframe's stock device, with no extra features and no raised
         // limits. See docs/superpowers/notes/2026-09-01-vello-egui-spike.md.
