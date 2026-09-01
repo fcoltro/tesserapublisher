@@ -13,7 +13,7 @@ pub mod history;
 pub mod ids;
 pub mod nodes;
 
-pub use document::Document;
+pub use document::{Document, StoryMap};
 pub use history::History;
 pub use ids::{FrameId, LayerId, PageId, SpreadId, StoryId};
 pub use nodes::{Frame, FrameKind, Layer, Page, Spread, Stroke};

@@ -191,3 +191,43 @@ proptest! {
         prop_assert_eq!(loaded.paint_order(), doc.paint_order());
     }
 }
+
+#[test]
+fn text_survives_a_save_and_load() {
+    // The bug this pins: stories once lived beside the document rather than
+    // inside it, so a saved file kept the text FRAMES and silently dropped the
+    // text. Everything looked right until the file was reopened.
+    let path = temp_path("text.tessera");
+    let mut doc = Document::new();
+    let layer = doc.default_layer().expect("layer");
+    let story = doc.add_story(tessera_text::story::Story::new("Hello, Tessera."));
+    let frame = doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: 10.0,
+                y: 10.0,
+                width: 400.0,
+                height: 40.0,
+            },
+            kind: FrameKind::Text { story },
+            fill: Color::WHITE,
+            stroke: None,
+        },
+    );
+
+    format::save(&doc, &path).expect("save");
+    let loaded = format::load(&path).expect("load");
+
+    let FrameKind::Text {
+        story: loaded_story,
+    } = loaded.frame(frame).expect("frame survived").kind.clone()
+    else {
+        panic!("the frame must still be a text frame");
+    };
+    assert_eq!(
+        loaded.story(loaded_story).expect("story survived").text,
+        "Hello, Tessera.",
+        "the text itself must come back, not just the frame holding it"
+    );
+}

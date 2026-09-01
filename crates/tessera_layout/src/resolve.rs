@@ -4,18 +4,14 @@
 //! module, so neither re-derives geometry nor re-shapes text. That shared
 //! source is what keeps an export from drifting away from the screen.
 
-use slotmap::SlotMap;
 use tessera_color::Color;
 use tessera_document::document::Document;
-use tessera_document::ids::{FrameId, StoryId};
+use tessera_document::ids::FrameId;
 use tessera_document::nodes::{FrameKind, Stroke};
 use tessera_geometry::DocRect;
 use tessera_text::shape::{ShapedText, Shaper};
-use tessera_text::story::Story;
 
-/// Stories live at the document level, addressed by id, so a threaded story
-/// can flow through many frames while existing once.
-pub type StoryMap = SlotMap<StoryId, Story>;
+pub use tessera_document::document::StoryMap;
 
 #[derive(Debug, Clone)]
 pub enum ResolvedKind {
@@ -38,7 +34,7 @@ pub struct ResolvedDocument {
 }
 
 /// Resolve every visible frame, in paint order.
-pub fn resolve(doc: &Document, stories: &StoryMap, shaper: &mut Shaper) -> ResolvedDocument {
+pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
     let mut items = Vec::new();
 
     for id in doc.paint_order() {
@@ -58,7 +54,7 @@ pub fn resolve(doc: &Document, stories: &StoryMap, shaper: &mut Shaper) -> Resol
                 // not a blank frame. Skipping it silently would hide the
                 // breakage; milestone 6's preflight reports it. For now it
                 // simply does not paint, which is visible.
-                let Some(story) = stories.get(*story) else {
+                let Some(story) = doc.story(*story) else {
                     continue;
                 };
                 ResolvedKind::Text {
@@ -82,6 +78,7 @@ pub fn resolve(doc: &Document, stories: &StoryMap, shaper: &mut Shaper) -> Resol
 mod tests {
     use super::*;
     use tessera_document::nodes::Frame;
+    use tessera_text::story::Story;
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> Frame {
         Frame {
@@ -99,7 +96,7 @@ mod tests {
 
     #[test]
     fn an_empty_document_resolves_to_nothing() {
-        let resolved = resolve(&Document::new(), &StoryMap::with_key(), &mut Shaper::new());
+        let resolved = resolve(&Document::new(), &mut Shaper::new());
         assert!(resolved.items.is_empty());
     }
 
@@ -109,7 +106,7 @@ mod tests {
         let layer = doc.default_layer().expect("layer");
         doc.add_frame(layer, rect(5.0, 6.0, 20.0, 30.0));
 
-        let resolved = resolve(&doc, &StoryMap::with_key(), &mut Shaper::new());
+        let resolved = resolve(&doc, &mut Shaper::new());
 
         assert_eq!(resolved.items.len(), 1);
         assert_eq!(resolved.items[0].bounds.width, 20.0);
@@ -126,7 +123,7 @@ mod tests {
         let first = doc.add_frame(layer, rect(0.0, 0.0, 1.0, 1.0));
         let second = doc.add_frame(layer, rect(0.0, 0.0, 2.0, 2.0));
 
-        let resolved = resolve(&doc, &StoryMap::with_key(), &mut Shaper::new());
+        let resolved = resolve(&doc, &mut Shaper::new());
 
         assert_eq!(resolved.items[0].frame, first);
         assert_eq!(resolved.items[1].frame, second);
@@ -136,14 +133,13 @@ mod tests {
     fn a_text_frame_resolves_with_text_shaped_to_the_frame_width() {
         let mut doc = Document::new();
         let layer = doc.default_layer().expect("layer");
-        let mut stories = StoryMap::with_key();
-        let story = stories.insert(Story::new("Hello"));
+        let story = doc.add_story(Story::new("Hello"));
 
         let mut frame = rect(0.0, 0.0, 500.0, 100.0);
         frame.kind = FrameKind::Text { story };
         doc.add_frame(layer, frame);
 
-        let resolved = resolve(&doc, &stories, &mut Shaper::new());
+        let resolved = resolve(&doc, &mut Shaper::new());
 
         let ResolvedKind::Text { shaped, .. } = &resolved.items[0].kind else {
             panic!("expected text");
@@ -155,14 +151,13 @@ mod tests {
     fn a_narrow_text_frame_wraps_because_the_frame_width_is_the_measure() {
         let mut doc = Document::new();
         let layer = doc.default_layer().expect("layer");
-        let mut stories = StoryMap::with_key();
-        let story = stories.insert(Story::new("the quick brown fox jumps over"));
+        let story = doc.add_story(Story::new("the quick brown fox jumps over"));
 
         let mut frame = rect(0.0, 0.0, 60.0, 100.0);
         frame.kind = FrameKind::Text { story };
         doc.add_frame(layer, frame);
 
-        let resolved = resolve(&doc, &stories, &mut Shaper::new());
+        let resolved = resolve(&doc, &mut Shaper::new());
 
         let ResolvedKind::Text { shaped, .. } = &resolved.items[0].kind else {
             panic!("expected text");
@@ -180,26 +175,20 @@ mod tests {
         doc.add_frame(layer, rect(0.0, 0.0, 10.0, 10.0));
         doc.layers.get_mut(layer).expect("layer").visible = false;
 
-        assert_eq!(
-            resolve(&doc, &StoryMap::with_key(), &mut Shaper::new())
-                .items
-                .len(),
-            0
-        );
+        assert_eq!(resolve(&doc, &mut Shaper::new()).items.len(), 0);
     }
 
     #[test]
     fn a_text_frame_with_a_missing_story_does_not_paint() {
         let mut doc = Document::new();
         let layer = doc.default_layer().expect("layer");
-        let mut stories = StoryMap::with_key();
-        let story = stories.insert(Story::new("gone"));
-        stories.remove(story);
+        let story = doc.add_story(Story::new("gone"));
+        doc.stories.remove(story);
 
         let mut frame = rect(0.0, 0.0, 100.0, 20.0);
         frame.kind = FrameKind::Text { story };
         doc.add_frame(layer, frame);
 
-        assert!(resolve(&doc, &stories, &mut Shaper::new()).items.is_empty());
+        assert!(resolve(&doc, &mut Shaper::new()).items.is_empty());
     }
 }

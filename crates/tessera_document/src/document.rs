@@ -4,8 +4,13 @@ use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 use tessera_geometry::{DocPoint, DocRect};
 
-use crate::ids::{FrameId, LayerId, PageId, SpreadId};
+use crate::ids::{FrameId, LayerId, PageId, SpreadId, StoryId};
 use crate::nodes::{Frame, Layer, Page, Spread};
+use tessera_text::story::Story;
+
+/// Stories are addressed by id and live at the document level, so a threaded
+/// story flows through many frames while existing exactly once.
+pub type StoryMap = slotmap::SlotMap<StoryId, Story>;
 
 /// US Letter in points — the default new-document size.
 const DEFAULT_PAGE: DocRect = DocRect {
@@ -21,6 +26,10 @@ pub struct Document {
     pub layers: SlotMap<LayerId, Layer>,
     pub pages: SlotMap<PageId, Page>,
     pub spreads: SlotMap<SpreadId, Spread>,
+    /// Text content, referenced by `FrameKind::Text`. **Part of the document,
+    /// so it is saved with it** — text held anywhere else would vanish on
+    /// save, which is precisely the class of bug this rebuild exists to fix.
+    pub stories: StoryMap,
     /// Spread paint and navigation order.
     pub spread_order: Vec<SpreadId>,
     /// Bumped on every mutation. The renderer rebuilds its scene only when
@@ -39,6 +48,7 @@ impl Document {
             layers: SlotMap::with_key(),
             pages: SlotMap::with_key(),
             spreads: SlotMap::with_key(),
+            stories: StoryMap::with_key(),
             spread_order: Vec::new(),
             revision: 0,
         };
@@ -111,6 +121,21 @@ impl Document {
             layer.frames.retain(|f| *f != id);
         }
         self.revision += 1;
+    }
+
+    pub fn add_story(&mut self, story: Story) -> StoryId {
+        self.revision += 1;
+        self.stories.insert(story)
+    }
+
+    pub fn story(&self, id: StoryId) -> Option<&Story> {
+        self.stories.get(id)
+    }
+
+    /// Bumps the revision on the assumption the caller mutates.
+    pub fn story_mut(&mut self, id: StoryId) -> Option<&mut Story> {
+        self.revision += 1;
+        self.stories.get_mut(id)
     }
 
     pub fn frame(&self, id: FrameId) -> Option<&Frame> {

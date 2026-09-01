@@ -20,6 +20,7 @@ zip.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+tessera_text.workspace = true
 proptest.workspace = true
 # Integration tests in tests/ link only against dev-dependencies, so the
 # crates they touch must be repeated here even when they are normal deps.

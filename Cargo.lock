@@ -3013,6 +3013,7 @@ dependencies = [
 name = "tessera_ui"
 version = "0.1.0"
 dependencies = [
+ "eframe",
  "egui",
  "egui-wgpu",
  "proptest",
