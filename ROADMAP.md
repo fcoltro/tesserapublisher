@@ -42,9 +42,11 @@ Never "done" until shipping; re-checked at the close of every milestone.
 - [~] **Save and open never lose data.** Round-trip property tests pass on
   arbitrary generated documents. There is only format version 1 so far, so the
   migration chain is untested by construction — the first bump proves it.
-- [~] **Cross-platform build parity.** The CI workflow builds and runs the
-  headless suite on Linux, Windows and macOS, and `platform/` is empty — but
-  no CI run has happened yet, since nothing is pushed.
+- [x] **Cross-platform build parity.** CI builds and runs the 129-test
+  headless suite on Linux, Windows and macOS — **all three green as of
+  2026-09-01**. `apps/tessera_app/src/platform/` is empty, so no
+  platform-specific code exists yet. This is the project's defining
+  requirement and it is now checked on every push.
 - [~] **Interactive verification.** Windows only, by choice. Linux and macOS
   are **known-unverified** and are recorded as such, never as done.
 - [x] **No unsafe code.** `unsafe_code = "forbid"` at the workspace level.
@@ -70,8 +72,9 @@ Never "done" until shipping; re-checked at the close of every milestone.
 > **Tessera can now keep a user's work.** That is the whole point of this
 > milestone and the correction to what came before.
 >
-> Verified on Windows only. Linux and macOS are **known-unverified** — they
-> are built by CI but have never been run.
+> Verified interactively on Windows only. Linux and macOS **build and pass
+> the headless suite in CI** but have never been run as an application —
+> known-unverified, not done.
 
 Every crate exists and is real. None is deep. This milestone deliberately
 produces an application that does very little and *keeps every bit of it*.
