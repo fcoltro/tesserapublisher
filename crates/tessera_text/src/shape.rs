@@ -25,6 +25,12 @@ pub struct PositionedGlyph {
     pub x: f64,
     /// Baseline-relative y, already including the line's baseline offset.
     pub y: f64,
+    /// Advance width, in points at [`ShapedText::font_size`].
+    ///
+    /// Carried from the shaper rather than recomputed, because the PDF
+    /// writer needs it for the `/W` array and must not disagree with what
+    /// was laid out on screen.
+    pub advance: f64,
     /// Index into [`ShapedText::fonts`].
     pub font_index: usize,
 }
@@ -122,6 +128,7 @@ impl Shaper {
                         glyph_id: g.id,
                         x: f64::from(g.x),
                         y: f64::from(g.y),
+                        advance: f64::from(g.advance),
                         font_index,
                     });
                 }
@@ -218,6 +225,17 @@ mod tests {
                     "font_index {} out of range",
                     g.font_index
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn glyphs_carry_their_advance_for_the_pdf_width_array() {
+        let mut shaper = Shaper::new();
+        let shaped = shaper.shape(&Story::new("Hello"), 500.0);
+        for line in &shaped.lines {
+            for g in &line.glyphs {
+                assert!(g.advance > 0.0, "a visible glyph must advance the pen");
             }
         }
     }

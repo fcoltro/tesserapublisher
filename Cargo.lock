@@ -3028,6 +3028,7 @@ dependencies = [
  "tessera_pdf",
  "tessera_render",
  "tessera_text",
+ "thiserror 2.0.20",
  "vello",
 ]
 

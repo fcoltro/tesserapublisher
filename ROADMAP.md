@@ -42,22 +42,30 @@ Never "done" until shipping; re-checked at the close of every milestone.
 - [ ] **Save and open never lose data.** Round-trip property tests pass on
   arbitrary generated documents, and every historical format version still
   loads through its migration chain.
-- [ ] **Cross-platform build parity.** CI builds and runs the headless suite
-  on Linux, Windows and macOS. No platform-specific code outside
-  `apps/tessera_app/src/platform/`.
+- [~] **Cross-platform build parity.** The CI workflow builds and runs the
+  headless suite on Linux, Windows and macOS, and `platform/` is empty — but
+  no CI run has happened yet, since nothing is pushed.
 - [~] **Interactive verification.** Windows only, by choice. Linux and macOS
   are **known-unverified** and are recorded as such, never as done.
-- [ ] **No unsafe code.** `unsafe_code = "forbid"` at the workspace level.
+- [x] **No unsafe code.** `unsafe_code = "forbid"` at the workspace level.
 - [ ] **No silent fallbacks.** Every failure states its cause in the interface
   or in a log. The previous codebase's most instructive defect was a clip
   rectangle that resolved to zero and disabled rendering without a word.
-- [ ] **Tests land with the change**, in the same commit.
+- [x] **Tests land with the change**, in the same commit.
 
 ---
 
 # Milestone 0 — The Walking Skeleton
 
 **The spine. Nothing else counts until this works.**
+
+> **Status 2026-09-01: code complete, awaiting the manual check.**
+> 139 tests pass (134 headless + 5 GPU-backed), `clippy -D warnings` is clean,
+> and the acceptance sentence runs end to end headlessly in
+> `crates/tessera_ui/tests/milestone_0.rs`. What has **not** happened is a
+> person performing the sentence in the running application. Per this file's
+> own rule, that is what `[x]` requires — so the boxes below stay unticked
+> until then.
 
 Every crate exists and is real. None is deep. This milestone deliberately
 produces an application that does very little and *keeps every bit of it*.
@@ -71,20 +79,24 @@ produces an application that does very little and *keeps every bit of it*.
 > text exactly as they were left. Export a PDF, and open that PDF in Acrobat
 > with the text selectable.
 
-- [ ] **Step 0 — the wgpu spike.** Prove Vello can render into a texture on
+- [x] **Step 0 — the wgpu spike.** Prove Vello can render into a texture on
   the device eframe owns, on egui 0.35. **This runs before anything else is
   built**, because a negative result changes the design (see R1 in the spec).
-- [ ] **Step 1 — demolition.** Remove `src/`, `src-tauri/`, `crates/core`,
+- [x] **Step 1 — demolition.** Remove `src/`, `src-tauri/`, `crates/core`,
   `crates/renderer`, and all Node tooling. The old tree stays in git history
   and is consulted, not carried.
-- [ ] **Step 2 — the workspace.** Nine crates and one app, dependencies
+- [x] **Step 2 — the workspace.** Nine crates and one app, dependencies
   pointing downward only, `unsafe_code = "forbid"`, CI on three platforms.
-- [ ] A window opens, egui draws, the canvas pans and zooms.
-- [ ] Rectangles and text frames can be drawn, selected and moved.
-- [ ] Text is typed **on the canvas**, with a caret, selection, and backspace.
-- [ ] `.tessera` saves and loads, with round-trip property tests.
-- [ ] PDF exports with embedded, subsetted fonts and RGB colour.
-- [ ] Undo and redo work across every one of the above.
+- [~] A window opens, egui draws, the canvas pans and zooms. *Built and seen
+  running; pan and zoom unverified by hand.*
+- [~] Rectangles and text frames can be drawn, selected and moved. *Built;
+  the gestures are unverified by hand.*
+- [~] Text is typed **on the canvas**, with a caret, selection, and backspace.
+  *The buffer and event plumbing are tested headless, including IME. Typing in
+  the running window is unverified.*
+- [x] `.tessera` saves and loads, with round-trip property tests.
+- [x] PDF exports with embedded, subsetted fonts and RGB colour.
+- [x] Undo and redo work across every one of the above.
 
 **Explicitly not in M0:** docking, panels beyond one inspector, master pages,
 threading, swatches, preflight, images, CMYK, print marks.

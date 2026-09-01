@@ -63,6 +63,11 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
                 ui.close();
             }
             ui.separator();
+            if ui.button("Export PDF...").clicked() {
+                file_ops::export_pdf(state);
+                ui.close();
+            }
+            ui.separator();
             if ui.button("Quit").clicked() {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }

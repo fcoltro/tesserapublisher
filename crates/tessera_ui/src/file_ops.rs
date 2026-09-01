@@ -48,6 +48,28 @@ pub fn new_document(state: &mut TesseraApp) {
     state.status = Some(Status::info("New document"));
 }
 
+/// Export the open document as a PDF.
+///
+/// Resolves the document once and hands the result to `tessera_pdf`, which is
+/// the same value the renderer draws — so the export cannot disagree with the
+/// screen. Note it needs no GPU: a document is exportable even if the surface
+/// failed to start.
+pub fn export_pdf_to_path(state: &mut TesseraApp, path: &Path) -> Result<(), ExportError> {
+    let resolved = tessera_layout::resolve::resolve(&state.document, &mut state.shaper);
+    let bytes = tessera_pdf::export(&resolved, state.first_page_bounds())?;
+    tessera_io::atomic::write_atomic(path, &bytes)?;
+    state.status = Some(Status::info(format!("Exported {}", path.display())));
+    Ok(())
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ExportError {
+    #[error(transparent)]
+    Pdf(#[from] tessera_pdf::PdfError),
+    #[error(transparent)]
+    Io(#[from] tessera_io::atomic::IoError),
+}
+
 // --- dialog wrappers ---------------------------------------------------
 
 fn pick_save_path(current: Option<&PathBuf>) -> Option<PathBuf> {
@@ -82,6 +104,30 @@ pub fn save_as(state: &mut TesseraApp) {
         path.set_extension(EXTENSION);
     }
     let result = save_to_path(state, &path);
+    set_error(state, result);
+}
+
+pub fn export_pdf(state: &mut TesseraApp) {
+    let suggested = state
+        .current_path
+        .as_ref()
+        .map(|p| p.with_extension("pdf"))
+        .unwrap_or_else(|| PathBuf::from("Untitled.pdf"));
+
+    let Some(mut path) = rfd::FileDialog::new()
+        .add_filter("PDF", &["pdf"])
+        .set_file_name(suggested.file_name().map_or_else(
+            || "Untitled.pdf".to_string(),
+            |n| n.to_string_lossy().into(),
+        ))
+        .save_file()
+    else {
+        return; // cancelled
+    };
+    if path.extension().is_none() {
+        path.set_extension("pdf");
+    }
+    let result = export_pdf_to_path(state, &path);
     set_error(state, result);
 }
 
