@@ -33,11 +33,18 @@ Every task's requirements implicitly include this section.
 
 ---
 
-### Task 1: The Vello-in-egui spike
+### Task 1: The Vello-in-egui spike — ✅ COMPLETE (2026-09-01)
 
-The one question that can invalidate the architecture. It runs before anything is built, and its output is an **answer plus a verified code snippet** that later tasks copy. The crate itself is throwaway.
+**Verdict: PASS.** Vello 0.10 renders on the device eframe creates, and egui composites the result in the same frame. Decision D2 stands; risk R1 is closed.
 
-Both lockfiles already agree on `wgpu 29.0.4`, so version alignment is not the risk. The real question is whether eframe can be told to create a device with the `Features` and `Limits` Vello requires.
+**Read [`docs/superpowers/notes/2026-09-01-vello-egui-spike.md`](../notes/2026-09-01-vello-egui-spike.md) before Tasks 15 and 16.** It holds the code that actually ran. The speculative code below is kept only as the record of what was assumed; **the note supersedes it wherever they disagree**, and they disagree in four places:
+
+1. **No `WgpuConfiguration` is needed.** Vello worked on eframe's stock device — zero features, wgpu's default `max_storage_buffers_per_shader_stage: 8`. Do not add one.
+2. **`vello::Renderer` is `Send` but not `Sync`** (`RefCell<Vec<u8>>` at `wgpu_engine.rs:99`), while `CallbackResources` requires `Send + Sync`. It must be stored as `Mutex<Renderer>`.
+3. **`eframe::App` has no `update` method in 0.35.** It requires `fn ui(&mut self, ui: &mut egui::Ui, frame: &mut Frame)`, with an optional `fn logic(&mut self, ctx, frame)` for work that does not paint.
+4. **eframe chose Vulkan on Windows** and Vello rendered correctly. Do not force a backend.
+
+Verified on an RTX 4070 Ti / Vulkan / Windows 11. Linux and macOS remain unverified.
 
 **Files:**
 - Create: `spike/vello_in_egui/Cargo.toml`
@@ -2774,11 +2781,28 @@ pub fn apply(ctx: &Context) {
 
 - [ ] **Step 4: Write the application shell**
 
-`crates/tessera_ui/src/app.rs` defines `TesseraApp` holding: `document: Document`, `stories: StoryMap`, `history: History`, `shaper: Shaper`, `view: ViewTransform`, `selection: Option<FrameId>`, `active_tool: Tool`, `editing: Option<(FrameId, EditBuffer)>`, `current_path: Option<PathBuf>`, `dirty: bool`. Its `update` draws a left tool strip, a right inspector, and a central panel — the central panel is filled in by Task 16.
+`crates/tessera_ui/src/app.rs` defines `TesseraApp` holding: `document: Document`, `stories: StoryMap`, `history: History`, `shaper: Shaper`, `view: ViewTransform`, `selection: Option<FrameId>`, `active_tool: Tool`, `editing: Option<(FrameId, EditBuffer)>`, `current_path: Option<PathBuf>`, `dirty: bool`, `status: Option<Status>`.
 
-`apps/tessera_app/src/main.rs` calls `eframe::run_native` with the `WgpuConfiguration` **copied verbatim from the Task 1 spike note**, and creates the Vello `Renderer` into `callback_resources` in the creation closure.
+**`eframe::App` in 0.35 has no `update`** (spike finding 3). Implement the two real methods, and keep the split honest:
 
-`apps/tessera_app/src/platform/mod.rs` holds `preferred_backends() -> wgpu::Backends` — Vulkan on Linux, DX12 on Windows, Metal on macOS, each with a documented fallback, behind `#[cfg(target_os = ...)]`. **This is the only file in the entire workspace permitted to contain `#[cfg(target_os)]`.**
+```rust
+impl eframe::App for TesseraApp {
+    /// Non-drawing work only: autosave ticks, deferred commands, preflight.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // egui forbids painting here.
+    }
+
+    /// The root Ui — no margin, no background. Drawing only.
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // menu bar (Task 21), left tool strip (Task 18),
+        // right inspector (Task 20), then the viewport (Task 16).
+    }
+}
+```
+
+`apps/tessera_app/src/main.rs` calls `eframe::run_native` with **plain `NativeOptions::default()`** — no `WgpuConfiguration`, per spike finding 1 — and creates the Vello `Renderer` into `callback_resources` in the creation closure, exactly as the note shows.
+
+`apps/tessera_app/src/platform/mod.rs` exists as the *designated home* for platform-specific code and is **empty in M0**. eframe selected Vulkan on Windows unprompted and Vello rendered correctly (spike finding 4), so there is no backend to force and no evidence justifying one. **This file remains the only place in the workspace permitted to contain `#[cfg(target_os)]`** — the rule is what matters now; the contents arrive when a real platform difference does.
 
 - [ ] **Step 5: Run it and see a window**
 
