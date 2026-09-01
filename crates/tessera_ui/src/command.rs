@@ -11,7 +11,25 @@ use tessera_document::nodes::{Frame, FrameKind};
 use tessera_geometry::DocRect;
 use tessera_text::story::Story;
 
-use crate::app::TesseraApp;
+use tessera_document::document::ZMove;
+
+use crate::app::{Clipboard, TesseraApp};
+
+/// Give a duplicated text frame its own story, so editing the copy does not
+/// edit the original.
+fn clone_story_into(
+    document: &mut tessera_document::document::Document,
+    mut frame: Frame,
+) -> Frame {
+    if let FrameKind::Text { story } = frame.kind
+        && let Some(content) = document.story(story).cloned()
+    {
+        frame.kind = FrameKind::Text {
+            story: document.add_story(content),
+        };
+    }
+    frame
+}
 
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -33,6 +51,11 @@ pub enum Command {
         text: String,
     },
     DeleteFrame(FrameId),
+    Duplicate(FrameId),
+    Copy(FrameId),
+    Cut(FrameId),
+    Paste,
+    MoveInZ(FrameId, ZMove),
     Undo,
     Redo,
 }
@@ -41,7 +64,9 @@ impl Command {
     /// Whether this command changes the document, and therefore needs an undo
     /// snapshot taken before it runs.
     fn mutates(&self) -> bool {
-        !matches!(self, Self::Undo | Self::Redo)
+        // Copy reads the document without changing it, so it must not push
+        // an undo entry: Ctrl+C should never need a Ctrl+Z to unwind.
+        !matches!(self, Self::Undo | Self::Redo | Self::Copy(_))
     }
 }
 
@@ -146,6 +171,58 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             if state.editing.as_ref().is_some_and(|(f, _)| *f == id) {
                 state.editing = None;
             }
+        }
+
+        Command::Duplicate(id) => {
+            // Offset so the copy sits visibly on top rather than exactly
+            // hidden behind the original.
+            const OFFSET: f64 = 12.0;
+            if let Some(mut frame) = state.document.frame(id).cloned() {
+                frame.bounds.x += OFFSET;
+                frame.bounds.y += OFFSET;
+                let frame = clone_story_into(&mut state.document, frame);
+                let layer = state.default_layer();
+                state.selection = Some(state.document.add_frame(layer, frame));
+            }
+        }
+
+        Command::Copy(id) => {
+            if let Some(frame) = state.document.frame(id).cloned() {
+                let story = match &frame.kind {
+                    FrameKind::Text { story } => state.document.story(*story).cloned(),
+                    _ => None,
+                };
+                state.clipboard = Some(Clipboard { frame, story });
+                state.status = Some(crate::app::Status::info("Copied"));
+            }
+        }
+
+        Command::Cut(id) => {
+            apply(state, Command::Copy(id));
+            apply(state, Command::DeleteFrame(id));
+        }
+
+        Command::Paste => {
+            const OFFSET: f64 = 12.0;
+            if let Some(item) = state.clipboard.clone() {
+                let mut frame = item.frame;
+                frame.bounds.x += OFFSET;
+                frame.bounds.y += OFFSET;
+                // A pasted text frame needs its own story rather than a
+                // reference to the one it came from, or editing the paste
+                // would edit the original.
+                if let (FrameKind::Text { .. }, Some(story)) = (&frame.kind, item.story) {
+                    frame.kind = FrameKind::Text {
+                        story: state.document.add_story(story),
+                    };
+                }
+                let layer = state.default_layer();
+                state.selection = Some(state.document.add_frame(layer, frame));
+            }
+        }
+
+        Command::MoveInZ(id, how) => {
+            state.document.move_in_z(id, how);
         }
 
         Command::Undo => {
@@ -345,5 +422,143 @@ mod tests {
             panic!("expected a path frame");
         };
         assert_eq!(stored, path);
+    }
+
+    #[test]
+    fn duplicating_a_frame_offsets_the_copy() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let original = state.selection.expect("selected");
+
+        apply(&mut state, Command::Duplicate(original));
+
+        let copy = state.selection.expect("the copy is selected");
+        assert_ne!(copy, original);
+        assert_eq!(state.document.frames.len(), 2);
+        assert!(
+            state.document.frame(copy).expect("copy").bounds.x
+                > state.document.frame(original).expect("original").bounds.x
+        );
+    }
+
+    #[test]
+    fn duplicating_a_text_frame_gives_the_copy_its_own_story() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddTextFrame(bounds()));
+        let original = state.selection.expect("selected");
+        apply(
+            &mut state,
+            Command::SetText {
+                id: original,
+                text: "one".to_string(),
+            },
+        );
+
+        apply(&mut state, Command::Duplicate(original));
+        let copy = state.selection.expect("copy");
+        apply(
+            &mut state,
+            Command::SetText {
+                id: copy,
+                text: "two".to_string(),
+            },
+        );
+
+        let FrameKind::Text { story } = state.document.frame(original).expect("f").kind.clone()
+        else {
+            panic!("expected text");
+        };
+        assert_eq!(
+            state.document.story(story).expect("story").text,
+            "one",
+            "editing the copy must not edit the original"
+        );
+    }
+
+    #[test]
+    fn copy_touches_neither_the_document_nor_the_undo_stack() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let id = state.selection.expect("selected");
+        let depth = state.history.undo_depth();
+
+        apply(&mut state, Command::Copy(id));
+
+        assert_eq!(state.document.frames.len(), 1);
+        assert_eq!(state.history.undo_depth(), depth, "copy is not an edit");
+    }
+
+    #[test]
+    fn paste_adds_a_frame_and_is_undoable() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let id = state.selection.expect("selected");
+        apply(&mut state, Command::Copy(id));
+
+        apply(&mut state, Command::Paste);
+        assert_eq!(state.document.frames.len(), 2);
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.document.frames.len(), 1);
+    }
+
+    #[test]
+    fn paste_with_an_empty_clipboard_does_nothing() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::Paste);
+        assert_eq!(state.document.frames.len(), 0);
+    }
+
+    #[test]
+    fn cut_removes_the_frame_but_keeps_it_pasteable() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let id = state.selection.expect("selected");
+
+        apply(&mut state, Command::Cut(id));
+        assert_eq!(state.document.frames.len(), 0);
+
+        apply(&mut state, Command::Paste);
+        assert_eq!(state.document.frames.len(), 1);
+    }
+
+    #[test]
+    fn a_pasted_text_frame_carries_its_text() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddTextFrame(bounds()));
+        let id = state.selection.expect("selected");
+        apply(
+            &mut state,
+            Command::SetText {
+                id,
+                text: "carried".to_string(),
+            },
+        );
+
+        apply(&mut state, Command::Copy(id));
+        apply(&mut state, Command::DeleteFrame(id));
+        apply(&mut state, Command::Paste);
+
+        let pasted = state.selection.expect("pasted");
+        let FrameKind::Text { story } = state.document.frame(pasted).expect("f").kind.clone()
+        else {
+            panic!("expected text");
+        };
+        assert_eq!(state.document.story(story).expect("story").text, "carried");
+    }
+
+    #[test]
+    fn changing_z_order_is_undoable() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let a = state.selection.expect("a");
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let b = state.selection.expect("b");
+
+        apply(&mut state, Command::MoveInZ(a, ZMove::ToFront));
+        assert_eq!(state.document.paint_order(), vec![b, a]);
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.document.paint_order(), vec![a, b]);
     }
 }

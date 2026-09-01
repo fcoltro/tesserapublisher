@@ -14,6 +14,17 @@ use crate::tools::{Drag, Tool};
 
 const UNDO_LIMIT: usize = 200;
 
+/// A frame on the clipboard, with its text if it had any.
+///
+/// The story travels with the frame because a text frame's content lives in
+/// the document's story arena rather than in the frame itself. Copying only
+/// the frame would paste an empty box.
+#[derive(Debug, Clone)]
+pub struct Clipboard {
+    pub frame: tessera_document::nodes::Frame,
+    pub story: Option<tessera_text::story::Story>,
+}
+
 /// A message for the status bar. Errors are never swallowed; they land here.
 #[derive(Debug, Clone)]
 pub struct Status {
@@ -59,6 +70,8 @@ pub struct TesseraApp {
     pub dirty: bool,
     pub status: Option<Status>,
 
+    pub clipboard: Option<Clipboard>,
+
     /// Set once the viewport has sized itself and fitted the page.
     pub fitted: bool,
 }
@@ -79,6 +92,7 @@ impl TesseraApp {
             current_path: None,
             dirty: false,
             status: None,
+            clipboard: None,
             fitted: false,
         }
     }

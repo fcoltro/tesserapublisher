@@ -12,6 +12,8 @@ pub mod viewport;
 
 use egui::{Panel, Ui};
 
+use tessera_document::document::ZMove;
+
 use crate::app::TesseraApp;
 use crate::command::{Command, apply};
 use crate::file_ops;
@@ -90,45 +92,140 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
                 apply(state, Command::Redo);
                 ui.close();
             }
+
+            ui.separator();
+
+            let selected = state.selection;
+            let has_selection = selected.is_some();
+            let can_paste = state.clipboard.is_some();
+
+            if ui
+                .add_enabled(has_selection, egui::Button::new("Cut"))
+                .clicked()
+                && let Some(id) = selected
+            {
+                apply(state, Command::Cut(id));
+                ui.close();
+            }
+            if ui
+                .add_enabled(has_selection, egui::Button::new("Copy"))
+                .clicked()
+                && let Some(id) = selected
+            {
+                apply(state, Command::Copy(id));
+                ui.close();
+            }
+            if ui
+                .add_enabled(can_paste, egui::Button::new("Paste"))
+                .clicked()
+            {
+                apply(state, Command::Paste);
+                ui.close();
+            }
+            if ui
+                .add_enabled(has_selection, egui::Button::new("Duplicate"))
+                .clicked()
+                && let Some(id) = selected
+            {
+                apply(state, Command::Duplicate(id));
+                ui.close();
+            }
+
+            ui.separator();
+
+            if ui
+                .add_enabled(has_selection, egui::Button::new("Delete"))
+                .clicked()
+                && let Some(id) = selected
+            {
+                apply(state, Command::DeleteFrame(id));
+                ui.close();
+            }
+        });
+
+        ui.menu_button("Object", |ui| {
+            let selected = state.selection;
+            let has_selection = selected.is_some();
+
+            for (label, how) in [
+                ("Bring to Front", ZMove::ToFront),
+                ("Bring Forward", ZMove::Forward),
+                ("Send Backward", ZMove::Backward),
+                ("Send to Back", ZMove::ToBack),
+            ] {
+                if ui
+                    .add_enabled(has_selection, egui::Button::new(label))
+                    .clicked()
+                    && let Some(id) = selected
+                {
+                    apply(state, Command::MoveInZ(id, how));
+                    ui.close();
+                }
+            }
         });
     });
 }
 
-/// Keyboard accelerators. All use modifiers, so they cannot double-fire with
-/// the plain-key tool shortcuts handled in the viewport.
+/// Keyboard accelerators.
+///
+/// All use modifiers, so they cannot double-fire with the plain-key tool
+/// shortcuts the viewport handles. `consume_key` takes the event, so a
+/// shortcut never also reaches the canvas as text.
 fn accelerators(ui: &Ui, state: &mut TesseraApp) {
-    let (new, open, save, save_as, undo, redo) = ui.ctx().input_mut(|i| {
-        (
-            i.consume_key(egui::Modifiers::COMMAND, egui::Key::N),
-            i.consume_key(egui::Modifiers::COMMAND, egui::Key::O),
-            i.consume_key(egui::Modifiers::COMMAND, egui::Key::S),
-            i.consume_key(
-                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                egui::Key::S,
-            ),
-            i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z),
-            i.consume_key(
-                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                egui::Key::Z,
-            ),
-        )
-    });
+    let cmd = egui::Modifiers::COMMAND;
+    let cmd_shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
 
-    if new {
+    let pressed = |m: egui::Modifiers, k: egui::Key| ui.ctx().input_mut(|i| i.consume_key(m, k));
+
+    // File. Save As is tested before Save, since its chord also matches Save.
+    if pressed(cmd, egui::Key::N) {
         file_ops::new_document(state);
     }
-    if open {
+    if pressed(cmd, egui::Key::O) {
         file_ops::open(state);
     }
-    // Save As is checked first: its chord also matches plain Save.
-    if save_as {
+    if pressed(cmd_shift, egui::Key::S) {
         file_ops::save_as(state);
-    } else if save {
+    } else if pressed(cmd, egui::Key::S) {
         file_ops::save(state);
     }
-    if redo {
+    if pressed(cmd_shift, egui::Key::E) {
+        file_ops::export_pdf(state);
+    }
+
+    // History. Redo before undo, for the same reason.
+    if pressed(cmd_shift, egui::Key::Z) {
         apply(state, Command::Redo);
-    } else if undo {
+    } else if pressed(cmd, egui::Key::Z) {
         apply(state, Command::Undo);
+    }
+
+    // Clipboard and object operations, all needing a selection.
+    if pressed(cmd, egui::Key::V) {
+        apply(state, Command::Paste);
+    }
+    let Some(id) = state.selection else {
+        return;
+    };
+    if pressed(cmd, egui::Key::X) {
+        apply(state, Command::Cut(id));
+    }
+    if pressed(cmd, egui::Key::C) {
+        apply(state, Command::Copy(id));
+    }
+    if pressed(cmd, egui::Key::D) {
+        apply(state, Command::Duplicate(id));
+    }
+
+    // Z-order, following InDesign's bracket chords.
+    for (m, key, how) in [
+        (cmd_shift, egui::Key::CloseBracket, ZMove::ToFront),
+        (cmd, egui::Key::CloseBracket, ZMove::Forward),
+        (cmd, egui::Key::OpenBracket, ZMove::Backward),
+        (cmd_shift, egui::Key::OpenBracket, ZMove::ToBack),
+    ] {
+        if pressed(m, key) {
+            apply(state, Command::MoveInZ(id, how));
+        }
     }
 }

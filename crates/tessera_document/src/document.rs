@@ -12,6 +12,15 @@ use tessera_text::story::Story;
 /// story flows through many frames while existing exactly once.
 pub type StoryMap = slotmap::SlotMap<StoryId, Story>;
 
+/// Where a frame should move within its layer's paint order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZMove {
+    Forward,
+    Backward,
+    ToFront,
+    ToBack,
+}
+
 /// US Letter in points — the default new-document size.
 const DEFAULT_PAGE: DocRect = DocRect {
     x: 0.0,
@@ -149,6 +158,34 @@ impl Document {
         self.frames.get_mut(id)
     }
 
+    /// Move a frame within its layer's paint order.
+    ///
+    /// Order lives in `Layer::frames` rather than in a z-index field on the
+    /// frame, so "in front of" is a property of the list and cannot fall out
+    /// of sync with itself.
+    pub fn move_in_z(&mut self, id: FrameId, how: ZMove) -> bool {
+        let Some(layer) = self.layers.values_mut().find(|l| l.frames.contains(&id)) else {
+            return false;
+        };
+        let Some(from) = layer.frames.iter().position(|f| *f == id) else {
+            return false;
+        };
+        let last = layer.frames.len() - 1;
+        let to = match how {
+            ZMove::Forward => (from + 1).min(last),
+            ZMove::Backward => from.saturating_sub(1),
+            ZMove::ToFront => last,
+            ZMove::ToBack => 0,
+        };
+        if to == from {
+            return false;
+        }
+        let frame = layer.frames.remove(from);
+        layer.frames.insert(to, frame);
+        self.revision += 1;
+        true
+    }
+
     /// Back-to-front paint order across every visible layer.
     pub fn paint_order(&self) -> Vec<FrameId> {
         self.layer_ids()
@@ -271,5 +308,65 @@ mod tests {
         doc.add_frame(layer, rect_frame());
         doc.layers.get_mut(layer).expect("layer").visible = false;
         assert_eq!(doc.hit_test(DocPoint { x: 50.0, y: 40.0 }), None);
+    }
+
+    #[test]
+    fn bringing_a_frame_forward_swaps_it_with_the_one_above() {
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let a = doc.add_frame(layer, rect_frame());
+        let b = doc.add_frame(layer, rect_frame());
+
+        assert!(doc.move_in_z(a, ZMove::Forward));
+
+        assert_eq!(doc.paint_order(), vec![b, a]);
+    }
+
+    #[test]
+    fn sending_to_back_puts_a_frame_first_in_paint_order() {
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let a = doc.add_frame(layer, rect_frame());
+        let b = doc.add_frame(layer, rect_frame());
+        let c = doc.add_frame(layer, rect_frame());
+
+        assert!(doc.move_in_z(c, ZMove::ToBack));
+
+        assert_eq!(doc.paint_order(), vec![c, a, b]);
+    }
+
+    #[test]
+    fn moving_the_frontmost_frame_forward_changes_nothing() {
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let a = doc.add_frame(layer, rect_frame());
+        let b = doc.add_frame(layer, rect_frame());
+
+        assert!(!doc.move_in_z(b, ZMove::Forward), "already at the front");
+
+        assert_eq!(doc.paint_order(), vec![a, b]);
+    }
+
+    #[test]
+    fn z_order_decides_which_frame_a_click_finds() {
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let under = doc.add_frame(layer, rect_frame());
+        let over = doc.add_frame(layer, rect_frame());
+        let point = DocPoint { x: 50.0, y: 40.0 };
+
+        assert_eq!(doc.hit_test(point), Some(over));
+        doc.move_in_z(over, ZMove::ToBack);
+        assert_eq!(
+            doc.hit_test(point),
+            Some(under),
+            "the stack really reordered"
+        );
+    }
+
+    #[test]
+    fn moving_an_unknown_frame_reports_failure_rather_than_panicking() {
+        let mut doc = Document::new();
+        assert!(!doc.move_in_z(FrameId::default(), ZMove::ToFront));
     }
 }
