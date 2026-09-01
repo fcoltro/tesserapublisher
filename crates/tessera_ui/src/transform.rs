@@ -155,6 +155,88 @@ pub fn resize(
     }
 }
 
+/// One frame's state at the start of a gesture.
+pub type Origin = (tessera_document::ids::FrameId, DocRect, f64);
+
+/// Map every frame from the box `from` onto the box `to`.
+///
+/// Used for a group: each child keeps its position and size *relative to the
+/// group*, so scaling the group scales its contents rather than merely
+/// stretching an invisible box around them.
+pub fn scale_origins(origins: &[Origin], from: DocRect, to: DocRect) -> Vec<Origin> {
+    let sx = if from.width.abs() > f64::EPSILON {
+        to.width / from.width
+    } else {
+        1.0
+    };
+    let sy = if from.height.abs() > f64::EPSILON {
+        to.height / from.height
+    } else {
+        1.0
+    };
+    origins
+        .iter()
+        .map(|(id, b, rot)| {
+            (
+                *id,
+                DocRect {
+                    x: to.x + (b.x - from.x) * sx,
+                    y: to.y + (b.y - from.y) * sy,
+                    width: b.width * sx,
+                    height: b.height * sy,
+                },
+                *rot,
+            )
+        })
+        .collect()
+}
+
+/// Rotate every frame by `delta` degrees about `center`.
+///
+/// Each frame's centre swings around the pivot *and* the frame turns on its
+/// own axis — both, or a rotated group would look like a scattered one.
+pub fn rotate_origins(origins: &[Origin], center: DocPoint, delta: f64) -> Vec<Origin> {
+    origins
+        .iter()
+        .map(|(id, b, rot)| {
+            let moved = b.center().rotated_about(center, delta);
+            (
+                *id,
+                DocRect {
+                    x: moved.x - b.width / 2.0,
+                    y: moved.y - b.height / 2.0,
+                    ..*b
+                },
+                (rot + delta + 180.0).rem_euclid(360.0) - 180.0,
+            )
+        })
+        .collect()
+}
+
+/// Snap `to` onto the nearest 45-degree ray from `from`.
+///
+/// What holding shift does while drawing a line: horizontal, vertical, or a
+/// true diagonal. The length is projected onto the chosen ray rather than
+/// kept, so the endpoint stays under the pointer instead of running ahead of
+/// it.
+pub fn constrain_to_45(from: DocPoint, to: DocPoint) -> DocPoint {
+    let dx = to.x - from.x;
+    let dy = to.y - from.y;
+    if dx == 0.0 && dy == 0.0 {
+        return to;
+    }
+    let angle = dy.atan2(dx);
+    let step = std::f64::consts::FRAC_PI_4;
+    let snapped = (angle / step).round() * step;
+    let (sin, cos) = snapped.sin_cos();
+    // Project the drag onto the snapped direction.
+    let length = dx * cos + dy * sin;
+    DocPoint {
+        x: from.x + cos * length,
+        y: from.y + sin * length,
+    }
+}
+
 /// The angle, in degrees, from `center` to `point`, clockwise from east.
 fn angle_of(center: DocPoint, point: DocPoint) -> f64 {
     (point.y - center.y).atan2(point.x - center.x).to_degrees()
@@ -392,5 +474,161 @@ mod tests {
         let current = DocPoint { x: 0.0, y: 10.0 };
         let r = rotation_from_drag(c, start, current, 170.0, false);
         assert!((-180.0..=180.0).contains(&r), "was {r}");
+    }
+
+    #[test]
+    fn constraining_a_near_horizontal_drag_makes_it_horizontal() {
+        let from = DocPoint { x: 0.0, y: 0.0 };
+        let to = constrain_to_45(from, DocPoint { x: 100.0, y: 8.0 });
+        assert!(close(to.y, 0.0), "y was {}", to.y);
+        assert!(to.x > 90.0);
+    }
+
+    #[test]
+    fn constraining_a_near_vertical_drag_makes_it_vertical() {
+        let from = DocPoint { x: 0.0, y: 0.0 };
+        let to = constrain_to_45(from, DocPoint { x: -6.0, y: 100.0 });
+        assert!(close(to.x, 0.0), "x was {}", to.x);
+        assert!(to.y > 90.0);
+    }
+
+    #[test]
+    fn constraining_a_near_diagonal_drag_makes_it_exactly_diagonal() {
+        let from = DocPoint { x: 0.0, y: 0.0 };
+        let to = constrain_to_45(from, DocPoint { x: 100.0, y: 88.0 });
+        assert!(close(to.x, to.y), "{} vs {}", to.x, to.y);
+    }
+
+    #[test]
+    fn constraining_works_in_every_quadrant() {
+        let from = DocPoint { x: 50.0, y: 50.0 };
+        for (dx, dy) in [(1.0, 0.1), (-1.0, 0.1), (1.0, -0.1), (-1.0, -0.1)] {
+            let to = constrain_to_45(
+                from,
+                DocPoint {
+                    x: from.x + dx * 100.0,
+                    y: from.y + dy * 100.0,
+                },
+            );
+            assert!(
+                close(to.y, from.y),
+                "({dx},{dy}) should have snapped horizontal, got {to:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_drag_that_has_not_moved_is_left_alone() {
+        let from = DocPoint { x: 3.0, y: 4.0 };
+        assert_eq!(constrain_to_45(from, from), from);
+    }
+
+    fn origins() -> Vec<Origin> {
+        use tessera_document::ids::FrameId;
+        vec![
+            (
+                FrameId::default(),
+                DocRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 10.0,
+                    height: 10.0,
+                },
+                0.0,
+            ),
+            (
+                FrameId::default(),
+                DocRect {
+                    x: 90.0,
+                    y: 0.0,
+                    width: 10.0,
+                    height: 10.0,
+                },
+                0.0,
+            ),
+        ]
+    }
+
+    fn group_box() -> DocRect {
+        DocRect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 10.0,
+        }
+    }
+
+    #[test]
+    fn scaling_a_group_scales_its_children_too() {
+        let doubled = DocRect {
+            width: 200.0,
+            ..group_box()
+        };
+        let out = scale_origins(&origins(), group_box(), doubled);
+
+        assert!(close(out[0].1.width, 20.0), "child width doubled");
+        assert!(close(out[1].1.x, 180.0), "child position doubled");
+        assert!(close(out[0].1.height, 10.0), "the other axis is untouched");
+    }
+
+    #[test]
+    fn scaling_keeps_children_in_the_same_relative_places() {
+        let out = scale_origins(
+            &origins(),
+            group_box(),
+            DocRect {
+                x: 50.0,
+                y: 5.0,
+                width: 100.0,
+                height: 10.0,
+            },
+        );
+        // Moved, not resized: the gap between the two children is preserved.
+        assert!(close(out[1].1.x - out[0].1.x, 90.0));
+        assert!(close(out[0].1.x, 50.0));
+    }
+
+    #[test]
+    fn scaling_a_zero_width_group_does_not_divide_by_zero() {
+        let flat = DocRect {
+            width: 0.0,
+            ..group_box()
+        };
+        let out = scale_origins(&origins(), flat, group_box());
+        assert!(out[0].1.width.is_finite());
+    }
+
+    #[test]
+    fn rotating_a_group_turns_each_child_and_swings_it_round() {
+        let center = group_box().center();
+        let out = rotate_origins(&origins(), center, 90.0);
+
+        // Each child turns on its own axis...
+        assert!(close(out[0].2, 90.0));
+        // ...and its centre swings about the group's.
+        let before = origins()[0].1.center();
+        let after = out[0].1.center();
+        assert!(
+            (before.x - after.x).abs() > 1.0 || (before.y - after.y).abs() > 1.0,
+            "the child should have moved: {before:?} -> {after:?}"
+        );
+    }
+
+    #[test]
+    fn rotating_by_zero_changes_nothing() {
+        let out = rotate_origins(&origins(), group_box().center(), 0.0);
+        for (before, after) in origins().iter().zip(out.iter()) {
+            assert!(close(before.1.x, after.1.x));
+            assert!(close(before.1.y, after.1.y));
+            assert!(close(before.2, after.2));
+        }
+    }
+
+    #[test]
+    fn a_childs_own_rotation_accumulates_rather_than_being_replaced() {
+        let mut o = origins();
+        o[0].2 = 30.0;
+        let out = rotate_origins(&o, group_box().center(), 45.0);
+        assert!(close(out[0].2, 75.0), "was {}", out[0].2);
     }
 }

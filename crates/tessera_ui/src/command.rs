@@ -56,6 +56,13 @@ pub enum Command {
     MoveSelectionInZ(ZMove),
     GroupSelection,
     UngroupSelection,
+    /// Set the bounds and rotation of a set of frames outright.
+    ///
+    /// The end state of a scale or rotate gesture, applied in one step. A
+    /// gesture computes its result from the state it started in, so the
+    /// command only has to carry that result — which keeps scaling a group of
+    /// twenty objects a single undo entry.
+    SetTransforms(Vec<(FrameId, DocRect, f64)>),
 
     Undo,
     Redo,
@@ -135,6 +142,15 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             for id in state.selection.as_slice().to_vec() {
                 // Goes through the document so a group carries its children.
                 state.document.translate_frame(id, dx, dy);
+            }
+        }
+
+        Command::SetTransforms(entries) => {
+            for (id, bounds, rotation) in entries {
+                if let Some(frame) = state.document.frame_mut(id) {
+                    frame.bounds = bounds;
+                    frame.rotation = rotation;
+                }
             }
         }
 

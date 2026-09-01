@@ -52,6 +52,42 @@ pub struct ResolvedDocument {
     pub items: Vec<ResolvedItem>,
 }
 
+/// Map a frame-local path onto its frame's bounds.
+///
+/// A path is stored in its own coordinates, so without this a line or a
+/// pen-drawn curve would keep its original size while its frame was resized —
+/// the box would move and the geometry would not. Doing it here rather than
+/// when the bounds change means *every* route to a new size works: the
+/// handles, the inspector's fields, and anything added later.
+///
+/// An axis with no extent — a perfectly horizontal line — is translated
+/// rather than scaled, since there is nothing to scale.
+fn fit_to_bounds(path: &kurbo::BezPath, bounds: DocRect) -> kurbo::BezPath {
+    use kurbo::Shape as _;
+
+    let b = path.bounding_box();
+    if b.width() <= f64::EPSILON && b.height() <= f64::EPSILON {
+        return path.clone();
+    }
+
+    let sx = if b.width() > f64::EPSILON {
+        bounds.width / b.width()
+    } else {
+        1.0
+    };
+    let sy = if b.height() > f64::EPSILON {
+        bounds.height / b.height()
+    } else {
+        1.0
+    };
+
+    let mut out = path.clone();
+    out.apply_affine(
+        kurbo::Affine::scale_non_uniform(sx, sy) * kurbo::Affine::translate((-b.x0, -b.y0)),
+    );
+    out
+}
+
 /// Resolve every visible frame, in paint order.
 pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
     let mut items = Vec::new();
@@ -69,7 +105,7 @@ pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
                 stroke: frame.stroke.clone(),
             },
             FrameKind::Path(path) => ResolvedKind::Path {
-                path: path.clone(),
+                path: fit_to_bounds(path, frame.bounds),
                 // An open path with no explicit stroke would be invisible, so
                 // a path frame's fill is treated as its stroke colour when it
                 // has no stroke of its own.
@@ -227,5 +263,117 @@ mod tests {
         doc.add_frame(layer, frame);
 
         assert!(resolve(&doc, &mut Shaper::new()).items.is_empty());
+    }
+
+    fn path_frame(bounds: DocRect, path: kurbo::BezPath) -> Frame {
+        Frame {
+            bounds,
+            kind: FrameKind::Path(path),
+            rotation: 0.0,
+            fill: Color::BLACK,
+            stroke: None,
+        }
+    }
+
+    /// A diagonal line filling a 10x10 box.
+    fn diagonal() -> kurbo::BezPath {
+        let mut p = kurbo::BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 10.0));
+        p
+    }
+
+    #[test]
+    fn a_path_is_scaled_to_fill_its_frame() {
+        use kurbo::Shape as _;
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        // Same path, but a frame twice as wide and three times as tall.
+        doc.add_frame(
+            layer,
+            path_frame(
+                DocRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 20.0,
+                    height: 30.0,
+                },
+                diagonal(),
+            ),
+        );
+
+        let resolved = resolve(&doc, &mut Shaper::new());
+        let ResolvedKind::Path { path, .. } = &resolved.items[0].kind else {
+            panic!("expected a path");
+        };
+        let b = path.bounding_box();
+
+        assert!((b.width() - 20.0).abs() < 1e-9, "width was {}", b.width());
+        assert!(
+            (b.height() - 30.0).abs() < 1e-9,
+            "height was {}",
+            b.height()
+        );
+    }
+
+    #[test]
+    fn a_path_that_already_fits_is_left_alone() {
+        use kurbo::Shape as _;
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        doc.add_frame(
+            layer,
+            path_frame(
+                DocRect {
+                    x: 5.0,
+                    y: 5.0,
+                    width: 10.0,
+                    height: 10.0,
+                },
+                diagonal(),
+            ),
+        );
+
+        let resolved = resolve(&doc, &mut Shaper::new());
+        let ResolvedKind::Path { path, .. } = &resolved.items[0].kind else {
+            panic!("expected a path");
+        };
+
+        assert_eq!(path.bounding_box(), diagonal().bounding_box());
+    }
+
+    #[test]
+    fn a_horizontal_line_scales_across_but_is_not_flattened_further() {
+        use kurbo::Shape as _;
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let mut flat = kurbo::BezPath::new();
+        flat.move_to((0.0, 0.0));
+        flat.line_to((10.0, 0.0));
+
+        doc.add_frame(
+            layer,
+            path_frame(
+                DocRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 50.0,
+                    height: 0.0,
+                },
+                flat,
+            ),
+        );
+
+        let resolved = resolve(&doc, &mut Shaper::new());
+        let ResolvedKind::Path { path, .. } = &resolved.items[0].kind else {
+            panic!("expected a path");
+        };
+        let b = path.bounding_box();
+
+        assert!((b.width() - 50.0).abs() < 1e-9, "width was {}", b.width());
+        assert!(
+            b.height().abs() < 1e-9,
+            "an axis with no extent must not blow up"
+        );
     }
 }

@@ -74,6 +74,9 @@ pub struct TesseraApp {
     pub clipboard: Vec<Clipboard>,
     /// The pen tool's path under construction, if any.
     pub pen: Option<crate::pen::PenPath>,
+    /// Where the pointer is while the pen is drawing, so the segment being
+    /// aimed at can be previewed before it is committed.
+    pub pen_cursor: Option<tessera_geometry::DocPoint>,
 
     /// Set once the viewport has sized itself and fitted the page.
     pub fitted: bool,
@@ -97,6 +100,7 @@ impl TesseraApp {
             status: None,
             clipboard: Vec::new(),
             pen: None,
+            pen_cursor: None,
             fitted: false,
         }
     }

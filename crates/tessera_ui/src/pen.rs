@@ -66,18 +66,30 @@ impl PenPath {
         self.anchors.len() >= 2
     }
 
-    /// Bounding box of the anchors **and their handles**.
+    /// The bounding box of the curve itself.
     ///
-    /// Handles are included because a curve can bow outside the hull of its
-    /// anchors, and a frame whose bounds clip its own content is wrong.
+    /// The *curve*, not the control-point hull: a cubic bows well inside its
+    /// handles, so hull bounds would leave dead space around the frame. It
+    /// also has to be exact, because a path frame's geometry is rescaled to
+    /// fit its bounds — bounds that did not match the curve would stretch it
+    /// the moment it was created.
     pub fn bounds(&self) -> DocRect {
-        let mut points: Vec<DocPoint> = Vec::new();
-        for a in &self.anchors {
-            points.push(a.point);
-            points.extend(a.handle_out);
-            points.extend(a.handle_in());
+        use kurbo::Shape as _;
+        if self.anchors.is_empty() {
+            return DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 0.0,
+                height: 0.0,
+            };
         }
-        bounds_of(&points)
+        let b = self.to_bezpath_at(0.0, 0.0).bounding_box();
+        DocRect {
+            x: b.x0,
+            y: b.y0,
+            width: b.width(),
+            height: b.height(),
+        }
     }
 
     /// Build the path in **frame-local** coordinates, relative to
@@ -124,30 +136,6 @@ fn segment(path: &mut BezPath, a: &Anchor, b: &Anchor, at: &impl Fn(DocPoint) ->
             let c2 = inc.unwrap_or(b.point);
             path.curve_to(at(c1), at(c2), at(b.point));
         }
-    }
-}
-
-fn bounds_of(points: &[DocPoint]) -> DocRect {
-    let Some(first) = points.first() else {
-        return DocRect {
-            x: 0.0,
-            y: 0.0,
-            width: 0.0,
-            height: 0.0,
-        };
-    };
-    let (mut x0, mut y0, mut x1, mut y1) = (first.x, first.y, first.x, first.y);
-    for p in points {
-        x0 = x0.min(p.x);
-        y0 = y0.min(p.y);
-        x1 = x1.max(p.x);
-        y1 = y1.max(p.y);
-    }
-    DocRect {
-        x: x0,
-        y: y0,
-        width: x1 - x0,
-        height: y1 - y0,
     }
 }
 
@@ -251,9 +239,9 @@ mod tests {
     }
 
     #[test]
-    fn bounds_cover_the_handles_not_just_the_anchors() {
-        // A curve bows outside the hull of its anchors. Bounds that ignored
-        // the handles would clip the frame's own content.
+    fn bounds_cover_the_curve_which_bows_beyond_its_anchors() {
+        // Both anchors sit on y = 0, so any height at all proves the bow is
+        // included. Bounds drawn round the anchors alone would clip it.
         let mut pen = PenPath::default();
         pen.push(Anchor {
             point: p(0.0, 0.0),
@@ -263,7 +251,26 @@ mod tests {
 
         let b = pen.bounds();
 
-        assert!(b.height >= 40.0, "handles must widen the bounds: {b:?}");
+        assert!(b.height > 5.0, "the bow must widen the bounds: {b:?}");
+    }
+
+    #[test]
+    fn bounds_do_not_run_out_to_the_handles() {
+        // The control point reaches y = 40, but a cubic only reaches about
+        // three eighths of that. Hull bounds would leave dead space that the
+        // frame's rescaling would then stretch the curve into.
+        let mut pen = PenPath::default();
+        pen.push(Anchor {
+            point: p(0.0, 0.0),
+            handle_out: Some(p(0.0, 40.0)),
+        });
+        pen.push(Anchor::corner(p(10.0, 0.0)));
+
+        assert!(
+            pen.bounds().height < 30.0,
+            "bounds hugged the handles instead of the curve: {:?}",
+            pen.bounds()
+        );
     }
 
     #[test]
