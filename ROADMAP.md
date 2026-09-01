@@ -39,17 +39,18 @@ true, with the shortfall stated · `[ ]` not started
 
 Never "done" until shipping; re-checked at the close of every milestone.
 
-- [ ] **Save and open never lose data.** Round-trip property tests pass on
-  arbitrary generated documents, and every historical format version still
-  loads through its migration chain.
+- [~] **Save and open never lose data.** Round-trip property tests pass on
+  arbitrary generated documents. There is only format version 1 so far, so the
+  migration chain is untested by construction — the first bump proves it.
 - [~] **Cross-platform build parity.** The CI workflow builds and runs the
   headless suite on Linux, Windows and macOS, and `platform/` is empty — but
   no CI run has happened yet, since nothing is pushed.
 - [~] **Interactive verification.** Windows only, by choice. Linux and macOS
   are **known-unverified** and are recorded as such, never as done.
 - [x] **No unsafe code.** `unsafe_code = "forbid"` at the workspace level.
-- [ ] **No silent fallbacks.** Every failure states its cause in the interface
-  or in a log. The previous codebase's most instructive defect was a clip
+- [~] **No silent fallbacks.** Holds across the code written so far: every
+  error path returns a stated cause, and file failures reach the status bar.
+  Re-checked each milestone rather than assumed. The previous codebase's most instructive defect was a clip
   rectangle that resolved to zero and disabled rendering without a word.
 - [x] **Tests land with the change**, in the same commit.
 
@@ -59,13 +60,18 @@ Never "done" until shipping; re-checked at the close of every milestone.
 
 **The spine. Nothing else counts until this works.**
 
-> **Status 2026-09-01: code complete, awaiting the manual check.**
-> 139 tests pass (134 headless + 5 GPU-backed), `clippy -D warnings` is clean,
-> and the acceptance sentence runs end to end headlessly in
-> `crates/tessera_ui/tests/milestone_0.rs`. What has **not** happened is a
-> person performing the sentence in the running application. Per this file's
-> own rule, that is what `[x]` requires — so the boxes below stay unticked
-> until then.
+> **COMPLETE — 2026-09-01.** The sentence below was performed by hand, in the
+> running application, on Windows. Not the test suite: the sentence.
+>
+> 139 tests pass alongside it (134 headless + 5 GPU-backed), `clippy -D
+> warnings` is clean, and the sentence also runs end to end headlessly in
+> `crates/tessera_ui/tests/milestone_0.rs`.
+>
+> **Tessera can now keep a user's work.** That is the whole point of this
+> milestone and the correction to what came before.
+>
+> Verified on Windows only. Linux and macOS are **known-unverified** — they
+> are built by CI but have never been run.
 
 Every crate exists and is real. None is deep. This milestone deliberately
 produces an application that does very little and *keeps every bit of it*.
@@ -87,13 +93,10 @@ produces an application that does very little and *keeps every bit of it*.
   and is consulted, not carried.
 - [x] **Step 2 — the workspace.** Nine crates and one app, dependencies
   pointing downward only, `unsafe_code = "forbid"`, CI on three platforms.
-- [~] A window opens, egui draws, the canvas pans and zooms. *Built and seen
-  running; pan and zoom unverified by hand.*
-- [~] Rectangles and text frames can be drawn, selected and moved. *Built;
-  the gestures are unverified by hand.*
-- [~] Text is typed **on the canvas**, with a caret, selection, and backspace.
-  *The buffer and event plumbing are tested headless, including IME. Typing in
-  the running window is unverified.*
+- [x] A window opens, egui draws, the canvas pans and zooms.
+- [x] Rectangles and text frames can be drawn, selected and moved.
+- [x] Text is typed **on the canvas**, with a caret, selection, and backspace.
+  The capability the previous architecture made structurally impossible.
 - [x] `.tessera` saves and loads, with round-trip property tests.
 - [x] PDF exports with embedded, subsetted fonts and RGB colour.
 - [x] Undo and redo work across every one of the above.
@@ -106,6 +109,8 @@ threading, swatches, preflight, images, CMYK, print marks.
 # Milestone 1 — The Editing Surface
 
 Making the skeleton pleasant to use. No new file-format surface area.
+
+*Next up. Milestone 0 closed 2026-09-01.*
 
 ### Acceptance
 
