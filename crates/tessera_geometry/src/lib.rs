@@ -7,7 +7,9 @@
 //! so export needs no conversion.
 
 pub mod spaces;
+pub mod transform;
 pub mod view;
 
 pub use spaces::{DocPoint, DocRect, ScreenPoint};
+pub use transform::Transform;
 pub use view::ViewTransform;
