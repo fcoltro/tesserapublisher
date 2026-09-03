@@ -78,6 +78,50 @@ impl Command {
     }
 }
 
+/// Give `id` a new box and angle, carrying a group's contents with it.
+///
+/// The inspector's fields and the transform handles have to mean the same
+/// thing. Writing straight into the frame is right for a shape and wrong for a
+/// group, whose box is only a box: stretching it on its own would leave the
+/// artwork behind, sitting outside the frame that claims to hold it.
+///
+/// So a group goes through the very functions a drag goes through — rotated
+/// about its old centre, then mapped from its old box onto its new one.
+fn retarget(state: &mut TesseraApp, id: FrameId, bounds: DocRect, rotation: f64) {
+    let Some(frame) = state.document.frame(id) else {
+        return;
+    };
+    let (from, was) = (frame.bounds, frame.rotation);
+
+    if !matches!(frame.kind, tessera_document::nodes::FrameKind::Group(_)) {
+        if let Some(f) = state.document.frame_mut(id) {
+            f.bounds = bounds;
+            f.rotation = rotation;
+        }
+        return;
+    }
+
+    let origins: Vec<crate::transform::Origin> = state
+        .document
+        .descendants(id)
+        .into_iter()
+        .filter_map(|leaf| {
+            let f = state.document.frame(leaf)?;
+            Some((leaf, f.bounds, f.rotation))
+        })
+        .collect();
+
+    let turned = crate::transform::rotate_origins(&origins, from.center(), rotation - was);
+    for (leaf, leaf_bounds, leaf_rotation) in
+        crate::transform::scale_origins(&turned, from, bounds, rotation)
+    {
+        if let Some(f) = state.document.frame_mut(leaf) {
+            f.bounds = leaf_bounds;
+            f.rotation = leaf_rotation;
+        }
+    }
+}
+
 pub fn apply(state: &mut TesseraApp, command: Command) {
     if command.mutates() {
         state.history.record(&state.document);
@@ -110,17 +154,22 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         }
 
         Command::SetBounds { id, bounds } => {
-            if let Some(frame) = state.document.frame_mut(id) {
-                frame.bounds = bounds;
-            }
+            let rotation = state.document.frame(id).map_or(0.0, |f| f.rotation);
+            retarget(state, id, bounds, rotation);
         }
 
         Command::SetRotation { id, degrees } => {
-            if let Some(frame) = state.document.frame_mut(id) {
-                // Normalised into -180..180 so the inspector never shows
-                // 3600 and a saved document never accumulates whole turns.
-                frame.rotation = (degrees + 180.0).rem_euclid(360.0) - 180.0;
-            }
+            let Some(bounds) = state.document.frame(id).map(|f| f.bounds) else {
+                return;
+            };
+            // Normalised into -180..180 so the inspector never shows 3600 and
+            // a saved document never accumulates whole turns.
+            retarget(
+                state,
+                id,
+                bounds,
+                (degrees + 180.0).rem_euclid(360.0) - 180.0,
+            );
         }
 
         Command::SetFill { id, color } => {
@@ -789,5 +838,115 @@ mod tests {
         state.selection.set(a);
         apply(&mut state, Command::GroupSelection);
         assert_eq!(state.selection.single(), Some(a), "still just the frame");
+    }
+
+    // --- a group's box carries its contents ------------------------------
+
+    /// Two 10x10 squares, at x = 0 and x = 90, grouped.
+    fn grouped_pair(state: &mut TesseraApp) -> (FrameId, FrameId, FrameId) {
+        let layer = state.document.default_layer().expect("layer");
+        let square = |x: f64| tessera_document::nodes::Frame {
+            bounds: DocRect {
+                x,
+                y: 0.0,
+                width: 10.0,
+                height: 10.0,
+            },
+            kind: tessera_document::nodes::FrameKind::Rectangle,
+            rotation: 0.0,
+            fill: Color::BLACK,
+            stroke: None,
+        };
+        let a = state.document.add_frame(layer, square(0.0));
+        let b = state.document.add_frame(layer, square(90.0));
+        let g = state.document.group(&[a, b]).expect("grouped");
+        (g, a, b)
+    }
+
+    #[test]
+    fn widening_a_group_in_the_inspector_carries_its_children() {
+        // The bug this pins: the inspector wrote the group's own box and left
+        // the artwork where it was, so the frame no longer held what it drew
+        // a box around.
+        let mut state = TesseraApp::headless();
+        let (g, a, b) = grouped_pair(&mut state);
+        let before = state.document.frame(g).expect("group").bounds;
+
+        apply(
+            &mut state,
+            Command::SetBounds {
+                id: g,
+                bounds: DocRect {
+                    width: before.width * 2.0,
+                    ..before
+                },
+            },
+        );
+
+        let far = state.document.frame(b).expect("b").bounds;
+        let near = state.document.frame(a).expect("a").bounds;
+        assert!(
+            (far.center().x - near.center().x - 180.0).abs() < 1e-9,
+            "the children should have spread with the box: {near:?} {far:?}"
+        );
+        assert!(
+            (far.width - 20.0).abs() < 1e-9,
+            "and been scaled, not just moved"
+        );
+    }
+
+    #[test]
+    fn turning_a_group_in_the_inspector_turns_its_children() {
+        let mut state = TesseraApp::headless();
+        let (g, a, _) = grouped_pair(&mut state);
+        let was = state.document.frame(a).expect("a").bounds.center();
+
+        apply(
+            &mut state,
+            Command::SetRotation {
+                id: g,
+                degrees: 90.0,
+            },
+        );
+
+        let child = state.document.frame(a).expect("a");
+        assert!(
+            (child.rotation - 90.0).abs() < 1e-9,
+            "the child turns on its own axis too, got {}",
+            child.rotation
+        );
+        let now = child.bounds.center();
+        assert!(
+            (was.x - now.x).abs() > 1.0 || (was.y - now.y).abs() > 1.0,
+            "and swings about the group's centre: {was:?} -> {now:?}"
+        );
+        assert!(
+            (state.document.frame(g).expect("group").rotation - 90.0).abs() < 1e-9,
+            "and the group records its own angle"
+        );
+    }
+
+    #[test]
+    fn setting_the_bounds_of_a_plain_shape_still_just_sets_them() {
+        // The group path must not cost the common case its directness.
+        let mut state = TesseraApp::headless();
+        apply(
+            &mut state,
+            Command::AddRectangle(DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 10.0,
+            }),
+        );
+        let id = state.selection.single().expect("selected");
+        let wanted = DocRect {
+            x: 5.0,
+            y: 6.0,
+            width: 70.0,
+            height: 80.0,
+        };
+        apply(&mut state, Command::SetBounds { id, bounds: wanted });
+        assert_eq!(state.document.frame(id).expect("frame").bounds, wanted);
     }
 }

@@ -33,6 +33,21 @@ impl Theme {
     pub const TOOL_SIZE: f32 = 32.0;
     /// Side of a selection handle.
     pub const HANDLE_SIZE: f32 = 7.0;
+
+    /// The painted pointer, in one weight, inverted against what is behind
+    /// it. A casing stroke under the line read as a heavier, blobbier icon
+    /// than the toolbar's; the canvas has exactly two backgrounds, so picking
+    /// between two colours gets the contrast without the second stroke.
+    pub const CURSOR_ON_DARK: Color32 = Color32::from_rgb(0xF5, 0xF6, 0xF8);
+    pub const CURSOR_ON_LIGHT: Color32 = Color32::from_rgb(0x12, 0x13, 0x15);
+    /// Side of a painted cursor, in logical points.
+    pub const CURSOR_SIZE: f32 = 20.0;
+
+    /// A text frame's non-printing edge, shown whether or not it is selected —
+    /// an empty text frame is otherwise invisible.
+    pub const FRAME_EDGE: Color32 = Color32::from_rgb(0x5A, 0x5D, 0x64);
+    /// The reference point a rotation turns about.
+    pub const REFERENCE_MARK: f32 = 4.0;
 }
 
 pub fn apply(ctx: &Context) {

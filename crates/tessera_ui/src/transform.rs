@@ -81,6 +81,24 @@ impl Handle {
     pub fn is_corner(self) -> bool {
         self.moves_x() && self.moves_y()
     }
+
+    /// The direction the handle pushes, in degrees clockwise from east.
+    ///
+    /// Add the frame's own rotation and a resize cursor points the way the
+    /// edge will actually travel — which is the only way a cursor stays
+    /// honest on a rotated frame.
+    pub fn normal_degrees(self) -> f32 {
+        match self {
+            Self::Right => 0.0,
+            Self::BottomRight => 45.0,
+            Self::Bottom => 90.0,
+            Self::BottomLeft => 135.0,
+            Self::Left => 180.0,
+            Self::TopLeft => 225.0,
+            Self::Top => 270.0,
+            Self::TopRight => 315.0,
+        }
+    }
 }
 
 /// Smallest frame a drag can produce, in points. Below this a frame becomes
@@ -163,7 +181,18 @@ pub type Origin = (tessera_document::ids::FrameId, DocRect, f64);
 /// Used for a group: each child keeps its position and size *relative to the
 /// group*, so scaling the group scales its contents rather than merely
 /// stretching an invisible box around them.
-pub fn scale_origins(origins: &[Origin], from: DocRect, to: DocRect) -> Vec<Origin> {
+///
+/// `rotation` is the box's own angle. `from` and `to` describe the box in its
+/// **local** space — that is what [`resize`] returns — so a child's centre has
+/// to be carried into that space, scaled, and carried back out. Scaling the
+/// document-space coordinates directly is what made a rotated group scatter
+/// its contents.
+///
+/// A child turned at some angle of its own still has its width and height
+/// scaled along its own axes. An axis-aligned box plus an angle cannot express
+/// the shear that would otherwise be needed, and refusing to scale at all
+/// would be worse than approximating.
+pub fn scale_origins(origins: &[Origin], from: DocRect, to: DocRect, rotation: f64) -> Vec<Origin> {
     let sx = if from.width.abs() > f64::EPSILON {
         to.width / from.width
     } else {
@@ -174,16 +203,25 @@ pub fn scale_origins(origins: &[Origin], from: DocRect, to: DocRect) -> Vec<Orig
     } else {
         1.0
     };
+    let (from_centre, to_centre) = (from.center(), to.center());
+
     origins
         .iter()
         .map(|(id, b, rot)| {
+            let local = b.center().rotated_about(from_centre, -rotation);
+            let scaled = DocPoint {
+                x: to.x + (local.x - from.x) * sx,
+                y: to.y + (local.y - from.y) * sy,
+            };
+            let centre = scaled.rotated_about(to_centre, rotation);
+            let (width, height) = (b.width * sx, b.height * sy);
             (
                 *id,
                 DocRect {
-                    x: to.x + (b.x - from.x) * sx,
-                    y: to.y + (b.y - from.y) * sy,
-                    width: b.width * sx,
-                    height: b.height * sy,
+                    x: centre.x - width / 2.0,
+                    y: centre.y - height / 2.0,
+                    width,
+                    height,
                 },
                 *rot,
             )
@@ -290,6 +328,18 @@ mod tests {
         );
         assert_eq!(Handle::Top.position(b), DocPoint { x: 200.0, y: 100.0 });
         assert_eq!(Handle::Left.position(b), DocPoint { x: 100.0, y: 150.0 });
+    }
+
+    #[test]
+    fn a_handle_and_its_opposite_point_opposite_ways() {
+        for h in Handle::ALL {
+            let apart = (h.normal_degrees() - h.opposite().normal_degrees()).abs();
+            assert!(
+                (apart - 180.0).abs() < 1e-3,
+                "{h:?} and {:?} are {apart} degrees apart",
+                h.opposite()
+            );
+        }
     }
 
     #[test]
@@ -564,7 +614,7 @@ mod tests {
             width: 200.0,
             ..group_box()
         };
-        let out = scale_origins(&origins(), group_box(), doubled);
+        let out = scale_origins(&origins(), group_box(), doubled, 0.0);
 
         assert!(close(out[0].1.width, 20.0), "child width doubled");
         assert!(close(out[1].1.x, 180.0), "child position doubled");
@@ -582,6 +632,7 @@ mod tests {
                 width: 100.0,
                 height: 10.0,
             },
+            0.0,
         );
         // Moved, not resized: the gap between the two children is preserved.
         assert!(close(out[1].1.x - out[0].1.x, 90.0));
@@ -594,8 +645,57 @@ mod tests {
             width: 0.0,
             ..group_box()
         };
-        let out = scale_origins(&origins(), flat, group_box());
+        let out = scale_origins(&origins(), flat, group_box(), 0.0);
         assert!(out[0].1.width.is_finite());
+    }
+
+    #[test]
+    fn scaling_a_rotated_group_scales_along_its_own_axes() {
+        // The bug this pins: children were scaled in document coordinates
+        // while the box they were scaled against is the group's own, local
+        // one — so stretching a turned group threw its contents off at an
+        // angle instead of spreading them along the edge being dragged.
+        //
+        // Built the way a real gesture leaves it: the children are rotated
+        // first, because that is what rotating the group did to them.
+        let from = group_box();
+        let turned = rotate_origins(&origins(), from.center(), 90.0);
+        let to = DocRect {
+            width: 200.0,
+            ..from
+        };
+
+        let out = scale_origins(&turned, from, to, 90.0);
+
+        // At 90 degrees the group's local x runs down the document's y, so
+        // doubling the width must double the children's separation in y and
+        // leave x alone.
+        let (near, far) = (out[0].1.center(), out[1].1.center());
+        let was = (turned[1].1.center().y - turned[0].1.center().y).abs();
+        assert!(close(was, 90.0), "the rotated children start 90 apart");
+        assert!(
+            close((far.y - near.y).abs(), 180.0),
+            "separation should have doubled along the rotated axis: {near:?} -> {far:?}"
+        );
+        assert!(
+            close((far.x - near.x).abs(), 0.0),
+            "and not along the other"
+        );
+    }
+
+    #[test]
+    fn scaling_by_nothing_moves_nothing_however_the_group_is_turned() {
+        // A gesture that has not moved yet must be the identity, or every
+        // drag would jump the instant it began.
+        for rotation in [0.0, 30.0, 90.0, 217.0] {
+            let out = scale_origins(&origins(), group_box(), group_box(), rotation);
+            for (before, after) in origins().iter().zip(out.iter()) {
+                assert!(close(before.1.x, after.1.x), "x drifted at {rotation}");
+                assert!(close(before.1.y, after.1.y), "y drifted at {rotation}");
+                assert!(close(before.1.width, after.1.width));
+                assert!(close(before.1.height, after.1.height));
+            }
+        }
     }
 
     #[test]

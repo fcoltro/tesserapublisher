@@ -28,6 +28,15 @@ pub enum Icon {
     Pen,
     Text,
     Hand,
+    /// The pan tool mid-drag: fingers curled, as `grab` draws them.
+    Grab,
+    Rotate,
+    Move,
+    /// One icon for all eight resize handles, turned to point along the
+    /// handle's own normal. See [`paint_rotated`].
+    Scale,
+    TextCursor,
+    Crosshair,
 }
 
 impl Icon {
@@ -69,6 +78,80 @@ impl Icon {
                 "M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8",
                 "M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15",
             ],
+            // lucide: grab — the closed-up hand a pan drag shows.
+            //
+            // Lucide writes the palm as one `d` with an implicit repeated arc
+            // command. It is split in two here rather than trusting every SVG
+            // parser to carry the command across.
+            Self::Grab => &[
+                "M18 11.5V9a2 2 0 0 0-2-2a2 2 0 0 0-2 2v1.4",
+                "M14 10V8a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2",
+                "M10 9.9V9a2 2 0 0 0-2-2a2 2 0 0 0-2 2v5",
+                "M6 14a2 2 0 0 0-2-2a2 2 0 0 0-2 2",
+                "M18 11a2 2 0 1 1 4 0v3a8 8 0 0 1-8 8h-4a8 8 0 0 1-8-8",
+                "M2 14a2 2 0 1 1 4 0",
+            ],
+            // lucide: rotate-cw
+            Self::Rotate => &[
+                "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8",
+                "M21 3v5h-5",
+            ],
+            // lucide: move
+            Self::Move => &[
+                "M12 2v20",
+                "M2 12h20",
+                "m15 19-3 3-3-3",
+                "m15 5-3-3-3 3",
+                "m19 9 3 3-3 3",
+                "m5 9-3 3 3 3",
+            ],
+            // lucide: move-horizontal. Drawn along +x and rotated to the
+            // handle's outward normal, so a rotated frame gets a cursor that
+            // actually points the way the edge will travel.
+            Self::Scale => &["m18 8 4 4-4 4", "M2 12h20", "m6 8-4 4 4 4"],
+            // lucide: text-cursor
+            Self::TextCursor => &[
+                "M17 22h-1a4 4 0 0 1-4-4V6a4 4 0 0 1 4-4h1",
+                "M7 22h1a4 4 0 0 0 4-4v-1",
+                "M7 2h1a4 4 0 0 1 4 4v1",
+            ],
+            // lucide: crosshair
+            Self::Crosshair => &[
+                "M22 12 A10 10 0 1 1 2 12 A10 10 0 1 1 22 12 Z",
+                "M22 12h-4",
+                "M6 12H2",
+                "M12 6V2",
+                "M12 18v4",
+            ],
+        }
+    }
+
+    /// The point in the 24-unit grid that must sit under the pointer.
+    ///
+    /// A cursor is not its bounding box: an arrow points from its tip, a
+    /// crosshair from its centre, a text bar from the middle of its stem.
+    /// Painting every icon centred would put the arrow's tip a dozen pixels
+    /// down and to the right of what the click actually hits.
+    pub fn hotspot(self) -> (f32, f32) {
+        match self {
+            // The arrow's tip, where `mouse-pointer-2` starts its outline.
+            Self::Select => (4.3, 4.3),
+            // The nib, not the barrel — and Lucide's `pen-tool` points up and
+            // to the LEFT, where its outline turns the sharp corner at about
+            // (2.3, 2.3). Reading the nib as the bottom-left corner put the
+            // whole icon a full grid away from the point it draws from.
+            Self::Pen => (2.3, 2.3),
+            Self::Rectangle
+            | Self::Ellipse
+            | Self::Line
+            | Self::Text
+            | Self::Hand
+            | Self::Grab
+            | Self::Rotate
+            | Self::Move
+            | Self::Scale
+            | Self::TextCursor
+            | Self::Crosshair => (12.0, 12.0),
         }
     }
 }
@@ -78,10 +161,30 @@ impl Icon {
 /// The icon is scaled uniformly from its 24-unit grid, so the stroke stays
 /// proportional and the shape never distorts.
 pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
+    paint_rotated(painter, rect, icon, color, 0.0, 1.0);
+}
+
+/// Paint `icon` turned `degrees` clockwise about the centre of `rect`, with
+/// its stroke multiplied by `weight`.
+///
+/// The rotation is what lets one `Scale` icon serve all eight resize handles
+/// on a frame at any angle; the weight is what lets a cursor be painted twice,
+/// a dark casing under a light stroke, so it reads on both the pasteboard and
+/// a white page.
+pub fn paint_rotated(
+    painter: &Painter,
+    rect: Rect,
+    icon: Icon,
+    color: Color32,
+    degrees: f32,
+    weight: f32,
+) {
     let side = rect.width().min(rect.height());
     let scale = side / GRID;
     let origin = rect.center() - egui::vec2(side / 2.0, side / 2.0);
-    let stroke = Stroke::new(STROKE * scale, color);
+    let stroke = Stroke::new(STROKE * scale * weight, color);
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    let pivot = rect.center();
 
     // Flatten in grid units, then scale — so the tolerance means the same
     // thing regardless of how large the icon is drawn.
@@ -105,7 +208,11 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
         };
 
         kurbo::flatten(path.iter(), tolerance, |el| {
-            let at = |p: kurbo::Point| origin + egui::vec2(p.x as f32 * scale, p.y as f32 * scale);
+            let at = |p: kurbo::Point| {
+                let flat = origin + egui::vec2(p.x as f32 * scale, p.y as f32 * scale);
+                let d = flat - pivot;
+                pivot + egui::vec2(d.x * cos - d.y * sin, d.x * sin + d.y * cos)
+            };
             match el {
                 PathEl::MoveTo(p) => {
                     flush(&mut run);
@@ -127,7 +234,7 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
 }
 
 /// Every icon, for exhaustive tests and for building a palette.
-pub const ALL: [Icon; 7] = [
+pub const ALL: [Icon; 13] = [
     Icon::Select,
     Icon::Rectangle,
     Icon::Ellipse,
@@ -135,6 +242,12 @@ pub const ALL: [Icon; 7] = [
     Icon::Pen,
     Icon::Text,
     Icon::Hand,
+    Icon::Grab,
+    Icon::Rotate,
+    Icon::Move,
+    Icon::Scale,
+    Icon::TextCursor,
+    Icon::Crosshair,
 ];
 
 #[cfg(test)]
@@ -178,6 +291,55 @@ mod tests {
                     "{icon:?} escapes the 24x24 grid: {b:?}"
                 );
             }
+        }
+    }
+
+    /// The icons that point with a tip rather than with their middle.
+    const POINTED: [Icon; 2] = [Icon::Select, Icon::Pen];
+
+    #[test]
+    fn a_pointed_icon_has_its_hotspot_on_its_own_ink() {
+        // The bug this pins: the pen's hotspot was read off the wrong corner —
+        // inside the icon's bounding box, but nowhere near the nib — so the
+        // cursor drew a whole grid away from the point it drew from.
+        use kurbo::ParamCurveNearest as _;
+
+        for icon in POINTED {
+            let (hx, hy) = icon.hotspot();
+            let at = kurbo::Point::new(f64::from(hx), f64::from(hy));
+            // Collected first: `segments` borrows the path it walks, so
+            // parsing inline would leave it dangling.
+            let paths: Vec<BezPath> = icon
+                .paths()
+                .iter()
+                .map(|d| BezPath::from_svg(d).expect("parses"))
+                .collect();
+            let nearest = paths
+                .iter()
+                .flat_map(|path| path.segments())
+                .map(|seg| seg.nearest(at, 0.01).distance_sq)
+                .fold(f64::MAX, f64::min);
+            assert!(
+                nearest.sqrt() < 1.5,
+                "{icon:?} points from ({hx}, {hy}), which is {} units from any ink",
+                nearest.sqrt()
+            );
+        }
+    }
+
+    #[test]
+    fn every_other_icon_points_from_its_middle() {
+        // A cursor that aims from somewhere other than its centre needs a
+        // reason, and a test above proving it lands on the ink.
+        for icon in ALL {
+            if POINTED.contains(&icon) {
+                continue;
+            }
+            assert_eq!(
+                icon.hotspot(),
+                (12.0, 12.0),
+                "{icon:?} aims off-centre without being listed as pointed"
+            );
         }
     }
 
