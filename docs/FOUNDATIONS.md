@@ -180,10 +180,20 @@ so they are ordinary feature work that happens to touch the format.
 - **Image frames.** `FrameKind` has no `Image` variant. Pulls in linked vs
   embedded assets, missing-link and relink handling, effective resolution
   reporting, and clipping paths. Table stakes for a layout tool.
-- **A real stroke model.** `Stroke { color, width }` has no cap, join, dash,
-  or alignment. Alignment (inside/centre/outside) is the structural one: it
-  changes the geometry that gets rendered and exported, so it cannot be
-  bolted on at the paint site.
+- ~~**A real stroke model.**~~ **Done 2026-09-03, format version 4.** Stroke
+  carries alignment, cap, join, miter limit, dashes and a dash offset.
+  Alignment was the structural one — it changes geometry, so `Stroke::offset`
+  lives in the model and both renderers move the geometry by it before
+  stroking centred. Nothing needed rewriting: every new field defaults to what
+  a stroke drew before it existed.
+
+  It uncovered an export bug on the way: the PDF writer filled rectangles and
+  ellipses and never stroked them, so a framed box exported without its frame.
+  Fixed.
+
+  Still open here: **a path's alignment is not applied.** Offsetting an
+  arbitrary curve is a different problem from insetting a rectangle, and needs
+  either a real offsetting pass or a clip layer. Paths stroke centred.
 - **Text runs and styles.** Already Milestone 2. `Story` currently applies one
   `TextStyle` to the whole text, which the code notes is a deliberate M0
   simplification.
@@ -216,4 +226,13 @@ clothing.
    and wants a person. See the three options above.
 4. Run it on Linux and macOS (Tier 3) — cheap, and may reorder everything
    below.
-5. Then the stroke model and images, then Milestone 2 as written.
+5. ~~The stroke model~~ — **done**. Then images, then Milestone 2 as written.
+
+## What is left, shortest first
+
+- **Run it on Linux and macOS.** Still the largest unknown, and cheap.
+- **Viewport culling.** Panning still rebuilds the whole scene; off-screen
+  spreads are still built. Needs Milestone 3's page structure.
+- **Stroke alignment on paths.** Needs offsetting or a clip layer.
+- **Delta undo.** The design decision is written up above and wants a person.
+- **Image frames.** The one Tier 2 item untouched, and the biggest.
