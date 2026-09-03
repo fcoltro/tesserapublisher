@@ -73,15 +73,13 @@ impl Shaper {
         }
     }
 
-    /// Shape `story` into `width` points of available measure.
-    pub fn shape(&mut self, story: &Story, width: f64) -> ShapedText {
-        if story.text.is_empty() {
-            return ShapedText {
-                font_size: story.style.size,
-                ..Default::default()
-            };
-        }
-
+    /// Lay `story` out into `width` points of available measure.
+    ///
+    /// The one place a layout is built. [`Shaper::shape`] turns it into
+    /// glyphs for the renderer and the PDF writer; [`crate::caret`] asks it
+    /// where the cursor goes. Two callers, one layout — which is what stops a
+    /// caret from drifting away from the glyphs it sits between.
+    pub(crate) fn layout(&mut self, story: &Story, width: f64) -> parley::Layout<()> {
         let mut builder =
             self.layout_ctx
                 .ranged_builder(&mut self.font_ctx, &story.text, 1.0, true);
@@ -98,6 +96,19 @@ impl Shaper {
 
         let mut layout: parley::Layout<()> = builder.build(&story.text);
         layout.break_all_lines(Some(width as f32));
+        layout
+    }
+
+    /// Shape `story` into `width` points of available measure.
+    pub fn shape(&mut self, story: &Story, width: f64) -> ShapedText {
+        if story.text.is_empty() {
+            return ShapedText {
+                font_size: story.style.size,
+                ..Default::default()
+            };
+        }
+
+        let layout = self.layout(story, width);
 
         let mut fonts: Vec<FontData> = Vec::new();
         let mut lines = Vec::new();

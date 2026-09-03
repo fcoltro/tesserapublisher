@@ -9,10 +9,12 @@
 //! `tessera_render` and `tessera_pdf` consume exactly this type, which is what
 //! guarantees a PDF export matches what was on screen.
 
+pub mod caret;
 pub mod edit;
 pub mod shape;
 pub mod story;
 
+pub use caret::{CaretGeometry, TextRect};
 pub use edit::{EditBuffer, TextCursor};
 pub use shape::{FontData, PositionedGlyph, ShapedLine, ShapedText, Shaper};
 pub use story::{Story, TextStyle};

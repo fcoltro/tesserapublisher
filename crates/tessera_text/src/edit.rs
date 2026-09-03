@@ -65,6 +65,23 @@ impl EditBuffer {
         };
     }
 
+    /// Move the caret to `position`, keeping the anchor where it is.
+    ///
+    /// What dragging through text does, and the counterpart to
+    /// [`EditBuffer::set_cursor`], which collapses instead.
+    pub fn extend_to(&mut self, position: usize) {
+        self.cursor.position = position.min(self.story.text.len());
+    }
+
+    /// Select exactly `range`, leaving the caret at its end.
+    pub fn select(&mut self, range: Range<usize>) {
+        let len = self.story.text.len();
+        self.cursor = TextCursor {
+            anchor: range.start.min(len),
+            position: range.end.min(len),
+        };
+    }
+
     pub fn selection_range(&self) -> Option<Range<usize>> {
         let (start, end) = if self.cursor.position <= self.cursor.anchor {
             (self.cursor.position, self.cursor.anchor)
