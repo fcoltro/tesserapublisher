@@ -12,6 +12,7 @@ pub mod format;
 pub mod history;
 pub mod ids;
 pub mod nodes;
+pub mod path;
 
 pub use document::{Document, StoryMap, ZMove};
 pub use history::History;

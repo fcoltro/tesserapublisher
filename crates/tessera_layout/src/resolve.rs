@@ -8,6 +8,7 @@ use tessera_color::Color;
 use tessera_document::document::Document;
 use tessera_document::ids::FrameId;
 use tessera_document::nodes::{FrameKind, Stroke};
+use tessera_document::path::fit_to_bounds;
 use tessera_geometry::DocRect;
 use tessera_text::shape::{ShapedText, Shaper};
 
@@ -50,42 +51,6 @@ pub struct ResolvedItem {
 pub struct ResolvedDocument {
     /// Back to front. The last item paints on top.
     pub items: Vec<ResolvedItem>,
-}
-
-/// Map a frame-local path onto its frame's bounds.
-///
-/// A path is stored in its own coordinates, so without this a line or a
-/// pen-drawn curve would keep its original size while its frame was resized —
-/// the box would move and the geometry would not. Doing it here rather than
-/// when the bounds change means *every* route to a new size works: the
-/// handles, the inspector's fields, and anything added later.
-///
-/// An axis with no extent — a perfectly horizontal line — is translated
-/// rather than scaled, since there is nothing to scale.
-fn fit_to_bounds(path: &kurbo::BezPath, bounds: DocRect) -> kurbo::BezPath {
-    use kurbo::Shape as _;
-
-    let b = path.bounding_box();
-    if b.width() <= f64::EPSILON && b.height() <= f64::EPSILON {
-        return path.clone();
-    }
-
-    let sx = if b.width() > f64::EPSILON {
-        bounds.width / b.width()
-    } else {
-        1.0
-    };
-    let sy = if b.height() > f64::EPSILON {
-        bounds.height / b.height()
-    } else {
-        1.0
-    };
-
-    let mut out = path.clone();
-    out.apply_affine(
-        kurbo::Affine::scale_non_uniform(sx, sy) * kurbo::Affine::translate((-b.x0, -b.y0)),
-    );
-    out
 }
 
 /// Resolve every visible frame, in paint order.
