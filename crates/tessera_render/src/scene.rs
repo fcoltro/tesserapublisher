@@ -7,6 +7,7 @@
 //! by egui's painter on top, so they can never appear in an export.
 
 use tessera_color::Color;
+use tessera_document::nodes::{LineCap, LineJoin, Stroke};
 use tessera_geometry::{DocRect, ViewTransform};
 use tessera_layout::resolve::{ResolvedDocument, ResolvedKind};
 use vello::kurbo::{Affine, Ellipse, Rect, Stroke as KurboStroke};
@@ -14,15 +15,75 @@ use vello::peniko::Fill;
 use vello::peniko::color::{AlphaColor, Srgb};
 use vello::{Glyph, Scene};
 
+fn to_cap(cap: LineCap) -> vello::kurbo::Cap {
+    match cap {
+        LineCap::Butt => vello::kurbo::Cap::Butt,
+        LineCap::Round => vello::kurbo::Cap::Round,
+        LineCap::Square => vello::kurbo::Cap::Square,
+    }
+}
+
+fn to_join(join: LineJoin) -> vello::kurbo::Join {
+    match join {
+        LineJoin::Miter => vello::kurbo::Join::Miter,
+        LineJoin::Round => vello::kurbo::Join::Round,
+        LineJoin::Bevel => vello::kurbo::Join::Bevel,
+    }
+}
+
 fn to_peniko(color: &Color) -> AlphaColor<Srgb> {
     let [r, g, b, a] = color.to_rgb_f32();
     AlphaColor::new([r, g, b, a])
+}
+
+/// The narrowest a stroke may be drawn, in **document** units at `view`.
+///
+/// A one-point rule at 25% zoom is a quarter of a device pixel wide. Vello
+/// renders that correctly — a quarter of the coverage — and the result is a
+/// line that fades, breaks up along its length, and flickers as the view
+/// moves, worst of all when it runs nearly straight across a row or column of
+/// pixels and every pixel in the run makes the same wrong decision.
+///
+/// So a stroke is never asked for less than one device pixel of width. This is
+/// what every drawing tool means by a hairline, and it applies to the screen
+/// only: the PDF writer does not go through here, so an export keeps the width
+/// the document actually specifies.
+fn hairline(view: ViewTransform) -> f64 {
+    const DEVICE_PIXELS: f64 = 1.0;
+    if view.zoom.abs() < f64::EPSILON {
+        return 0.0;
+    }
+    DEVICE_PIXELS / view.zoom.abs()
+}
+
+/// The shape's own rectangle, moved out to where the stroke's centreline
+/// runs.
+///
+/// An inside stroke on a frame thinner than the stroke itself would turn the
+/// rectangle inside out, so the inset is held at the point where it collapses.
+fn stroked_rect(bounds: Rect, offset: f64) -> Rect {
+    let limit = (bounds.width().min(bounds.height()) / 2.0).max(0.0);
+    bounds.inflate(offset.max(-limit), offset.max(-limit))
 }
 
 /// Build the scene for one page of a resolved document.
 pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRect) -> Scene {
     let mut scene = Scene::new();
     let transform = view.to_affine();
+    let hairline = hairline(view);
+    // The whole stroke, not just its width: caps, joins and dashes are what
+    // make a rule read as a rule rather than as a thin rectangle.
+    let stroke_of = |s: &Stroke| {
+        let mut k = KurboStroke::new(s.width.max(hairline));
+        k.start_cap = to_cap(s.cap);
+        k.end_cap = to_cap(s.cap);
+        k.join = to_join(s.join);
+        k.miter_limit = s.miter_limit;
+        if s.is_dashed() {
+            k = k.with_dashes(s.dash_offset, s.dashes.iter().copied());
+        }
+        k
+    };
 
     // The page itself, so the document reads as paper rather than as objects
     // floating on the pasteboard.
@@ -36,28 +97,21 @@ pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRe
 
     for item in &resolved.items {
         let rect: Rect = item.bounds.to_kurbo();
-        // Rotation is about the frame's own centre, so it composes as
-        // translate-out, rotate, translate-back — applied before the camera.
-        let transform = if item.rotation == 0.0 {
-            transform
-        } else {
-            let c = item.bounds.center();
-            transform
-                * Affine::translate((c.x, c.y))
-                * Affine::rotate(item.rotation.to_radians())
-                * Affine::translate((-c.x, -c.y))
-        };
+        // The frame's own space, then the camera. `bounds` is expressed in
+        // that own space, so the item transform has to be applied to it
+        // before the view is.
+        let transform = transform * item.transform.to_affine();
 
         match &item.kind {
             ResolvedKind::Rectangle { fill, stroke } => {
                 scene.fill(Fill::NonZero, transform, to_peniko(fill), None, &rect);
                 if let Some(s) = stroke {
                     scene.stroke(
-                        &KurboStroke::new(s.width),
+                        &stroke_of(s),
                         transform,
                         to_peniko(&s.color),
                         None,
-                        &rect,
+                        &stroked_rect(rect, s.offset()),
                     );
                 }
             }
@@ -66,11 +120,11 @@ pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRe
                 scene.fill(Fill::NonZero, transform, to_peniko(fill), None, &ellipse);
                 if let Some(s) = stroke {
                     scene.stroke(
-                        &KurboStroke::new(s.width),
+                        &stroke_of(s),
                         transform,
                         to_peniko(&s.color),
                         None,
-                        &ellipse,
+                        &Ellipse::from_rect(stroked_rect(rect, s.offset())),
                     );
                 }
             }
@@ -82,13 +136,11 @@ pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRe
                     scene.fill(Fill::NonZero, placed, to_peniko(f), None, path);
                 }
                 if let Some(s) = stroke {
-                    scene.stroke(
-                        &KurboStroke::new(s.width),
-                        placed,
-                        to_peniko(&s.color),
-                        None,
-                        path,
-                    );
+                    // A path's alignment is not applied: offsetting an
+                    // arbitrary curve is a different problem from insetting a
+                    // rectangle, and drawing it centred is honest where
+                    // approximating the offset would not be.
+                    scene.stroke(&stroke_of(s), placed, to_peniko(&s.color), None, path);
                 }
             }
 
@@ -142,6 +194,7 @@ fn draw_text(
 mod tests {
     use super::*;
     use tessera_document::ids::FrameId;
+    use tessera_geometry::Transform;
     use tessera_layout::resolve::ResolvedItem;
     use tessera_text::shape::Shaper;
     use tessera_text::story::Story;
@@ -167,7 +220,7 @@ mod tests {
         ResolvedDocument {
             items: vec![ResolvedItem {
                 frame: FrameId::default(),
-                rotation: 0.0,
+                transform: Transform::IDENTITY,
                 bounds,
                 kind,
             }],
@@ -230,10 +283,7 @@ mod tests {
             &one_item(
                 ResolvedKind::Rectangle {
                     fill: Color::BLACK,
-                    stroke: Some(tessera_document::nodes::Stroke {
-                        color: Color::BLACK,
-                        width: 2.0,
-                    }),
+                    stroke: Some(Stroke::new(Color::BLACK, 2.0)),
                 },
                 bounds,
             ),
@@ -344,5 +394,56 @@ mod tests {
         );
 
         assert!(scene.encoding().resources.glyph_runs.is_empty());
+    }
+
+    // --- hairlines ------------------------------------------------------
+
+    fn view_at(zoom: f64) -> ViewTransform {
+        ViewTransform {
+            zoom,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_stroke_is_never_asked_for_less_than_a_device_pixel() {
+        // A one-point rule zoomed out to 25% is a quarter of a pixel wide.
+        // Drawn honestly it fades and breaks up along its length, and a line
+        // running nearly straight down a column of pixels breaks up the most,
+        // because every pixel in the run makes the same wrong decision.
+        let floor = hairline(view_at(0.25));
+        assert!(
+            (floor - 4.0).abs() < 1e-9,
+            "a quarter-scale view needs 4 document units to make a pixel, got {floor}"
+        );
+        assert!(1.0_f64.max(floor) > 1.0, "a 1pt rule is widened at 25%");
+    }
+
+    #[test]
+    fn zooming_in_never_widens_a_stroke() {
+        // The floor is a floor. Past 1:1 it must do nothing at all, or every
+        // hairline would fatten as you zoomed in.
+        let width = 1.0_f64;
+        for zoom in [1.0, 2.0, 8.0] {
+            let drawn = width.max(hairline(view_at(zoom)));
+            assert!(
+                (drawn - width).abs() < 1e-9,
+                "a 1pt stroke became {drawn} at {zoom}x"
+            );
+        }
+    }
+
+    #[test]
+    fn a_thick_stroke_is_left_alone_however_far_out_the_view_is() {
+        let drawn = 40.0_f64.max(hairline(view_at(0.1)));
+        assert!((drawn - 40.0).abs() < 1e-9, "got {drawn}");
+    }
+
+    #[test]
+    fn a_zero_zoom_does_not_produce_an_infinite_stroke() {
+        // Nothing is visible at zero zoom, but a division by it would poison
+        // the scene with a non-finite width rather than draw nothing.
+        assert_eq!(hairline(view_at(0.0)), 0.0);
+        assert!(hairline(view_at(0.0)).is_finite());
     }
 }

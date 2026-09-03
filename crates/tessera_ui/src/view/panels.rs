@@ -92,7 +92,7 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
         apply(state, Command::SetBounds { id, bounds });
     }
 
-    let mut degrees = frame.rotation;
+    let mut degrees = frame.rotation_degrees();
     ui.horizontal(|ui| {
         ui.colored_label(Theme::TEXT_MUTED, "Rotation");
         if ui

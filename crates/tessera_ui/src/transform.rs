@@ -1,10 +1,16 @@
 //! Resizing and rotating a frame by dragging its handles.
 //!
-//! Pure geometry, kept away from the viewport so the awkward part — keeping
-//! the opposite corner pinned while a *rotated* frame is resized — is
-//! testable without a window.
+//! Pure geometry, kept away from the viewport so it is testable without a
+//! window.
+//!
+//! Everything here works in a frame's **own** coordinate space and produces a
+//! document-space [`Transform`] to compose onto what is already there. That is
+//! what makes the awkward cases ordinary: resizing a turned frame is just
+//! resizing, because the turn lives in the placement rather than in the
+//! arithmetic, and scaling a rotated group is exact rather than approximate,
+//! because the shear it produces is now something a frame can hold.
 
-use tessera_geometry::{DocPoint, DocRect};
+use tessera_geometry::{DocPoint, DocRect, Transform};
 
 /// The eight resize grips, in reading order around the frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +87,24 @@ impl Handle {
     pub fn is_corner(self) -> bool {
         self.moves_x() && self.moves_y()
     }
+
+    /// The direction the handle pushes, in degrees clockwise from east.
+    ///
+    /// Add the frame's own rotation and a resize cursor points the way the
+    /// edge will actually travel — which is the only way a cursor stays
+    /// honest on a rotated frame.
+    pub fn normal_degrees(self) -> f32 {
+        match self {
+            Self::Right => 0.0,
+            Self::BottomRight => 45.0,
+            Self::Bottom => 90.0,
+            Self::BottomLeft => 135.0,
+            Self::Left => 180.0,
+            Self::TopLeft => 225.0,
+            Self::Top => 270.0,
+            Self::TopRight => 315.0,
+        }
+    }
 }
 
 /// Smallest frame a drag can produce, in points. Below this a frame becomes
@@ -89,24 +113,16 @@ const MIN_SIZE: f64 = 1.0;
 
 /// Resize `bounds` by dragging `handle` to `pointer`.
 ///
-/// `rotation` is the frame's own rotation in degrees. The drag is interpreted
-/// in the frame's **local** (unrotated) space, and the result is placed so the
-/// handle's opposite corner stays exactly where it was on screen — which is
-/// what makes resizing a rotated frame feel like resizing rather than
-/// swinging.
-pub fn resize(
-    bounds: DocRect,
-    rotation: f64,
-    handle: Handle,
-    pointer: DocPoint,
-    proportional: bool,
-) -> DocRect {
-    let center = bounds.center();
-    let anchor_local = handle.anchor(bounds);
-    // Where the anchor sits on screen now, and must still sit afterwards.
-    let anchor_doc = anchor_local.rotated_about(center, rotation);
-
-    let local = pointer.rotated_about(center, -rotation);
+/// **Both are in the frame's own space** — the caller puts the pointer there
+/// with `frame.to_local`. That is the whole trick: a rotated, sheared or
+/// flipped frame resizes with the same arithmetic as an upright one, because
+/// its placement is not part of the arithmetic.
+///
+/// The result is placed so the handle's opposite corner keeps its local
+/// position, and since the placement does not change, it therefore keeps its
+/// position on screen too.
+pub fn resize(bounds: DocRect, handle: Handle, pointer: DocPoint, proportional: bool) -> DocRect {
+    let anchor_before = handle.anchor(bounds);
 
     let mut x0 = bounds.x;
     let mut y0 = bounds.y;
@@ -115,14 +131,14 @@ pub fn resize(
 
     if handle.moves_x() {
         match handle {
-            Handle::TopLeft | Handle::BottomLeft | Handle::Left => x0 = local.x,
-            _ => x1 = local.x,
+            Handle::TopLeft | Handle::BottomLeft | Handle::Left => x0 = pointer.x,
+            _ => x1 = pointer.x,
         }
     }
     if handle.moves_y() {
         match handle {
-            Handle::TopLeft | Handle::Top | Handle::TopRight => y0 = local.y,
-            _ => y1 = local.y,
+            Handle::TopLeft | Handle::Top | Handle::TopRight => y0 = pointer.y,
+            _ => y1 = pointer.y,
         }
     }
 
@@ -146,24 +162,34 @@ pub fn resize(
         }
     }
 
-    // Re-place so the anchor lands back on its original document position.
-    let anchor_after = handle.anchor(new).rotated_about(new.center(), rotation);
+    // Put the anchor back where it was.
+    let anchor_after = handle.anchor(new);
     DocRect {
-        x: new.x + (anchor_doc.x - anchor_after.x),
-        y: new.y + (anchor_doc.y - anchor_after.y),
+        x: new.x + (anchor_before.x - anchor_after.x),
+        y: new.y + (anchor_before.y - anchor_after.y),
         ..new
     }
 }
 
-/// One frame's state at the start of a gesture.
-pub type Origin = (tessera_document::ids::FrameId, DocRect, f64);
+/// One frame's state at the start of a gesture: its box, and its placement.
+pub type Origin = (tessera_document::ids::FrameId, DocRect, Transform);
 
-/// Map every frame from the box `from` onto the box `to`.
+/// The document-space transform that carries a frame's footprint from
+/// `from` under `was`, to `to` under `placement`.
 ///
-/// Used for a group: each child keeps its position and size *relative to the
-/// group*, so scaling the group scales its contents rather than merely
-/// stretching an invisible box around them.
-pub fn scale_origins(origins: &[Origin], from: DocRect, to: DocRect) -> Vec<Origin> {
+/// This is the one piece of algebra the gestures share. Everything a drag or
+/// an inspector field does to a frame is some `from`/`was` becoming some
+/// `to`/`placement`; the children of a group have to follow by exactly that
+/// map, and nothing else.
+///
+/// Read right to left: undo the old placement to get into the frame's own
+/// space, do the box change there, then apply the new placement.
+pub fn footprint_map(
+    from: DocRect,
+    was: Transform,
+    to: DocRect,
+    placement: Transform,
+) -> Transform {
     let sx = if from.width.abs() > f64::EPSILON {
         to.width / from.width
     } else {
@@ -174,42 +200,54 @@ pub fn scale_origins(origins: &[Origin], from: DocRect, to: DocRect) -> Vec<Orig
     } else {
         1.0
     };
+
+    let in_own_space = Transform::translate(-from.x, -from.y)
+        .then(Transform::scale_about(sx, sy, DocPoint::ZERO))
+        .then(Transform::translate(to.x, to.y));
+
+    was.inverse().then(in_own_space).then(placement)
+}
+
+/// Every frame in a scale gesture, after dragging `target`'s box to `to`.
+///
+/// The frame being dragged takes the new box directly and keeps its placement,
+/// so its `bounds` stay an honest width and height. Everything inside it — a
+/// group's contents — follows by composing the map onto its own placement, so
+/// a child keeps its size and angle relative to the group.
+///
+/// A child turned at some angle of its own is handled exactly, not
+/// approximately: scaling it along the group's axes shears it, and a placement
+/// can hold a shear.
+pub fn scaled(
+    origins: &[Origin],
+    target: tessera_document::ids::FrameId,
+    from: DocRect,
+    to: DocRect,
+    placement: Transform,
+) -> Vec<Origin> {
+    let map = footprint_map(from, placement, to, placement);
     origins
         .iter()
-        .map(|(id, b, rot)| {
-            (
-                *id,
-                DocRect {
-                    x: to.x + (b.x - from.x) * sx,
-                    y: to.y + (b.y - from.y) * sy,
-                    width: b.width * sx,
-                    height: b.height * sy,
-                },
-                *rot,
-            )
+        .map(|(id, bounds, own)| {
+            if *id == target {
+                (*id, to, *own)
+            } else {
+                (*id, *bounds, own.then(map))
+            }
         })
         .collect()
 }
 
-/// Rotate every frame by `delta` degrees about `center`.
+/// Every frame in a rotate gesture, turned `degrees` about `pivot`.
 ///
-/// Each frame's centre swings around the pivot *and* the frame turns on its
-/// own axis — both, or a rotated group would look like a scattered one.
-pub fn rotate_origins(origins: &[Origin], center: DocPoint, delta: f64) -> Vec<Origin> {
+/// Boxes do not change: a rotation is entirely a change of placement, which
+/// is why a group's frame now swings rigidly instead of breathing as the
+/// bounding box of its swinging children.
+pub fn rotated(origins: &[Origin], degrees: f64, pivot: DocPoint) -> Vec<Origin> {
+    let turn = Transform::rotate_about(degrees, pivot);
     origins
         .iter()
-        .map(|(id, b, rot)| {
-            let moved = b.center().rotated_about(center, delta);
-            (
-                *id,
-                DocRect {
-                    x: moved.x - b.width / 2.0,
-                    y: moved.y - b.height / 2.0,
-                    ..*b
-                },
-                (rot + delta + 180.0).rem_euclid(360.0) - 180.0,
-            )
-        })
+        .map(|(id, bounds, own)| (*id, *bounds, own.then(turn)))
         .collect()
 }
 
@@ -293,6 +331,18 @@ mod tests {
     }
 
     #[test]
+    fn a_handle_and_its_opposite_point_opposite_ways() {
+        for h in Handle::ALL {
+            let apart = (h.normal_degrees() - h.opposite().normal_degrees()).abs();
+            assert!(
+                (apart - 180.0).abs() < 1e-3,
+                "{h:?} and {:?} are {apart} degrees apart",
+                h.opposite()
+            );
+        }
+    }
+
+    #[test]
     fn every_handle_is_its_opposites_opposite() {
         for h in Handle::ALL {
             assert_eq!(h.opposite().opposite(), h);
@@ -305,7 +355,6 @@ mod tests {
         let b = rect();
         let new = resize(
             b,
-            0.0,
             Handle::BottomRight,
             DocPoint { x: 400.0, y: 300.0 },
             false,
@@ -319,13 +368,7 @@ mod tests {
     #[test]
     fn dragging_the_top_left_keeps_the_bottom_right_pinned() {
         let b = rect();
-        let new = resize(
-            b,
-            0.0,
-            Handle::TopLeft,
-            DocPoint { x: 150.0, y: 150.0 },
-            false,
-        );
+        let new = resize(b, Handle::TopLeft, DocPoint { x: 150.0, y: 150.0 }, false);
         assert!(close(new.x + new.width, 300.0), "right edge held");
         assert!(close(new.y + new.height, 200.0), "bottom edge held");
     }
@@ -333,13 +376,7 @@ mod tests {
     #[test]
     fn an_edge_handle_changes_only_one_axis() {
         let b = rect();
-        let new = resize(
-            b,
-            0.0,
-            Handle::Right,
-            DocPoint { x: 500.0, y: 999.0 },
-            false,
-        );
+        let new = resize(b, Handle::Right, DocPoint { x: 500.0, y: 999.0 }, false);
         assert!(
             close(new.height, b.height),
             "height untouched by a side drag"
@@ -352,7 +389,6 @@ mod tests {
         let b = rect();
         let new = resize(
             b,
-            0.0,
             Handle::BottomRight,
             DocPoint { x: 100.0, y: 100.0 },
             false,
@@ -366,7 +402,6 @@ mod tests {
         let b = rect(); // 2:1
         let new = resize(
             b,
-            0.0,
             Handle::BottomRight,
             DocPoint { x: 500.0, y: 220.0 },
             true,
@@ -384,54 +419,49 @@ mod tests {
         // An edge drag has only one axis to follow, so constraining it would
         // mean the frame resists the pointer for no reason.
         let b = rect();
-        let new = resize(b, 0.0, Handle::Right, DocPoint { x: 500.0, y: 150.0 }, true);
+        let new = resize(b, Handle::Right, DocPoint { x: 500.0, y: 150.0 }, true);
         assert!(close(new.height, b.height));
     }
 
     #[test]
-    fn resizing_a_rotated_frame_keeps_its_anchor_on_screen() {
-        // The property that makes rotated resizing feel right: whatever the
-        // rotation, the corner opposite the dragged handle must not move.
+    fn resizing_a_placed_frame_keeps_its_anchor_where_it_was() {
+        // The property that makes resizing a turned frame feel right: whatever
+        // the placement, the corner opposite the dragged handle must not move
+        // on screen.
+        //
+        // It now holds for free — the resize happens in the frame's own space
+        // and the placement is untouched — but it is the whole point of doing
+        // it that way, so it is still checked.
         let b = rect();
-        for rotation in [0.0, 30.0, 90.0, 145.0, -60.0] {
-            let anchor_before = Handle::BottomRight
-                .position(b)
-                .rotated_about(b.center(), rotation);
+        for placement in [
+            Transform::IDENTITY,
+            Transform::rotate_about(30.0, b.center()),
+            Transform::rotate_about(-60.0, DocPoint::ZERO),
+            Transform::rotate_about(45.0, b.center()).then(Transform::scale_about(
+                2.0,
+                1.0,
+                DocPoint::ZERO,
+            )),
+        ] {
+            let anchor_before = placement.apply(Handle::BottomRight.position(b));
 
-            let new = resize(
-                b,
-                rotation,
-                Handle::TopLeft,
-                DocPoint { x: 140.0, y: 130.0 },
-                false,
-            );
+            // The pointer arrives in the frame's own space, as the viewport
+            // hands it over.
+            let pointer = placement.inverse().apply(DocPoint { x: 140.0, y: 130.0 });
+            let new = resize(b, Handle::TopLeft, pointer, false);
 
-            let anchor_after = Handle::BottomRight
-                .position(new)
-                .rotated_about(new.center(), rotation);
-
+            let anchor_after = placement.apply(Handle::BottomRight.position(new));
             assert!(
                 close(anchor_before.x, anchor_after.x) && close(anchor_before.y, anchor_after.y),
-                "rotation {rotation}: anchor moved from {anchor_before:?} to {anchor_after:?}"
+                "anchor moved from {anchor_before:?} to {anchor_after:?}"
             );
         }
     }
 
     #[test]
-    fn resizing_an_unrotated_frame_is_unaffected_by_the_rotation_path() {
-        // Zero rotation must take the same route and land in the same place.
-        let b = rect();
-        let p = DocPoint { x: 400.0, y: 300.0 };
-        assert_eq!(
-            resize(b, 0.0, Handle::BottomRight, p, false),
-            resize(b, 0.0, Handle::BottomRight, p, false)
-        );
-    }
-
-    #[test]
     fn dragging_a_handle_past_its_opposite_flips_rather_than_inverting() {
         let b = rect();
-        let new = resize(b, 0.0, Handle::Right, DocPoint { x: 0.0, y: 150.0 }, false);
+        let new = resize(b, Handle::Right, DocPoint { x: 0.0, y: 150.0 }, false);
         assert!(new.width > 0.0, "width must never go negative");
     }
 
@@ -523,32 +553,11 @@ mod tests {
         assert_eq!(constrain_to_45(from, from), from);
     }
 
-    fn origins() -> Vec<Origin> {
-        use tessera_document::ids::FrameId;
-        vec![
-            (
-                FrameId::default(),
-                DocRect {
-                    x: 0.0,
-                    y: 0.0,
-                    width: 10.0,
-                    height: 10.0,
-                },
-                0.0,
-            ),
-            (
-                FrameId::default(),
-                DocRect {
-                    x: 90.0,
-                    y: 0.0,
-                    width: 10.0,
-                    height: 10.0,
-                },
-                0.0,
-            ),
-        ]
-    }
+    // --- groups ---------------------------------------------------------
 
+    use tessera_document::ids::FrameId;
+
+    /// A group box 100 wide, holding two 10x10 children at each end.
     fn group_box() -> DocRect {
         DocRect {
             x: 0.0,
@@ -558,77 +567,241 @@ mod tests {
         }
     }
 
-    #[test]
-    fn scaling_a_group_scales_its_children_too() {
-        let doubled = DocRect {
+    /// Three genuinely distinct frame ids.
+    ///
+    /// Minted from a real document rather than repeating `FrameId::default()`:
+    /// `scaled` singles out the frame being dragged by id, so identical ids
+    /// would make every frame the target and quietly hide whether the
+    /// contents follow at all.
+    fn three_ids() -> [FrameId; 3] {
+        let mut doc = tessera_document::document::Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let frame = || tessera_document::nodes::Frame {
+            bounds: group_box(),
+            kind: tessera_document::nodes::FrameKind::Rectangle,
+            transform: Transform::IDENTITY,
+            fill: tessera_color::Color::BLACK,
+            stroke: None,
+        };
+        [
+            doc.add_frame(layer, frame()),
+            doc.add_frame(layer, frame()),
+            doc.add_frame(layer, frame()),
+        ]
+    }
+
+    /// The group, then its two children — and the group's id, which is what a
+    /// gesture targets.
+    fn group_and_children() -> (Vec<Origin>, FrameId) {
+        let [group, first, second] = three_ids();
+        let child = |x: f64| DocRect {
+            x,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        (
+            vec![
+                (group, group_box(), Transform::IDENTITY),
+                (first, child(0.0), Transform::IDENTITY),
+                (second, child(90.0), Transform::IDENTITY),
+            ],
+            group,
+        )
+    }
+
+    /// The same, with every frame given `placement`.
+    fn placed_group(placement: Transform) -> (Vec<Origin>, FrameId) {
+        let (origins, group) = group_and_children();
+        (
+            origins
+                .into_iter()
+                .map(|(id, b, _)| (id, b, placement))
+                .collect(),
+            group,
+        )
+    }
+
+    /// Where a frame's centre really is, placement included.
+    fn centre_of(origin: &Origin) -> DocPoint {
+        origin.2.apply(origin.1.center())
+    }
+
+    fn doubled() -> DocRect {
+        DocRect {
             width: 200.0,
             ..group_box()
-        };
-        let out = scale_origins(&origins(), group_box(), doubled);
-
-        assert!(close(out[0].1.width, 20.0), "child width doubled");
-        assert!(close(out[1].1.x, 180.0), "child position doubled");
-        assert!(close(out[0].1.height, 10.0), "the other axis is untouched");
-    }
-
-    #[test]
-    fn scaling_keeps_children_in_the_same_relative_places() {
-        let out = scale_origins(
-            &origins(),
-            group_box(),
-            DocRect {
-                x: 50.0,
-                y: 5.0,
-                width: 100.0,
-                height: 10.0,
-            },
-        );
-        // Moved, not resized: the gap between the two children is preserved.
-        assert!(close(out[1].1.x - out[0].1.x, 90.0));
-        assert!(close(out[0].1.x, 50.0));
-    }
-
-    #[test]
-    fn scaling_a_zero_width_group_does_not_divide_by_zero() {
-        let flat = DocRect {
-            width: 0.0,
-            ..group_box()
-        };
-        let out = scale_origins(&origins(), flat, group_box());
-        assert!(out[0].1.width.is_finite());
-    }
-
-    #[test]
-    fn rotating_a_group_turns_each_child_and_swings_it_round() {
-        let center = group_box().center();
-        let out = rotate_origins(&origins(), center, 90.0);
-
-        // Each child turns on its own axis...
-        assert!(close(out[0].2, 90.0));
-        // ...and its centre swings about the group's.
-        let before = origins()[0].1.center();
-        let after = out[0].1.center();
-        assert!(
-            (before.x - after.x).abs() > 1.0 || (before.y - after.y).abs() > 1.0,
-            "the child should have moved: {before:?} -> {after:?}"
-        );
-    }
-
-    #[test]
-    fn rotating_by_zero_changes_nothing() {
-        let out = rotate_origins(&origins(), group_box().center(), 0.0);
-        for (before, after) in origins().iter().zip(out.iter()) {
-            assert!(close(before.1.x, after.1.x));
-            assert!(close(before.1.y, after.1.y));
-            assert!(close(before.2, after.2));
         }
     }
 
     #[test]
-    fn a_childs_own_rotation_accumulates_rather_than_being_replaced() {
-        let mut o = origins();
-        o[0].2 = 30.0;
-        let out = rotate_origins(&o, group_box().center(), 45.0);
-        assert!(close(out[0].2, 75.0), "was {}", out[0].2);
+    fn scaling_a_group_carries_its_children() {
+        let (start, group) = group_and_children();
+        let out = scaled(&start, group, group_box(), doubled(), Transform::IDENTITY);
+
+        // The target takes the new box directly, so its width stays honest.
+        assert!(close(out[0].1.width, 200.0));
+        // The children spread with it.
+        assert!(
+            close(centre_of(&out[2]).x - centre_of(&out[1]).x, 180.0),
+            "{:?} -> {:?}",
+            centre_of(&out[1]),
+            centre_of(&out[2])
+        );
+        // And grow: a child's own box is untouched, so the growth is in the
+        // placement.
+        let width =
+            out[1].2.apply(DocPoint { x: 10.0, y: 0.0 }).x - out[1].2.apply(DocPoint::ZERO).x;
+        assert!(close(width, 20.0), "child width came out {width}");
+    }
+
+    #[test]
+    fn scaling_by_nothing_moves_nothing_however_the_group_is_placed() {
+        // A gesture that has not moved yet must be the identity, or every drag
+        // would jump the instant it began.
+        for placement in [
+            Transform::IDENTITY,
+            Transform::rotate_about(30.0, group_box().center()),
+            Transform::rotate_about(217.0, DocPoint { x: 5.0, y: -3.0 }),
+        ] {
+            let (start, group) = placed_group(placement);
+            let out = scaled(&start, group, group_box(), group_box(), placement);
+            for (before, after) in start.iter().zip(out.iter()) {
+                let (b, a) = (centre_of(before), centre_of(after));
+                assert!(close(b.x, a.x) && close(b.y, a.y), "{b:?} -> {a:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_zero_width_group_does_not_divide_by_zero() {
+        let flat = DocRect {
+            width: 0.0,
+            ..group_box()
+        };
+        let (start, group) = group_and_children();
+        let out = scaled(&start, group, flat, group_box(), Transform::IDENTITY);
+        assert!(centre_of(&out[1]).x.is_finite());
+    }
+
+    #[test]
+    fn scaling_a_rotated_group_spreads_its_children_along_its_own_axis() {
+        // The case the old model could only approximate. With the group turned
+        // a quarter turn its local x runs down the document's y, so doubling
+        // its width must double the children's separation in y and leave x
+        // alone.
+        let placement = Transform::rotate_about(90.0, group_box().center());
+        let (start, group) = placed_group(placement);
+
+        let out = scaled(&start, group, group_box(), doubled(), placement);
+
+        let (near, far) = (centre_of(&out[1]), centre_of(&out[2]));
+        assert!(close((far.y - near.y).abs(), 180.0), "{near:?} -> {far:?}");
+        assert!(
+            close((far.x - near.x).abs(), 0.0),
+            "and not along the other"
+        );
+    }
+
+    #[test]
+    fn scaling_a_rotated_group_shears_a_child_rather_than_lying_about_it() {
+        // The payoff. A child turned 45 degrees inside a group scaled on one
+        // axis only cannot stay a rectangle -- it becomes a parallelogram. The
+        // old model had nowhere to put that and silently approximated; a
+        // placement holds it exactly.
+        let [group, child_id, _] = three_ids();
+        let child = DocRect {
+            x: 40.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        let start = vec![
+            (group, group_box(), Transform::IDENTITY),
+            (
+                child_id,
+                child,
+                Transform::rotate_about(45.0, child.center()),
+            ),
+        ];
+
+        let out = scaled(&start, group, group_box(), doubled(), Transform::IDENTITY);
+
+        let [a, b, c, d, _, _] = out[1].2.coefficients;
+        // The child's two axes are no longer perpendicular: that is the shear.
+        assert!(
+            (a * c + b * d).abs() > 1e-9,
+            "the child stayed a rectangle, so the shear was thrown away"
+        );
+        assert!(
+            out[1].2.determinant().abs() > 1e-9,
+            "and it did not collapse"
+        );
+    }
+
+    #[test]
+    fn rotating_a_group_turns_each_child_and_swings_it_round() {
+        let (start, _) = group_and_children();
+        let pivot = group_box().center();
+        let out = rotated(&start, 90.0, pivot);
+
+        // Each child turns on its own axis...
+        assert!(close(out[1].2.rotation_degrees(), 90.0));
+        // ...and its centre swings about the group's.
+        let before = centre_of(&start[1]);
+        let after = centre_of(&out[1]);
+        assert!(
+            (before.x - after.x).abs() > 1.0 || (before.y - after.y).abs() > 1.0,
+            "the child should have moved: {before:?} -> {after:?}"
+        );
+        // The pivot itself does not.
+        let group_centre = centre_of(&out[0]);
+        assert!(close(group_centre.x, pivot.x) && close(group_centre.y, pivot.y));
+    }
+
+    #[test]
+    fn a_group_box_does_not_change_shape_when_it_is_only_turned() {
+        // The reported bug: the frame drawn around a rotating group breathed
+        // in and out, because it was recomputed as the bounding box of the
+        // children rather than being the group's own box turned with them.
+        let (start, _) = group_and_children();
+        let out = rotated(&start, 37.0, group_box().center());
+        assert_eq!(out[0].1, group_box(), "the box itself is untouched");
+        assert!(close(out[0].2.rotation_degrees(), 37.0));
+    }
+
+    #[test]
+    fn rotating_by_zero_changes_nothing() {
+        let (start, _) = group_and_children();
+        let out = rotated(&start, 0.0, group_box().center());
+        for (before, after) in start.iter().zip(out.iter()) {
+            let (b, a) = (centre_of(before), centre_of(after));
+            assert!(close(b.x, a.x) && close(b.y, a.y));
+        }
+    }
+
+    #[test]
+    fn a_childs_own_placement_accumulates_rather_than_being_replaced() {
+        let [id, ..] = three_ids();
+        let start = vec![(
+            id,
+            group_box(),
+            Transform::rotate_about(20.0, group_box().center()),
+        )];
+        let out = rotated(&start, 30.0, group_box().center());
+        assert!(
+            close(out[0].2.rotation_degrees(), 50.0),
+            "got {}",
+            out[0].2.rotation_degrees()
+        );
+    }
+
+    #[test]
+    fn a_footprint_map_is_the_identity_when_nothing_changes() {
+        let placement = Transform::rotate_about(23.0, DocPoint { x: 4.0, y: 9.0 });
+        let map = footprint_map(group_box(), placement, group_box(), placement);
+        let p = DocPoint { x: 17.0, y: -5.0 };
+        let moved = map.apply(p);
+        assert!(close(moved.x, p.x) && close(moved.y, p.y), "{moved:?}");
     }
 }

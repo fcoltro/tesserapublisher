@@ -9,10 +9,8 @@ publish = false
 workspace = true
 
 [dependencies]
-tessera_geometry.workspace = true
 tessera_color.workspace = true
 parley.workspace = true
-skrifa.workspace = true
 serde.workspace = true
 unicode-segmentation.workspace = true
 

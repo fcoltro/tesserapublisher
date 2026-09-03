@@ -20,7 +20,7 @@
 
 use tessera_color::Color;
 use tessera_document::ids::FrameId;
-use tessera_geometry::{DocPoint, DocRect, ViewTransform};
+use tessera_geometry::{DocPoint, DocRect, Transform, ViewTransform};
 use tessera_layout::resolve::{ResolvedDocument, ResolvedItem, ResolvedKind};
 use tessera_render::headless::HeadlessRenderer;
 use tessera_render::scene::build_scene;
@@ -42,7 +42,7 @@ fn rect_doc(bounds: DocRect, fill: Color) -> ResolvedDocument {
         items: vec![ResolvedItem {
             frame: FrameId::default(),
             bounds,
-            rotation: 0.0,
+            transform: Transform::IDENTITY,
             kind: ResolvedKind::Rectangle { fill, stroke: None },
         }],
     }
@@ -180,7 +180,7 @@ fn text_puts_dark_pixels_on_the_page() {
                     width: 400.0,
                     height: 60.0,
                 },
-                rotation: 0.0,
+                transform: Transform::IDENTITY,
                 kind: ResolvedKind::Text {
                     shaped,
                     color: Color::BLACK,
@@ -224,7 +224,7 @@ fn rotating_a_bar_moves_the_pixels_it_covers() {
 
     // Turned a quarter turn about its own centre, those swap.
     let mut doc = rect_doc(bar, Color::BLACK);
-    doc.items[0].rotation = 90.0;
+    doc.items[0].transform = Transform::rotate_about(90.0, doc.items[0].bounds.center());
     let turned = build_scene(&doc, ViewTransform::default(), page());
     let pixels = renderer.render(&turned).expect("render");
     assert_eq!(pixel(&pixels, 50, 20), [0, 0, 0], "turned: up the page");

@@ -14,7 +14,6 @@ tessera_text.workspace = true
 tessera_color.workspace = true
 tessera_geometry.workspace = true
 kurbo.workspace = true
-slotmap.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

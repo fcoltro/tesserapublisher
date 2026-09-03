@@ -98,8 +98,11 @@ pub enum DragKind {
     /// commits as one undo entry.
     Scale {
         handle: crate::transform::Handle,
+        /// The frame the handle belongs to. It takes the new box directly;
+        /// anything inside it follows by transform.
+        target: FrameId,
         origin: DocRect,
-        rotation: f64,
+        placement: tessera_geometry::Transform,
         leaves: Vec<crate::transform::Origin>,
     },
     /// Rotating about a pivot.

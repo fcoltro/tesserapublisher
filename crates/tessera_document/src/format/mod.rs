@@ -23,11 +23,13 @@ use std::path::Path;
 
 pub use meta::Meta;
 
+use tessera_geometry::{DocPoint, Transform};
+
 use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 4;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -91,14 +93,71 @@ pub fn load(path: &Path) -> Result<Document, FormatError> {
 /// ago follows exactly the path a document written two versions ago does, and
 /// each step only has to know about its own change.
 fn migrate(value: &mut serde_json::Value, from: u32) {
-    // 1 -> 2: frames gained `rotation`. The field carries `serde(default)`,
-    // so an absent value already reads as 0.0 — this step exists to make the
-    // chain real and exercised rather than theoretical. The next change that
-    // is *not* default-compatible will slot in beside it.
-    if from < 2 {
-        // Nothing to rewrite.
+    // 1 -> 2: frames gained `rotation`. The field carried `serde(default)`,
+    // so an absent value already read as 0.0 and there was nothing to
+    // rewrite. Superseded by the next step, which removes the field entirely.
+
+    // 2 -> 3: `rotation` became a full affine `transform`.
+    //
+    // The first migration that actually rewrites. A frame's rotation was
+    // always about its own centre, so the equivalent transform is exactly
+    // that rotation — `Transform::rotate_about` is asserted to be the same
+    // operation as the `DocPoint::rotated_about` frames used before it.
+    if from < 3 {
+        rotation_to_transform(value);
     }
-    let _ = value;
+
+    // 3 -> 4: strokes gained alignment, caps, joins, a miter limit and
+    // dashes. Every one of them carries `serde(default)`, and the defaults
+    // are what a stroke drew before they existed, so there is nothing to
+    // rewrite. The version still moves, so that a build without them refuses
+    // a document that uses them rather than silently dropping them on the
+    // next save.
+}
+
+/// Rewrite every `{ bounds, rotation }` object into `{ bounds, transform }`.
+///
+/// Walks the whole tree rather than reaching for a known path, because how
+/// `SlotMap` chooses to encode its slots is its business and not something the
+/// migration should depend on. A frame is recognised by carrying both keys.
+fn rotation_to_transform(value: &mut serde_json::Value) {
+    use serde_json::Value;
+
+    match value {
+        Value::Object(map) => {
+            let rewritten = map
+                .get("rotation")
+                .and_then(Value::as_f64)
+                .zip(map.get("bounds").and_then(centre_of))
+                .map(|(degrees, centre)| Transform::rotate_about(degrees, centre));
+
+            if let Some(transform) = rewritten {
+                map.remove("rotation");
+                map.insert(
+                    "transform".to_string(),
+                    serde_json::to_value(transform).unwrap_or(Value::Null),
+                );
+            }
+            for child in map.values_mut() {
+                rotation_to_transform(child);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                rotation_to_transform(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The centre of a serialized `DocRect`, if it really is one.
+fn centre_of(bounds: &serde_json::Value) -> Option<DocPoint> {
+    let read = |key: &str| bounds.get(key)?.as_f64();
+    Some(DocPoint {
+        x: read("x")? + read("width")? / 2.0,
+        y: read("y")? + read("height")? / 2.0,
+    })
 }
 
 fn to_bytes(doc: &Document, version: u32) -> Result<Vec<u8>, FormatError> {

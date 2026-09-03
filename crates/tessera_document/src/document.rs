@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
-use tessera_geometry::{DocPoint, DocRect};
+use tessera_geometry::{DocPoint, DocRect, Transform};
 
 use crate::ids::{FrameId, LayerId, PageId, SpreadId, StoryId};
 use crate::nodes::{Frame, FrameKind, Layer, Page, Spread};
@@ -266,6 +266,72 @@ impl Document {
         union
     }
 
+    /// The axis-aligned box a frame really covers, rotation included.
+    ///
+    /// [`Document::effective_bounds`] unions children's *unrotated* boxes,
+    /// which is right for asking how big a shape is and wrong for drawing a
+    /// box around one: a frame turned 45 degrees sticks out well past its own
+    /// bounds. Grouping needs the second question answered, or the new group's
+    /// box starts out too small.
+    pub fn visual_bounds(&self, id: FrameId) -> Option<DocRect> {
+        let mut union: Option<(f64, f64, f64, f64)> = None;
+        for leaf in self.descendants(id) {
+            let Some(frame) = self.frames.get(leaf) else {
+                continue;
+            };
+            if matches!(frame.kind, FrameKind::Group(_)) {
+                continue;
+            }
+            for p in frame.corners() {
+                union = Some(match union {
+                    None => (p.x, p.y, p.x, p.y),
+                    Some((x0, y0, x1, y1)) => (x0.min(p.x), y0.min(p.y), x1.max(p.x), y1.max(p.y)),
+                });
+            }
+        }
+        union.map(|(x0, y0, x1, y1)| DocRect {
+            x: x0,
+            y: y0,
+            width: x1 - x0,
+            height: y1 - y0,
+        })
+    }
+
+    /// Roughly how much memory this document holds, in bytes.
+    ///
+    /// Used to bound the undo stack, which holds whole snapshots. Deliberately
+    /// an estimate: walking every allocation exactly would cost more than the
+    /// bound is worth, and a bound only has to be the right order of
+    /// magnitude to stop a large document filling memory with its own history.
+    ///
+    /// Counts the things that actually scale — frame count, path complexity,
+    /// text length — and ignores the fixed overhead of the arenas themselves.
+    pub fn footprint(&self) -> usize {
+        use std::mem::{size_of, size_of_val};
+
+        let mut bytes = self.frames.len() * size_of::<Frame>();
+        for frame in self.frames.values() {
+            bytes += match &frame.kind {
+                FrameKind::Path(path) => size_of_val(path.elements()),
+                FrameKind::Group(children) => children.len() * size_of::<FrameId>(),
+                _ => 0,
+            };
+        }
+
+        for story in self.stories.values() {
+            bytes += story.text.len() + story.style.family.len() + size_of::<Story>();
+        }
+
+        for layer in self.layers.values() {
+            bytes += layer.name.len() + layer.frames.len() * size_of::<FrameId>();
+        }
+        bytes += self.pages.len() * size_of::<Page>();
+        bytes += self.spreads.len() * size_of::<Spread>();
+        bytes += self.spread_order.len() * size_of::<SpreadId>();
+
+        bytes
+    }
+
     /// Move a frame, carrying a group's children with it.
     pub fn translate_frame(&mut self, id: FrameId, dx: f64, dy: f64) {
         for leaf in self.descendants(id) {
@@ -303,9 +369,12 @@ impl Document {
             .iter()
             .position(|f| Some(f) == members.last())?;
 
+        // The group's own box is authoritative from here on: the interface
+        // draws it, and transforms update it alongside the children. So it has
+        // to start out enclosing what is actually on screen, rotation and all.
         let bounds = members
             .iter()
-            .filter_map(|id| self.effective_bounds(*id))
+            .filter_map(|id| self.visual_bounds(*id))
             .fold(None::<DocRect>, |acc, b| {
                 Some(match acc {
                     None => b,
@@ -327,7 +396,7 @@ impl Document {
         let group = self.frames.insert(Frame {
             bounds,
             kind: FrameKind::Group(std::mem::take(&mut members)),
-            rotation: 0.0,
+            transform: Transform::IDENTITY,
             fill: tessera_color::Color::BLACK,
             stroke: None,
         });
@@ -389,28 +458,197 @@ impl Document {
     /// frame's own space, rather than by building a rotated polygon. Same
     /// answer, one line, and it stays correct for any future transform that
     /// is invertible.
-    pub fn hit_test(&self, point: DocPoint) -> Option<FrameId> {
+    /// A frame's geometry as a path in **document** coordinates, rotation
+    /// applied.
+    ///
+    /// What the frame actually draws, as opposed to the box it draws inside.
+    /// A group returns `None`: it has no geometry, only children.
+    pub fn outline(&self, id: FrameId) -> Option<kurbo::BezPath> {
+        use kurbo::Shape as _;
+
+        let frame = self.frames.get(id)?;
+        let b = frame.bounds;
+        let rect = kurbo::Rect::new(b.x, b.y, b.x + b.width, b.y + b.height);
+
+        let mut path = match &frame.kind {
+            FrameKind::Rectangle | FrameKind::Text { .. } => rect.to_path(ACCURACY),
+            FrameKind::Ellipse => kurbo::Ellipse::from_rect(rect).to_path(ACCURACY),
+            FrameKind::Path(p) => {
+                let mut placed = crate::path::fit_to_bounds(p, b);
+                // `fit_to_bounds` answers frame-locally; this is the one place
+                // that wants the answer in document space.
+                placed.apply_affine(kurbo::Affine::translate((b.x, b.y)));
+                placed
+            }
+            FrameKind::Group(_) => return None,
+        };
+
+        path.apply_affine(frame.transform.to_affine());
+        Some(path)
+    }
+
+    /// The top-level frames a rubber band over `area` catches.
+    ///
+    /// By content, not by bounding box — the same rule clicking follows. A
+    /// marquee that caught anything whose box it grazed would sweep up a
+    /// pen-drawn curve from well outside the ink, which is exactly what
+    /// clicking was fixed not to do.
+    ///
+    /// Top-level, also like clicking: a marquee over part of a group takes the
+    /// group, because that is what grouping means.
+    pub fn frames_touching(&self, area: DocRect) -> Vec<FrameId> {
+        self.top_level_order()
+            .into_iter()
+            .filter(|id| self.touches_anywhere(*id, area))
+            .collect()
+    }
+
+    fn touches_anywhere(&self, id: FrameId, area: DocRect) -> bool {
+        self.descendants(id).into_iter().any(|leaf| {
+            let Some(frame) = self.frames.get(leaf) else {
+                return false;
+            };
+            self.outline(leaf)
+                .is_some_and(|path| touches(&path, area, is_filled(&frame.kind)))
+        })
+    }
+
+    /// The frontmost frame `point` lands on, or `None`.
+    ///
+    /// `tolerance`, in document units, is how far outside a shape's edge still
+    /// counts. The viewport passes a few screen pixels converted through the
+    /// zoom, so a hairline stays clickable however far out the view is.
+    pub fn hit_test(&self, point: DocPoint, tolerance: f64) -> Option<FrameId> {
         // Top level, not paint order: clicking a grouped object selects the
         // GROUP, which is what grouping is for.
         self.top_level_order()
             .into_iter()
             .rev()
-            .find(|id| self.hits_anywhere(*id, point))
+            .find(|id| self.hits_anywhere(*id, point, tolerance))
     }
 
-    fn hits_anywhere(&self, id: FrameId, point: DocPoint) -> bool {
+    fn hits_anywhere(&self, id: FrameId, point: DocPoint, tolerance: f64) -> bool {
         self.descendants(id).into_iter().any(|leaf| {
-            self.frames
-                .get(leaf)
-                .is_some_and(|f| !matches!(f.kind, FrameKind::Group(_)) && hits(f, point))
+            self.frames.get(leaf).is_some_and(|f| {
+                !matches!(f.kind, FrameKind::Group(_)) && hits(f, point, tolerance)
+            })
         })
     }
 }
 
-/// Whether `point` falls inside `frame`, accounting for its rotation.
-fn hits(frame: &Frame, point: DocPoint) -> bool {
-    let local = point.rotated_about(frame.bounds.center(), -frame.rotation);
-    frame.bounds.contains(local)
+/// Whether `point` lands on `frame`, accounting for its rotation.
+///
+/// The shape decides, not the bounding box. A box test is right for a
+/// rectangle and wrong for everything else: it hands an ellipse its corners,
+/// and it lets a pen-drawn curve claim the whole rectangle it happens to span,
+/// so clicking empty space well away from the ink selects it.
+fn hits(frame: &Frame, point: DocPoint, tolerance: f64) -> bool {
+    let bounds = frame.bounds;
+    // Into the frame's own space, where its geometry is described.
+    let local = frame.to_local(point);
+
+    match &frame.kind {
+        // A text frame is a box, and an empty one still has to be clickable.
+        FrameKind::Rectangle | FrameKind::Text { .. } => grown(bounds, tolerance).contains(local),
+
+        FrameKind::Ellipse => {
+            let (rx, ry) = (
+                bounds.width / 2.0 + tolerance,
+                bounds.height / 2.0 + tolerance,
+            );
+            if rx <= 0.0 || ry <= 0.0 {
+                return grown(bounds, tolerance).contains(local);
+            }
+            let centre = bounds.center();
+            let nx = (local.x - centre.x) / rx;
+            let ny = (local.y - centre.y) / ry;
+            nx * nx + ny * ny <= 1.0
+        }
+
+        // Proximity to the ink, not to the box. A path frame renders as a
+        // stroke and never as a fill (see `tessera_layout::resolve`), so the
+        // empty middle of a closed pen shape belongs to whatever is behind it
+        // — which is what an unfilled path means in every layout tool.
+        FrameKind::Path(path) => {
+            use kurbo::ParamCurveNearest as _;
+
+            let reach = tolerance + frame.stroke.as_ref().map_or(1.0, |s| s.width) / 2.0;
+            // `fit_to_bounds` answers in frame-local coordinates, so the
+            // point has to be asked the same way.
+            let fitted = crate::path::fit_to_bounds(path, bounds);
+            let at = kurbo::Point::new(local.x - bounds.x, local.y - bounds.y);
+            // Cheap rejection first: a path cannot be nearer than its own box.
+            if !grown(bounds, reach).contains(local) {
+                return false;
+            }
+            fitted
+                .segments()
+                .any(|seg| seg.nearest(at, ACCURACY).distance_sq <= reach * reach)
+        }
+
+        // A group is a container. `hits_anywhere` asks its children instead.
+        FrameKind::Group(_) => false,
+    }
+}
+
+/// Whether a marquee lying wholly inside this shape should catch it.
+///
+/// A filled shape swallows the band; an unfilled outline does not, for the
+/// same reason clicking its empty middle does not select it.
+fn is_filled(kind: &FrameKind) -> bool {
+    matches!(
+        kind,
+        FrameKind::Rectangle | FrameKind::Ellipse | FrameKind::Text { .. }
+    )
+}
+
+/// Whether the rubber band over `area` touches `path`.
+///
+/// Three ways it can: the band contains part of the path, the path crosses an
+/// edge of the band, or — for a filled shape — the band is entirely inside it.
+fn touches(path: &kurbo::BezPath, area: DocRect, filled: bool) -> bool {
+    use kurbo::{ParamCurve as _, Shape as _};
+
+    let band = kurbo::Rect::new(area.x, area.y, area.x + area.width, area.y + area.height);
+    let corners = [
+        (band.x0, band.y0),
+        (band.x1, band.y0),
+        (band.x1, band.y1),
+        (band.x0, band.y1),
+    ];
+    let edges: Vec<kurbo::Line> = (0..4)
+        .map(|i| kurbo::Line::new(corners[i], corners[(i + 1) % 4]))
+        .collect();
+
+    for seg in path.segments() {
+        if band.contains(seg.eval(0.0)) || band.contains(seg.eval(1.0)) {
+            return true;
+        }
+        // Exact against the curve, not against a flattened approximation of
+        // it: a band clipping the bulge of a tight arc must still catch it.
+        if edges
+            .iter()
+            .any(|edge| !seg.intersect_line(*edge).is_empty())
+        {
+            return true;
+        }
+    }
+
+    filled && path.winding(band.center()) != 0
+}
+
+/// How precisely a curve's nearest point is found, in document units. Well
+/// below anything a pointer can express, and far cheaper than exact.
+const ACCURACY: f64 = 0.05;
+
+/// `bounds` grown by `by` on every side.
+fn grown(bounds: DocRect, by: f64) -> DocRect {
+    DocRect {
+        x: bounds.x - by,
+        y: bounds.y - by,
+        width: bounds.width + by * 2.0,
+        height: bounds.height + by * 2.0,
+    }
 }
 
 impl Default for Document {
@@ -435,7 +673,7 @@ mod tests {
                 height: 50.0,
             },
             kind: FrameKind::Rectangle,
-            rotation: 0.0,
+            transform: Transform::IDENTITY,
             fill: Color::BLACK,
             stroke: None,
         }
@@ -488,8 +726,8 @@ mod tests {
         let mut doc = Document::new();
         let layer = doc.default_layer().expect("default layer");
         let id = doc.add_frame(layer, rect_frame());
-        assert_eq!(doc.hit_test(DocPoint { x: 50.0, y: 40.0 }), Some(id));
-        assert_eq!(doc.hit_test(DocPoint { x: 5.0, y: 5.0 }), None);
+        assert_eq!(doc.hit_test(DocPoint { x: 50.0, y: 40.0 }, 0.0), Some(id));
+        assert_eq!(doc.hit_test(DocPoint { x: 5.0, y: 5.0 }, 0.0), None);
     }
 
     #[test]
@@ -498,7 +736,7 @@ mod tests {
         let layer = doc.default_layer().expect("default layer");
         let _under = doc.add_frame(layer, rect_frame());
         let over = doc.add_frame(layer, rect_frame());
-        assert_eq!(doc.hit_test(DocPoint { x: 50.0, y: 40.0 }), Some(over));
+        assert_eq!(doc.hit_test(DocPoint { x: 50.0, y: 40.0 }, 0.0), Some(over));
     }
 
     #[test]
@@ -516,7 +754,7 @@ mod tests {
         let layer = doc.default_layer().expect("default layer");
         doc.add_frame(layer, rect_frame());
         doc.layers.get_mut(layer).expect("layer").visible = false;
-        assert_eq!(doc.hit_test(DocPoint { x: 50.0, y: 40.0 }), None);
+        assert_eq!(doc.hit_test(DocPoint { x: 50.0, y: 40.0 }, 0.0), None);
     }
 
     #[test]
@@ -564,10 +802,10 @@ mod tests {
         let over = doc.add_frame(layer, rect_frame());
         let point = DocPoint { x: 50.0, y: 40.0 };
 
-        assert_eq!(doc.hit_test(point), Some(over));
+        assert_eq!(doc.hit_test(point, 0.0), Some(over));
         doc.move_in_z(over, ZMove::ToBack);
         assert_eq!(
-            doc.hit_test(point),
+            doc.hit_test(point, 0.0),
             Some(under),
             "the stack really reordered"
         );
@@ -589,7 +827,7 @@ mod tests {
                 height: 10.0,
             },
             kind: FrameKind::Rectangle,
-            rotation: 0.0,
+            transform: Transform::IDENTITY,
             fill: tessera_color::Color::BLACK,
             stroke: None,
         }
@@ -600,8 +838,8 @@ mod tests {
         let mut doc = Document::new();
         let layer = doc.default_layer().expect("layer");
         let id = doc.add_frame(layer, bar());
-        assert_eq!(doc.hit_test(DocPoint { x: 50.0, y: 50.0 }), Some(id));
-        assert_eq!(doc.hit_test(DocPoint { x: 50.0, y: 10.0 }), None);
+        assert_eq!(doc.hit_test(DocPoint { x: 50.0, y: 50.0 }, 0.0), Some(id));
+        assert_eq!(doc.hit_test(DocPoint { x: 50.0, y: 10.0 }, 0.0), None);
     }
 
     #[test]
@@ -612,15 +850,16 @@ mod tests {
 
         // Upright, the bar spans x 0..100 at y 45..55, centred on (50, 50).
         // Turned a quarter turn it spans y 0..100 at x 45..55.
-        doc.frames.get_mut(id).expect("frame").rotation = 90.0;
+        let frame = doc.frames.get_mut(id).expect("frame");
+        frame.transform = Transform::rotate_about(90.0, frame.bounds.center());
 
         assert_eq!(
-            doc.hit_test(DocPoint { x: 50.0, y: 10.0 }),
+            doc.hit_test(DocPoint { x: 50.0, y: 10.0 }, 0.0),
             Some(id),
             "the bar now reaches up the page"
         );
         assert_eq!(
-            doc.hit_test(DocPoint { x: 10.0, y: 50.0 }),
+            doc.hit_test(DocPoint { x: 10.0, y: 50.0 }, 0.0),
             None,
             "and no longer reaches across it"
         );
@@ -632,9 +871,10 @@ mod tests {
         let layer = doc.default_layer().expect("layer");
         let id = doc.add_frame(layer, bar());
         for angle in [0.0, 17.0, 45.0, 90.0, 180.0, -33.0] {
-            doc.frames.get_mut(id).expect("frame").rotation = angle;
+            let frame = doc.frames.get_mut(id).expect("frame");
+            frame.transform = Transform::rotate_about(angle, frame.bounds.center());
             assert_eq!(
-                doc.hit_test(DocPoint { x: 50.0, y: 50.0 }),
+                doc.hit_test(DocPoint { x: 50.0, y: 50.0 }, 0.0),
                 Some(id),
                 "rotation {angle} lost its own centre"
             );
@@ -651,7 +891,7 @@ mod tests {
                 height: 20.0,
             },
             kind: FrameKind::Rectangle,
-            rotation: 0.0,
+            transform: Transform::IDENTITY,
             fill: tessera_color::Color::BLACK,
             stroke: None,
         }
@@ -664,6 +904,239 @@ mod tests {
         let a = doc.add_frame(layer, at(0.0, 0.0));
         let b = doc.add_frame(layer, at(100.0, 0.0));
         (doc, a, b)
+    }
+
+    // --- shape-precise hit testing -------------------------------------
+
+    fn shape(kind: FrameKind, bounds: DocRect) -> Frame {
+        Frame {
+            bounds,
+            kind,
+            transform: Transform::IDENTITY,
+            fill: tessera_color::Color::BLACK,
+            stroke: None,
+        }
+    }
+
+    fn square() -> DocRect {
+        DocRect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+        }
+    }
+
+    fn with(kind: FrameKind) -> (Document, FrameId) {
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let id = doc.add_frame(layer, shape(kind, square()));
+        (doc, id)
+    }
+
+    #[test]
+    fn an_ellipse_does_not_claim_its_corners() {
+        // The bug this pins: every kind was hit-tested against its bounding
+        // box, so the empty corner of a circle selected it.
+        let (doc, id) = with(FrameKind::Ellipse);
+        assert_eq!(
+            doc.hit_test(DocPoint { x: 50.0, y: 50.0 }, 0.0),
+            Some(id),
+            "the middle is still inside"
+        );
+        assert_eq!(
+            doc.hit_test(DocPoint { x: 3.0, y: 3.0 }, 0.0),
+            None,
+            "the corner of the box is outside the ellipse"
+        );
+    }
+
+    /// A diagonal stroke from corner to corner of `square`.
+    fn diagonal() -> FrameKind {
+        let mut path = kurbo::BezPath::new();
+        path.move_to((0.0, 0.0));
+        path.line_to((100.0, 100.0));
+        FrameKind::Path(path)
+    }
+
+    #[test]
+    fn a_path_is_hit_on_its_ink_and_not_across_its_box() {
+        // The reported bug: a curve drawn with the pen could be selected by
+        // clicking anywhere inside the rectangle it happened to span.
+        let (doc, id) = with(diagonal());
+        assert_eq!(
+            doc.hit_test(DocPoint { x: 50.0, y: 50.0 }, 0.0),
+            Some(id),
+            "on the line"
+        );
+        assert_eq!(
+            doc.hit_test(DocPoint { x: 90.0, y: 10.0 }, 0.0),
+            None,
+            "well off the line but inside its box"
+        );
+    }
+
+    #[test]
+    fn a_closed_path_does_not_claim_its_empty_middle() {
+        // A path frame renders as a stroke and never as a fill, so its inside
+        // belongs to whatever is behind it.
+        let mut path = kurbo::BezPath::new();
+        path.move_to((0.0, 0.0));
+        path.line_to((100.0, 0.0));
+        path.line_to((100.0, 100.0));
+        path.line_to((0.0, 100.0));
+        path.close_path();
+        let (doc, id) = with(FrameKind::Path(path));
+
+        assert_eq!(doc.hit_test(DocPoint { x: 0.5, y: 50.0 }, 0.0), Some(id));
+        assert_eq!(
+            doc.hit_test(DocPoint { x: 50.0, y: 50.0 }, 0.0),
+            None,
+            "the middle of an unfilled outline is not the outline"
+        );
+    }
+
+    #[test]
+    fn tolerance_makes_a_hairline_clickable_without_making_it_a_box() {
+        let (doc, id) = with(diagonal());
+        let just_off = DocPoint { x: 53.0, y: 50.0 };
+        assert_eq!(doc.hit_test(just_off, 0.0), None, "no tolerance, no hit");
+        assert_eq!(
+            doc.hit_test(just_off, 4.0),
+            Some(id),
+            "a few units of slack catches it"
+        );
+        assert_eq!(
+            doc.hit_test(DocPoint { x: 90.0, y: 10.0 }, 4.0),
+            None,
+            "but slack must not restore the bounding box"
+        );
+    }
+
+    #[test]
+    fn a_rotated_path_is_hit_where_it_was_drawn_to() {
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let mut frame = shape(diagonal(), square());
+        frame.transform = Transform::rotate_about(90.0, frame.bounds.center());
+        let id = doc.add_frame(layer, frame);
+
+        // The centre is on the line whatever the angle...
+        assert_eq!(doc.hit_test(DocPoint { x: 50.0, y: 50.0 }, 0.0), Some(id));
+        // ...and the far corner, which the rotated line now passes through.
+        assert_eq!(doc.hit_test(DocPoint { x: 10.0, y: 90.0 }, 2.0), Some(id));
+        assert_eq!(
+            doc.hit_test(DocPoint { x: 90.0, y: 90.0 }, 2.0),
+            None,
+            "the corner the rotated line moved away from"
+        );
+    }
+
+    #[test]
+    fn a_text_frame_is_still_a_box_even_when_it_is_empty() {
+        // An empty text frame has no ink at all. Hit-testing it by its
+        // content would make it impossible to select or delete.
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let story = doc.add_story(tessera_text::story::Story::default());
+        let id = doc.add_frame(layer, shape(FrameKind::Text { story }, square()));
+        assert_eq!(doc.hit_test(DocPoint { x: 50.0, y: 50.0 }, 0.0), Some(id));
+    }
+
+    // --- the marquee catches content, not boxes --------------------------
+
+    fn band(x: f64, y: f64, width: f64, height: f64) -> DocRect {
+        DocRect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn a_marquee_across_a_curve_catches_it() {
+        let (doc, id) = with(diagonal());
+        // A band straddling the middle of the diagonal.
+        assert_eq!(
+            doc.frames_touching(band(40.0, 40.0, 20.0, 20.0)),
+            vec![id],
+            "the band crosses the ink"
+        );
+    }
+
+    #[test]
+    fn a_marquee_in_the_empty_part_of_a_curves_box_catches_nothing() {
+        // The reported bug: selecting by bounding box swept up a pen-drawn
+        // curve from a corner of its box the ink never reaches.
+        let (doc, _) = with(diagonal());
+        assert!(
+            doc.frames_touching(band(80.0, 5.0, 15.0, 15.0)).is_empty(),
+            "the band is inside the box but nowhere near the curve"
+        );
+    }
+
+    #[test]
+    fn a_marquee_wholly_inside_a_filled_shape_still_catches_it() {
+        // Otherwise a rubber band drawn in the middle of a large rectangle
+        // would select nothing, which is not what any layout tool does.
+        let (doc, id) = with(FrameKind::Rectangle);
+        assert_eq!(doc.frames_touching(band(40.0, 40.0, 5.0, 5.0)), vec![id]);
+    }
+
+    #[test]
+    fn a_marquee_inside_an_unfilled_outline_catches_nothing() {
+        // The same rule clicking follows: an unfilled path is its outline.
+        let mut path = kurbo::BezPath::new();
+        path.move_to((0.0, 0.0));
+        path.line_to((100.0, 0.0));
+        path.line_to((100.0, 100.0));
+        path.line_to((0.0, 100.0));
+        path.close_path();
+        let (doc, _) = with(FrameKind::Path(path));
+        assert!(doc.frames_touching(band(40.0, 40.0, 5.0, 5.0)).is_empty());
+    }
+
+    #[test]
+    fn a_marquee_that_misses_entirely_catches_nothing() {
+        let (doc, _) = with(FrameKind::Rectangle);
+        assert!(
+            doc.frames_touching(band(500.0, 500.0, 10.0, 10.0))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_marquee_over_part_of_a_group_takes_the_whole_group() {
+        // Top-level, exactly as clicking is. Selecting one child out of a
+        // group by rubber band would contradict what grouping means — and
+        // paint order, which this used to walk, only ever yields children.
+        let (mut doc, a, b) = two_apart();
+        let g = doc.group(&[a, b]).expect("grouped");
+        assert_eq!(
+            doc.frames_touching(band(-5.0, -5.0, 20.0, 20.0)),
+            vec![g],
+            "the band touches only the first child"
+        );
+    }
+
+    #[test]
+    fn a_marquee_catches_a_rotated_frame_where_it_really_is() {
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let mut frame = shape(FrameKind::Rectangle, square());
+        frame.transform = Transform::rotate_about(45.0, frame.bounds.center());
+        let id = doc.add_frame(layer, frame);
+
+        // A 45-degree square reaches further along the axes through its
+        // centre than its unrotated bounds do.
+        let reach = 50.0 * 2.0_f64.sqrt();
+        let outside = 50.0 + reach - 4.0;
+        assert_eq!(
+            doc.frames_touching(band(outside, 48.0, 3.0, 3.0)),
+            vec![id],
+            "the corner swung out to here"
+        );
     }
 
     #[test]
@@ -705,17 +1178,17 @@ mod tests {
     #[test]
     fn clicking_a_grouped_object_selects_the_group() {
         let (mut doc, a, b) = two_apart();
-        assert_eq!(doc.hit_test(DocPoint { x: 10.0, y: 10.0 }), Some(a));
+        assert_eq!(doc.hit_test(DocPoint { x: 10.0, y: 10.0 }, 0.0), Some(a));
 
         let g = doc.group(&[a, b]).expect("grouped");
 
         assert_eq!(
-            doc.hit_test(DocPoint { x: 10.0, y: 10.0 }),
+            doc.hit_test(DocPoint { x: 10.0, y: 10.0 }, 0.0),
             Some(g),
             "the group answers for its children"
         );
         assert_eq!(
-            doc.hit_test(DocPoint { x: 110.0, y: 10.0 }),
+            doc.hit_test(DocPoint { x: 110.0, y: 10.0 }, 0.0),
             Some(g),
             "either child, same answer"
         );
@@ -727,7 +1200,7 @@ mod tests {
         // space between two grouped objects must miss.
         let (mut doc, a, b) = two_apart();
         doc.group(&[a, b]).expect("grouped");
-        assert_eq!(doc.hit_test(DocPoint { x: 60.0, y: 10.0 }), None);
+        assert_eq!(doc.hit_test(DocPoint { x: 60.0, y: 10.0 }, 0.0), None);
     }
 
     #[test]

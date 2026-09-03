@@ -5,46 +5,89 @@
 //! an inverse operation is subtly wrong — or, as happened in the previous
 //! codebase, where an operation never got an inverse at all and was silently
 //! not undoable.
+//!
+//! What snapshots cost is memory, and a count alone does not bound it: two
+//! hundred snapshots of a two-page flyer is nothing, and two hundred of a
+//! two-hundred-page catalogue is not. So the stack is bounded by **both** a
+//! count and an estimated total size, and the oldest entries go first.
+//!
+//! One entry is always kept, however large. An undo stack that refused to hold
+//! even the last step would be worse than one that used too much memory.
 
 use std::collections::VecDeque;
 
 use crate::document::Document;
 
+/// How much the undo stack may hold before the oldest entries are dropped.
+///
+/// Generous enough that ordinary work never reaches it, small enough that a
+/// large document cannot fill memory with its own history.
+pub const DEFAULT_BUDGET_BYTES: usize = 256 * 1024 * 1024;
+
 pub struct History {
-    past: VecDeque<Document>,
+    /// Each snapshot with its estimated size, so trimming does not have to
+    /// re-measure documents it is about to throw away.
+    past: VecDeque<(Document, usize)>,
     future: Vec<Document>,
     limit: usize,
+    budget: usize,
+    held: usize,
 }
 
 impl History {
-    /// `limit` bounds how many snapshots are kept. Memory-bounding on total
-    /// size arrives when documents are large enough to need it.
+    /// `limit` bounds how many snapshots are kept, and
+    /// [`DEFAULT_BUDGET_BYTES`] how much they may weigh between them.
     pub fn new(limit: usize) -> Self {
+        Self::with_budget(limit, DEFAULT_BUDGET_BYTES)
+    }
+
+    pub fn with_budget(limit: usize, budget: usize) -> Self {
         Self {
             past: VecDeque::new(),
             future: Vec::new(),
             limit: limit.max(1),
+            budget,
+            held: 0,
         }
     }
 
     /// Call immediately *before* mutating the document.
     pub fn record(&mut self, doc: &Document) {
-        self.past.push_back(doc.clone());
-        while self.past.len() > self.limit {
-            self.past.pop_front();
-        }
+        let size = doc.footprint();
+        self.past.push_back((doc.clone(), size));
+        self.held += size;
+        self.trim();
         self.future.clear();
     }
 
+    /// Drop the oldest entries until the stack is within both bounds.
+    fn trim(&mut self) {
+        while self.past.len() > self.limit || (self.held > self.budget && self.past.len() > 1) {
+            match self.past.pop_front() {
+                Some((_, size)) => self.held = self.held.saturating_sub(size),
+                None => break,
+            }
+        }
+    }
+
+    /// The estimated size of everything the stack is holding, in bytes.
+    pub fn held_bytes(&self) -> usize {
+        self.held
+    }
+
     pub fn undo(&mut self, current: &Document) -> Option<Document> {
-        let previous = self.past.pop_back()?;
+        let (previous, size) = self.past.pop_back()?;
+        self.held = self.held.saturating_sub(size);
         self.future.push(current.clone());
         Some(previous)
     }
 
     pub fn redo(&mut self, current: &Document) -> Option<Document> {
         let next = self.future.pop()?;
-        self.past.push_back(current.clone());
+        let size = current.footprint();
+        self.past.push_back((current.clone(), size));
+        self.held += size;
+        self.trim();
         Some(next)
     }
 
@@ -72,7 +115,7 @@ mod tests {
     use super::*;
     use crate::document::Document;
     use crate::nodes::{Frame, FrameKind};
-    use tessera_geometry::DocRect;
+    use tessera_geometry::{DocRect, Transform};
 
     fn frame() -> Frame {
         Frame {
@@ -83,10 +126,104 @@ mod tests {
                 height: 10.0,
             },
             kind: FrameKind::Rectangle,
-            rotation: 0.0,
+            transform: Transform::IDENTITY,
             fill: tessera_color::Color::BLACK,
             stroke: None,
         }
+    }
+
+    #[test]
+    fn a_document_reports_a_footprint_that_grows_with_its_contents() {
+        let mut doc = Document::new();
+        let empty = doc.footprint();
+        let layer = doc.default_layer().expect("layer");
+        for _ in 0..50 {
+            doc.add_frame(layer, frame());
+        }
+        assert!(
+            doc.footprint() > empty,
+            "fifty frames should weigh more than none"
+        );
+    }
+
+    #[test]
+    fn text_counts_towards_the_footprint() {
+        // Text is the part that really scales in a page-layout document, so a
+        // bound that ignored it would not bound anything that matters.
+        let mut doc = Document::new();
+        let before = doc.footprint();
+        doc.add_story(tessera_text::story::Story::new("x".repeat(10_000)));
+        assert!(doc.footprint() >= before + 10_000);
+    }
+
+    #[test]
+    fn the_stack_stops_growing_once_it_reaches_its_budget() {
+        // The reason this exists: two hundred snapshots of a two-hundred-page
+        // catalogue is not the same amount of memory as two hundred of a
+        // flyer, and a count alone cannot tell them apart.
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        for _ in 0..200 {
+            doc.add_frame(layer, frame());
+        }
+
+        let budget = doc.footprint() * 4;
+        let mut history = History::with_budget(100, budget);
+        for _ in 0..50 {
+            history.record(&doc);
+        }
+
+        assert!(
+            history.held_bytes() <= budget,
+            "held {} against a budget of {budget}",
+            history.held_bytes()
+        );
+        assert!(
+            history.undo_depth() < 50,
+            "the count limit alone would have kept all fifty"
+        );
+    }
+
+    #[test]
+    fn one_step_is_always_kept_however_big_the_document() {
+        // Refusing to hold even the last step would be worse than using too
+        // much memory.
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        for _ in 0..100 {
+            doc.add_frame(layer, frame());
+        }
+
+        let mut history = History::with_budget(100, 1);
+        history.record(&doc);
+        history.record(&doc);
+
+        assert_eq!(history.undo_depth(), 1);
+        assert!(history.can_undo());
+    }
+
+    #[test]
+    fn a_small_document_still_gets_the_full_count() {
+        let doc = Document::new();
+        let mut history = History::with_budget(10, super::DEFAULT_BUDGET_BYTES);
+        for _ in 0..25 {
+            history.record(&doc);
+        }
+        assert_eq!(history.undo_depth(), 10, "the count bound still applies");
+    }
+
+    #[test]
+    fn undoing_gives_the_memory_back() {
+        let doc = Document::new();
+        let mut history = History::new(10);
+        history.record(&doc);
+        let held = history.held_bytes();
+        assert!(held > 0);
+        let _ = history.undo(&doc);
+        assert!(
+            history.held_bytes() < held,
+            "the popped snapshot should stop counting"
+        );
     }
 
     #[test]

@@ -9,8 +9,6 @@ publish = false
 workspace = true
 
 [dependencies]
-tessera_color.workspace = true
-tessera_geometry.workspace = true
 image.workspace = true
 thiserror.workspace = true
 

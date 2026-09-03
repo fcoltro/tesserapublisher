@@ -7,6 +7,7 @@
 pub mod app;
 pub mod camera;
 pub mod command;
+pub mod cursor;
 pub mod file_ops;
 pub mod icons;
 pub mod pen;

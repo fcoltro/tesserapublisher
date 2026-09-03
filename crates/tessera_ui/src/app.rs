@@ -58,6 +58,11 @@ pub struct TesseraApp {
 
     pub history: History,
     pub shaper: Shaper,
+    /// The resolved document, kept until the document itself changes.
+    ///
+    /// Resolving lays out every story, and the viewport needs the result on
+    /// every painted frame whether or not anything moved.
+    pub resolved: tessera_layout::cache::ResolveCache,
 
     pub view: ViewTransform,
     pub selection: crate::selection::Selection,
@@ -90,6 +95,7 @@ impl TesseraApp {
 
             history: History::new(UNDO_LIMIT),
             shaper: Shaper::new(),
+            resolved: tessera_layout::cache::ResolveCache::default(),
             view: ViewTransform::default(),
             selection: crate::selection::Selection::default(),
             active_tool: Tool::Select,
