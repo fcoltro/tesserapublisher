@@ -297,6 +297,41 @@ impl Document {
         })
     }
 
+    /// Roughly how much memory this document holds, in bytes.
+    ///
+    /// Used to bound the undo stack, which holds whole snapshots. Deliberately
+    /// an estimate: walking every allocation exactly would cost more than the
+    /// bound is worth, and a bound only has to be the right order of
+    /// magnitude to stop a large document filling memory with its own history.
+    ///
+    /// Counts the things that actually scale — frame count, path complexity,
+    /// text length — and ignores the fixed overhead of the arenas themselves.
+    pub fn footprint(&self) -> usize {
+        use std::mem::{size_of, size_of_val};
+
+        let mut bytes = self.frames.len() * size_of::<Frame>();
+        for frame in self.frames.values() {
+            bytes += match &frame.kind {
+                FrameKind::Path(path) => size_of_val(path.elements()),
+                FrameKind::Group(children) => children.len() * size_of::<FrameId>(),
+                _ => 0,
+            };
+        }
+
+        for story in self.stories.values() {
+            bytes += story.text.len() + story.style.family.len() + size_of::<Story>();
+        }
+
+        for layer in self.layers.values() {
+            bytes += layer.name.len() + layer.frames.len() * size_of::<FrameId>();
+        }
+        bytes += self.pages.len() * size_of::<Page>();
+        bytes += self.spreads.len() * size_of::<Spread>();
+        bytes += self.spread_order.len() * size_of::<SpreadId>();
+
+        bytes
+    }
+
     /// Move a frame, carrying a group's children with it.
     pub fn translate_frame(&mut self, id: FrameId, dx: f64, dy: f64) {
         for leaf in self.descendants(id) {

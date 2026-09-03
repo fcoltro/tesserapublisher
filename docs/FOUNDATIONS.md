@@ -71,20 +71,51 @@ rework already touched.
 images, styles, tables, anchored objects — each of which will have grown its
 own assumption that an object is a box and an angle.
 
-### 2. Undo stores whole documents
+### 2. Undo stores whole documents — partly addressed, and deliberately not finished
 
-`crates/tessera_document/src/history.rs`: `past: VecDeque<Document>`, and
-`record` is `self.past.push_back(doc.clone())`, with a limit of 200.
+`crates/tessera_document/src/history.rs`: a full clone of the document per
+gesture, up to 200 resident. Correct, simple, and right for a walking skeleton;
+it does not survive a 200-page catalogue.
 
-A full clone of the document per gesture, and up to 200 of them resident.
-Correct, simple, and completely right for a walking skeleton. It does not
-survive a real document: a 200-page catalogue with thousands of frames and
-long stories makes every edit an O(document) copy and the undo stack a
-multi-gigabyte structure.
+**Done: the stack is now bounded by memory as well as by count**
+(`DEFAULT_BUDGET_BYTES`, with `Document::footprint` as the estimate). A count
+alone cannot tell two hundred snapshots of a flyer from two hundred of a
+catalogue. One entry is always kept, however large.
 
-The replacement is delta or command-based undo — store the inverse of what
-changed, not the whole world. Touches `command.rs` and every mutation path,
-which is small **now** and grows with every command added.
+**Not done: delta undo.** Two things came out of looking at it properly, and
+both argue for deciding this deliberately rather than in passing.
+
+**`SlotMap` has no insert-at-key.** Its `insert` mints a fresh generational
+key, so a deleted frame *cannot* be restored under its original `FrameId`. Any
+delta scheme therefore has to fall back to a whole snapshot whenever the key
+set shrinks — and every `FrameId` held elsewhere (the selection, a group's
+child list) would be stale across an undo. That is not a detail; it decides
+whether deltas are worth having at all.
+
+**The existing design chose snapshots on purpose, having been bitten.** The
+module's own note records it: snapshots "cannot develop the class of bug where
+an inverse operation is subtly wrong — or, as happened in the previous
+codebase, where an operation never got an inverse at all and was silently not
+undoable." Reversing a decision made *because of a bug that already cost this
+project once* should be a conscious call.
+
+Three ways forward, in rough order of how much they change:
+
+1. **Persistent arenas.** Replace `SlotMap` with a structurally-shared map, so
+   `Document::clone` is O(changed) and the snapshot API and semantics do not
+   change at all. Lowest risk to correctness, because no inverse is ever
+   written; highest cost in dependency and model churn, and it needs a key
+   scheme that survives it.
+2. **Automatic diffing.** Keep one baseline document, and after each command
+   diff it against the current one to store only the frames that changed.
+   Needs `record` to move from before-the-mutation to after it, which moves the
+   boundary of a text-editing session — that boundary is currently opened by
+   hand in `start_editing`. Snapshot whenever the key set changes.
+3. **Per-command inverses.** Smallest storage, and exactly the design that
+   failed before. Would need a property test over random command sequences
+   asserting apply-then-undo returns an equal document, as a standing guard.
+
+My recommendation is (1), and it is not a change to make unattended.
 
 ### 3. The entire document is re-resolved and re-shaped every frame
 
@@ -150,11 +181,10 @@ clothing.
 
 ## Suggested order
 
-1. Affine transforms (Tier 1.1) — one format migration, done while the
-   surface is still small.
-2. Incremental resolve and shaping (Tier 1.3) — before Milestone 2 makes text
-   more expensive.
-3. Delta undo (Tier 1.2) — before more commands exist to convert.
+1. ~~Affine transforms (Tier 1.1)~~ — **done**, format version 3.
+2. ~~Incremental resolve and shaping (Tier 1.3)~~ — **done**, two caches.
+3. Delta undo (Tier 1.2) — **memory bound done; the design decision is open**
+   and wants a person. See the three options above.
 4. Run it on Linux and macOS (Tier 3) — cheap, and may reorder everything
-   above.
-5. Then images and the stroke model, then Milestone 2 as written.
+   below.
+5. Then the stroke model and images, then Milestone 2 as written.
