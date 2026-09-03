@@ -67,12 +67,16 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
         && let Some(render_state) = frame.wgpu_render_state()
         && let Some(texture_id) = vello_host::prepare_target(render_state, width, height)
     {
-        let resolved = tessera_layout::resolve::resolve(&state.document, &mut state.shaper);
-        let scene = tessera_render::scene::build_scene(
-            &resolved,
-            scaled_view(state, ppp),
-            state.first_page_bounds(),
-        );
+        // Read before resolving: the cache borrows the document and the
+        // shaper, and these want the whole of `state`.
+        let view = scaled_view(state, ppp);
+        let page = state.first_page_bounds();
+        // Resolves only when the document's revision has moved on, so a still
+        // canvas repainting at sixty frames a second lays out nothing. The
+        // scene is still rebuilt every frame, because the camera is baked into
+        // it -- see `tessera_layout::cache`.
+        let resolved = state.resolved.get(&state.document, &mut state.shaper);
+        let scene = tessera_render::scene::build_scene(resolved, view, page);
 
         ui.painter().add(egui_wgpu::Callback::new_paint_callback(
             rect,

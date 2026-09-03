@@ -4,6 +4,8 @@
 //! model, and separated from `tessera_render` because a headless PDF export
 //! needs the same answers a screen redraw does.
 
+pub mod cache;
 pub mod resolve;
 
+pub use cache::ResolveCache;
 pub use resolve::{ResolvedDocument, ResolvedItem, ResolvedKind, StoryMap, resolve};
