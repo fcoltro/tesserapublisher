@@ -75,10 +75,12 @@ pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
                 // a path frame's fill is treated as its stroke colour when it
                 // has no stroke of its own.
                 fill: None,
-                stroke: Some(frame.stroke.clone().unwrap_or(Stroke {
-                    color: frame.fill.clone(),
-                    width: 1.0,
-                })),
+                stroke: Some(
+                    frame
+                        .stroke
+                        .clone()
+                        .unwrap_or_else(|| Stroke::new(frame.fill.clone(), 1.0)),
+                ),
             },
 
             // A group draws nothing of its own, and paint_order already

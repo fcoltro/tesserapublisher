@@ -54,10 +54,7 @@ fn a_document_with_a_rectangle_round_trips_exactly() {
                 k: 0.4,
                 a: 1.0,
             },
-            stroke: Some(Stroke {
-                color: Color::BLACK,
-                width: 2.0,
-            }),
+            stroke: Some(Stroke::new(Color::BLACK, 2.0)),
         },
     );
 
@@ -164,10 +161,7 @@ fn any_frame() -> impl Strategy<Value = Frame> {
             kind: FrameKind::Rectangle,
             transform: Transform::IDENTITY,
             fill,
-            stroke: stroke_width.map(|width| Stroke {
-                color: Color::BLACK,
-                width,
-            }),
+            stroke: stroke_width.map(|width| Stroke::new(Color::BLACK, width)),
         })
 }
 

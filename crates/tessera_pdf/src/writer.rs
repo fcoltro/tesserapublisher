@@ -2,8 +2,10 @@
 
 use std::collections::BTreeMap;
 
+use pdf_writer::types::{LineCapStyle, LineJoinStyle};
 use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref, Str};
 use tessera_color::Color;
+use tessera_document::nodes::{LineCap, LineJoin, Stroke};
 use tessera_geometry::{DocRect, Transform};
 use tessera_layout::resolve::{ResolvedDocument, ResolvedKind};
 use tessera_text::shape::{FontData, ShapedText};
@@ -188,26 +190,49 @@ fn build_content(
         }
 
         match &item.kind {
-            ResolvedKind::Rectangle { fill, .. } => {
-                let [r, g, b, _] = fill.to_rgb_f32();
+            ResolvedKind::Rectangle { fill, stroke } => {
                 content.save_state();
+                let [r, g, b, _] = fill.to_rgb_f32();
                 content.set_fill_rgb(r, g, b);
-                content.rect(
-                    item.bounds.x as f32,
-                    to_pdf_y(page, item.bounds.y, item.bounds.height) as f32,
-                    item.bounds.width as f32,
-                    item.bounds.height as f32,
-                );
-                content.fill_nonzero();
+                let rect = |c: &mut Content, b: DocRect| {
+                    c.rect(
+                        b.x as f32,
+                        to_pdf_y(page, b.y, b.height) as f32,
+                        b.width as f32,
+                        b.height as f32,
+                    );
+                };
+
+                match stroke {
+                    // The fill and the stroke follow different rectangles once
+                    // the stroke is aligned inside or outside, so they cannot
+                    // share one path.
+                    Some(s) => {
+                        rect(&mut content, item.bounds);
+                        content.fill_nonzero();
+                        apply_stroke(&mut content, s);
+                        rect(&mut content, offset_rect(item.bounds, s.offset()));
+                        content.stroke();
+                    }
+                    None => {
+                        rect(&mut content, item.bounds);
+                        content.fill_nonzero();
+                    }
+                }
                 content.restore_state();
             }
 
-            ResolvedKind::Ellipse { fill, .. } => {
-                let [r, g, b, _] = fill.to_rgb_f32();
+            ResolvedKind::Ellipse { fill, stroke } => {
                 content.save_state();
+                let [r, g, b, _] = fill.to_rgb_f32();
                 content.set_fill_rgb(r, g, b);
                 ellipse_path(&mut content, page, item.bounds);
                 content.fill_nonzero();
+                if let Some(s) = stroke {
+                    apply_stroke(&mut content, s);
+                    ellipse_path(&mut content, page, offset_rect(item.bounds, s.offset()));
+                    content.stroke();
+                }
                 content.restore_state();
             }
 
@@ -221,9 +246,7 @@ fn build_content(
                         content.fill_nonzero();
                     }
                     (None, Some(s)) => {
-                        let [r, g, b, _] = s.color.to_rgb_f32();
-                        content.set_stroke_rgb(r, g, b);
-                        content.set_line_width(s.width as f32);
+                        apply_stroke(&mut content, s);
                         content.stroke();
                     }
                     (None, None) => {
@@ -246,6 +269,49 @@ fn build_content(
     }
 
     Ok(content.finish().to_vec())
+}
+
+/// Set every stroke attribute on the content stream.
+///
+/// Colour, width, cap, join, miter limit and dash pattern. A stroke that
+/// exported as a bare width would not be the stroke that was on screen, which
+/// is the one thing this crate exists to prevent.
+fn apply_stroke(content: &mut Content, stroke: &Stroke) {
+    let [r, g, b, _] = stroke.color.to_rgb_f32();
+    content.set_stroke_rgb(r, g, b);
+    content.set_line_width(stroke.width as f32);
+    content.set_line_cap(match stroke.cap {
+        LineCap::Butt => LineCapStyle::ButtCap,
+        LineCap::Round => LineCapStyle::RoundCap,
+        LineCap::Square => LineCapStyle::ProjectingSquareCap,
+    });
+    content.set_line_join(match stroke.join {
+        LineJoin::Miter => LineJoinStyle::MiterJoin,
+        LineJoin::Round => LineJoinStyle::RoundJoin,
+        LineJoin::Bevel => LineJoinStyle::BevelJoin,
+    });
+    content.set_miter_limit(stroke.miter_limit as f32);
+    if stroke.is_dashed() {
+        content.set_dash_pattern(
+            stroke.dashes.iter().map(|d| *d as f32),
+            stroke.dash_offset as f32,
+        );
+    }
+}
+
+/// A rectangle moved out to where an aligned stroke's centreline runs.
+///
+/// Held at the point where an inside stroke would turn the rectangle inside
+/// out, exactly as the screen renderer holds it.
+fn offset_rect(bounds: DocRect, offset: f64) -> DocRect {
+    let limit = (bounds.width.min(bounds.height) / 2.0).max(0.0);
+    let o = offset.max(-limit);
+    DocRect {
+        x: bounds.x - o,
+        y: bounds.y - o,
+        width: bounds.width + o * 2.0,
+        height: bounds.height + o * 2.0,
+    }
 }
 
 /// A document-space transform, expressed in PDF's coordinate space.

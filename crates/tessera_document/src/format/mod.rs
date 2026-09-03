@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 3;
+pub const FORMAT_VERSION: u32 = 4;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -106,6 +106,13 @@ fn migrate(value: &mut serde_json::Value, from: u32) {
     if from < 3 {
         rotation_to_transform(value);
     }
+
+    // 3 -> 4: strokes gained alignment, caps, joins, a miter limit and
+    // dashes. Every one of them carries `serde(default)`, and the defaults
+    // are what a stroke drew before they existed, so there is nothing to
+    // rewrite. The version still moves, so that a build without them refuses
+    // a document that uses them rather than silently dropping them on the
+    // next save.
 }
 
 /// Rewrite every `{ bounds, rotation }` object into `{ bounds, transform }`.

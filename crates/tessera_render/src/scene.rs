@@ -7,12 +7,29 @@
 //! by egui's painter on top, so they can never appear in an export.
 
 use tessera_color::Color;
+use tessera_document::nodes::{LineCap, LineJoin, Stroke};
 use tessera_geometry::{DocRect, ViewTransform};
 use tessera_layout::resolve::{ResolvedDocument, ResolvedKind};
 use vello::kurbo::{Affine, Ellipse, Rect, Stroke as KurboStroke};
 use vello::peniko::Fill;
 use vello::peniko::color::{AlphaColor, Srgb};
 use vello::{Glyph, Scene};
+
+fn to_cap(cap: LineCap) -> vello::kurbo::Cap {
+    match cap {
+        LineCap::Butt => vello::kurbo::Cap::Butt,
+        LineCap::Round => vello::kurbo::Cap::Round,
+        LineCap::Square => vello::kurbo::Cap::Square,
+    }
+}
+
+fn to_join(join: LineJoin) -> vello::kurbo::Join {
+    match join {
+        LineJoin::Miter => vello::kurbo::Join::Miter,
+        LineJoin::Round => vello::kurbo::Join::Round,
+        LineJoin::Bevel => vello::kurbo::Join::Bevel,
+    }
+}
 
 fn to_peniko(color: &Color) -> AlphaColor<Srgb> {
     let [r, g, b, a] = color.to_rgb_f32();
@@ -39,12 +56,34 @@ fn hairline(view: ViewTransform) -> f64 {
     DEVICE_PIXELS / view.zoom.abs()
 }
 
+/// The shape's own rectangle, moved out to where the stroke's centreline
+/// runs.
+///
+/// An inside stroke on a frame thinner than the stroke itself would turn the
+/// rectangle inside out, so the inset is held at the point where it collapses.
+fn stroked_rect(bounds: Rect, offset: f64) -> Rect {
+    let limit = (bounds.width().min(bounds.height()) / 2.0).max(0.0);
+    bounds.inflate(offset.max(-limit), offset.max(-limit))
+}
+
 /// Build the scene for one page of a resolved document.
 pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRect) -> Scene {
     let mut scene = Scene::new();
     let transform = view.to_affine();
     let hairline = hairline(view);
-    let stroke_of = |width: f64| KurboStroke::new(width.max(hairline));
+    // The whole stroke, not just its width: caps, joins and dashes are what
+    // make a rule read as a rule rather than as a thin rectangle.
+    let stroke_of = |s: &Stroke| {
+        let mut k = KurboStroke::new(s.width.max(hairline));
+        k.start_cap = to_cap(s.cap);
+        k.end_cap = to_cap(s.cap);
+        k.join = to_join(s.join);
+        k.miter_limit = s.miter_limit;
+        if s.is_dashed() {
+            k = k.with_dashes(s.dash_offset, s.dashes.iter().copied());
+        }
+        k
+    };
 
     // The page itself, so the document reads as paper rather than as objects
     // floating on the pasteboard.
@@ -68,11 +107,11 @@ pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRe
                 scene.fill(Fill::NonZero, transform, to_peniko(fill), None, &rect);
                 if let Some(s) = stroke {
                     scene.stroke(
-                        &stroke_of(s.width),
+                        &stroke_of(s),
                         transform,
                         to_peniko(&s.color),
                         None,
-                        &rect,
+                        &stroked_rect(rect, s.offset()),
                     );
                 }
             }
@@ -81,11 +120,11 @@ pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRe
                 scene.fill(Fill::NonZero, transform, to_peniko(fill), None, &ellipse);
                 if let Some(s) = stroke {
                     scene.stroke(
-                        &stroke_of(s.width),
+                        &stroke_of(s),
                         transform,
                         to_peniko(&s.color),
                         None,
-                        &ellipse,
+                        &Ellipse::from_rect(stroked_rect(rect, s.offset())),
                     );
                 }
             }
@@ -97,7 +136,11 @@ pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRe
                     scene.fill(Fill::NonZero, placed, to_peniko(f), None, path);
                 }
                 if let Some(s) = stroke {
-                    scene.stroke(&stroke_of(s.width), placed, to_peniko(&s.color), None, path);
+                    // A path's alignment is not applied: offsetting an
+                    // arbitrary curve is a different problem from insetting a
+                    // rectangle, and drawing it centred is honest where
+                    // approximating the offset would not be.
+                    scene.stroke(&stroke_of(s), placed, to_peniko(&s.color), None, path);
                 }
             }
 
@@ -240,10 +283,7 @@ mod tests {
             &one_item(
                 ResolvedKind::Rectangle {
                     fill: Color::BLACK,
-                    stroke: Some(tessera_document::nodes::Stroke {
-                        color: Color::BLACK,
-                        width: 2.0,
-                    }),
+                    stroke: Some(Stroke::new(Color::BLACK, 2.0)),
                 },
                 bounds,
             ),
