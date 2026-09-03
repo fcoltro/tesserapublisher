@@ -19,10 +19,32 @@ fn to_peniko(color: &Color) -> AlphaColor<Srgb> {
     AlphaColor::new([r, g, b, a])
 }
 
+/// The narrowest a stroke may be drawn, in **document** units at `view`.
+///
+/// A one-point rule at 25% zoom is a quarter of a device pixel wide. Vello
+/// renders that correctly — a quarter of the coverage — and the result is a
+/// line that fades, breaks up along its length, and flickers as the view
+/// moves, worst of all when it runs nearly straight across a row or column of
+/// pixels and every pixel in the run makes the same wrong decision.
+///
+/// So a stroke is never asked for less than one device pixel of width. This is
+/// what every drawing tool means by a hairline, and it applies to the screen
+/// only: the PDF writer does not go through here, so an export keeps the width
+/// the document actually specifies.
+fn hairline(view: ViewTransform) -> f64 {
+    const DEVICE_PIXELS: f64 = 1.0;
+    if view.zoom.abs() < f64::EPSILON {
+        return 0.0;
+    }
+    DEVICE_PIXELS / view.zoom.abs()
+}
+
 /// Build the scene for one page of a resolved document.
 pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRect) -> Scene {
     let mut scene = Scene::new();
     let transform = view.to_affine();
+    let hairline = hairline(view);
+    let stroke_of = |width: f64| KurboStroke::new(width.max(hairline));
 
     // The page itself, so the document reads as paper rather than as objects
     // floating on the pasteboard.
@@ -53,7 +75,7 @@ pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRe
                 scene.fill(Fill::NonZero, transform, to_peniko(fill), None, &rect);
                 if let Some(s) = stroke {
                     scene.stroke(
-                        &KurboStroke::new(s.width),
+                        &stroke_of(s.width),
                         transform,
                         to_peniko(&s.color),
                         None,
@@ -66,7 +88,7 @@ pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRe
                 scene.fill(Fill::NonZero, transform, to_peniko(fill), None, &ellipse);
                 if let Some(s) = stroke {
                     scene.stroke(
-                        &KurboStroke::new(s.width),
+                        &stroke_of(s.width),
                         transform,
                         to_peniko(&s.color),
                         None,
@@ -82,13 +104,7 @@ pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRe
                     scene.fill(Fill::NonZero, placed, to_peniko(f), None, path);
                 }
                 if let Some(s) = stroke {
-                    scene.stroke(
-                        &KurboStroke::new(s.width),
-                        placed,
-                        to_peniko(&s.color),
-                        None,
-                        path,
-                    );
+                    scene.stroke(&stroke_of(s.width), placed, to_peniko(&s.color), None, path);
                 }
             }
 
@@ -344,5 +360,56 @@ mod tests {
         );
 
         assert!(scene.encoding().resources.glyph_runs.is_empty());
+    }
+
+    // --- hairlines ------------------------------------------------------
+
+    fn view_at(zoom: f64) -> ViewTransform {
+        ViewTransform {
+            zoom,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_stroke_is_never_asked_for_less_than_a_device_pixel() {
+        // A one-point rule zoomed out to 25% is a quarter of a pixel wide.
+        // Drawn honestly it fades and breaks up along its length, and a line
+        // running nearly straight down a column of pixels breaks up the most,
+        // because every pixel in the run makes the same wrong decision.
+        let floor = hairline(view_at(0.25));
+        assert!(
+            (floor - 4.0).abs() < 1e-9,
+            "a quarter-scale view needs 4 document units to make a pixel, got {floor}"
+        );
+        assert!(1.0_f64.max(floor) > 1.0, "a 1pt rule is widened at 25%");
+    }
+
+    #[test]
+    fn zooming_in_never_widens_a_stroke() {
+        // The floor is a floor. Past 1:1 it must do nothing at all, or every
+        // hairline would fatten as you zoomed in.
+        let width = 1.0_f64;
+        for zoom in [1.0, 2.0, 8.0] {
+            let drawn = width.max(hairline(view_at(zoom)));
+            assert!(
+                (drawn - width).abs() < 1e-9,
+                "a 1pt stroke became {drawn} at {zoom}x"
+            );
+        }
+    }
+
+    #[test]
+    fn a_thick_stroke_is_left_alone_however_far_out_the_view_is() {
+        let drawn = 40.0_f64.max(hairline(view_at(0.1)));
+        assert!((drawn - 40.0).abs() < 1e-9, "got {drawn}");
+    }
+
+    #[test]
+    fn a_zero_zoom_does_not_produce_an_infinite_stroke() {
+        // Nothing is visible at zero zoom, but a division by it would poison
+        // the scene with a non-finite width rather than draw nothing.
+        assert_eq!(hairline(view_at(0.0)), 0.0);
+        assert!(hairline(view_at(0.0)).is_finite());
     }
 }
