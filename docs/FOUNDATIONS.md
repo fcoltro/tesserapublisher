@@ -7,9 +7,12 @@ not by how visible it is. Everything in Tier 1 touches either the file format
 or every gesture in the application, so each feature added before them is a
 feature that has to be revisited after them.
 
-This is an assessment of the code as it stands on 2026-09-02, with the
-evidence for each claim. It is not a plan; it is the list a plan should be
-made from.
+First written against the code as it stood on 2026-09-02, with the evidence
+for each claim. It is not a plan; it is the list a plan should be made from.
+
+**Updated 2026-09-03.** Tier 1.1 and 1.3 are done and Tier 1.2 is half done;
+each section below says what landed. The entries are kept rather than deleted,
+because what a thing was is most of why it is now shaped the way it is.
 
 ---
 
@@ -39,7 +42,19 @@ Worth stating, so the list below is not read as a verdict on the whole thing.
 
 ## Tier 1 — before any more features
 
-### 1. A frame's transform is a rectangle and an angle, not a matrix
+### 1. A frame's transform is a rectangle and an angle, not a matrix — DONE
+
+**Landed 2026-09-03, format version 3.** `Frame` now holds `bounds` in its own
+coordinate space plus a `Transform` placing that space on the page. `resize`
+lost its rotation argument entirely — the pointer arrives in the frame's own
+space, so a turned, sheared or flipped frame resizes with the same arithmetic
+as an upright one. `scale_origins` and `rotate_origins` collapsed into one
+`footprint_map`, which the inspector's fields now route through too. Scaling a
+rotated group is exact rather than approximate; a test asserts a 45-degree
+child comes out with non-perpendicular axes, which is the shear the old model
+had to throw away.
+
+The problem it solved, kept for the record:
 
 `Frame { bounds: DocRect, rotation: f64 }` in
 `crates/tessera_document/src/nodes.rs`.
@@ -117,7 +132,21 @@ Three ways forward, in rough order of how much they change:
 
 My recommendation is (1), and it is not a change to make unattended.
 
-### 3. The entire document is re-resolved and re-shaped every frame
+### 3. The entire document is re-resolved and re-shaped every frame — DONE
+
+**Landed 2026-09-03.** Two caches, at the two levels where the question
+differs. `tessera_layout::ResolveCache` keys the whole resolved document on the
+revision counter, so a still canvas lays out nothing at all. The `Shaper` keys
+laid-out stories on text, family, size, line height and measure — exhaustive by
+construction, since the brush type is `()` and colour cannot move a glyph —
+which is what makes *dragging* cheap, because a drag bumps the revision on
+every pointer move but changes neither a story's text nor its measure.
+
+Still outstanding here: **viewport culling**. Panning and zooming rebuild the
+Vello scene because the camera is baked into it, and off-screen spreads are
+still built. That needs page structure Milestone 3 has not built yet.
+
+The problem it solved, kept for the record:
 
 `crates/tessera_ui/src/view/viewport.rs`, in `show`:
 
