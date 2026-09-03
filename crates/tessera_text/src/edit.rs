@@ -48,10 +48,6 @@ impl EditBuffer {
         &self.story
     }
 
-    pub fn into_story(self) -> Story {
-        self.story
-    }
-
     pub fn cursor(&self) -> TextCursor {
         self.cursor
     }

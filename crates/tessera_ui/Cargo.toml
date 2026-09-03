@@ -24,7 +24,6 @@ egui-wgpu.workspace = true
 vello.workspace = true
 rfd.workspace = true
 thiserror.workspace = true
-slotmap.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

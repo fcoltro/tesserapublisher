@@ -44,11 +44,6 @@ impl Selection {
         }
     }
 
-    /// The frame an operation should act on when any one will do.
-    pub fn primary(&self) -> Option<FrameId> {
-        self.frames.first().copied()
-    }
-
     pub fn clear(&mut self) {
         self.frames.clear();
     }
@@ -137,7 +132,7 @@ mod tests {
         let s = Selection::default();
         assert!(s.is_empty());
         assert_eq!(s.single(), None);
-        assert_eq!(s.primary(), None);
+        assert_eq!(s.as_slice().first(), None);
     }
 
     #[test]
@@ -176,7 +171,7 @@ mod tests {
         s.add(a);
         s.add(b);
         assert_eq!(s.single(), None, "several selected is not 'one'");
-        assert_eq!(s.primary(), Some(a), "but there is still a first");
+        assert_eq!(s.as_slice().first(), Some(&a), "but there is still a first");
     }
 
     #[test]

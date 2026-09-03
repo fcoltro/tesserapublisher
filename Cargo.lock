@@ -3602,8 +3602,6 @@ dependencies = [
  "image",
  "proptest",
  "serde_json",
- "tessera_color",
- "tessera_geometry",
  "thiserror 2.0.20",
 ]
 
@@ -3614,7 +3612,6 @@ dependencies = [
  "kurbo",
  "proptest",
  "serde_json",
- "slotmap",
  "tessera_color",
  "tessera_document",
  "tessera_geometry",
@@ -3661,9 +3658,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "skrifa 0.44.0",
  "tessera_color",
- "tessera_geometry",
  "unicode-segmentation",
 ]
 
@@ -3678,7 +3673,6 @@ dependencies = [
  "proptest",
  "rfd",
  "serde_json",
- "slotmap",
  "tessera_color",
  "tessera_document",
  "tessera_geometry",

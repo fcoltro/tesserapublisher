@@ -168,22 +168,18 @@ mod tests {
     use super::*;
     use crate::story::Story;
 
-    fn glyph_count(shaped: &ShapedText) -> usize {
-        shaped.lines.iter().map(|l| l.glyphs.len()).sum()
-    }
-
     #[test]
     fn shaping_empty_text_yields_no_glyphs() {
         let mut shaper = Shaper::new();
         let shaped = shaper.shape(&Story::new(""), 200.0);
-        assert_eq!(glyph_count(&shaped), 0);
+        assert_eq!(shaped.glyph_count(), 0);
     }
 
     #[test]
     fn shaping_produces_one_glyph_per_character_for_simple_latin() {
         let mut shaper = Shaper::new();
         let shaped = shaper.shape(&Story::new("Hello"), 500.0);
-        assert_eq!(glyph_count(&shaped), 5);
+        assert_eq!(shaped.glyph_count(), 5);
     }
 
     #[test]
