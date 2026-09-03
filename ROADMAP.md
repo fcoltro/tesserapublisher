@@ -114,9 +114,15 @@ threading, swatches, preflight, images, CMYK, print marks.
 
 Making the skeleton pleasant to use. No new file-format surface area.
 
-> **Status 2026-09-01: code complete, awaiting the manual check.**
+> **Status 2026-09-02: code complete, awaiting the manual check.**
 > Every item below is built and tested. As with milestone 0, the boxes stay
 > unticked until a person performs the sentence in the running application.
+>
+> A first run on 2026-09-02 produced a punch list, worked through in
+> `docs/UX-PASS-1.md`: painted Lucide cursors, transform zones that do not
+> overlap, an authoritative group box, shape-precise selection and marquee,
+> on-canvas text editing with a real caret, and two antialiasing fixes. That
+> pass has not itself been looked at yet.
 
 ### Acceptance
 
@@ -128,11 +134,13 @@ Making the skeleton pleasant to use. No new file-format surface area.
 
 - [~] Tool state machine: select, rectangle, ellipse, line, pen, text, hand.
   *Direct-select and zoom tools are not built; the wheel zooms instead.*
-- [x] Marquee selection, shift-extend, and select-all.
+- [x] Marquee selection, shift-extend, and select-all. Both clicking and the
+  rubber band select by an object's geometry, not by its bounding box.
 - [~] Transform handles: move, scale from any of eight handles, rotate by
   dragging outside a corner, with shift for proportional scaling and
-  15-degree rotation snap. *From-centre scaling is not built. Scaling and
-  rotating apply to a single frame; a group moves but does not yet scale.*
+  15-degree rotation snap. A group scales and rotates as one, carrying its
+  contents. *From-centre scaling is not built, and a multiple selection has
+  no handles — one frame or one group at a time.*
 - [~] Clipboard and duplicate. *Step-and-repeat is not built.*
 - [x] Z-order: bring forward, send backward, to front, to back — correct for
   multiple selections, which needs opposite traversal orders per operation.
