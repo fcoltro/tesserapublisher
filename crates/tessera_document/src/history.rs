@@ -72,7 +72,7 @@ mod tests {
     use super::*;
     use crate::document::Document;
     use crate::nodes::{Frame, FrameKind};
-    use tessera_geometry::DocRect;
+    use tessera_geometry::{DocRect, Transform};
 
     fn frame() -> Frame {
         Frame {
@@ -83,7 +83,7 @@ mod tests {
                 height: 10.0,
             },
             kind: FrameKind::Rectangle,
-            rotation: 0.0,
+            transform: Transform::IDENTITY,
             fill: tessera_color::Color::BLACK,
             stroke: None,
         }

@@ -9,7 +9,7 @@ use tessera_document::document::Document;
 use tessera_document::ids::FrameId;
 use tessera_document::nodes::{FrameKind, Stroke};
 use tessera_document::path::fit_to_bounds;
-use tessera_geometry::DocRect;
+use tessera_geometry::{DocRect, Transform};
 use tessera_text::shape::{ShapedText, Shaper};
 
 pub use tessera_document::document::StoryMap;
@@ -41,9 +41,9 @@ pub enum ResolvedKind {
 pub struct ResolvedItem {
     pub frame: FrameId,
     pub bounds: DocRect,
-    /// Clockwise degrees about `bounds.center()`. Both the renderer and the
-    /// PDF writer apply this the same way, from this one value.
-    pub rotation: f64,
+    /// The frame's own space, mapped onto the document. Both the renderer
+    /// and the PDF writer apply this the same way, from this one value.
+    pub transform: Transform,
     pub kind: ResolvedKind,
 }
 
@@ -103,7 +103,7 @@ pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
         items.push(ResolvedItem {
             frame: id,
             bounds: frame.bounds,
-            rotation: frame.rotation,
+            transform: frame.transform,
             kind,
         });
     }
@@ -126,7 +126,7 @@ mod tests {
                 height: h,
             },
             kind: FrameKind::Rectangle,
-            rotation: 0.0,
+            transform: Transform::IDENTITY,
             fill: Color::BLACK,
             stroke: None,
         }
@@ -234,7 +234,7 @@ mod tests {
         Frame {
             bounds,
             kind: FrameKind::Path(path),
-            rotation: 0.0,
+            transform: Transform::IDENTITY,
             fill: Color::BLACK,
             stroke: None,
         }

@@ -105,7 +105,7 @@ mod tests {
     use super::*;
     use tessera_document::document::Document;
     use tessera_document::nodes::{Frame, FrameKind};
-    use tessera_geometry::DocRect;
+    use tessera_geometry::{DocRect, Transform};
 
     fn doc_with_two() -> (Document, FrameId, FrameId) {
         let mut doc = Document::new();
@@ -118,7 +118,7 @@ mod tests {
                 height: 10.0,
             },
             kind: FrameKind::Rectangle,
-            rotation: 0.0,
+            transform: Transform::IDENTITY,
             fill: tessera_color::Color::BLACK,
             stroke: None,
         };

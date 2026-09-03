@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref, Str};
 use tessera_color::Color;
-use tessera_geometry::DocRect;
+use tessera_geometry::{DocRect, Transform};
 use tessera_layout::resolve::{ResolvedDocument, ResolvedKind};
 use tessera_text::shape::{FontData, ShapedText};
 
@@ -179,24 +179,12 @@ fn build_content(
     let mut content = Content::new();
 
     for item in &resolved.items {
-        // A rotated item gets its own graphics state, with the rotation
-        // written as a `cm` matrix about the frame's centre in PDF space.
-        let rotated = item.rotation != 0.0;
-        if rotated {
+        // A placed item gets its own graphics state, with its transform
+        // written as a `cm` matrix.
+        let placed = !item.transform.is_identity();
+        if placed {
             content.save_state();
-            let c = item.bounds.center();
-            let cy = to_pdf_y(page, c.y, 0.0);
-            // PDF's y axis points up, so a clockwise on-screen rotation is
-            // anticlockwise here — hence the negated angle.
-            let (sin, cos) = (-item.rotation).to_radians().sin_cos();
-            content.transform([
-                cos as f32,
-                sin as f32,
-                -sin as f32,
-                cos as f32,
-                (c.x - c.x * cos + cy * sin) as f32,
-                (cy - c.x * sin - cy * cos) as f32,
-            ]);
+            content.transform(to_pdf_matrix(item.transform, page).map(|v| v as f32));
         }
 
         match &item.kind {
@@ -252,12 +240,29 @@ fn build_content(
             }
         }
 
-        if rotated {
+        if placed {
             content.restore_state();
         }
     }
 
     Ok(content.finish().to_vec())
+}
+
+/// A document-space transform, expressed in PDF's coordinate space.
+///
+/// The rest of this writer converts each coordinate as it emits it, through
+/// [`to_pdf_y`], so the content stream is already in PDF space — where y grows
+/// upward rather than downward. A transform written for document space
+/// therefore has to be mirrored into that space before it can be applied to
+/// it: `F * A * F`, where `F` is the y flip. `F` is its own inverse, which is
+/// why it appears on both sides.
+///
+/// For a pure rotation this comes out as the same negated angle the writer
+/// used to compute by hand — now a consequence of the mirroring rather than a
+/// separate rule to keep in step.
+fn to_pdf_matrix(transform: Transform, page: DocRect) -> [f64; 6] {
+    let flip = kurbo::Affine::new([1.0, 0.0, 0.0, -1.0, 0.0, page.height]);
+    (flip * transform.to_affine() * flip).as_coeffs()
 }
 
 /// Emit a frame-local path into the content stream, in PDF coordinates.
@@ -454,4 +459,114 @@ fn write_font(pdf: &mut Pdf, font: &EmbeddedFont) {
         .finish();
 
     pdf.stream(font.file_ref, &font.data).finish();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tessera_geometry::DocPoint;
+
+    fn page() -> DocRect {
+        DocRect {
+            x: 0.0,
+            y: 0.0,
+            width: 595.0,
+            height: 842.0,
+        }
+    }
+
+    /// A document point, in PDF coordinates.
+    fn to_pdf(page: DocRect, p: DocPoint) -> DocPoint {
+        DocPoint {
+            x: p.x,
+            y: to_pdf_y(page, p.y, 0.0),
+        }
+    }
+
+    /// The property that makes `to_pdf_matrix` right, for one transform.
+    ///
+    /// Placing a point and then converting it to PDF space must land in the
+    /// same place as converting first and then applying the emitted matrix.
+    /// If it did not, an export would disagree with the screen — which is the
+    /// one thing this crate exists to prevent.
+    fn agrees(transform: Transform) {
+        let m = Transform {
+            coefficients: to_pdf_matrix(transform, page()),
+        };
+        for p in [
+            DocPoint { x: 0.0, y: 0.0 },
+            DocPoint { x: 100.0, y: 50.0 },
+            DocPoint { x: 300.0, y: 700.0 },
+            DocPoint { x: -20.0, y: 900.0 },
+        ] {
+            let placed_then_converted = to_pdf(page(), transform.apply(p));
+            let converted_then_placed = m.apply(to_pdf(page(), p));
+            assert!(
+                (placed_then_converted.x - converted_then_placed.x).abs() < 1e-9
+                    && (placed_then_converted.y - converted_then_placed.y).abs() < 1e-9,
+                "{placed_then_converted:?} vs {converted_then_placed:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_identity_stays_the_identity() {
+        agrees(Transform::IDENTITY);
+    }
+
+    #[test]
+    fn a_rotation_survives_the_mirroring() {
+        for degrees in [15.0, 90.0, 180.0, -45.0] {
+            agrees(Transform::rotate_about(
+                degrees,
+                DocPoint { x: 200.0, y: 400.0 },
+            ));
+        }
+    }
+
+    #[test]
+    fn a_translation_moves_the_right_way_up() {
+        // The direction most likely to be wrong: PDF's y grows upward, so a
+        // downward move in the document is an upward one here.
+        agrees(Transform::translate(10.0, 25.0));
+
+        let m = Transform {
+            coefficients: to_pdf_matrix(Transform::translate(0.0, 25.0), page()),
+        };
+        assert!(
+            m.apply(DocPoint::ZERO).y < 0.0,
+            "moving down the page must move down in PDF space too"
+        );
+    }
+
+    #[test]
+    fn a_scale_and_a_shear_survive_it_too() {
+        agrees(Transform::scale_about(
+            2.0,
+            3.0,
+            DocPoint { x: 50.0, y: 60.0 },
+        ));
+        agrees(
+            Transform::rotate_about(45.0, DocPoint { x: 100.0, y: 100.0 })
+                .then(Transform::scale_about(2.0, 1.0, DocPoint::ZERO)),
+        );
+    }
+
+    #[test]
+    fn a_rotation_comes_out_negated_as_it_did_before() {
+        // The old writer computed this by hand with a negated angle. That is
+        // now a consequence of the mirroring rather than a separate rule, so
+        // it is worth pinning that the consequence still holds.
+        let m = Transform {
+            coefficients: to_pdf_matrix(
+                Transform::rotate_about(30.0, DocPoint { x: 0.0, y: 0.0 }),
+                page(),
+            ),
+        };
+        assert!(
+            (m.rotation_degrees() + 30.0).abs() < 1e-9,
+            "got {}",
+            m.rotation_degrees()
+        );
+    }
 }

@@ -3,7 +3,7 @@
 use eframe::egui_wgpu;
 use egui::{Color32, Rect, Sense, Stroke, Ui};
 use tessera_document::ids::FrameId;
-use tessera_geometry::{DocPoint, DocRect, ScreenPoint, ViewTransform};
+use tessera_geometry::{DocPoint, DocRect, ScreenPoint, Transform, ViewTransform};
 use tessera_text::edit::EditBuffer;
 
 use crate::app::TesseraApp;
@@ -206,7 +206,7 @@ fn text_offset_at(state: &mut TesseraApp, rect: Rect, pos: egui::Pos2) -> Option
     let (id, buffer) = editing.as_ref()?;
     let frame = document.frame(*id)?;
     // Into the frame's own space: the text does not turn with the pointer.
-    let local = at.rotated_about(frame.bounds.center(), -frame.rotation);
+    let local = frame.to_local(at);
     Some(shaper.offset_at(
         buffer.story(),
         frame.bounds.width,
@@ -230,7 +230,7 @@ fn text_word_at(
     } = state;
     let (id, buffer) = editing.as_ref()?;
     let frame = document.frame(*id)?;
-    let local = at.rotated_about(frame.bounds.center(), -frame.rotation);
+    let local = frame.to_local(at);
     Some(shaper.word_at(
         buffer.story(),
         frame.bounds.width,
@@ -245,10 +245,10 @@ fn over_editing_frame(state: &TesseraApp, rect: Rect, pos: egui::Pos2) -> bool {
         return false;
     };
     let at = doc_pos(state, rect, pos);
-    state.document.frame(*id).is_some_and(|f| {
-        f.bounds
-            .contains(at.rotated_about(f.bounds.center(), -f.rotation))
-    })
+    state
+        .document
+        .frame(*id)
+        .is_some_and(|f| f.bounds.contains(f.to_local(at)))
 }
 
 fn is_text(state: &TesseraApp, id: FrameId) -> bool {
@@ -463,9 +463,9 @@ fn camera_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
 ///
 /// The union is only the starting value, taken once when the group is made;
 /// keeping it right afterwards is [`origins_of`]'s job.
-fn presented(state: &TesseraApp, id: FrameId) -> Option<(DocRect, f64)> {
+fn presented(state: &TesseraApp, id: FrameId) -> Option<(DocRect, Transform)> {
     let frame = state.document.frame(id)?;
-    Some((frame.bounds, frame.rotation))
+    Some((frame.bounds, frame.transform))
 }
 
 /// Every frame a transform gesture will move, with its starting state.
@@ -481,7 +481,7 @@ fn origins_of(state: &TesseraApp, id: FrameId) -> Vec<crate::transform::Origin> 
         .into_iter()
         .filter_map(|leaf| {
             let f = state.document.frame(leaf)?;
-            Some((leaf, f.bounds, f.rotation))
+            Some((leaf, f.bounds, f.transform))
         })
         .collect()
 }
@@ -491,12 +491,10 @@ fn handle_screen_pos(
     state: &TesseraApp,
     rect: Rect,
     bounds: DocRect,
-    rotation: f64,
+    placement: tessera_geometry::Transform,
     handle: crate::transform::Handle,
 ) -> egui::Pos2 {
-    let p = handle
-        .position(bounds)
-        .rotated_about(bounds.center(), rotation);
+    let p = placement.apply(handle.position(bounds));
     let s = state.view.doc_to_screen(p);
     egui::pos2(rect.min.x + s.x, rect.min.y + s.y)
 }
@@ -510,13 +508,13 @@ enum Grab {
 
 fn grab_at(state: &TesseraApp, rect: Rect, pos: egui::Pos2) -> Option<(FrameId, Grab)> {
     let id = state.selection.single()?;
-    let (bounds, rotation) = presented(state, id)?;
+    let (bounds, placement) = presented(state, id)?;
 
     // A handle you can see is a handle you can drag: scale wins wherever the
     // two zones touch, so the cursor never promises a resize the click then
     // refuses.
     for handle in crate::transform::Handle::ALL {
-        let hp = handle_screen_pos(state, rect, bounds, rotation, handle);
+        let hp = handle_screen_pos(state, rect, bounds, placement, handle);
         if hp.distance(pos) <= HANDLE_GRAB_PX {
             return Some((id, Grab::Scale(handle)));
         }
@@ -525,7 +523,7 @@ fn grab_at(state: &TesseraApp, rect: Rect, pos: egui::Pos2) -> Option<(FrameId, 
     // Rotation is an affordance *outside* the object; inside belongs to the
     // move gesture, whatever it is near. Decided in the frame's own space, so
     // a rotated frame's ring turns with it.
-    let local = doc_pos(state, rect, pos).rotated_about(bounds.center(), -rotation);
+    let local = placement.inverse().apply(doc_pos(state, rect, pos));
     if bounds.contains(local) {
         return None;
     }
@@ -533,7 +531,7 @@ fn grab_at(state: &TesseraApp, rect: Rect, pos: egui::Pos2) -> Option<(FrameId, 
     let nearest_corner = crate::transform::Handle::ALL
         .into_iter()
         .filter(|h| h.is_corner())
-        .map(|h| handle_screen_pos(state, rect, bounds, rotation, h).distance(pos))
+        .map(|h| handle_screen_pos(state, rect, bounds, placement, h).distance(pos))
         .fold(f32::MAX, f32::min);
 
     (nearest_corner <= ROTATE_RING_PX).then_some((id, Grab::Rotate))
@@ -584,8 +582,9 @@ fn grip_cursor(state: &TesseraApp, id: FrameId, grab: &Grab) -> crate::cursor::C
         // really travel, rather than an approximation from four fixed
         // diagonals that go wrong the moment a frame is rotated.
         Grab::Scale(handle) => {
-            let rotation = presented(state, id).map_or(0.0, |(_, r)| r);
-            Cursor::turned(Icon::Scale, handle.normal_degrees() + rotation as f32)
+            let turned =
+                presented(state, id).map_or(0.0, |(_, placement)| placement.rotation_degrees());
+            Cursor::turned(Icon::Scale, handle.normal_degrees() + turned as f32)
         }
     }
 }
@@ -627,7 +626,7 @@ fn canvas_cursor(
         let inside = state
             .document
             .frame(*id)
-            .is_some_and(|f| f.bounds.contains(doc_pos(state, rect, pos)));
+            .is_some_and(|f| f.bounds.contains(f.to_local(doc_pos(state, rect, pos))));
         return Cursor::new(if inside {
             Icon::TextCursor
         } else {
@@ -641,9 +640,12 @@ fn canvas_cursor(
         match &drag.kind {
             DragKind::Rotate { .. } => return Cursor::new(Icon::Rotate),
             DragKind::Scale {
-                handle, rotation, ..
+                handle, placement, ..
             } => {
-                return Cursor::turned(Icon::Scale, handle.normal_degrees() + *rotation as f32);
+                return Cursor::turned(
+                    Icon::Scale,
+                    handle.normal_degrees() + placement.rotation_degrees() as f32,
+                );
             }
             DragKind::Move { .. } => return Cursor::new(Icon::Move),
             DragKind::Draw | DragKind::Marquee => {}
@@ -801,7 +803,7 @@ fn transform_gesture(
         && state.drag.is_none()
         && let Some(pos) = press_pos(ui, response)
         && let Some((id, grab)) = grab_at(state, rect, pos)
-        && let Some((bounds, rotation)) = presented(state, id)
+        && let Some((bounds, placement)) = presented(state, id)
     {
         let leaves = origins_of(state, id);
         state.drag = Some(Drag::new(
@@ -809,12 +811,15 @@ fn transform_gesture(
             match grab {
                 Grab::Scale(handle) => DragKind::Scale {
                     handle,
+                    target: id,
                     origin: bounds,
-                    rotation,
+                    placement,
                     leaves,
                 },
+                // The pivot is the frame's centre where it really is, which is
+                // not the centre of its box unless it is unplaced.
                 Grab::Rotate => DragKind::Rotate {
-                    center: bounds.center(),
+                    center: placement.apply(bounds.center()),
                     leaves,
                 },
             },
@@ -840,10 +845,10 @@ fn transform_gesture(
         if let Some(drag) = state.drag.clone()
             && let Some(entries) = transform_result(&drag, ui)
         {
-            for (id, bounds, rotation) in entries {
+            for (id, bounds, placement) in entries {
                 if let Some(f) = state.document.frame_mut(id) {
                     f.bounds = bounds;
-                    f.rotation = rotation;
+                    f.transform = placement;
                 }
             }
         }
@@ -856,10 +861,10 @@ fn transform_gesture(
         && let DragKind::Scale { ref leaves, .. } | DragKind::Rotate { ref leaves, .. } = drag.kind
         && let Some(entries) = transform_result(&drag, ui)
     {
-        for (id, bounds, rotation) in leaves {
+        for (id, bounds, placement) in leaves {
             if let Some(f) = state.document.frame_mut(*id) {
                 f.bounds = *bounds;
-                f.rotation = *rotation;
+                f.transform = *placement;
             }
         }
         if &entries != leaves {
@@ -879,13 +884,17 @@ fn transform_result(drag: &Drag, ui: &Ui) -> Option<Vec<crate::transform::Origin
     match &drag.kind {
         DragKind::Scale {
             handle,
+            target,
             origin,
-            rotation,
+            placement,
             leaves,
         } => {
-            let to = crate::transform::resize(*origin, *rotation, *handle, drag.current, modifier);
-            Some(crate::transform::scale_origins(
-                leaves, *origin, to, *rotation,
+            // The pointer arrives in the frame's own space, which is what
+            // makes resizing a turned or sheared frame ordinary arithmetic.
+            let pointer = placement.inverse().apply(drag.current);
+            let to = crate::transform::resize(*origin, *handle, pointer, modifier);
+            Some(crate::transform::scaled(
+                leaves, *target, *origin, to, *placement,
             ))
         }
         DragKind::Rotate { center, leaves } => {
@@ -896,7 +905,7 @@ fn transform_result(drag: &Drag, ui: &Ui) -> Option<Vec<crate::transform::Origin
                 0.0,
                 modifier,
             );
-            Some(crate::transform::rotate_origins(leaves, *center, delta))
+            Some(crate::transform::rotated(leaves, delta, *center))
         }
         _ => None,
     }
@@ -1134,12 +1143,17 @@ fn draw_overlays(
         )
     };
 
-    /// The four corners of a frame's box on screen, rotation included.
-    fn quad(state: &TesseraApp, rect: Rect, bounds: DocRect, rotation: f64) -> Vec<egui::Pos2> {
+    /// The four corners of a frame's box on screen, placement included.
+    fn quad(
+        state: &TesseraApp,
+        rect: Rect,
+        bounds: DocRect,
+        placement: tessera_geometry::Transform,
+    ) -> Vec<egui::Pos2> {
         use crate::transform::Handle::{BottomLeft, BottomRight, TopLeft, TopRight};
         [TopLeft, TopRight, BottomRight, BottomLeft]
             .into_iter()
-            .map(|h| handle_screen_pos(state, rect, bounds, rotation, h))
+            .map(|h| handle_screen_pos(state, rect, bounds, placement, h))
             .collect()
     }
 
@@ -1157,7 +1171,7 @@ fn draw_overlays(
             continue; // a selected frame already has a brighter outline
         }
         painter.add(egui::Shape::closed_line(
-            quad(state, rect, frame.bounds, frame.rotation),
+            quad(state, rect, frame.bounds, frame.transform),
             Stroke::new(1.0, Theme::FRAME_EDGE),
         ));
     }
@@ -1166,7 +1180,7 @@ fn draw_overlays(
     // handles, since a multiple selection has nothing single to resize yet.
     let single = state.selection.single();
     for id in state.selection.iter() {
-        let Some((bounds, rotation)) = presented(state, id) else {
+        let Some((bounds, placement)) = presented(state, id) else {
             continue;
         };
         let corners: Vec<egui::Pos2> = [
@@ -1176,7 +1190,7 @@ fn draw_overlays(
             crate::transform::Handle::BottomLeft,
         ]
         .into_iter()
-        .map(|h| handle_screen_pos(state, rect, bounds, rotation, h))
+        .map(|h| handle_screen_pos(state, rect, bounds, placement, h))
         .collect();
         painter.add(egui::Shape::closed_line(
             corners,
@@ -1189,7 +1203,7 @@ fn draw_overlays(
         if single == Some(id) {
             let h = Theme::HANDLE_SIZE;
             for handle in crate::transform::Handle::ALL {
-                let pos = handle_screen_pos(state, rect, bounds, rotation, handle);
+                let pos = handle_screen_pos(state, rect, bounds, placement, handle);
                 painter.rect_filled(
                     Rect::from_center_size(pos, egui::vec2(h, h)),
                     0.0,
@@ -1200,7 +1214,7 @@ fn draw_overlays(
             // The reference point a rotation turns about: InDesign's mark, a
             // small thin x. A ring with a full crosshair through it was big
             // enough to read as part of the artwork.
-            let c = to_screen(bounds.center());
+            let c = to_screen(placement.apply(bounds.center()));
             let arm = Theme::REFERENCE_MARK;
             let hair = Stroke::new(1.0, Theme::SELECTION);
             painter.line_segment([c - egui::vec2(arm, arm), c + egui::vec2(arm, arm)], hair);
@@ -1313,19 +1327,17 @@ fn draw_overlays(
         && let Some(frame) = state.document.frame(*id)
     {
         let bounds = frame.bounds;
-        let centre = bounds.center();
+        // The caret is measured inside the text, which is laid out in the
+        // frame's own space -- so it is placed the same way the frame is.
         let local = |x: f64, y: f64| {
-            to_screen(
-                DocPoint {
-                    x: bounds.x + x,
-                    y: bounds.y + y,
-                }
-                .rotated_about(centre, frame.rotation),
-            )
+            to_screen(frame.transform.apply(DocPoint {
+                x: bounds.x + x,
+                y: bounds.y + y,
+            }))
         };
 
         painter.add(egui::Shape::closed_line(
-            quad(state, rect, bounds, frame.rotation),
+            quad(state, rect, bounds, frame.transform),
             Stroke::new(1.0, Theme::ACCENT),
         ));
 

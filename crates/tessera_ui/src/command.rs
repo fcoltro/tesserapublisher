@@ -13,7 +13,7 @@ use tessera_color::Color;
 use tessera_document::document::{Document, ZMove};
 use tessera_document::ids::FrameId;
 use tessera_document::nodes::{Frame, FrameKind};
-use tessera_geometry::DocRect;
+use tessera_geometry::{DocRect, Transform};
 use tessera_text::story::Story;
 
 use crate::app::{Clipboard, TesseraApp};
@@ -62,7 +62,7 @@ pub enum Command {
     /// gesture computes its result from the state it started in, so the
     /// command only has to carry that result — which keeps scaling a group of
     /// twenty objects a single undo entry.
-    SetTransforms(Vec<(FrameId, DocRect, f64)>),
+    SetTransforms(Vec<(FrameId, DocRect, Transform)>),
 
     Undo,
     Redo,
@@ -87,37 +87,32 @@ impl Command {
 ///
 /// So a group goes through the very functions a drag goes through — rotated
 /// about its old centre, then mapped from its old box onto its new one.
-fn retarget(state: &mut TesseraApp, id: FrameId, bounds: DocRect, rotation: f64) {
+fn retarget(state: &mut TesseraApp, id: FrameId, bounds: DocRect, placement: Transform) {
     let Some(frame) = state.document.frame(id) else {
         return;
     };
-    let (from, was) = (frame.bounds, frame.rotation);
+    let (from, was) = (frame.bounds, frame.transform);
+    let is_group = matches!(frame.kind, tessera_document::nodes::FrameKind::Group(_));
 
-    if !matches!(frame.kind, tessera_document::nodes::FrameKind::Group(_)) {
-        if let Some(f) = state.document.frame_mut(id) {
-            f.bounds = bounds;
-            f.rotation = rotation;
-        }
+    if let Some(f) = state.document.frame_mut(id) {
+        f.bounds = bounds;
+        f.transform = placement;
+    }
+    if !is_group {
         return;
     }
 
-    let origins: Vec<crate::transform::Origin> = state
-        .document
-        .descendants(id)
-        .into_iter()
-        .filter_map(|leaf| {
-            let f = state.document.frame(leaf)?;
-            Some((leaf, f.bounds, f.rotation))
-        })
-        .collect();
-
-    let turned = crate::transform::rotate_origins(&origins, from.center(), rotation - was);
-    for (leaf, leaf_bounds, leaf_rotation) in
-        crate::transform::scale_origins(&turned, from, bounds, rotation)
-    {
+    // One map describes the whole change -- the box and the placement
+    // together -- and the contents follow by exactly that. The same function
+    // the drag gestures use, so a number typed into a field and a handle
+    // dragged on canvas cannot mean different things.
+    let map = crate::transform::footprint_map(from, was, bounds, placement);
+    for leaf in state.document.descendants(id) {
+        if leaf == id {
+            continue;
+        }
         if let Some(f) = state.document.frame_mut(leaf) {
-            f.bounds = leaf_bounds;
-            f.rotation = leaf_rotation;
+            f.transform = f.transform.then(map);
         }
     }
 }
@@ -154,22 +149,26 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         }
 
         Command::SetBounds { id, bounds } => {
-            let rotation = state.document.frame(id).map_or(0.0, |f| f.rotation);
-            retarget(state, id, bounds, rotation);
+            let placement = state
+                .document
+                .frame(id)
+                .map_or(Transform::IDENTITY, |f| f.transform);
+            retarget(state, id, bounds, placement);
         }
 
         Command::SetRotation { id, degrees } => {
-            let Some(bounds) = state.document.frame(id).map(|f| f.bounds) else {
+            let Some(frame) = state.document.frame(id) else {
                 return;
             };
+            let (bounds, was) = (frame.bounds, frame.transform);
             // Normalised into -180..180 so the inspector never shows 3600 and
             // a saved document never accumulates whole turns.
-            retarget(
-                state,
-                id,
-                bounds,
-                (degrees + 180.0).rem_euclid(360.0) - 180.0,
-            );
+            let wanted = (degrees + 180.0).rem_euclid(360.0) - 180.0;
+            // Turned by the difference about where the frame really is, so a
+            // scale or a shear already on the frame is preserved rather than
+            // being flattened into a bare rotation.
+            let turn = Transform::rotate_about(wanted - was.rotation_degrees(), frame.centre());
+            retarget(state, id, bounds, was.then(turn));
         }
 
         Command::SetFill { id, color } => {
@@ -195,10 +194,10 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         }
 
         Command::SetTransforms(entries) => {
-            for (id, bounds, rotation) in entries {
+            for (id, bounds, placement) in entries {
                 if let Some(frame) = state.document.frame_mut(id) {
                     frame.bounds = bounds;
-                    frame.rotation = rotation;
+                    frame.transform = placement;
                 }
             }
         }
@@ -335,7 +334,7 @@ fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
             kind,
             fill,
             stroke: None,
-            rotation: 0.0,
+            transform: Transform::IDENTITY,
         },
     );
     state.selection.set(id);
@@ -730,7 +729,7 @@ mod tests {
 
         for (given, expected) in [(0.0, 0.0), (90.0, 90.0), (370.0, 10.0), (-190.0, 170.0)] {
             apply(&mut state, Command::SetRotation { id, degrees: given });
-            let got = state.document.frame(id).expect("frame").rotation;
+            let got = state.document.frame(id).expect("frame").rotation_degrees();
             assert!(
                 (got - expected).abs() < 1e-9,
                 "{given} normalised to {got}, expected {expected}"
@@ -745,7 +744,10 @@ mod tests {
         let id = state.selection.single().expect("selected");
         apply(&mut state, Command::SetRotation { id, degrees: 45.0 });
         apply(&mut state, Command::Undo);
-        assert_eq!(state.document.frame(id).expect("frame").rotation, 0.0);
+        assert_eq!(
+            state.document.frame(id).expect("frame").rotation_degrees(),
+            0.0
+        );
     }
 
     /// Two rectangles apart from each other, both selected.
@@ -853,7 +855,7 @@ mod tests {
                 height: 10.0,
             },
             kind: tessera_document::nodes::FrameKind::Rectangle,
-            rotation: 0.0,
+            transform: Transform::IDENTITY,
             fill: Color::BLACK,
             stroke: None,
         };
@@ -883,15 +885,20 @@ mod tests {
             },
         );
 
-        let far = state.document.frame(b).expect("b").bounds;
-        let near = state.document.frame(a).expect("a").bounds;
+        // Where the children really are, placement included -- a child now
+        // follows a group by transform, so its own box does not move.
+        let far = state.document.frame(b).expect("b").centre();
+        let near = state.document.frame(a).expect("a").centre();
         assert!(
-            (far.center().x - near.center().x - 180.0).abs() < 1e-9,
+            (far.x - near.x - 180.0).abs() < 1e-9,
             "the children should have spread with the box: {near:?} {far:?}"
         );
+
+        let widths = state.document.frame(b).expect("b").corners();
+        let width = (widths[1].x - widths[0].x).hypot(widths[1].y - widths[0].y);
         assert!(
-            (far.width - 20.0).abs() < 1e-9,
-            "and been scaled, not just moved"
+            (width - 20.0).abs() < 1e-9,
+            "and been scaled, not just moved, got {width}"
         );
     }
 
@@ -899,7 +906,7 @@ mod tests {
     fn turning_a_group_in_the_inspector_turns_its_children() {
         let mut state = TesseraApp::headless();
         let (g, a, _) = grouped_pair(&mut state);
-        let was = state.document.frame(a).expect("a").bounds.center();
+        let was = state.document.frame(a).expect("a").centre();
 
         apply(
             &mut state,
@@ -911,17 +918,17 @@ mod tests {
 
         let child = state.document.frame(a).expect("a");
         assert!(
-            (child.rotation - 90.0).abs() < 1e-9,
+            (child.rotation_degrees() - 90.0).abs() < 1e-9,
             "the child turns on its own axis too, got {}",
-            child.rotation
+            child.rotation_degrees()
         );
-        let now = child.bounds.center();
+        let now = child.centre();
         assert!(
             (was.x - now.x).abs() > 1.0 || (was.y - now.y).abs() > 1.0,
             "and swings about the group's centre: {was:?} -> {now:?}"
         );
         assert!(
-            (state.document.frame(g).expect("group").rotation - 90.0).abs() < 1e-9,
+            (state.document.frame(g).expect("group").rotation_degrees() - 90.0).abs() < 1e-9,
             "and the group records its own angle"
         );
     }

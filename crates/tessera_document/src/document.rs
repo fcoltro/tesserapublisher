@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
-use tessera_geometry::{DocPoint, DocRect};
+use tessera_geometry::{DocPoint, DocRect, Transform};
 
 use crate::ids::{FrameId, LayerId, PageId, SpreadId, StoryId};
 use crate::nodes::{Frame, FrameKind, Layer, Page, Spread};
@@ -282,24 +282,7 @@ impl Document {
             if matches!(frame.kind, FrameKind::Group(_)) {
                 continue;
             }
-            let b = frame.bounds;
-            let centre = b.center();
-            for corner in [
-                DocPoint { x: b.x, y: b.y },
-                DocPoint {
-                    x: b.x + b.width,
-                    y: b.y,
-                },
-                DocPoint {
-                    x: b.x + b.width,
-                    y: b.y + b.height,
-                },
-                DocPoint {
-                    x: b.x,
-                    y: b.y + b.height,
-                },
-            ] {
-                let p = corner.rotated_about(centre, frame.rotation);
+            for p in frame.corners() {
                 union = Some(match union {
                     None => (p.x, p.y, p.x, p.y),
                     Some((x0, y0, x1, y1)) => (x0.min(p.x), y0.min(p.y), x1.max(p.x), y1.max(p.y)),
@@ -378,7 +361,7 @@ impl Document {
         let group = self.frames.insert(Frame {
             bounds,
             kind: FrameKind::Group(std::mem::take(&mut members)),
-            rotation: 0.0,
+            transform: Transform::IDENTITY,
             fill: tessera_color::Color::BLACK,
             stroke: None,
         });
@@ -465,14 +448,7 @@ impl Document {
             FrameKind::Group(_) => return None,
         };
 
-        if frame.rotation != 0.0 {
-            let c = b.center();
-            path.apply_affine(
-                kurbo::Affine::translate((c.x, c.y))
-                    * kurbo::Affine::rotate(frame.rotation.to_radians())
-                    * kurbo::Affine::translate((-c.x, -c.y)),
-            );
-        }
+        path.apply_affine(frame.transform.to_affine());
         Some(path)
     }
 
@@ -533,7 +509,8 @@ impl Document {
 /// so clicking empty space well away from the ink selects it.
 fn hits(frame: &Frame, point: DocPoint, tolerance: f64) -> bool {
     let bounds = frame.bounds;
-    let local = point.rotated_about(bounds.center(), -frame.rotation);
+    // Into the frame's own space, where its geometry is described.
+    let local = frame.to_local(point);
 
     match &frame.kind {
         // A text frame is a box, and an empty one still has to be clickable.
@@ -661,7 +638,7 @@ mod tests {
                 height: 50.0,
             },
             kind: FrameKind::Rectangle,
-            rotation: 0.0,
+            transform: Transform::IDENTITY,
             fill: Color::BLACK,
             stroke: None,
         }
@@ -815,7 +792,7 @@ mod tests {
                 height: 10.0,
             },
             kind: FrameKind::Rectangle,
-            rotation: 0.0,
+            transform: Transform::IDENTITY,
             fill: tessera_color::Color::BLACK,
             stroke: None,
         }
@@ -838,7 +815,8 @@ mod tests {
 
         // Upright, the bar spans x 0..100 at y 45..55, centred on (50, 50).
         // Turned a quarter turn it spans y 0..100 at x 45..55.
-        doc.frames.get_mut(id).expect("frame").rotation = 90.0;
+        let frame = doc.frames.get_mut(id).expect("frame");
+        frame.transform = Transform::rotate_about(90.0, frame.bounds.center());
 
         assert_eq!(
             doc.hit_test(DocPoint { x: 50.0, y: 10.0 }, 0.0),
@@ -858,7 +836,8 @@ mod tests {
         let layer = doc.default_layer().expect("layer");
         let id = doc.add_frame(layer, bar());
         for angle in [0.0, 17.0, 45.0, 90.0, 180.0, -33.0] {
-            doc.frames.get_mut(id).expect("frame").rotation = angle;
+            let frame = doc.frames.get_mut(id).expect("frame");
+            frame.transform = Transform::rotate_about(angle, frame.bounds.center());
             assert_eq!(
                 doc.hit_test(DocPoint { x: 50.0, y: 50.0 }, 0.0),
                 Some(id),
@@ -877,7 +856,7 @@ mod tests {
                 height: 20.0,
             },
             kind: FrameKind::Rectangle,
-            rotation: 0.0,
+            transform: Transform::IDENTITY,
             fill: tessera_color::Color::BLACK,
             stroke: None,
         }
@@ -898,7 +877,7 @@ mod tests {
         Frame {
             bounds,
             kind,
-            rotation: 0.0,
+            transform: Transform::IDENTITY,
             fill: tessera_color::Color::BLACK,
             stroke: None,
         }
@@ -1004,7 +983,7 @@ mod tests {
         let mut doc = Document::new();
         let layer = doc.default_layer().expect("layer");
         let mut frame = shape(diagonal(), square());
-        frame.rotation = 90.0;
+        frame.transform = Transform::rotate_about(90.0, frame.bounds.center());
         let id = doc.add_frame(layer, frame);
 
         // The centre is on the line whatever the angle...
@@ -1111,7 +1090,7 @@ mod tests {
         let mut doc = Document::new();
         let layer = doc.default_layer().expect("layer");
         let mut frame = shape(FrameKind::Rectangle, square());
-        frame.rotation = 45.0;
+        frame.transform = Transform::rotate_about(45.0, frame.bounds.center());
         let id = doc.add_frame(layer, frame);
 
         // A 45-degree square reaches further along the axes through its

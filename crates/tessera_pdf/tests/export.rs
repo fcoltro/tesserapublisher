@@ -7,7 +7,7 @@
 
 use tessera_color::Color;
 use tessera_document::ids::FrameId;
-use tessera_geometry::DocRect;
+use tessera_geometry::{DocRect, Transform};
 use tessera_layout::resolve::{ResolvedDocument, ResolvedItem, ResolvedKind};
 use tessera_text::shape::Shaper;
 use tessera_text::story::Story;
@@ -25,7 +25,7 @@ fn one(kind: ResolvedKind, bounds: DocRect) -> ResolvedDocument {
     ResolvedDocument {
         items: vec![ResolvedItem {
             frame: FrameId::default(),
-            rotation: 0.0,
+            transform: Transform::IDENTITY,
             bounds,
             kind,
         }],
@@ -193,7 +193,7 @@ fn several_items_all_reach_the_content_stream() {
         items: vec![
             ResolvedItem {
                 frame: FrameId::default(),
-                rotation: 0.0,
+                transform: Transform::IDENTITY,
                 bounds: rect(10.0, 10.0, 50.0, 50.0),
                 kind: ResolvedKind::Rectangle {
                     fill: Color::BLACK,
@@ -202,7 +202,7 @@ fn several_items_all_reach_the_content_stream() {
             },
             ResolvedItem {
                 frame: FrameId::default(),
-                rotation: 0.0,
+                transform: Transform::IDENTITY,
                 bounds: rect(100.0, 100.0, 80.0, 40.0),
                 kind: ResolvedKind::Ellipse {
                     fill: Color::BLACK,
@@ -211,7 +211,7 @@ fn several_items_all_reach_the_content_stream() {
             },
             ResolvedItem {
                 frame: FrameId::default(),
-                rotation: 0.0,
+                transform: Transform::IDENTITY,
                 bounds: rect(20.0, 300.0, 400.0, 40.0),
                 kind: ResolvedKind::Text {
                     shaped,
