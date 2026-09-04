@@ -9,6 +9,11 @@ this project exists.
 surface. No webview. See
 [the rebuild design](docs/superpowers/specs/2026-09-01-tessera-rebuild-design.md).
 
+**Interface:** InDesign-informed, not InDesign-shaped. The element-by-element
+comparison is [`docs/INDESIGN-PARITY.md`](docs/INDESIGN-PARITY.md); the
+direction is
+[the Instrument spec](docs/superpowers/specs/2026-09-03-instrument-milestone-design.md).
+
 ---
 
 ## How to read this file
@@ -147,6 +152,72 @@ Making the skeleton pleasant to use. No new file-format surface area.
 - [x] Grouping and ungrouping, including nested groups.
 - [x] Numeric transform fields with drag-to-scrub, including rotation.
 - [x] Every gesture records exactly one undo entry, on completion.
+- [ ] **Reference point**: transforms resolve about a chosen one of nine
+  anchors, which subsumes the from-centre scaling missing above.
+- [ ] **Shear**, with an honest affine decomposition replacing
+  `Transform::rotation_degrees()`'s assumption that no shear exists.
+- [ ] **Align and distribute** across a multiple selection.
+- [ ] Corner options and corner radius. *(Model change: a format version
+  bump.)*
+- [ ] Direct-select and zoom tools; add, delete and convert anchor points;
+  polygon; scissors.
+
+---
+
+# Milestone 1.5 — The Instrument
+
+**The missing surface for capability that already shipped.**
+
+> Prompted by reading an InDesign screenshot against the codebase on
+> 2026-09-03. Design:
+> [the Instrument spec](docs/superpowers/specs/2026-09-03-instrument-milestone-design.md).
+
+`Stroke` carries alignment, caps, joins, miter limit, dashes and dash offset —
+built, tested, and exposed nowhere. `Color` models CMYK and spot; nothing can
+create either. The inspector renders position, size, rotation, text and fill,
+and stops.
+
+This does not break the rule that defers the workspace to milestone 7. That
+rule forbids chrome *ahead of* capability. This is the surface for capability
+already finished, and its defining constraint is that **it adds no field to
+`nodes.rs` and bumps no format version.** Anything that would is not in it.
+
+### Acceptance
+
+> Select a rectangle. Set its position and size numerically with the reference
+> point on its centre, and watch it scale about that point — with the anchor
+> mark visible on the object as it does. Type `12mm` into a field reading
+> points and see it convert. Give the rectangle a 3 pt dashed stroke, aligned
+> inside, with round caps, and see it on the canvas. Swap fill and stroke with
+> one key. Select three objects and align their left edges from the toolbar
+> beside them. Shear one. Press `Ctrl`+`K`, type "flip", and flip it. Read its
+> position off a ruler in millimetres, switch the ruler to picas, and watch
+> every field in the application follow. Press `W` and see the handles, frame
+> edges and rulers go, leaving the page on a neutral surround; press it again
+> and get them back. Switch to the light theme and read every label.
+
+- [ ] Inspector with a **stable section order** — Transform, Fill, Stroke,
+  Text, Frame — where an inapplicable section hides without the others moving.
+- [ ] Reference-point proxy, with the chosen anchor drawn on the selection.
+- [ ] Constrain-proportions chain; scale as a percentage; shear.
+- [ ] **Stroke controls**: weight, style, alignment, cap, join, colour.
+- [ ] Fill and stroke proxy, with swap, defaults and none.
+- [ ] Canvas toolbar beside the selection: align, distribute, flip, rotate 90°.
+- [ ] **Command palette** over the existing `Command` enum, showing shortcuts.
+- [ ] Numeric fields parse unit suffixes; no unit mode.
+- [ ] Rulers with unit selection and a zero-point widget. *They measure only —
+  guides are document data and arrive in milestone 4.*
+- [ ] Screen modes Normal and Preview. *Bleed and slug need milestone 3.*
+- [ ] Status bar: zoom control and page navigator.
+- [ ] Layout, Type, View and Window menus, carrying only commands that exist.
+- [ ] Icon set grown to roughly 60 Lucide glyphs, parsed once and cached.
+- [ ] Light theme alongside dark, with WCAG AA contrast asserted by a test.
+- [ ] Scene rebuild keyed on `(revision, view)`; no repaint on a timer.
+
+**Explicitly not in M1.5:** anything needing a model field. Corner radius,
+opacity, effects, object styles, gradients, swatches, text wrap, frame
+fitting, text-frame options, links, parent pages, guides, snapping, the layers
+panel, dockable panels.
 
 ---
 
@@ -194,6 +265,10 @@ The reason a layout tool is not a drawing tool.
 - [ ] Master item override, promoting one item to a local editable copy.
 - [ ] Layers panel: named layers, reorder, visibility, lock.
 - [ ] Document setup: page size, orientation, margins, bleed, slug.
+- [ ] **A spread renders as a spread.** `build_scene` takes one page today, so
+  facing pages cannot be drawn side by side however the model stores them.
+- [ ] Screen modes **Bleed** and **Slug**, which need the geometry above.
+  (Normal and Preview ship in milestone 1.5.)
 
 ---
 
@@ -211,7 +286,8 @@ The reason a layout tool is not a drawing tool.
 - [ ] Ruler guides, margin guides, column guides.
 - [ ] Snapping solver with a pixel-threshold lock and visible indicators.
 - [ ] Baseline grid with a per-frame lock toggle.
-- [ ] Multi-column text frames with gutter control.
+- [ ] Multi-column text frames with gutter control, **frame inset, and
+  vertical justification**.
 - [ ] **Text threading**: overflow flows to the next frame, and a resize
   reflows the whole chain.
 - [ ] **Thread connector lines drawn on selection.** (The previous
@@ -244,6 +320,12 @@ The reason a layout tool is not a drawing tool.
 - [ ] Document output intent with on-screen soft proofing.
 - [ ] Linear and radial gradients; drop shadow; multiply, screen and overlay
   blending.
+- [ ] **Object opacity** as a field distinct from blend mode, and distinct
+  again from a fill colour's alpha.
+- [ ] **A graphic frame is not a shape.** The placeholder frame InDesign draws
+  with an X is a container with its own inner transform; making that explicit
+  in the model is what "content-within-frame" above depends on.
+- [ ] **Object styles**, cascading on edit the way paragraph styles do.
 
 ---
 
@@ -268,6 +350,8 @@ application.
   modified links, low resolution, colour-space mismatch, missing fonts,
   objects outside the bleed.
 - [ ] Preflight panel with click-to-jump, errors sorted above warnings.
+- [ ] **A live preflight indicator in the status bar**, so the document's
+  state is visible without opening the panel.
 - [ ] PDF/X-1a and PDF/X-4 export.
 - [ ] CMYK conversion through the document's output intent.
 - [ ] `MediaBox`, `TrimBox`, `BleedBox`; crop, bleed and registration marks,
