@@ -363,11 +363,11 @@ working software alone: **C-i the rail** (C1–C5), **C-ii the surface**
 - [x] **C2 — Reference-point proxy**, with the chosen anchor also drawn on the
   selection itself (A4). Settling `Anchor::shear`'s sign found that phase A's
   decomposition never pinned which way a positive shear leaned; it does now.
-- [~] **C3 — Numeric fields**: scale as a percentage, rotation and shear, all
-  read from one `Decomposition` and written back as deltas about the reference
-  point (A3). *The constrain-proportions chain is not built, and X/Y/W/H still
-  scrub in points rather than parsing units — `measure` exists and the
-  transform fields have not been moved onto it.*
+- [x] **C3 — Numeric fields**: every field parses a unit suffix (A1) — typing
+  `12mm` into a field showing points converts it — with a
+  constrain-proportions chain, scale as a percentage, rotation and shear, all
+  read from one `Decomposition` and written back as deltas about the
+  reference point (A3).
 - [x] **C4 — Stroke section**: weight, colour, alignment, cap, join, miter
   limit and dash presets — the shipped model, reachable at last. The miter
   limit and the dash offset appear only when they mean something.

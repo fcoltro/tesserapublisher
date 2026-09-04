@@ -285,19 +285,27 @@ point",
     });
     ui.add_space(Theme::SPACING_SM);
 
+    let unit = state.prefs.unit;
     let origin = frame.corners()[0];
     let (mut x, mut y) = (origin.x, origin.y);
     let mut bounds = frame.bounds;
-    let (mut moved, mut resized) = (false, false);
+    let (was_w, was_h) = (bounds.width, bounds.height);
+    let mut moved = false;
+    let (mut w_changed, mut h_changed) = (false, false);
 
     egui::Grid::new("bounds").num_columns(2).show(ui, |ui| {
-        moved |= scrub(ui, "X", &mut x);
-        moved |= scrub(ui, "Y", &mut y);
+        moved |= measure(ui, "X", &mut x, unit);
+        moved |= measure(ui, "Y", &mut y, unit);
         ui.end_row();
-        resized |= scrub(ui, "W", &mut bounds.width);
-        resized |= scrub(ui, "H", &mut bounds.height);
+        w_changed = measure(ui, "W", &mut bounds.width, unit);
+        h_changed = measure(ui, "H", &mut bounds.height, unit);
         ui.end_row();
     });
+
+    let mut chain = state.constrain_proportions;
+    if ui.checkbox(&mut chain, "Constrain proportions").changed() {
+        state.constrain_proportions = chain;
+    }
 
     if moved {
         // Translated in document space, so a turned frame goes where the
@@ -310,7 +318,12 @@ point",
             },
         );
     }
-    if resized {
+    if w_changed || h_changed {
+        if chain {
+            let (w, h) = constrained((was_w, was_h), (bounds.width, bounds.height), w_changed);
+            bounds.width = w;
+            bounds.height = h;
+        }
         apply(state, Command::SetBounds { id, bounds });
     }
 
@@ -371,6 +384,27 @@ point",
                 shear: shear - d.shear_degrees,
             },
         );
+    }
+}
+
+/// Carry a size change across to the other side, keeping the ratio.
+///
+/// `w_changed` says which field the user touched; that one drives. A zero
+/// side has no ratio to carry, so it is left alone rather than collapsing its
+/// partner to nothing.
+fn constrained(was: (f64, f64), now: (f64, f64), w_changed: bool) -> (f64, f64) {
+    let (was_w, was_h) = was;
+    let (w, h) = now;
+    if w_changed {
+        if was_w == 0.0 {
+            return (w, h);
+        }
+        (w, was_h * (w / was_w))
+    } else {
+        if was_h == 0.0 {
+            return (w, h);
+        }
+        (was_w * (h / was_h), h)
     }
 }
 
@@ -721,8 +755,13 @@ fn measure(ui: &mut Ui, label: &str, points: &mut f64, unit: Unit) -> bool {
             ui.add(
                 egui::DragValue::new(&mut shown)
                     .speed(0.25)
-                    .fixed_decimals(2)
-                    .suffix(format!(" {}", unit.suffix())),
+                    // Typing `12mm` into a field showing points converts it.
+                    // This is D5: a unit is parsed, never moded, so the same
+                    // keystrokes never mean two different things.
+                    .custom_formatter(move |v, _| format!("{v:.2} {}", unit.suffix()))
+                    .custom_parser(move |text| {
+                        Unit::parse_to_points(text, unit).map(|p| unit.from_points(p))
+                    }),
             )
             .changed()
         })
@@ -731,16 +770,6 @@ fn measure(ui: &mut Ui, label: &str, points: &mut f64, unit: Unit) -> bool {
         *points = unit.to_points(shown);
     }
     changed
-}
-
-/// A numeric field that also scrubs when its label is dragged.
-fn scrub(ui: &mut Ui, label: &str, value: &mut f64) -> bool {
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, label);
-        ui.add(egui::DragValue::new(value).speed(0.5).fixed_decimals(1))
-            .changed()
-    })
-    .inner
 }
 
 // --- status bar --------------------------------------------------------
@@ -780,6 +809,35 @@ mod tests {
             fill: Color::BLACK,
             stroke: None,
         }
+    }
+
+    #[test]
+    fn the_chain_carries_a_width_change_across_to_the_height() {
+        let (w, h) = constrained((100.0, 50.0), (200.0, 50.0), true);
+        assert_eq!(
+            (w, h),
+            (200.0, 100.0),
+            "doubling the width doubled the height"
+        );
+    }
+
+    #[test]
+    fn the_chain_carries_a_height_change_across_to_the_width() {
+        let (w, h) = constrained((100.0, 50.0), (100.0, 25.0), false);
+        assert_eq!((w, h), (50.0, 25.0), "halving the height halved the width");
+    }
+
+    #[test]
+    fn the_chain_leaves_a_zero_side_alone_rather_than_collapsing_its_partner() {
+        // A zero has no ratio. Carrying it across would silently destroy the
+        // other dimension, and the object with it.
+        let (w, h) = constrained((0.0, 50.0), (30.0, 50.0), true);
+        assert_eq!((w, h), (30.0, 50.0));
+    }
+
+    #[test]
+    fn the_chain_is_off_until_asked_for() {
+        assert!(!TesseraApp::headless().constrain_proportions);
     }
 
     #[test]

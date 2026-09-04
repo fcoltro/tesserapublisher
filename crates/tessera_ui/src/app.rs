@@ -71,6 +71,11 @@ pub struct TesseraApp {
     /// selections the way the active tool is: it is a way of working, not a
     /// property of any one object.
     pub anchor: tessera_geometry::Anchor,
+    /// Whether width and height move together.
+    ///
+    /// Application state, like the anchor: a way of working rather than a
+    /// property of any one object.
+    pub constrain_proportions: bool,
     pub drag: Option<Drag>,
     pub status: Option<Status>,
 
@@ -102,6 +107,7 @@ impl TesseraApp {
             shaper: Shaper::new(),
             active_tool: Tool::Select,
             anchor: tessera_geometry::Anchor::default(),
+            constrain_proportions: false,
             drag: None,
             status: None,
             clipboard: Vec::new(),
