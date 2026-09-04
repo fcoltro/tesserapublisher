@@ -188,7 +188,11 @@ impl Transform {
         Decomposition {
             scale_x,
             scale_y: determinant / scale_x,
-            shear_degrees: ((a * c + b * d) / determinant).atan().to_degrees(),
+            // Negated so that a positive shear leans the *top* to the
+            // right — the italic slant a designer expects. Document space
+            // has y increasing downward, so the unnegated matrix leans the
+            // bottom instead, which reads backwards.
+            shear_degrees: -((a * c + b * d) / determinant).atan().to_degrees(),
             rotation_degrees: b.atan2(a).to_degrees(),
             translation: (e, f),
         }
@@ -197,7 +201,8 @@ impl Transform {
     /// Build a transform from the parts [`Transform::decompose`] reports.
     pub fn from_decomposition(d: Decomposition) -> Self {
         let (sin, cos) = d.rotation_degrees.to_radians().sin_cos();
-        let m = d.shear_degrees.to_radians().tan();
+        // Negated to match `decompose`; see the note there.
+        let m = -d.shear_degrees.to_radians().tan();
         Self {
             coefficients: [
                 d.scale_x * cos,
@@ -281,6 +286,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_positive_shear_leans_the_top_to_the_right() {
+        // The sign has a meaning and this is it. The round-trip test below
+        // passes under either convention, so without this nothing pins which
+        // way a positive number leans.
+        let t = Transform::from_decomposition(Decomposition {
+            shear_degrees: 45.0,
+            ..Decomposition::IDENTITY
+        });
+        // A point one unit *above* the origin, y being down.
+        let above = t.apply(DocPoint { x: 0.0, y: -1.0 });
+        assert!(
+            above.x > 0.0,
+            "a positive shear must lean the top to the right, got {above:?}"
+        );
     }
 
     #[test]

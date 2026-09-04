@@ -1282,10 +1282,16 @@ fn draw_overlays(
                 );
             }
 
-            // The reference point a rotation turns about: InDesign's mark, a
-            // small thin x. A ring with a full crosshair through it was big
-            // enough to read as part of the artwork.
-            let c = to_screen(placement.apply(bounds.center()));
+            // The reference point every transform resolves about: a small
+            // thin x. A ring with a full crosshair through it was big enough
+            // to read as part of the artwork.
+            //
+            // Drawn wherever the chosen anchor is, not always at the centre.
+            // That is D4: InDesign's proxy sits in a corner of the screen and
+            // silently changes what every field and every drag gesture mean,
+            // and the only safe place to show a mode is where the user is
+            // already looking.
+            let c = to_screen(placement.apply(state.anchor.in_rect(bounds)));
             let arm = Theme::REFERENCE_MARK;
             let hair = Stroke::new(1.0, Theme::SELECTION);
             painter.line_segment([c - egui::vec2(arm, arm), c + egui::vec2(arm, arm)], hair);

@@ -64,6 +64,13 @@ pub struct TesseraApp {
     pub shaper: Shaper,
 
     pub active_tool: Tool,
+
+    /// The point transforms resolve about.
+    ///
+    /// Application state rather than document data, and persistent across
+    /// selections the way the active tool is: it is a way of working, not a
+    /// property of any one object.
+    pub anchor: tessera_geometry::Anchor,
     pub drag: Option<Drag>,
     pub status: Option<Status>,
 
@@ -94,6 +101,7 @@ impl TesseraApp {
             active,
             shaper: Shaper::new(),
             active_tool: Tool::Select,
+            anchor: tessera_geometry::Anchor::default(),
             drag: None,
             status: None,
             clipboard: Vec::new(),

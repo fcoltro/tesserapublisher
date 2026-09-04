@@ -2,7 +2,7 @@
 
 use egui::{Sense, Ui, Vec2};
 use tessera_color::Color;
-use tessera_geometry::Unit;
+use tessera_geometry::{Anchor, Unit};
 
 use crate::app::TesseraApp;
 use crate::command::{Command, apply};
@@ -141,6 +141,50 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
     }
 }
 
+/// The nine-point reference proxy.
+///
+/// Bigger than InDesign's, which is a grid of targets a few pixels across —
+/// small enough that hitting the wrong one is easy and noticing that you did
+/// is not. Returns whether the anchor changed.
+pub fn reference_proxy(ui: &mut Ui, anchor: &mut Anchor) -> bool {
+    const CELL: f32 = 15.0;
+    let side = CELL * 3.0;
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
+    let mut changed = false;
+
+    for (i, candidate) in Anchor::ALL.iter().enumerate() {
+        let (col, row) = ((i % 3) as f32, (i / 3) as f32);
+        let cell = egui::Rect::from_min_size(
+            rect.min + Vec2::new(col * CELL, row * CELL),
+            Vec2::splat(CELL),
+        );
+        let response = ui.interact(cell, ui.id().with(("anchor", i)), Sense::click());
+        if response.clicked() {
+            *anchor = *candidate;
+            changed = true;
+        }
+
+        let selected = *candidate == *anchor;
+        let colour = if selected {
+            Theme::ACCENT
+        } else if response.hovered() {
+            Theme::TEXT_PRIMARY
+        } else {
+            Theme::TEXT_MUTED
+        };
+        ui.painter()
+            .circle_filled(cell.center(), if selected { 4.0 } else { 2.0 }, colour);
+    }
+
+    ui.painter().rect_stroke(
+        rect,
+        2.0,
+        egui::Stroke::new(1.0, Theme::BORDER),
+        egui::StrokeKind::Inside,
+    );
+    changed
+}
+
 fn transform_section(
     ui: &mut Ui,
     state: &mut TesseraApp,
@@ -151,6 +195,19 @@ fn transform_section(
     // which is what each of them means. `bounds` is the frame's own box, so it
     // answers W and H directly — but it does not move when the frame does,
     // because a move is a change of placement.
+    ui.horizontal(|ui| {
+        let mut anchor = state.anchor;
+        if reference_proxy(ui, &mut anchor) {
+            state.anchor = anchor;
+        }
+        ui.colored_label(
+            Theme::TEXT_MUTED,
+            "Reference
+point",
+        );
+    });
+    ui.add_space(Theme::SPACING_SM);
+
     let origin = frame.corners()[0];
     let (mut x, mut y) = (origin.x, origin.y);
     let mut bounds = frame.bounds;
@@ -573,6 +630,13 @@ mod tests {
             fill: Color::BLACK,
             stroke: None,
         }
+    }
+
+    #[test]
+    fn the_default_reference_point_is_the_centre() {
+        // Scaling and rotating about the middle is what a user expects when
+        // they have not said otherwise.
+        assert_eq!(TesseraApp::headless().anchor, Anchor::Centre);
     }
 
     #[test]
