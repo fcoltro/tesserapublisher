@@ -70,6 +70,9 @@ pub struct TesseraApp {
     /// Every copied frame, so cutting four objects pastes four. Shared, so
     /// that a copy in one document pastes into another.
     pub clipboard: Vec<Clipboard>,
+
+    /// When the crash-recovery copy was last written.
+    pub recovery: crate::recovery::Recovery,
 }
 
 impl TesseraApp {
@@ -86,6 +89,51 @@ impl TesseraApp {
             drag: None,
             status: None,
             clipboard: Vec::new(),
+            recovery: crate::recovery::Recovery::default(),
+        }
+    }
+
+    /// Write the crash-recovery copy, if one is owed.
+    ///
+    /// Called once per frame from `logic`. **It must never ask for a repaint**
+    /// — it rides on frames that were going to be drawn anyway, so an idle
+    /// application stays idle. That is the performance invariant in the
+    /// Instrument spec, §6.
+    pub fn autosave_if_due(&mut self) {
+        let revision = self.active().document().revision();
+        if !self.recovery.due(revision, std::time::Instant::now()) {
+            return;
+        }
+
+        let Some(path) = crate::recovery::Recovery::path() else {
+            // No config directory means no autosave. Say so once: an
+            // application quietly not protecting your work is exactly what
+            // the no-silent-fallbacks rule is for.
+            if !self.recovery.announced_failure {
+                self.recovery.announced_failure = true;
+                self.status = Some(Status::error(
+                    "This system reports no configuration directory, so \
+                     Tessera cannot autosave. Save your work manually.",
+                ));
+            }
+            return;
+        };
+
+        match tessera_document::format::save(self.active().document(), &path) {
+            Ok(()) => {
+                self.recovery.last_saved_revision = revision;
+                self.recovery.last_write = std::time::Instant::now();
+                self.recovery.announced_failure = false;
+            }
+            Err(error) => {
+                if !self.recovery.announced_failure {
+                    self.recovery.announced_failure = true;
+                    self.status = Some(Status::error(format!("Could not autosave: {error}")));
+                }
+                // Try again next interval rather than never: the failure may
+                // be a full disk that the user is about to clear.
+                self.recovery.last_write = std::time::Instant::now();
+            }
         }
     }
 

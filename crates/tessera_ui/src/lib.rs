@@ -13,6 +13,7 @@ pub mod icons;
 pub mod open_document;
 pub mod pen;
 pub mod prefs;
+pub mod recovery;
 pub mod selection;
 pub mod theme;
 pub mod tools;
@@ -31,6 +32,9 @@ pub use tools::Tool;
 impl eframe::App for TesseraApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.window_title()));
+        // Rides on a frame that was going to be drawn anyway; asks for none
+        // of its own.
+        self.autosave_if_due();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {

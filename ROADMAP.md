@@ -242,7 +242,7 @@ Nothing here appears on screen and nothing here touches the file format. Each
 task is a small, pure, independently testable piece that later work stands on.
 Built first because retrofitting any of them is many times the cost.
 
-> **Status 2026-09-04: eight of ten done, one partial, one not started.**
+> **Status 2026-09-04: nine of ten done, one partial. Code complete.**
 >
 > A phase-A item has no sentence a person can perform — that is what makes it
 > phase A. So `[x]` here means the narrower thing: the code exists, its tests
@@ -257,7 +257,7 @@ Built first because retrofitting any of them is many times the cost.
 > changed how icons are built, and nobody has looked at the tool strip since.
 > Until both are done, phase A is code-complete rather than complete.
 >
-> A10 remains.
+> Every task is built. Phase B is next, and it is planned separately.
 
 - [x] **A1 — Units.** A `Unit` type over mm, pt, px, inches and picas, with
   parsing (`12mm`, `1p6`, `.5in`), formatting and conversion. Property-tested
@@ -291,7 +291,7 @@ Built first because retrofitting any of them is many times the cost.
   by `Icon`, instead of being re-parsed on every paint. *Tests cover the
   geometry and the cache; the tool strip has not been looked at since the
   change, so the pixels are unverified.*
-- [ ] **A10 — Autosave and crash recovery.** A periodic atomic write to a
+- [x] **A10 — Autosave and crash recovery.** A periodic atomic write to a
   recovery path, detected and offered on the next launch. Data safety belongs
   with the cross-cutting rules, not at milestone 7.
 

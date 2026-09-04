@@ -21,6 +21,11 @@ pub fn save_to_path(state: &mut TesseraApp, path: &Path) -> Result<(), FormatErr
     format::save(state.active().document(), path)?;
     state.active_mut().current_path = Some(path.to_path_buf());
     state.active_mut().dirty = false;
+    // The work is safe in the user's own file now, so the recovery copy is
+    // not just redundant but misleading: left behind, it would offer to
+    // recover work that was already saved.
+    crate::recovery::Recovery::discard();
+    state.recovery.last_saved_revision = state.active().document().revision();
     state.status = Some(Status::info(format!("Saved {}", path.display())));
     Ok(())
 }

@@ -36,7 +36,12 @@ fn main() -> eframe::Result<()> {
                 .ok_or("Tessera needs the wgpu backend, which failed to start")?;
             tessera_ui::view::vello_host::install(render_state)?;
 
-            Ok(Box::new(TesseraApp::headless()) as Box<dyn eframe::App>)
+            let mut app = TesseraApp::headless();
+            // Before the first frame: work from a session that did not close
+            // is offered rather than quietly discarded.
+            tessera_ui::recovery::offer_pending(&mut app);
+
+            Ok(Box::new(app) as Box<dyn eframe::App>)
         }),
     )
 }
