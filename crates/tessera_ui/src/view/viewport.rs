@@ -27,7 +27,14 @@ const CARET_PX: f32 = 1.5;
 ///
 /// Converted through the zoom at the point of use, so a hairline is no harder
 /// to click at 25% than at 400%.
-const HIT_TOLERANCE_PX: f32 = 4.0;
+const HIT_TOLERANCE_PX: f32 = 6.0;
+/// How near a selected frame's reference mark counts as grabbing it, in
+/// screen pixels.
+///
+/// The mark is a move handle. It is what makes a hairline or a thin curve
+/// draggable at all: its ink is a pixel wide wherever you aim, but its centre
+/// is a target you can actually hit.
+const CENTRE_GRAB_PX: f32 = 9.0;
 /// How near a handle a click counts as grabbing it, in screen pixels.
 const HANDLE_GRAB_PX: f32 = 8.0;
 /// How far past a corner the rotate ring reaches, in screen pixels.
@@ -260,6 +267,31 @@ fn is_text(state: &TesseraApp, id: FrameId) -> bool {
         state.document.frame(id).map(|f| &f.kind),
         Some(tessera_document::nodes::FrameKind::Text { .. })
     )
+}
+
+/// A document point on screen.
+fn to_screen_pos(state: &TesseraApp, rect: Rect, p: DocPoint) -> egui::Pos2 {
+    let s = state.view.doc_to_screen(p);
+    egui::pos2(rect.min.x + s.x, rect.min.y + s.y)
+}
+
+/// A selected frame whose reference mark is under `pos`.
+///
+/// Only selected frames, because the mark is only drawn for them — an
+/// invisible target would be worse than a small one.
+fn centre_grab_at(state: &TesseraApp, rect: Rect, pos: egui::Pos2) -> Option<FrameId> {
+    state.selection.iter().find(|id| {
+        presented(state, *id).is_some_and(|(bounds, placement)| {
+            to_screen_pos(state, rect, placement.apply(bounds.center())).distance(pos)
+                <= CENTRE_GRAB_PX
+        })
+    })
+}
+
+/// What a click here would pick up: the shape under it, or a selected frame
+/// grabbed by its centre mark.
+fn move_target_at(state: &TesseraApp, rect: Rect, pos: egui::Pos2) -> Option<FrameId> {
+    centre_grab_at(state, rect, pos).or_else(|| frame_at(state, rect, pos))
 }
 
 /// What the pointer is over, shape-precisely.
@@ -659,11 +691,14 @@ fn canvas_cursor(
     match state.active_tool {
         Tool::Hand => Cursor::new(if held { Icon::Grab } else { Icon::Hand }),
         Tool::Pen => Cursor::new(Icon::Pen),
-        Tool::Text => Cursor::new(Icon::TextCursor),
+        // Not a text cursor until there is text to put a caret in: with the
+        // type tool chosen and nothing drawn yet, the gesture on offer is
+        // drawing a frame, so the pointer says so.
+        Tool::Text => Cursor::new(Icon::TextFrame),
         Tool::Rectangle | Tool::Ellipse | Tool::Line => Cursor::new(Icon::Crosshair),
         Tool::Select => match grab_at(state, rect, pos) {
             Some((id, grab)) => grip_cursor(state, id, &grab),
-            None => match frame_at(state, rect, pos) {
+            None => match move_target_at(state, rect, pos) {
                 Some(id) if state.selection.contains(id) => Cursor::new(Icon::Move),
                 _ => Cursor::new(Icon::Select),
             },
@@ -686,7 +721,7 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
         && let Some(pos) = response.interact_pointer_pos()
     {
         let at = doc_pos(state, rect, pos);
-        match state.document.hit_test(at, hit_tolerance(state)) {
+        match move_target_at(state, rect, pos) {
             // Dragging a frame that is already selected moves the whole
             // selection; dragging an unselected one selects it first.
             Some(hit) => {
@@ -704,7 +739,7 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
                     .selection
                     .iter()
                     .flat_map(|id| state.document.descendants(id))
-                    .filter_map(|id| state.document.frame(id).map(|f| (id, f.bounds)))
+                    .filter_map(|id| state.document.frame(id).map(|f| (id, f.transform)))
                     .collect();
                 state.drag = Some(Drag::new(at, DragKind::Move { origins }));
             }
@@ -727,13 +762,12 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
         }) = state.drag.clone()
         {
             let (dx, dy) = state.drag.as_ref().expect("just matched").delta();
+            let by = tessera_geometry::Transform::translate(dx, dy);
             for (id, origin) in origins {
                 if let Some(f) = state.document.frame_mut(id) {
-                    f.bounds = DocRect {
-                        x: origin.x + dx,
-                        y: origin.y + dy,
-                        ..origin
-                    };
+                    // Composed onto the placement, in document space. Added to
+                    // `bounds` it would be turned by the frame's own angle.
+                    f.transform = origin.then(by);
                 }
             }
         }
@@ -750,7 +784,7 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
                 let (dx, dy) = drag.delta();
                 for (id, origin) in origins {
                     if let Some(f) = state.document.frame_mut(*id) {
-                        f.bounds = *origin;
+                        f.transform = *origin;
                     }
                 }
                 if dx != 0.0 || dy != 0.0 {
@@ -896,9 +930,9 @@ fn transform_result(drag: &Drag, ui: &Ui) -> Option<Vec<crate::transform::Origin
             // The pointer arrives in the frame's own space, which is what
             // makes resizing a turned or sheared frame ordinary arithmetic.
             let pointer = placement.inverse().apply(drag.current);
-            let to = crate::transform::resize(*origin, *handle, pointer, modifier);
+            let resize = crate::transform::resize(*origin, *handle, pointer, modifier);
             Some(crate::transform::scaled(
-                leaves, *target, *origin, to, *placement,
+                leaves, *target, &resize, *placement,
             ))
         }
         DragKind::Rotate { center, leaves } => {
@@ -933,12 +967,14 @@ fn draw_gesture(
         && let Some(pos) = response.interact_pointer_pos()
     {
         let at = state.view.screen_to_doc(local(rect, pos));
-        let constrain = constrain_held && state.active_tool == Tool::Line;
         if let Some(drag) = state.drag.as_mut() {
-            drag.current = if constrain {
-                crate::transform::constrain_to_45(drag.start, at)
-            } else {
-                at
+            drag.current = match (constrain_held, state.active_tool) {
+                // A line has no width to match, so shift snaps its direction.
+                (true, Tool::Line) => crate::transform::constrain_to_45(drag.start, at),
+                // Everything else with two dimensions gets equal ones: a
+                // square, a circle, a square text frame.
+                (true, _) => crate::transform::constrain_to_square(drag.start, at),
+                (false, _) => at,
             };
         }
     }
@@ -1437,5 +1473,83 @@ mod tests {
     fn a_nonsense_scale_factor_is_survived_rather_than_dividing_by_zero() {
         let rect = Rect::from_min_max(egui::pos2(1.5, 2.5), egui::pos2(3.5, 4.5));
         assert_eq!(pixel_snapped(rect, 0.0), rect);
+    }
+
+    // --- grabbing by the centre mark --------------------------------------
+
+    /// A headless app with one 100x40 frame at the origin, selected, and a
+    /// 1:1 view so document units are screen points.
+    fn app_with_a_selected_frame() -> (TesseraApp, FrameId, Rect) {
+        let mut state = TesseraApp::headless();
+        let layer = state.default_layer();
+        let id = state.document.add_frame(
+            layer,
+            tessera_document::nodes::Frame {
+                bounds: DocRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 100.0,
+                    height: 40.0,
+                },
+                kind: tessera_document::nodes::FrameKind::Rectangle,
+                transform: Transform::IDENTITY,
+                fill: tessera_color::Color::BLACK,
+                stroke: None,
+            },
+        );
+        state.selection.set(id);
+        state.view = tessera_geometry::ViewTransform::default();
+        (
+            state,
+            id,
+            Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0)),
+        )
+    }
+
+    #[test]
+    fn a_selected_frame_can_be_grabbed_by_its_centre_mark() {
+        // The reported problem: a thin line or curve is almost impossible to
+        // pick up, because its ink is a pixel wide wherever you aim. Its
+        // centre mark is a target you can actually hit.
+        let (state, id, rect) = app_with_a_selected_frame();
+        let centre = to_screen_pos(&state, rect, DocPoint { x: 50.0, y: 20.0 });
+
+        assert_eq!(centre_grab_at(&state, rect, centre), Some(id));
+        assert_eq!(
+            centre_grab_at(&state, rect, centre + egui::vec2(3.0, 3.0)),
+            Some(id),
+            "and with a few pixels of slack around it"
+        );
+    }
+
+    #[test]
+    fn the_centre_mark_is_only_a_target_while_it_is_drawn() {
+        // It is only painted for a selected frame, and an invisible target
+        // would be worse than a small one.
+        let (mut state, _, rect) = app_with_a_selected_frame();
+        state.selection.clear();
+        let centre = to_screen_pos(&state, rect, DocPoint { x: 50.0, y: 20.0 });
+        assert_eq!(centre_grab_at(&state, rect, centre), None);
+    }
+
+    #[test]
+    fn well_away_from_the_mark_is_not_a_grab() {
+        let (state, _, rect) = app_with_a_selected_frame();
+        let far =
+            to_screen_pos(&state, rect, DocPoint { x: 50.0, y: 20.0 }) + egui::vec2(40.0, 0.0);
+        assert_eq!(centre_grab_at(&state, rect, far), None);
+    }
+
+    #[test]
+    fn the_mark_moves_with_the_frame_it_belongs_to() {
+        // It is the frame's real centre, placement included -- not the centre
+        // of its own box, which does not move when the frame does.
+        let (mut state, id, rect) = app_with_a_selected_frame();
+        state.document.translate_frame(id, 200.0, 100.0);
+
+        let was = to_screen_pos(&state, rect, DocPoint { x: 50.0, y: 20.0 });
+        let now = to_screen_pos(&state, rect, DocPoint { x: 250.0, y: 120.0 });
+        assert_eq!(centre_grab_at(&state, rect, was), None, "not where it was");
+        assert_eq!(centre_grab_at(&state, rect, now), Some(id), "where it is");
     }
 }

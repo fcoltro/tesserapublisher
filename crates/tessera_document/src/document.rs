@@ -334,10 +334,13 @@ impl Document {
 
     /// Move a frame, carrying a group's children with it.
     pub fn translate_frame(&mut self, id: FrameId, dx: f64, dy: f64) {
+        // Composed onto the placement rather than added to `bounds`. Bounds
+        // are in the frame's own space; a translation is in document space,
+        // and adding one to the other turns the move by the frame's own angle.
+        let by = Transform::translate(dx, dy);
         for leaf in self.descendants(id) {
             if let Some(f) = self.frames.get_mut(leaf) {
-                f.bounds.x += dx;
-                f.bounds.y += dy;
+                f.transform = f.transform.then(by);
             }
         }
         self.revision += 1;
@@ -1210,9 +1213,42 @@ mod tests {
 
         doc.translate_frame(g, 5.0, 7.0);
 
-        assert_eq!(doc.frame(a).expect("a").bounds.x, 5.0);
-        assert_eq!(doc.frame(b).expect("b").bounds.x, 105.0);
-        assert_eq!(doc.frame(a).expect("a").bounds.y, 7.0);
+        // Where the children really are. A move is a change of placement, so
+        // their own boxes are untouched.
+        assert_eq!(doc.frame(a).expect("a").corners()[0].x, 5.0);
+        assert_eq!(doc.frame(b).expect("b").corners()[0].x, 105.0);
+        assert_eq!(doc.frame(a).expect("a").corners()[0].y, 7.0);
+        assert_eq!(
+            doc.frame(a).expect("a").bounds.x,
+            0.0,
+            "the frame's own space did not move"
+        );
+    }
+
+    #[test]
+    fn translating_a_rotated_frame_moves_it_the_way_it_was_asked_to() {
+        // The reported bug: a translation was added straight into `bounds`,
+        // which is in the frame's own space, so it came out turned by the
+        // frame's own angle -- and at a half turn, exactly backwards.
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let id = doc.add_frame(layer, at(0.0, 0.0));
+
+        for degrees in [0.0, 90.0, 180.0, -37.0] {
+            let frame = doc.frames.get_mut(id).expect("frame");
+            let centre = frame.bounds.center();
+            frame.transform = Transform::rotate_about(degrees, centre);
+            let before = doc.frame(id).expect("frame").centre();
+
+            doc.translate_frame(id, 20.0, 0.0);
+
+            let after = doc.frame(id).expect("frame").centre();
+            assert!(
+                (after.x - before.x - 20.0).abs() < 1e-9 && (after.y - before.y).abs() < 1e-9,
+                "at {degrees} degrees it moved {:?} rather than 20 to the right",
+                (after.x - before.x, after.y - before.y)
+            );
+        }
     }
 
     #[test]

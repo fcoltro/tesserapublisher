@@ -36,6 +36,8 @@ pub enum Icon {
     /// handle's own normal. See [`paint_rotated`].
     Scale,
     TextCursor,
+    /// The type tool before anything is drawn: a frame waiting to be dragged.
+    TextFrame,
     Crosshair,
 }
 
@@ -115,6 +117,19 @@ impl Icon {
                 "M7 22h1a4 4 0 0 0 4-4v-1",
                 "M7 2h1a4 4 0 0 1 4 4v1",
             ],
+            // lucide: square-dashed-mouse-pointer
+            Self::TextFrame => &[
+                "M12.034 12.681a.498.498 0 0 1 .647-.647l9 3.5a.5.5 0 0 1-.033.943l-3.444 1.068a1 1 0 0 0-.66.66l-1.067 3.443a.5.5 0 0 1-.943.033z",
+                "M5 3a2 2 0 0 0-2 2",
+                "M19 3a2 2 0 0 1 2 2",
+                "M5 21a2 2 0 0 1-2-2",
+                "M9 3h1",
+                "M9 21h2",
+                "M14 3h1",
+                "M3 9v1",
+                "M21 9v2",
+                "M3 14v1",
+            ],
             // lucide: crosshair
             Self::Crosshair => &[
                 "M22 12 A10 10 0 1 1 2 12 A10 10 0 1 1 22 12 Z",
@@ -151,6 +166,7 @@ impl Icon {
             | Self::Move
             | Self::Scale
             | Self::TextCursor
+            | Self::TextFrame
             | Self::Crosshair => (12.0, 12.0),
         }
     }
@@ -234,7 +250,7 @@ pub fn paint_rotated(
 }
 
 /// Every icon, for exhaustive tests and for building a palette.
-pub const ALL: [Icon; 13] = [
+pub const ALL: [Icon; 14] = [
     Icon::Select,
     Icon::Rectangle,
     Icon::Ellipse,
@@ -247,6 +263,7 @@ pub const ALL: [Icon; 13] = [
     Icon::Move,
     Icon::Scale,
     Icon::TextCursor,
+    Icon::TextFrame,
     Icon::Crosshair,
 ];
 

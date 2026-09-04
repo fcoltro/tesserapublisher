@@ -111,6 +111,75 @@ impl Handle {
 /// un-grabbable, which is worse than refusing to shrink further.
 const MIN_SIZE: f64 = 1.0;
 
+/// What a resize drag amounts to, in the frame's own space.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Resize {
+    /// The new box. Always positive: a mirrored frame is a positive box with
+    /// a mirrored placement, never a negative width.
+    pub bounds: DocRect,
+    /// Signed scale about [`Resize::anchor`], per axis.
+    ///
+    /// Negative means the drag crossed the anchor and the frame is mirrored on
+    /// that axis — which is what dragging a handle past its opposite means in
+    /// every layout tool.
+    pub sx: f64,
+    pub sy: f64,
+    /// The point the gesture holds still, in the frame's own space.
+    pub anchor: DocPoint,
+}
+
+impl Resize {
+    fn sign(v: f64) -> f64 {
+        if v < 0.0 { -1.0 } else { 1.0 }
+    }
+
+    /// The mirror to apply inside the new box.
+    ///
+    /// The box stays positive, so a flip lives in the placement instead. An
+    /// affine can hold that; a width could not, which is why dragging a handle
+    /// past its opposite used to fold the frame back the way it came rather
+    /// than mirroring it.
+    pub fn flip(&self) -> Transform {
+        Transform::scale_about(
+            Self::sign(self.sx),
+            Self::sign(self.sy),
+            self.bounds.center(),
+        )
+    }
+
+    /// The scale, about the anchor, that carries the old box onto the new one.
+    pub fn map(&self) -> Transform {
+        Transform::scale_about(self.sx, self.sy, self.anchor)
+    }
+}
+
+/// How far along its axis the dragged edge has been taken, as a signed ratio.
+///
+/// 1.0 leaves it where it was, 0.5 halves the frame, and anything below zero
+/// has crossed the anchor.
+fn axis_scale(moves: bool, anchor: f64, edge: f64, pointer: f64) -> f64 {
+    let span = edge - anchor;
+    if !moves || span == 0.0 {
+        return 1.0;
+    }
+    (pointer - anchor) / span
+}
+
+/// Hold the dragged edge at least [`MIN_SIZE`] from the anchor.
+///
+/// Clamped as a scale rather than as a width, so the sign — and therefore the
+/// mirror — survives being squeezed through zero.
+fn clamp_span(scale: f64, span: f64) -> f64 {
+    if span == 0.0 {
+        return scale;
+    }
+    let smallest = MIN_SIZE / span.abs();
+    if scale.abs() < smallest {
+        return smallest * Resize::sign(scale);
+    }
+    scale
+}
+
 /// Resize `bounds` by dragging `handle` to `pointer`.
 ///
 /// **Both are in the frame's own space** — the caller puts the pointer there
@@ -118,56 +187,53 @@ const MIN_SIZE: f64 = 1.0;
 /// flipped frame resizes with the same arithmetic as an upright one, because
 /// its placement is not part of the arithmetic.
 ///
-/// The result is placed so the handle's opposite corner keeps its local
-/// position, and since the placement does not change, it therefore keeps its
-/// position on screen too.
-pub fn resize(bounds: DocRect, handle: Handle, pointer: DocPoint, proportional: bool) -> DocRect {
-    let anchor_before = handle.anchor(bounds);
+/// Expressed as a signed scale about the edge being held still. The anchor
+/// therefore cannot move — it is the fixed point of the scale — and a drag
+/// taken past it comes out as a negative factor rather than as a box that has
+/// to be un-inverted afterwards.
+pub fn resize(bounds: DocRect, handle: Handle, pointer: DocPoint, proportional: bool) -> Resize {
+    let (x0, y0) = (bounds.x, bounds.y);
+    let (x1, y1) = (bounds.x + bounds.width, bounds.y + bounds.height);
 
-    let mut x0 = bounds.x;
-    let mut y0 = bounds.y;
-    let mut x1 = bounds.x + bounds.width;
-    let mut y1 = bounds.y + bounds.height;
-
-    if handle.moves_x() {
-        match handle {
-            Handle::TopLeft | Handle::BottomLeft | Handle::Left => x0 = pointer.x,
-            _ => x1 = pointer.x,
-        }
-    }
-    if handle.moves_y() {
-        match handle {
-            Handle::TopLeft | Handle::Top | Handle::TopRight => y0 = pointer.y,
-            _ => y1 = pointer.y,
-        }
-    }
-
-    // Normalise, so dragging a handle past its opposite flips rather than
-    // producing a negative size.
-    let mut new = DocRect {
-        x: x0.min(x1),
-        y: y0.min(y1),
-        width: (x1 - x0).abs().max(MIN_SIZE),
-        height: (y1 - y0).abs().max(MIN_SIZE),
+    // Per axis: the edge held still, and the edge being dragged. An axis the
+    // handle does not move keeps both of its own edges.
+    let (ax, mx) = match handle {
+        Handle::TopLeft | Handle::BottomLeft | Handle::Left => (x1, x0),
+        _ => (x0, x1),
+    };
+    let (ay, my) = match handle {
+        Handle::TopLeft | Handle::Top | Handle::TopRight => (y1, y0),
+        _ => (y0, y1),
     };
 
-    if proportional && handle.is_corner() && bounds.width > 0.0 && bounds.height > 0.0 {
-        let aspect = bounds.width / bounds.height;
-        // Take the larger change, so the frame follows the pointer rather
-        // than lagging on whichever axis moved less.
-        if new.width / aspect >= new.height {
-            new.height = new.width / aspect;
-        } else {
-            new.width = new.height * aspect;
-        }
+    let mut sx = axis_scale(handle.moves_x(), ax, mx, pointer.x);
+    let mut sy = axis_scale(handle.moves_y(), ay, my, pointer.y);
+
+    if proportional && handle.is_corner() {
+        // Take the larger change, so the frame follows the pointer rather than
+        // lagging on whichever axis moved less. Each axis keeps its own sign,
+        // so a proportional drag can still mirror.
+        let k = sx.abs().max(sy.abs());
+        sx = k * Resize::sign(sx);
+        sy = k * Resize::sign(sy);
     }
 
-    // Put the anchor back where it was.
-    let anchor_after = handle.anchor(new);
-    DocRect {
-        x: new.x + (anchor_before.x - anchor_after.x),
-        y: new.y + (anchor_before.y - anchor_after.y),
-        ..new
+    sx = clamp_span(sx, mx - ax);
+    sy = clamp_span(sy, my - ay);
+
+    let nx = ax + (mx - ax) * sx;
+    let ny = ay + (my - ay) * sy;
+
+    Resize {
+        bounds: DocRect {
+            x: ax.min(nx),
+            y: ay.min(ny),
+            width: (nx - ax).abs(),
+            height: (ny - ay).abs(),
+        },
+        sx,
+        sy,
+        anchor: DocPoint { x: ax, y: ay },
     }
 }
 
@@ -208,7 +274,7 @@ pub fn footprint_map(
     was.inverse().then(in_own_space).then(placement)
 }
 
-/// Every frame in a scale gesture, after dragging `target`'s box to `to`.
+/// Every frame in a scale gesture.
 ///
 /// The frame being dragged takes the new box directly and keeps its placement,
 /// so its `bounds` stay an honest width and height. Everything inside it — a
@@ -221,16 +287,22 @@ pub fn footprint_map(
 pub fn scaled(
     origins: &[Origin],
     target: tessera_document::ids::FrameId,
-    from: DocRect,
-    to: DocRect,
+    resize: &Resize,
     placement: Transform,
 ) -> Vec<Origin> {
-    let map = footprint_map(from, placement, to, placement);
+    // The scale carried into document space through the frame's own placement,
+    // so a group's contents follow it exactly -- shear, mirror and all.
+    let map = placement.inverse().then(resize.map()).then(placement);
+    let mirrored = resize.flip().then(placement);
+
     origins
         .iter()
         .map(|(id, bounds, own)| {
             if *id == target {
-                (*id, to, *own)
+                // The dragged frame takes the new box directly, so its bounds
+                // stay an honest width and height. Any mirror goes into its
+                // placement, where a positive box can still hold it.
+                (*id, resize.bounds, mirrored)
             } else {
                 (*id, *bounds, own.then(map))
             }
@@ -272,6 +344,24 @@ pub fn constrain_to_45(from: DocPoint, to: DocPoint) -> DocPoint {
     DocPoint {
         x: from.x + cos * length,
         y: from.y + sin * length,
+    }
+}
+
+/// Square off a drag from `from` to `to`.
+///
+/// What holding shift does while drawing a rectangle or an ellipse: equal
+/// width and height, so the shape comes out a square or a circle. The larger
+/// of the two extents wins, and each axis keeps its own direction, so dragging
+/// up and to the left squares off that way rather than jumping to the opposite
+/// corner.
+pub fn constrain_to_square(from: DocPoint, to: DocPoint) -> DocPoint {
+    let dx = to.x - from.x;
+    let dy = to.y - from.y;
+    let side = dx.abs().max(dy.abs());
+    let sign = |v: f64| if v < 0.0 { -1.0 } else { 1.0 };
+    DocPoint {
+        x: from.x + side * sign(dx),
+        y: from.y + side * sign(dy),
     }
 }
 
@@ -318,6 +408,33 @@ mod tests {
         (a - b).abs() < 1e-6
     }
 
+    /// The new box a drag produces. The signed factors it also returns have
+    /// their own tests, below.
+    fn resized(bounds: DocRect, handle: Handle, pointer: DocPoint, proportional: bool) -> DocRect {
+        resize(bounds, handle, pointer, proportional).bounds
+    }
+
+    /// The resize that carries `from` onto `to`, anchored at `from`'s corner.
+    fn to_box(from: DocRect, to: DocRect) -> Resize {
+        Resize {
+            bounds: to,
+            sx: if from.width == 0.0 {
+                1.0
+            } else {
+                to.width / from.width
+            },
+            sy: if from.height == 0.0 {
+                1.0
+            } else {
+                to.height / from.height
+            },
+            anchor: DocPoint {
+                x: from.x,
+                y: from.y,
+            },
+        }
+    }
+
     #[test]
     fn handles_sit_where_their_names_say() {
         let b = rect();
@@ -353,7 +470,7 @@ mod tests {
     #[test]
     fn dragging_a_corner_moves_only_that_corner() {
         let b = rect();
-        let new = resize(
+        let new = resized(
             b,
             Handle::BottomRight,
             DocPoint { x: 400.0, y: 300.0 },
@@ -368,7 +485,7 @@ mod tests {
     #[test]
     fn dragging_the_top_left_keeps_the_bottom_right_pinned() {
         let b = rect();
-        let new = resize(b, Handle::TopLeft, DocPoint { x: 150.0, y: 150.0 }, false);
+        let new = resized(b, Handle::TopLeft, DocPoint { x: 150.0, y: 150.0 }, false);
         assert!(close(new.x + new.width, 300.0), "right edge held");
         assert!(close(new.y + new.height, 200.0), "bottom edge held");
     }
@@ -376,7 +493,7 @@ mod tests {
     #[test]
     fn an_edge_handle_changes_only_one_axis() {
         let b = rect();
-        let new = resize(b, Handle::Right, DocPoint { x: 500.0, y: 999.0 }, false);
+        let new = resized(b, Handle::Right, DocPoint { x: 500.0, y: 999.0 }, false);
         assert!(
             close(new.height, b.height),
             "height untouched by a side drag"
@@ -387,7 +504,7 @@ mod tests {
     #[test]
     fn a_frame_cannot_be_dragged_to_nothing() {
         let b = rect();
-        let new = resize(
+        let new = resized(
             b,
             Handle::BottomRight,
             DocPoint { x: 100.0, y: 100.0 },
@@ -400,7 +517,7 @@ mod tests {
     #[test]
     fn proportional_scaling_preserves_the_aspect_ratio() {
         let b = rect(); // 2:1
-        let new = resize(
+        let new = resized(
             b,
             Handle::BottomRight,
             DocPoint { x: 500.0, y: 220.0 },
@@ -419,7 +536,7 @@ mod tests {
         // An edge drag has only one axis to follow, so constraining it would
         // mean the frame resists the pointer for no reason.
         let b = rect();
-        let new = resize(b, Handle::Right, DocPoint { x: 500.0, y: 150.0 }, true);
+        let new = resized(b, Handle::Right, DocPoint { x: 500.0, y: 150.0 }, true);
         assert!(close(new.height, b.height));
     }
 
@@ -443,17 +560,36 @@ mod tests {
                 DocPoint::ZERO,
             )),
         ] {
-            let anchor_before = placement.apply(Handle::BottomRight.position(b));
-
             // The pointer arrives in the frame's own space, as the viewport
             // hands it over.
             let pointer = placement.inverse().apply(DocPoint { x: 140.0, y: 130.0 });
-            let new = resize(b, Handle::TopLeft, pointer, false);
+            let r = resize(b, Handle::TopLeft, pointer, false);
 
-            let anchor_after = placement.apply(Handle::BottomRight.position(new));
+            // The anchor is the fixed point of the scale, so it must still be
+            // a corner of the new box — and since the placement is untouched,
+            // that is the same as saying it has not moved on screen.
+            //
+            // Stated as "a corner" rather than "the bottom-right corner",
+            // because a drag taken past the anchor mirrors the frame and the
+            // corner's name changes even though its position does not.
+            let xs = [r.bounds.x, r.bounds.x + r.bounds.width];
+            let ys = [r.bounds.y, r.bounds.y + r.bounds.height];
             assert!(
-                close(anchor_before.x, anchor_after.x) && close(anchor_before.y, anchor_after.y),
-                "anchor moved from {anchor_before:?} to {anchor_after:?}"
+                xs.iter().any(|e| close(*e, r.anchor.x)),
+                "anchor x {} is not an edge of {:?}",
+                r.anchor.x,
+                r.bounds
+            );
+            assert!(
+                ys.iter().any(|e| close(*e, r.anchor.y)),
+                "anchor y {} is not an edge of {:?}",
+                r.anchor.y,
+                r.bounds
+            );
+            assert_eq!(
+                r.anchor,
+                Handle::TopLeft.anchor(b),
+                "and it is the corner opposite the handle"
             );
         }
     }
@@ -461,7 +597,7 @@ mod tests {
     #[test]
     fn dragging_a_handle_past_its_opposite_flips_rather_than_inverting() {
         let b = rect();
-        let new = resize(b, Handle::Right, DocPoint { x: 0.0, y: 150.0 }, false);
+        let new = resized(b, Handle::Right, DocPoint { x: 0.0, y: 150.0 }, false);
         assert!(new.width > 0.0, "width must never go negative");
     }
 
@@ -637,7 +773,12 @@ mod tests {
     #[test]
     fn scaling_a_group_carries_its_children() {
         let (start, group) = group_and_children();
-        let out = scaled(&start, group, group_box(), doubled(), Transform::IDENTITY);
+        let out = scaled(
+            &start,
+            group,
+            &to_box(group_box(), doubled()),
+            Transform::IDENTITY,
+        );
 
         // The target takes the new box directly, so its width stays honest.
         assert!(close(out[0].1.width, 200.0));
@@ -665,7 +806,7 @@ mod tests {
             Transform::rotate_about(217.0, DocPoint { x: 5.0, y: -3.0 }),
         ] {
             let (start, group) = placed_group(placement);
-            let out = scaled(&start, group, group_box(), group_box(), placement);
+            let out = scaled(&start, group, &to_box(group_box(), group_box()), placement);
             for (before, after) in start.iter().zip(out.iter()) {
                 let (b, a) = (centre_of(before), centre_of(after));
                 assert!(close(b.x, a.x) && close(b.y, a.y), "{b:?} -> {a:?}");
@@ -680,7 +821,12 @@ mod tests {
             ..group_box()
         };
         let (start, group) = group_and_children();
-        let out = scaled(&start, group, flat, group_box(), Transform::IDENTITY);
+        let out = scaled(
+            &start,
+            group,
+            &to_box(flat, group_box()),
+            Transform::IDENTITY,
+        );
         assert!(centre_of(&out[1]).x.is_finite());
     }
 
@@ -693,7 +839,7 @@ mod tests {
         let placement = Transform::rotate_about(90.0, group_box().center());
         let (start, group) = placed_group(placement);
 
-        let out = scaled(&start, group, group_box(), doubled(), placement);
+        let out = scaled(&start, group, &to_box(group_box(), doubled()), placement);
 
         let (near, far) = (centre_of(&out[1]), centre_of(&out[2]));
         assert!(close((far.y - near.y).abs(), 180.0), "{near:?} -> {far:?}");
@@ -725,7 +871,12 @@ mod tests {
             ),
         ];
 
-        let out = scaled(&start, group, group_box(), doubled(), Transform::IDENTITY);
+        let out = scaled(
+            &start,
+            group,
+            &to_box(group_box(), doubled()),
+            Transform::IDENTITY,
+        );
 
         let [a, b, c, d, _, _] = out[1].2.coefficients;
         // The child's two axes are no longer perpendicular: that is the shear.
@@ -803,5 +954,110 @@ mod tests {
         let p = DocPoint { x: 17.0, y: -5.0 };
         let moved = map.apply(p);
         assert!(close(moved.x, p.x) && close(moved.y, p.y), "{moved:?}");
+    }
+
+    // --- flipping -------------------------------------------------------
+
+    #[test]
+    fn dragging_a_handle_past_its_anchor_mirrors_rather_than_folding_back() {
+        // The reported bug: squeezing a frame to nothing and carrying on past
+        // that point sent it back the way it came, growing again on the side
+        // it started. It should keep going and come out mirrored.
+        let b = rect(); // x 100..300
+        let r = resize(b, Handle::Right, DocPoint { x: 40.0, y: 150.0 }, false);
+
+        assert!(r.sx < 0.0, "crossing the anchor is a negative scale");
+        assert!(
+            close(r.bounds.x, 40.0) && close(r.bounds.x + r.bounds.width, 100.0),
+            "the frame should now lie left of the anchor, got {:?}",
+            r.bounds
+        );
+    }
+
+    #[test]
+    fn the_anchor_holds_still_through_a_flip() {
+        // The edge being held is the fixed point of the scale, so it cannot
+        // move however far past it the pointer goes.
+        let b = rect();
+        for x in [290.0, 150.0, 100.0, 60.0, -500.0] {
+            let r = resize(b, Handle::Right, DocPoint { x, y: 150.0 }, false);
+            let left = r.bounds.x.min(r.bounds.x + r.bounds.width);
+            let right = r.bounds.x + r.bounds.width;
+            assert!(
+                close(left, 100.0) || close(right, 100.0),
+                "at x={x} the anchor edge left 100: {:?}",
+                r.bounds
+            );
+        }
+    }
+
+    #[test]
+    fn a_flip_is_a_mirror_in_the_placement_not_a_negative_width() {
+        let b = rect();
+        let r = resize(b, Handle::Right, DocPoint { x: 40.0, y: 150.0 }, false);
+
+        assert!(r.bounds.width > 0.0, "the box itself stays positive");
+        // The mirror sends the box's left edge to its right edge.
+        let flipped = r.flip().apply(DocPoint {
+            x: r.bounds.x,
+            y: r.bounds.y,
+        });
+        assert!(close(flipped.x, r.bounds.x + r.bounds.width), "{flipped:?}");
+    }
+
+    #[test]
+    fn an_ordinary_resize_is_not_mirrored() {
+        let b = rect();
+        let r = resize(b, Handle::Right, DocPoint { x: 400.0, y: 150.0 }, false);
+        assert!(r.sx > 0.0);
+        assert!(r.flip().is_identity(), "nothing should be mirrored here");
+    }
+
+    #[test]
+    fn a_flipped_group_carries_its_children_across_too() {
+        let (start, group) = group_and_children();
+        // Drag the right edge back past the left one.
+        let r = resize(
+            group_box(),
+            Handle::Right,
+            DocPoint { x: -100.0, y: 5.0 },
+            false,
+        );
+        let out = scaled(&start, group, &r, Transform::IDENTITY);
+
+        // The child that was on the left is now on the right of the other.
+        let near = centre_of(&out[1]).x;
+        let far = centre_of(&out[2]).x;
+        assert!(
+            near > far,
+            "the children should have swapped sides: {near} vs {far}"
+        );
+    }
+
+    // --- squaring off ---------------------------------------------------
+
+    #[test]
+    fn shift_squares_a_drag_off_using_the_larger_extent() {
+        let from = DocPoint { x: 10.0, y: 10.0 };
+        let to = constrain_to_square(from, DocPoint { x: 110.0, y: 40.0 });
+        assert!(close(to.x - from.x, 100.0));
+        assert!(close(to.y - from.y, 100.0), "the short axis grows to match");
+    }
+
+    #[test]
+    fn squaring_keeps_the_direction_of_each_axis() {
+        // Dragging up and to the left must square off up and to the left,
+        // rather than jumping to the opposite corner.
+        let from = DocPoint { x: 100.0, y: 100.0 };
+        let to = constrain_to_square(from, DocPoint { x: 40.0, y: 90.0 });
+        assert!(close(to.x, 40.0), "x kept its direction: {to:?}");
+        assert!(close(to.y, 40.0), "and y followed it: {to:?}");
+    }
+
+    #[test]
+    fn squaring_a_drag_that_has_not_moved_leaves_it_alone() {
+        let from = DocPoint { x: 5.0, y: 5.0 };
+        let to = constrain_to_square(from, from);
+        assert!(close(to.x, from.x) && close(to.y, from.y));
     }
 }

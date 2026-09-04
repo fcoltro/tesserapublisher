@@ -467,8 +467,37 @@ mod tests {
         let (mut state, a, b) = two_selected();
         apply(&mut state, Command::TranslateSelection { dx: 5.0, dy: 7.0 });
 
-        assert_eq!(state.document.frame(a).expect("a").bounds.x, 5.0);
-        assert_eq!(state.document.frame(b).expect("b").bounds.y, 7.0);
+        // Where the frames really are, not where their own boxes say: a move
+        // is a change of placement, and `bounds` is in the frame's own space.
+        assert_eq!(state.document.frame(a).expect("a").corners()[0].x, 5.0);
+        assert_eq!(state.document.frame(b).expect("b").corners()[0].y, 7.0);
+    }
+
+    #[test]
+    fn translating_a_rotated_frame_moves_it_the_way_the_pointer_went() {
+        // The reported bug: a move was added straight into `bounds`, which is
+        // in the frame's own space, so it came out turned by the frame's own
+        // angle -- and at a half turn, exactly backwards.
+        let (mut state, a, _) = two_selected();
+        for degrees in [0.0, 90.0, 180.0, -37.0] {
+            let frame = state.document.frame_mut(a).expect("a");
+            let centre = frame.bounds.center();
+            frame.transform = Transform::rotate_about(degrees, centre);
+            let before = state.document.frame(a).expect("a").centre();
+
+            state.selection.set(a);
+            apply(
+                &mut state,
+                Command::TranslateSelection { dx: 20.0, dy: 0.0 },
+            );
+
+            let after = state.document.frame(a).expect("a").centre();
+            assert!(
+                (after.x - before.x - 20.0).abs() < 1e-9 && (after.y - before.y).abs() < 1e-9,
+                "at {degrees} degrees it moved {:?} rather than 20 to the right",
+                (after.x - before.x, after.y - before.y)
+            );
+        }
     }
 
     #[test]
@@ -807,8 +836,8 @@ mod tests {
             Command::TranslateSelection { dx: 10.0, dy: 4.0 },
         );
 
-        assert_eq!(state.document.frame(a).expect("a").bounds.x, 10.0);
-        assert_eq!(state.document.frame(b).expect("b").bounds.x, 110.0);
+        assert_eq!(state.document.frame(a).expect("a").corners()[0].x, 10.0);
+        assert_eq!(state.document.frame(b).expect("b").corners()[0].x, 110.0);
     }
 
     #[test]
