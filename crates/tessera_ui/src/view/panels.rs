@@ -237,16 +237,89 @@ point",
         apply(state, Command::SetBounds { id, bounds });
     }
 
-    let mut degrees = frame.rotation_degrees();
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, "Rotation");
-        if ui
-            .add(egui::DragValue::new(&mut degrees).speed(0.5).suffix("°"))
-            .changed()
-        {
-            apply(state, Command::SetRotation { id, degrees });
-        }
+    // Scale, rotation and shear are all read from one decomposition and
+    // written back as deltas about the reference point, so the fields, the
+    // handles and the proxy mean one thing rather than three.
+    let d = frame.transform.decompose();
+    let anchor = state.anchor;
+
+    let (mut sx, mut sy) = (d.scale_x * 100.0, d.scale_y * 100.0);
+    let mut scaled = false;
+    egui::Grid::new("scale").num_columns(2).show(ui, |ui| {
+        scaled |= percent(ui, "Scale X", &mut sx);
+        scaled |= percent(ui, "Scale Y", &mut sy);
+        ui.end_row();
     });
+    if scaled && d.scale_x != 0.0 && d.scale_y != 0.0 {
+        apply(
+            state,
+            Command::TransformAbout {
+                id,
+                anchor,
+                // A ratio, because the command takes a delta: the anchor is
+                // what the operation is about, and an absolute would have to
+                // rebuild the translation itself.
+                scale: (sx / 100.0 / d.scale_x, sy / 100.0 / d.scale_y),
+                rotate: 0.0,
+                shear: 0.0,
+            },
+        );
+        return;
+    }
+
+    let mut rotation = d.rotation_degrees;
+    if angle(ui, "Rotation", &mut rotation) {
+        apply(
+            state,
+            Command::TransformAbout {
+                id,
+                anchor,
+                scale: (1.0, 1.0),
+                rotate: rotation - d.rotation_degrees,
+                shear: 0.0,
+            },
+        );
+        return;
+    }
+
+    let mut shear = d.shear_degrees;
+    if angle(ui, "Shear", &mut shear) {
+        apply(
+            state,
+            Command::TransformAbout {
+                id,
+                anchor,
+                scale: (1.0, 1.0),
+                rotate: 0.0,
+                shear: shear - d.shear_degrees,
+            },
+        );
+    }
+}
+
+/// A percentage field.
+fn percent(ui: &mut Ui, label: &str, value: &mut f64) -> bool {
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::TEXT_MUTED, label);
+        ui.add(
+            egui::DragValue::new(value)
+                .speed(0.5)
+                .fixed_decimals(1)
+                .suffix("%"),
+        )
+        .changed()
+    })
+    .inner
+}
+
+/// An angle field, in degrees.
+fn angle(ui: &mut Ui, label: &str, value: &mut f64) -> bool {
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::TEXT_MUTED, label);
+        ui.add(egui::DragValue::new(value).speed(0.5).suffix("°"))
+            .changed()
+    })
+    .inner
 }
 
 fn fill_section(

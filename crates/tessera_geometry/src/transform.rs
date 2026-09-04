@@ -77,6 +77,22 @@ impl Transform {
         )
     }
 
+    /// Horizontal shear by `degrees` about `about`.
+    ///
+    /// Points move along `x` in proportion to their distance from `about` in
+    /// `y`. Positive leans the **top** to the right — the italic slant, and
+    /// the same sign [`Transform::decompose`] reports.
+    pub fn shear_about(degrees: f64, about: DocPoint) -> Self {
+        if degrees == 0.0 {
+            return Self::IDENTITY;
+        }
+        let m = degrees.to_radians().tan();
+        // x' = x - m*(y - about.y), y' = y.
+        Self {
+            coefficients: [1.0, 0.0, -m, 1.0, m * about.y, 0.0],
+        }
+    }
+
     pub fn apply(self, p: DocPoint) -> DocPoint {
         let [a, b, c, d, e, f] = self.coefficients;
         DocPoint {

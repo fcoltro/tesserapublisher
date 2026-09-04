@@ -85,6 +85,22 @@ pub enum Command {
         stroke: Option<tessera_document::nodes::Stroke>,
     },
 
+    /// Scale, rotate and shear a frame about a reference point.
+    ///
+    /// Each value is a **delta**, not an absolute. The anchor is what the
+    /// operation is about: "make this 200% wide about its centre" is a
+    /// different result from setting a width, and an absolute form would have
+    /// to reconstruct the translation itself and would quietly ignore the
+    /// reference point — the bug D4 exists to prevent.
+    TransformAbout {
+        id: FrameId,
+        anchor: tessera_geometry::Anchor,
+        /// Multipliers, so `(1.0, 1.0)` is no change.
+        scale: (f64, f64),
+        rotate: f64,
+        shear: f64,
+    },
+
     Undo,
     Redo,
 }
@@ -363,6 +379,38 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             }
         }
 
+        Command::TransformAbout {
+            id,
+            anchor,
+            scale,
+            rotate,
+            shear,
+        } => {
+            let Some(frame) = state.active().document().frame(id) else {
+                return;
+            };
+            // The anchor is resolved where the frame really is. `bounds` says
+            // only where it is in its own space, and does not move when the
+            // frame does — so the anchor point has to travel through the
+            // frame's own transform before anything composes onto it.
+            let about = frame.transform.apply(anchor.in_rect(frame.bounds));
+            let mut result = frame.transform;
+
+            if scale != (1.0, 1.0) {
+                result = result.then(Transform::scale_about(scale.0, scale.1, about));
+            }
+            if rotate != 0.0 {
+                result = result.then(Transform::rotate_about(rotate, about));
+            }
+            if shear != 0.0 {
+                result = result.then(Transform::shear_about(shear, about));
+            }
+
+            if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
+                f.transform = result;
+            }
+        }
+
         Command::Undo => {
             if let Some(previous) = state.active_mut().undo() {
                 restore(state, previous);
@@ -434,6 +482,148 @@ fn duplicate_one(state: &mut TesseraApp, id: FrameId) -> Option<FrameId> {
 
 #[cfg(test)]
 mod tests {
+    use tessera_geometry::Anchor;
+
+    fn placed_rect(state: &mut TesseraApp) -> FrameId {
+        apply(
+            state,
+            Command::AddRectangle(DocRect {
+                x: 100.0,
+                y: 100.0,
+                width: 40.0,
+                height: 20.0,
+            }),
+        );
+        state
+            .active()
+            .selection
+            .single()
+            .expect("the new rectangle")
+    }
+
+    #[test]
+    fn scaling_about_the_centre_leaves_the_centre_where_it_was() {
+        let mut state = TesseraApp::headless();
+        let id = placed_rect(&mut state);
+        let before = state.active().document().frame(id).expect("frame").centre();
+
+        apply(
+            &mut state,
+            Command::TransformAbout {
+                id,
+                anchor: Anchor::Centre,
+                scale: (2.0, 2.0),
+                rotate: 0.0,
+                shear: 0.0,
+            },
+        );
+
+        let after = state.active().document().frame(id).expect("frame").centre();
+        assert!((after.x - before.x).abs() < 1e-9, "the centre moved");
+        assert!((after.y - before.y).abs() < 1e-9);
+    }
+
+    #[test]
+    fn scaling_about_a_corner_holds_that_corner_still() {
+        let mut state = TesseraApp::headless();
+        let id = placed_rect(&mut state);
+        let corner = state
+            .active()
+            .document()
+            .frame(id)
+            .expect("frame")
+            .corners()[0];
+
+        apply(
+            &mut state,
+            Command::TransformAbout {
+                id,
+                anchor: Anchor::TopLeft,
+                scale: (3.0, 3.0),
+                rotate: 0.0,
+                shear: 0.0,
+            },
+        );
+
+        let after = state
+            .active()
+            .document()
+            .frame(id)
+            .expect("frame")
+            .corners()[0];
+        assert!(
+            (after.x - corner.x).abs() < 1e-9,
+            "the anchored corner moved"
+        );
+        assert!((after.y - corner.y).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_transform_is_one_undo_entry() {
+        let mut state = TesseraApp::headless();
+        let id = placed_rect(&mut state);
+        let before = state
+            .active()
+            .document()
+            .frame(id)
+            .expect("frame")
+            .transform;
+
+        apply(
+            &mut state,
+            Command::TransformAbout {
+                id,
+                anchor: Anchor::Centre,
+                scale: (1.5, 1.5),
+                rotate: 30.0,
+                shear: 10.0,
+            },
+        );
+        apply(&mut state, Command::Undo);
+
+        let after = state
+            .active()
+            .document()
+            .frame(id)
+            .expect("frame")
+            .transform;
+        assert_eq!(
+            after, before,
+            "one undo unwinds scale, rotation and shear together"
+        );
+    }
+
+    #[test]
+    fn shear_survives_a_round_trip_through_the_decomposition() {
+        // The reason phase A's decompose exists: rotation_degrees assumed no
+        // shear, and this is the first code that breaks that assumption.
+        let mut state = TesseraApp::headless();
+        let id = placed_rect(&mut state);
+        apply(
+            &mut state,
+            Command::TransformAbout {
+                id,
+                anchor: Anchor::Centre,
+                scale: (1.0, 1.0),
+                rotate: 0.0,
+                shear: 15.0,
+            },
+        );
+
+        let d = state
+            .active()
+            .document()
+            .frame(id)
+            .expect("frame")
+            .transform
+            .decompose();
+        assert!(
+            (d.shear_degrees - 15.0).abs() < 1e-6,
+            "read back {} degrees of shear",
+            d.shear_degrees
+        );
+    }
+
     use tessera_document::nodes::{LineCap, LineJoin, Stroke, StrokeAlign};
 
     fn one_rect(state: &mut TesseraApp) -> FrameId {
