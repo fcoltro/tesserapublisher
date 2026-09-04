@@ -829,17 +829,89 @@ fn measure(ui: &mut Ui, label: &str, points: &mut f64, unit: Unit) -> bool {
 
 // --- status bar --------------------------------------------------------
 
-pub fn status_bar(ui: &mut Ui, state: &TesseraApp) {
+/// The zoom levels the step buttons move between.
+///
+/// A ladder rather than a multiplier, so the steps land on the round numbers
+/// a person names — 50%, 100%, 200% — instead of 70.7% and 141.4%.
+const ZOOM_LADDER: [f64; 13] = [
+    0.05, 0.10, 0.25, 0.50, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 16.0,
+];
+
+/// The next rung above or below `current`.
+///
+/// Clamped at both ends: at 1600% there is nowhere further to go, and
+/// wrapping round to 5% would be a surprise rather than a convenience.
+pub fn stepped_zoom(current: f64, up: bool) -> f64 {
+    let last = ZOOM_LADDER[ZOOM_LADDER.len() - 1];
+    if up {
+        ZOOM_LADDER
+            .iter()
+            .find(|z| **z > current + 1e-9)
+            .copied()
+            .unwrap_or(last)
+    } else {
+        ZOOM_LADDER
+            .iter()
+            .rev()
+            .find(|z| **z < current - 1e-9)
+            .copied()
+            .unwrap_or(ZOOM_LADDER[0])
+    }
+}
+
+pub fn status_bar(ui: &mut Ui, state: &mut TesseraApp) {
     ui.horizontal(|ui| {
         match &state.status {
             Some(s) if s.is_error => ui.colored_label(Theme::ERROR, &s.message),
             Some(s) => ui.colored_label(Theme::TEXT_MUTED, &s.message),
             None => ui.colored_label(Theme::TEXT_MUTED, state.active_tool.label()),
         };
+
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let mut percent = state.active().view.zoom * 100.0;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut percent)
+                        .speed(1.0)
+                        .range(5.0..=1600.0)
+                        .suffix("%"),
+                )
+                .changed()
+            {
+                state.active_mut().view.zoom = percent / 100.0;
+            }
+            if ui.small_button("+").on_hover_text("Zoom in").clicked() {
+                let next = stepped_zoom(state.active().view.zoom, true);
+                state.active_mut().view.zoom = next;
+            }
+            if ui.small_button("−").on_hover_text("Zoom out").clicked() {
+                let next = stepped_zoom(state.active().view.zoom, false);
+                state.active_mut().view.zoom = next;
+            }
+            if ui
+                .small_button("Fit")
+                .on_hover_text("Zoom to fit")
+                .clicked()
+            {
+                // The viewport fits the page whenever this is false, which is
+                // the same path the very first frame takes.
+                state.active_mut().fitted = false;
+            }
+
+            ui.separator();
+
+            // The page count. Navigation arrives with the pages panel at
+            // milestone 3; this is the reading InDesign shows in the same
+            // corner, and it is true today.
+            let pages = state.active().document().page_ids().count();
+            let spreads = state.active().document().spread_ids().count();
             ui.colored_label(
                 Theme::TEXT_MUTED,
-                format!("{:.0}%", state.active().view.zoom * 100.0),
+                format!(
+                    "{pages} page{} in {spreads} spread{}",
+                    if pages == 1 { "" } else { "s" },
+                    if spreads == 1 { "" } else { "s" }
+                ),
             );
         });
     });
@@ -864,6 +936,26 @@ mod tests {
             fill: Color::BLACK,
             stroke: None,
         }
+    }
+
+    #[test]
+    fn zooming_in_lands_on_the_next_round_number() {
+        assert_eq!(stepped_zoom(1.0, true), 1.5);
+        assert_eq!(stepped_zoom(1.0, false), 0.75);
+    }
+
+    #[test]
+    fn zoom_steps_stop_at_the_ends_rather_than_wrapping() {
+        // At 1600% there is nowhere further to go, and jumping back to 5%
+        // would be a surprise rather than a convenience.
+        assert_eq!(stepped_zoom(16.0, true), 16.0);
+        assert_eq!(stepped_zoom(0.05, false), 0.05);
+    }
+
+    #[test]
+    fn a_zoom_between_two_rungs_moves_to_the_nearer_one_in_that_direction() {
+        assert_eq!(stepped_zoom(1.2, true), 1.5);
+        assert_eq!(stepped_zoom(1.2, false), 1.0);
     }
 
     #[test]
