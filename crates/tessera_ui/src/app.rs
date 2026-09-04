@@ -147,6 +147,9 @@ pub struct TesseraApp {
     /// When the crash-recovery copy was last written.
     pub recovery: crate::recovery::Recovery,
 
+    /// The command palette's own state.
+    pub palette: crate::view::palette::Palette,
+
     /// What the application remembers between runs.
     ///
     /// Defaults here rather than being read from disk, because `headless` is
@@ -175,6 +178,7 @@ impl TesseraApp {
             status: None,
             clipboard: Vec::new(),
             recovery: crate::recovery::Recovery::default(),
+            palette: crate::view::palette::Palette::default(),
             prefs: crate::prefs::Preferences::default(),
         }
     }

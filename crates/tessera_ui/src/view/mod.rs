@@ -6,6 +6,7 @@
 //! `Ui`, so the whole window is one tree.
 
 pub mod canvas_toolbar;
+pub mod palette;
 pub mod panels;
 pub mod rulers;
 pub mod text_edit;
@@ -26,6 +27,9 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     accelerators(ui, state);
 
     Panel::top("menu").show(ui, |ui| menu_bar(ui, state));
+
+    // Above everything, so it can be reached from anywhere.
+    palette::show(ui, state);
 
     Panel::bottom("status")
         .exact_size(24.0)
@@ -79,158 +83,56 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
         });
 }
 
+/// The menu bar, built from the one action list.
+///
+/// A menu cannot carry a command the palette does not, or the other way
+/// round, because both read `actions::all()`. And a group with no actions
+/// gets no menu: **a menu entry for an unbuilt feature is the lie the previous
+/// codebase told often.**
 fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
+    use crate::actions::{self, Group};
+
+    // Menu order, not group order: Align sits inside Object and Tool inside
+    // View, so the bar has five menus rather than seven.
+    const MENUS: [&str; 4] = ["File", "Edit", "Object", "View"];
+
+    let mut chosen = None;
     egui::MenuBar::new().ui(ui, |ui| {
-        ui.menu_button("File", |ui| {
-            if ui.button("New").clicked() {
-                file_ops::new_document(state);
-                ui.close();
+        for menu in MENUS {
+            let mut groups = Group::ALL
+                .into_iter()
+                .filter(|g| g.menu() == menu)
+                .peekable();
+            if groups.peek().is_none() {
+                continue;
             }
-            if ui.button("Open...").clicked() {
-                file_ops::open(state);
-                ui.close();
-            }
-            ui.separator();
-            if ui.button("Save").clicked() {
-                file_ops::save(state);
-                ui.close();
-            }
-            if ui.button("Save As...").clicked() {
-                file_ops::save_as(state);
-                ui.close();
-            }
-            ui.separator();
-            if ui.button("Export PDF...").clicked() {
-                file_ops::export_pdf(state);
-                ui.close();
-            }
-            ui.separator();
-            if ui.button("Quit").clicked() {
-                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-        });
-
-        ui.menu_button("Edit", |ui| {
-            let can_undo = state.active().history.can_undo();
-            let can_redo = state.active().history.can_redo();
-            if ui
-                .add_enabled(can_undo, egui::Button::new("Undo"))
-                .clicked()
-            {
-                apply(state, Command::Undo);
-                ui.close();
-            }
-            if ui
-                .add_enabled(can_redo, egui::Button::new("Redo"))
-                .clicked()
-            {
-                apply(state, Command::Redo);
-                ui.close();
-            }
-
-            ui.separator();
-
-            let has_selection = !state.active().selection.is_empty();
-            let can_paste = !state.clipboard.is_empty();
-
-            if ui
-                .add_enabled(has_selection, egui::Button::new("Cut"))
-                .clicked()
-            {
-                apply(state, Command::CutSelection);
-                ui.close();
-            }
-            if ui
-                .add_enabled(has_selection, egui::Button::new("Copy"))
-                .clicked()
-            {
-                apply(state, Command::CopySelection);
-                ui.close();
-            }
-            if ui
-                .add_enabled(can_paste, egui::Button::new("Paste"))
-                .clicked()
-            {
-                apply(state, Command::Paste);
-                ui.close();
-            }
-            if ui
-                .add_enabled(has_selection, egui::Button::new("Duplicate"))
-                .clicked()
-            {
-                apply(state, Command::DuplicateSelection);
-                ui.close();
-            }
-
-            if ui.button("Select All").clicked() {
-                state.active_mut().select_all();
-                ui.close();
-            }
-
-            ui.separator();
-
-            if ui
-                .add_enabled(has_selection, egui::Button::new("Delete"))
-                .clicked()
-            {
-                apply(state, Command::DeleteSelection);
-                ui.close();
-            }
-        });
-
-        ui.menu_button("Object", |ui| {
-            let has_selection = !state.active().selection.is_empty();
-
-            let is_group = state
-                .active()
-                .selection
-                .single()
-                .and_then(|id| state.active().document().frame(id))
-                .is_some_and(|f| matches!(f.kind, tessera_document::nodes::FrameKind::Group(_)));
-
-            if ui
-                .add_enabled(
-                    state.active().selection.len() >= 2,
-                    egui::Button::new("Group"),
-                )
-                .clicked()
-            {
-                apply(state, Command::GroupSelection);
-                ui.close();
-            }
-            if ui
-                .add_enabled(is_group, egui::Button::new("Ungroup"))
-                .clicked()
-            {
-                apply(state, Command::UngroupSelection);
-                ui.close();
-            }
-
-            ui.separator();
-
-            for (label, how) in [
-                ("Bring to Front", ZMove::ToFront),
-                ("Bring Forward", ZMove::Forward),
-                ("Send Backward", ZMove::Backward),
-                ("Send to Back", ZMove::ToBack),
-            ] {
-                if ui
-                    .add_enabled(has_selection, egui::Button::new(label))
-                    .clicked()
-                {
-                    apply(state, Command::MoveSelectionInZ(how));
-                    ui.close();
+            ui.menu_button(menu, |ui| {
+                let mut first = true;
+                for group in Group::ALL.into_iter().filter(|g| g.menu() == menu) {
+                    if !first {
+                        ui.separator();
+                    }
+                    first = false;
+                    for action in actions::all().iter().filter(|a| a.group == group) {
+                        let label = match action.shortcut {
+                            Some(s) => format!("{}	{}", action.name, s),
+                            None => action.name.to_string(),
+                        };
+                        if ui.button(label).clicked() {
+                            chosen = Some(action.run);
+                            ui.close();
+                        }
+                    }
                 }
-            }
-        });
+            });
+        }
     });
+
+    if let Some(run) = chosen {
+        actions::run(state, run);
+    }
 }
 
-/// Keyboard accelerators.
-///
-/// All use modifiers, so they cannot double-fire with the plain-key tool
-/// shortcuts the viewport handles. `consume_key` takes the event, so a
-/// shortcut never also reaches the canvas as text.
 fn accelerators(ui: &Ui, state: &mut TesseraApp) {
     let cmd = egui::Modifiers::COMMAND;
     let cmd_shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;

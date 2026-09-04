@@ -134,6 +134,16 @@ pub enum Command {
         index: usize,
     },
 
+    /// Flip every selected frame about the reference point.
+    FlipSelection {
+        horizontal: bool,
+        vertical: bool,
+    },
+    /// Turn every selected frame a quarter turn about the reference point.
+    RotateSelection90 {
+        clockwise: bool,
+    },
+
     Undo,
     Redo,
 }
@@ -571,6 +581,44 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 .remove_guide(spread, index);
         }
 
+        Command::FlipSelection {
+            horizontal,
+            vertical,
+        } => {
+            let anchor = state.anchor;
+            for id in state.active().selection.as_slice().to_vec() {
+                apply(
+                    state,
+                    Command::TransformAbout {
+                        id,
+                        anchor,
+                        scale: (
+                            if horizontal { -1.0 } else { 1.0 },
+                            if vertical { -1.0 } else { 1.0 },
+                        ),
+                        rotate: 0.0,
+                        shear: 0.0,
+                    },
+                );
+            }
+        }
+
+        Command::RotateSelection90 { clockwise } => {
+            let anchor = state.anchor;
+            for id in state.active().selection.as_slice().to_vec() {
+                apply(
+                    state,
+                    Command::TransformAbout {
+                        id,
+                        anchor,
+                        scale: (1.0, 1.0),
+                        rotate: if clockwise { 90.0 } else { -90.0 },
+                        shear: 0.0,
+                    },
+                );
+            }
+        }
+
         Command::Undo => {
             if let Some(previous) = state.active_mut().undo() {
                 restore(state, previous);
@@ -642,6 +690,67 @@ fn duplicate_one(state: &mut TesseraApp, id: FrameId) -> Option<FrameId> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn flipping_twice_returns_the_selection_to_where_it_was() {
+        let mut state = TesseraApp::headless();
+        let id = placed_rect(&mut state);
+        let before = state
+            .active()
+            .document()
+            .frame(id)
+            .expect("frame")
+            .corners();
+
+        for _ in 0..2 {
+            apply(
+                &mut state,
+                Command::FlipSelection {
+                    horizontal: true,
+                    vertical: false,
+                },
+            );
+        }
+
+        let after = state
+            .active()
+            .document()
+            .frame(id)
+            .expect("frame")
+            .corners();
+        for (a, b) in before.iter().zip(after.iter()) {
+            assert!((a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn four_quarter_turns_return_the_selection_to_where_it_was() {
+        let mut state = TesseraApp::headless();
+        let id = placed_rect(&mut state);
+        let before = state
+            .active()
+            .document()
+            .frame(id)
+            .expect("frame")
+            .corners();
+
+        for _ in 0..4 {
+            apply(&mut state, Command::RotateSelection90 { clockwise: true });
+        }
+
+        let after = state
+            .active()
+            .document()
+            .frame(id)
+            .expect("frame")
+            .corners();
+        for (a, b) in before.iter().zip(after.iter()) {
+            assert!(
+                (a.x - b.x).abs() < 1e-6 && (a.y - b.y).abs() < 1e-6,
+                "{a:?} vs {b:?}"
+            );
+        }
+    }
+
     use tessera_document::nodes::Guide;
 
     fn only_spread(state: &TesseraApp) -> tessera_document::ids::SpreadId {
