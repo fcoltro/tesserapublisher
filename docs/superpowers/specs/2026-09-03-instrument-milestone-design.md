@@ -219,15 +219,38 @@ Stated as invariants to be tested, not as aspirations.
 
 ## 7. The constraint that defines the milestone
 
-**No format version bump.** Every item above is one of three things: view
-state (reference point, screen mode, selection), an application preference
-(unit, theme), or a surface for a model field that already ships (`Stroke`,
-`Transform`'s full affine, `Color`'s CMYK and spot variants).
+**Revised 2026-09-03, after a sequencing review.** The original constraint was
+*no format version bump*, on the reasoning that a milestone which touched the
+model would drift into building chrome ahead of capability.
 
-If an item cannot be built without adding a field to `nodes.rs`, it does not
-belong to this milestone. This is the test that keeps the milestone honest and
-small, and it is what distinguishes it from building chrome ahead of
-capability.
+That constraint was wrong, and reviewing the ordering is what showed it.
+Deferring the page geometry pushed a foundation behind everything that stands
+on it — rulers, screen modes, align-to-page, `TrimBox` and `BleedBox`,
+preflight's out-of-bleed rule — and PDF export already ships without a bleed
+box. It also forced R2 below: a ruler that could not yield a guide, purely to
+avoid a bump.
+
+The constraint is now **one bump, batched, in a phase of its own**. A format
+version costs a migration test; page size, margins, bleed, slug, facing pages
+and guides delivered together cost one, and delivered separately cost five.
+
+The milestone therefore runs in three ordered phases:
+
+**Phase A — Foundations.** No UI, no format surface. Units, a preferences
+store, affine decomposition, anchor resolution, the open-document container,
+the command invariant, a performance harness, theme tokens, the icon cache,
+autosave. Everything here is small, pure and depended upon.
+
+**Phase B — The Page.** The single format bump: page geometry, facing pages,
+guides as data, `ColorRef`, a spread that renders as a spread, migration tests,
+the document inspector, and the PDF boxes.
+
+**Phase C — The Instrument.** The interface described in §4 and §5, built on
+both.
+
+The honesty test survives in a better form: **an item belongs to phase C only
+if phases A and B have already made it buildable.** Chrome ahead of capability
+is prevented by the ordering rather than by a prohibition.
 
 ## 8. Acceptance
 
@@ -275,12 +298,13 @@ it to place handles. Introducing shear makes that assumption false.
 beside it, migrate callers one at a time, and leave `rotation_degrees()`
 delegating until the last one has moved.
 
-**R2 — rulers without guides.** Guides are document data and would force the
-format bump §7 forbids. The ruler therefore measures and cannot yet yield a
-guide, which may read as broken. *Mitigation:* accepted deliberately, and
-recorded here rather than discovered later. Guides arrive in milestone 4. The
-alternative — deferring rulers wholesale — means shipping numeric fields with
-no unit selection and rebuilding them later.
+**R2 — rulers without guides. ~~Accepted~~ Dissolved 2026-09-03.** This risk
+existed only because §7 originally forbade a format bump, which left the ruler
+unable to yield a guide. Once the sequencing review moved page geometry into
+phase B, the bump was being paid anyway and guides rode along at no extra
+cost. Recorded rather than deleted, because a risk that disappears when a
+constraint is questioned is worth remembering as a pattern: **the risk was
+downstream of a self-imposed rule, not of the problem.**
 
 **R3 — two surfaces for transforms.** D2 splits verbs from nouns, but a user
 who does not perceive the split will look in the wrong place. *Mitigation:*

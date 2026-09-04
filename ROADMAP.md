@@ -61,6 +61,19 @@ Never "done" until shipping; re-checked at the close of every milestone.
   Re-checked each milestone rather than assumed. The previous codebase's most instructive defect was a clip
   rectangle that resolved to zero and disabled rendering without a word.
 - [x] **Tests land with the change**, in the same commit.
+- [ ] **Every mutation goes through `Command`.** No path in the interface takes
+  a mutable document directly. Undo integrity, the command palette and any
+  later scripting all rest on this holding, and it erodes silently — so it is
+  asserted by a test rather than by intention. *(Lands as milestone 1.5, A6.)*
+- [ ] **The application is operable from the keyboard alone**, and every
+  control carries an accessible name through egui's AccessKit support.
+  Retrofitting this costs many times what designing for it does, and a
+  publishing tool that a screen reader cannot describe is not finished.
+  Re-checked at the close of every milestone.
+- [ ] **Performance is measured, not asserted.** A benchmark over a 500-frame
+  document guards resolve and scene-build time, and the interactive frame
+  budget is 16.7 ms. A number nothing measures is a wish. *(Lands as
+  milestone 1.5, A7.)*
 
 ---
 
@@ -169,9 +182,10 @@ Making the skeleton pleasant to use. No new file-format surface area.
 
 ---
 
-# Milestone 1.5 — The Instrument
+# Milestone 1.5 — The Foundation and the Instrument
 
-**The missing surface for capability that already shipped.**
+**Three ordered phases. The invisible things first, the page second, the
+interface last.**
 
 > Prompted by reading an InDesign screenshot against the codebase on
 > 2026-09-03. Design:
@@ -184,8 +198,17 @@ and stops.
 
 This does not break the rule that defers the workspace to milestone 7. That
 rule forbids chrome *ahead of* capability. This is the surface for capability
-already finished, and its defining constraint is that **it adds no field to
-`nodes.rs` and bumps no format version.** Anything that would is not in it.
+already finished.
+
+**The phases are strictly ordered.** Phase A builds the things that have no
+UI and no file-format surface, and that half of everything below depends on.
+Phase B makes the page a real page — the single format version bump of this
+milestone, batched deliberately because each bump costs a migration test and
+five scattered bumps cost five. Phase C is the interface, which cannot be
+built well before either.
+
+Every task lands with its tests in one commit. A task that cannot is too big
+and gets split.
 
 ### Acceptance
 
@@ -197,32 +220,115 @@ already finished, and its defining constraint is that **it adds no field to
 > one key. Select three objects and align their left edges from the toolbar
 > beside them. Shear one. Press `Ctrl`+`K`, type "flip", and flip it. Read its
 > position off a ruler in millimetres, switch the ruler to picas, and watch
-> every field in the application follow. Press `W` and see the handles, frame
-> edges and rulers go, leaving the page on a neutral surround; press it again
-> and get them back. Switch to the light theme and read every label.
+> every field in the application follow. Drag a guide off that ruler and align
+> the object to the page margin. Give the document a 3 mm bleed and see it
+> drawn. Press `W` and see the handles, frame edges, guides and rulers go,
+> leaving the page on a neutral surround; press it again and get them back.
+> Switch to the light theme and read every label. Save, quit, reopen, and find
+> the page setup and the guide exactly as they were left. Force-quit instead,
+> relaunch, and be offered the recovered document.
 
-- [ ] Inspector with a **stable section order** — Transform, Fill, Stroke,
-  Text, Frame — where an inapplicable section hides without the others moving.
-- [ ] Reference-point proxy, with the chosen anchor drawn on the selection.
-- [ ] Constrain-proportions chain; scale as a percentage; shear.
-- [ ] **Stroke controls**: weight, style, alignment, cap, join, colour.
-- [ ] Fill and stroke proxy, with swap, defaults and none.
-- [ ] Canvas toolbar beside the selection: align, distribute, flip, rotate 90°.
-- [ ] **Command palette** over the existing `Command` enum, showing shortcuts.
-- [ ] Numeric fields parse unit suffixes; no unit mode.
-- [ ] Rulers with unit selection and a zero-point widget. *They measure only —
-  guides are document data and arrive in milestone 4.*
-- [ ] Screen modes Normal and Preview. *Bleed and slug need milestone 3.*
-- [ ] Status bar: zoom control and page navigator.
-- [ ] Layout, Type, View and Window menus, carrying only commands that exist.
-- [ ] Icon set grown to roughly 60 Lucide glyphs, parsed once and cached.
-- [ ] Light theme alongside dark, with WCAG AA contrast asserted by a test.
-- [ ] Scene rebuild keyed on `(revision, view)`; no repaint on a timer.
+## Phase A — Foundations
 
-**Explicitly not in M1.5:** anything needing a model field. Corner radius,
-opacity, effects, object styles, gradients, swatches, text wrap, frame
-fitting, text-frame options, links, parent pages, guides, snapping, the layers
-panel, dockable panels.
+Nothing here appears on screen and nothing here touches the file format. Each
+task is a small, pure, independently testable piece that later work stands on.
+Built first because retrofitting any of them is many times the cost.
+
+- [ ] **A1 — Units.** A `Unit` type over mm, pt, px, inches and picas, with
+  parsing (`12mm`, `1p6`, `.5in`), formatting and conversion. Property-tested
+  round-trips. Every numeric field in the application depends on it.
+- [ ] **A2 — Preferences store.** A versioned struct written through
+  `tessera_io::write_atomic` to the platform config directory, defaulting
+  cleanly when absent and **reporting** — never swallowing — a corrupt one.
+  First consumers: the preferred unit and the theme.
+- [ ] **A3 — Affine decomposition.** `Transform::decompose()` into scale,
+  shear, rotation and translation, with a recompose property test. Callers of
+  `rotation_degrees()` migrate off its no-shear assumption one at a time.
+  Unblocks shear, scale-as-percentage and the reference point.
+- [ ] **A4 — Anchor resolution.** The nine-point anchor as a type, and the
+  resolution of scale, rotation and flip about it. Pure geometry, no UI.
+- [ ] **A5 — The open-document container.** `TesseraApp` holds `document`,
+  `history`, `resolved`, `view` and `selection` as flat fields; all five are
+  per-document. They move into an `OpenDocument`, with the application holding
+  a map and an active id. **One document is still open at a time** — the tabs
+  are milestone 7. Done now because this refactor widens with every milestone.
+- [ ] **A6 — The command invariant.** Every mutation routes through the
+  `Command` enum, asserted by a test that no path in the UI takes a mutable
+  document directly. Undo integrity, the command palette and any future
+  scripting all rest on this holding.
+- [ ] **A7 — Performance harness.** A benchmark that builds a 500-frame
+  document and measures resolve and scene build, with a regression assertion.
+  *The 16.7 ms budget in the spec is a wish until something measures it.*
+- [ ] **A8 — Theme tokens, light and dark**, with a test asserting WCAG AA
+  contrast for every foreground-on-background pair rather than checking by eye.
+- [ ] **A9 — Icon cache.** Lucide paths parse to `BezPath` once and are cached
+  by `Icon`, instead of being re-parsed on every paint.
+- [ ] **A10 — Autosave and crash recovery.** A periodic atomic write to a
+  recovery path, detected and offered on the next launch. Data safety belongs
+  with the cross-cutting rules, not at milestone 7.
+
+## Phase B — The Page
+
+**One format version bump, one migration test, all of the page geometry at
+once.** Moved here out of milestone 3 because rulers, screen modes,
+align-to-page, `TrimBox` and `BleedBox`, and preflight's out-of-bleed rule all
+stand on it — and because PDF export already ships without a bleed box.
+
+- [ ] **B1 — Page geometry.** Size, orientation and presets; margins; bleed;
+  slug.
+- [ ] **B2 — Facing pages.** The flag, and correct left/right spread geometry.
+- [ ] **B3 — Guides as document data.** A guide is an axis, a position and a
+  spread. Landing here rather than at milestone 4 costs nothing extra, because
+  the format bump is already being paid — and it is what lets phase C's rulers
+  actually yield a guide.
+- [ ] **B4 — `ColorRef::{ Direct, Swatch }`.** The indirection between an
+  object and a named colour, reserved now with only `Direct` constructible.
+  Swatches arrive at milestone 5; adding the indirection then would mean
+  migrating every fill and every stroke in every saved document. *This is the
+  one deliberately speculative item in the milestone, and it is speculative
+  only in the sense that milestone 5 is already written down.*
+- [ ] **B5 — A spread renders as a spread.** `build_scene` takes one page
+  today. Margins, bleed and slug are drawn.
+- [ ] **B6 — Format version 3**, with migration tests from version 2 and from
+  a hand-built version 1.
+- [ ] **B7 — Document setup inspector**, the "no selection" state: preset,
+  size, orientation, facing pages, margins, bleed, slug.
+- [ ] **B8 — `TrimBox` and `BleedBox` in the PDF.** Exporting a document that
+  has a bleed and not recording it discards the user's intent silently, which
+  the cross-cutting rules forbid. PDF/X proper remains milestone 6.
+
+## Phase C — The Instrument
+
+The interface, built last, on foundations that now exist.
+
+- [ ] **C1 — Inspector shell** with a stable section order — Transform, Fill,
+  Stroke, Text, Frame — where an inapplicable section hides without the others
+  moving up to fill the gap.
+- [ ] **C2 — Reference-point proxy**, with the chosen anchor also drawn on the
+  selection itself (A4).
+- [ ] **C3 — Numeric fields**: unit parsing (A1), constrain-proportions chain,
+  scale as a percentage, shear (A3).
+- [ ] **C4 — Stroke section**: weight, style, alignment, cap, join, colour —
+  the shipped model, reachable at last.
+- [ ] **C5 — Fill and stroke proxy**, with swap, defaults and none.
+- [ ] **C6 — Align and distribute**, to the selection, the margins, the page
+  and the spread (B1).
+- [ ] **C7 — Canvas toolbar**: align, distribute, flip, rotate 90°. Spatial
+  verbs beside the object; values stay in the rail.
+- [ ] **C8 — Rulers**, with a unit selector and a zero-point widget — and
+  dragging one out yields a guide (B3).
+- [ ] **C9 — Screen modes**: Normal, Preview, Bleed and Slug, all four (B1).
+- [ ] **C10 — Status bar**: zoom control and page navigator.
+- [ ] **C11 — Command palette** over the `Command` enum (A6), showing each
+  command's shortcut beside it.
+- [ ] **C12 — Layout, Type, View and Window menus**, carrying only commands
+  that exist.
+- [ ] **C13 — Icon set** grown to roughly 60 Lucide glyphs (A9).
+
+**Explicitly not in M1.5:** corner radius, opacity, effects, object styles,
+gradients, the swatches panel, text wrap, frame fitting, text-frame options,
+image links, parent pages, the pages panel, the layers panel, snapping,
+dockable panels, document tabs.
 
 ---
 
@@ -265,15 +371,18 @@ The reason a layout tool is not a drawing tool.
 - [ ] Add, delete and duplicate pages — **all undoable.** (The previous
   implementation never made add or remove page undoable, because no inverse
   was ever written. D5's snapshot undo removes that failure mode.)
-- [ ] Facing-page spreads with correct left/right geometry.
+- [ ] Facing-page spreads with correct left/right geometry. → **moved to
+  milestone 1.5, phase B**, along with page size, margins, bleed, slug, and a
+  spread that renders as a spread. Tracked there, not here.
 - [ ] Master pages, applied by drag, rendered behind page content.
 - [ ] Master item override, promoting one item to a local editable copy.
 - [ ] Layers panel: named layers, reorder, visibility, lock.
-- [ ] Document setup: page size, orientation, margins, bleed, slug.
-- [ ] **A spread renders as a spread.** `build_scene` takes one page today, so
-  facing pages cannot be drawn side by side however the model stores them.
-- [ ] Screen modes **Bleed** and **Slug**, which need the geometry above.
-  (Normal and Preview ship in milestone 1.5.)
+- [ ] Document setup: page size, orientation, margins, bleed, slug. → **moved
+  to milestone 1.5, phase B.** Too much stands on it to leave it this late:
+  rulers, screen modes, align-to-page, `TrimBox` and `BleedBox`, and
+  preflight's out-of-bleed rule. Per-page size overrides stay here.
+- [ ] Screen modes Bleed and Slug → **moved to milestone 1.5, phase C**, since
+  phase B supplies the geometry they need.
 
 ---
 
@@ -287,8 +396,12 @@ The reason a layout tool is not a drawing tool.
 > across two pages, resize the first, and watch the text reflow through the
 > chain. See the connector lines between linked frames when one is selected.
 
-- [ ] Rulers with unit selection (mm, pt, px, in, picas).
-- [ ] Ruler guides, margin guides, column guides.
+- [ ] Rulers with unit selection (mm, pt, px, in, picas) → **moved to
+  milestone 1.5**: the unit type to phase A, the ruler to phase C.
+- [ ] Ruler guides → **moved to milestone 1.5**: the data to phase B, the
+  drag-out to phase C. They rode along free on a format bump that was being
+  paid anyway. Margin guides are drawn by phase B; **column guides stay here**,
+  because columns are text-frame geometry that phase B does not model.
 - [ ] Snapping solver with a pixel-threshold lock and visible indicators.
 - [ ] Baseline grid with a per-frame lock toggle.
 - [ ] Multi-column text frames with gutter control, **frame inset, and
@@ -387,10 +500,14 @@ milestone the layout is fixed: a tool strip, one inspector, and the canvas.
 - [ ] Named workspaces, saved and restored, with presets.
 - [ ] Full menu bar with accelerators.
 - [ ] A keyboard shortcut for every common command, user-remappable.
-- [ ] Theme tokens complete; light and dark both finished.
-- [ ] Multiple open documents.
-- [ ] Preferences dialog.
-- [ ] Autosave and crash recovery, surfaced on relaunch.
+- [ ] Theme tokens complete; light and dark both finished → **moved to
+  milestone 1.5, phase A**, with contrast asserted by a test.
+- [ ] Preferences dialog. *The store itself lands in milestone 1.5 phase A,
+  because phase A introduces two preferences and they need somewhere to live.*
+- [ ] Autosave and crash recovery → **moved to milestone 1.5, phase A.** Data
+  safety belongs with the cross-cutting rules, not eight milestones away.
+- [ ] Multiple open documents. *The structure lands in milestone 1.5 phase A;
+  what remains here is the tab bar and switching between them.*
 
 ---
 
