@@ -339,6 +339,30 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
         apply(state, Command::DeleteSelection);
     }
 
+    // The fill and stroke proxy's three keys. Unmodified, so they sit here
+    // rather than in `accelerators` — below the editing guard above, which is
+    // what stops typing the letter `x` into a caption swapping the frame's
+    // colours.
+    if let Some(id) = state.active().selection.single() {
+        let (swap, default, none) = ui.input(|i| {
+            let plain = i.modifiers.is_none();
+            (
+                plain && i.key_pressed(egui::Key::X),
+                plain && i.key_pressed(egui::Key::D),
+                plain && i.key_pressed(egui::Key::Slash),
+            )
+        });
+        if swap {
+            apply(state, Command::SwapFillAndStroke(id));
+        }
+        if default {
+            apply(state, Command::DefaultFillAndStroke(id));
+        }
+        if none {
+            apply(state, Command::ClearFill(id));
+        }
+    }
+
     camera_input(ui, response, rect, state);
 
     if ui.input(|i| i.key_down(egui::Key::Space)) {

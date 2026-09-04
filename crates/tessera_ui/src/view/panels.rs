@@ -125,6 +125,8 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
         return;
     };
 
+    fill_stroke_proxy(ui, state, id, &frame);
+
     for section in Section::ALL {
         if !section.applies_to(&frame) {
             continue;
@@ -139,6 +141,81 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
             Section::Frame => frame_section(ui, &frame),
         }
     }
+}
+
+/// The fill and stroke proxy: two overlapping swatches with their three keys.
+///
+/// The arrangement every drawing tool since MacDraw has used, and the one
+/// place InDesign's design is worth copying exactly — a shape so familiar that
+/// it needs no label.
+fn fill_stroke_proxy(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::FrameId,
+    frame: &tessera_document::nodes::Frame,
+) {
+    const SWATCH: f32 = 26.0;
+    const OFFSET: f32 = 10.0;
+
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(SWATCH + OFFSET + 60.0, SWATCH + OFFSET),
+        Sense::hover(),
+    );
+    let painter = ui.painter();
+
+    let to_colour = |c: &Color| {
+        let [r, g, b, a] = c.to_rgb_f32();
+        egui::Color32::from_rgba_unmultiplied(
+            (r * 255.0) as u8,
+            (g * 255.0) as u8,
+            (b * 255.0) as u8,
+            (a * 255.0) as u8,
+        )
+    };
+
+    // Stroke behind, fill in front — the stroke's swatch is a ring, so the
+    // fill sitting over it still shows both.
+    let stroke_rect =
+        egui::Rect::from_min_size(rect.min + Vec2::splat(OFFSET), Vec2::splat(SWATCH));
+    let fill_rect = egui::Rect::from_min_size(rect.min, Vec2::splat(SWATCH));
+
+    let stroke_colour = frame
+        .stroke
+        .as_ref()
+        .map_or(Theme::PANEL_BG, |s| to_colour(&s.color));
+    painter.rect_filled(stroke_rect, 2.0, stroke_colour);
+    painter.rect_filled(stroke_rect.shrink(6.0), 1.0, Theme::PANEL_BG);
+    painter.rect_stroke(
+        stroke_rect,
+        2.0,
+        egui::Stroke::new(1.0, Theme::BORDER),
+        egui::StrokeKind::Inside,
+    );
+
+    painter.rect_filled(fill_rect, 2.0, to_colour(&frame.fill));
+    painter.rect_stroke(
+        fill_rect,
+        2.0,
+        egui::Stroke::new(1.0, Theme::BORDER),
+        egui::StrokeKind::Inside,
+    );
+
+    ui.horizontal(|ui| {
+        if ui
+            .small_button("⇄")
+            .on_hover_text("Swap fill and stroke (X)")
+            .clicked()
+        {
+            apply(state, Command::SwapFillAndStroke(id));
+        }
+        if ui.small_button("◼").on_hover_text("Defaults (D)").clicked() {
+            apply(state, Command::DefaultFillAndStroke(id));
+        }
+        if ui.small_button("∅").on_hover_text("No fill (/)").clicked() {
+            apply(state, Command::ClearFill(id));
+        }
+    });
+    ui.add_space(Theme::SPACING_SM);
 }
 
 /// The nine-point reference proxy.

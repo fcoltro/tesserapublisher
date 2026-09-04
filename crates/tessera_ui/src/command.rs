@@ -101,6 +101,17 @@ pub enum Command {
         shear: f64,
     },
 
+    /// Exchange a frame's fill colour with its stroke colour.
+    SwapFillAndStroke(FrameId),
+    /// Black fill, no stroke — what a new shape starts as.
+    DefaultFillAndStroke(FrameId),
+    /// Make the fill transparent.
+    ///
+    /// The model has no "no fill": a frame's fill is a `Color`. A zero alpha
+    /// is the honest representation of none within that, and it is what the
+    /// renderer and the PDF writer both already draw as nothing.
+    ClearFill(FrameId),
+
     Undo,
     Redo,
 }
@@ -411,6 +422,45 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             }
         }
 
+        Command::SwapFillAndStroke(id) => {
+            let Some(frame) = state.active().document().frame(id).cloned() else {
+                return;
+            };
+            let fill = frame.fill.clone();
+            let (new_fill, new_stroke) = match frame.stroke {
+                Some(mut stroke) => {
+                    let was = stroke.color.clone();
+                    stroke.color = fill;
+                    (was, Some(stroke))
+                }
+                // With no stroke to swap with, the fill becomes one rather
+                // than being discarded — a swap that silently deleted a
+                // colour would be worse than one that had no effect.
+                None => (
+                    Color::BLACK,
+                    Some(tessera_document::nodes::Stroke::new(fill, 1.0)),
+                ),
+            };
+            if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
+                f.fill = new_fill;
+                f.stroke = new_stroke;
+            }
+        }
+
+        Command::DefaultFillAndStroke(id) => {
+            if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
+                f.fill = Color::BLACK;
+                f.stroke = None;
+            }
+        }
+
+        Command::ClearFill(id) => {
+            if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
+                let [r, g, b, _] = f.fill.to_rgb_f32();
+                f.fill = Color::Rgb { r, g, b, a: 0.0 };
+            }
+        }
+
         Command::Undo => {
             if let Some(previous) = state.active_mut().undo() {
                 restore(state, previous);
@@ -482,6 +532,104 @@ fn duplicate_one(state: &mut TesseraApp, id: FrameId) -> Option<FrameId> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn swapping_exchanges_the_fill_and_the_stroke_colour() {
+        let mut state = TesseraApp::headless();
+        let id = one_rect(&mut state);
+        apply(
+            &mut state,
+            Command::SetFill {
+                id,
+                color: Color::WHITE,
+            },
+        );
+        apply(
+            &mut state,
+            Command::SetStroke {
+                id,
+                stroke: Some(Stroke::new(Color::BLACK, 2.0)),
+            },
+        );
+
+        apply(&mut state, Command::SwapFillAndStroke(id));
+
+        let frame = state.active().document().frame(id).expect("frame").clone();
+        assert_eq!(frame.fill, Color::BLACK);
+        let stroke = frame.stroke.expect("still stroked");
+        assert_eq!(stroke.color, Color::WHITE);
+        assert_eq!(stroke.width, 2.0, "the stroke keeps its width");
+    }
+
+    #[test]
+    fn swapping_a_shape_with_no_stroke_gives_it_one() {
+        // Otherwise the swap silently discards the fill colour.
+        let mut state = TesseraApp::headless();
+        let id = one_rect(&mut state);
+        apply(
+            &mut state,
+            Command::SetFill {
+                id,
+                color: Color::WHITE,
+            },
+        );
+
+        apply(&mut state, Command::SwapFillAndStroke(id));
+
+        let frame = state.active().document().frame(id).expect("frame").clone();
+        let stroke = frame.stroke.expect("the fill became a stroke");
+        assert_eq!(stroke.color, Color::WHITE);
+    }
+
+    #[test]
+    fn defaults_are_a_black_fill_and_no_stroke() {
+        let mut state = TesseraApp::headless();
+        let id = one_rect(&mut state);
+        apply(
+            &mut state,
+            Command::SetStroke {
+                id,
+                stroke: Some(Stroke::new(Color::WHITE, 5.0)),
+            },
+        );
+
+        apply(&mut state, Command::DefaultFillAndStroke(id));
+
+        let frame = state.active().document().frame(id).expect("frame").clone();
+        assert_eq!(frame.fill, Color::BLACK);
+        assert!(frame.stroke.is_none());
+    }
+
+    #[test]
+    fn clearing_the_fill_keeps_the_hue_and_drops_the_alpha() {
+        // So that turning a fill off and on again does not lose the colour.
+        let mut state = TesseraApp::headless();
+        let id = one_rect(&mut state);
+        apply(
+            &mut state,
+            Command::SetFill {
+                id,
+                color: Color::Rgb {
+                    r: 0.2,
+                    g: 0.4,
+                    b: 0.6,
+                    a: 1.0,
+                },
+            },
+        );
+
+        apply(&mut state, Command::ClearFill(id));
+
+        let [r, g, b, a] = state
+            .active()
+            .document()
+            .frame(id)
+            .expect("frame")
+            .fill
+            .to_rgb_f32();
+        assert_eq!(a, 0.0, "invisible");
+        assert!((r - 0.2).abs() < 1e-6 && (g - 0.4).abs() < 1e-6 && (b - 0.6).abs() < 1e-6);
+    }
+
     use tessera_geometry::Anchor;
 
     fn placed_rect(state: &mut TesseraApp) -> FrameId {
