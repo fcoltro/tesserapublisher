@@ -5,7 +5,7 @@ use slotmap::SlotMap;
 use tessera_geometry::{DocPoint, DocRect, Transform};
 
 use crate::ids::{FrameId, LayerId, PageId, SpreadId, StoryId};
-use crate::nodes::{DocumentSetup, Frame, FrameKind, Layer, Page, PageSide, Spread};
+use crate::nodes::{DocumentSetup, Frame, FrameKind, Guide, Layer, Page, PageSide, Spread};
 use tessera_text::story::Story;
 
 /// Stories are addressed by id and live at the document level, so a threaded
@@ -81,7 +81,10 @@ impl Document {
             bounds: DEFAULT_PAGE,
             layers: vec![layer],
         });
-        let spread = doc.spreads.insert(Spread { pages: vec![page] });
+        let spread = doc.spreads.insert(Spread {
+            pages: vec![page],
+            guides: Vec::new(),
+        });
         doc.spread_order.push(spread);
 
         doc
@@ -172,6 +175,29 @@ impl Document {
         }
         self.revision += 1;
         page
+    }
+
+    pub fn guides_of(&self, spread: SpreadId) -> &[Guide] {
+        self.spreads
+            .get(spread)
+            .map_or(&[], |s| s.guides.as_slice())
+    }
+
+    pub fn add_guide(&mut self, spread: SpreadId, guide: Guide) {
+        if let Some(s) = self.spreads.get_mut(spread) {
+            s.guides.push(guide);
+            self.revision += 1;
+        }
+    }
+
+    pub fn remove_guide(&mut self, spread: SpreadId, index: usize) -> Option<Guide> {
+        let s = self.spreads.get_mut(spread)?;
+        if index >= s.guides.len() {
+            return None;
+        }
+        let removed = s.guides.remove(index);
+        self.revision += 1;
+        Some(removed)
     }
 
     /// The type area: the page inset by its margins.
@@ -787,7 +813,59 @@ fn outset_each(rect: DocRect, top: f64, bottom: f64, left: f64, right: f64) -> D
 
 #[cfg(test)]
 mod tests {
-    use crate::nodes::{Insets, Margins, PageSide};
+    use crate::nodes::{Axis, Guide, Insets, Margins, PageSide};
+
+    fn guide(position: f64) -> Guide {
+        Guide {
+            axis: Axis::Vertical,
+            position,
+            locked: false,
+        }
+    }
+
+    #[test]
+    fn a_guide_added_to_a_spread_can_be_read_back() {
+        let mut doc = super::Document::new();
+        let spread = doc.spread_ids().next().expect("a spread");
+        doc.add_guide(spread, guide(120.0));
+
+        let guides = doc.guides_of(spread);
+        assert_eq!(guides.len(), 1);
+        assert_eq!(guides[0].position, 120.0);
+        assert_eq!(guides[0].axis, Axis::Vertical);
+    }
+
+    #[test]
+    fn adding_a_guide_moves_the_revision_so_the_canvas_redraws() {
+        let mut doc = super::Document::new();
+        let spread = doc.spread_ids().next().expect("a spread");
+        let before = doc.revision();
+        doc.add_guide(spread, guide(40.0));
+        assert_ne!(doc.revision(), before);
+    }
+
+    #[test]
+    fn removing_a_guide_returns_it_and_leaves_the_rest() {
+        let mut doc = super::Document::new();
+        let spread = doc.spread_ids().next().expect("a spread");
+        for position in [10.0, 20.0, 30.0] {
+            doc.add_guide(spread, guide(position));
+        }
+        let removed = doc.remove_guide(spread, 1).expect("the middle one");
+        assert_eq!(removed.position, 20.0);
+        assert_eq!(
+            doc.guides_of(spread).iter().map(|g| g.position).collect::<Vec<_>>(),
+            vec![10.0, 30.0]
+        );
+    }
+
+    #[test]
+    fn removing_a_guide_that_is_not_there_returns_nothing() {
+        let mut doc = super::Document::new();
+        let spread = doc.spread_ids().next().expect("a spread");
+        assert!(doc.remove_guide(spread, 7).is_none());
+    }
+
 
     #[test]
     fn a_page_has_no_side_when_pages_do_not_face() {

@@ -291,9 +291,33 @@ pub struct Page {
     pub layers: Vec<LayerId>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Axis {
+    Horizontal,
+    Vertical,
+}
+
+/// A ruler guide, in spread coordinates.
+///
+/// On the spread rather than on a page. InDesign has both, and the difference
+/// only bites once pages within a spread can move independently — which is
+/// milestone 3's concern. One kind now beats two kinds guessed at.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Guide {
+    pub axis: Axis,
+    /// Where it sits along the axis it cuts across: an `x` for a vertical
+    /// guide, a `y` for a horizontal one.
+    pub position: f64,
+    pub locked: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Spread {
     pub pages: Vec<PageId>,
+    /// `serde(default)` so a document written before guides existed loads
+    /// with none, which is the truth about it.
+    #[serde(default)]
+    pub guides: Vec<Guide>,
 }
 
 #[cfg(test)]
