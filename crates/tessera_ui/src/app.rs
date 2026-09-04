@@ -1,18 +1,13 @@
 //! Application state.
 
-use std::path::PathBuf;
-
 use tessera_document::document::Document;
-use tessera_document::history::History;
-use tessera_document::ids::{FrameId, LayerId};
-use tessera_geometry::{DocRect, ViewTransform};
+use tessera_document::ids::LayerId;
+use tessera_geometry::DocRect;
 
-use tessera_text::edit::EditBuffer;
 use tessera_text::shape::Shaper;
 
+use crate::open_document::OpenDocument;
 use crate::tools::{Drag, Tool};
-
-const UNDO_LIMIT: usize = 200;
 
 /// A frame on the clipboard, with its text if it had any.
 ///
@@ -48,100 +43,105 @@ impl Status {
     }
 }
 
+slotmap::new_key_type! {
+    /// Which open document. A key rather than an index, so that closing one
+    /// document cannot silently renumber another.
+    pub struct DocumentKey;
+}
+
 /// Everything the application holds.
 ///
 /// Constructed with [`TesseraApp::headless`] in tests, so the command layer,
 /// the file operations and the milestone-0 acceptance path are all exercisable
 /// without a window.
 pub struct TesseraApp {
-    pub document: Document,
+    /// Every open document. One today; the tab bar is milestone 7.
+    pub documents: slotmap::SlotMap<DocumentKey, OpenDocument>,
+    pub active: DocumentKey,
 
-    pub history: History,
+    /// The font cache, shared by every document — which is the whole reason
+    /// it is here rather than in [`OpenDocument`].
     pub shaper: Shaper,
-    /// The resolved document, kept until the document itself changes.
-    ///
-    /// Resolving lays out every story, and the viewport needs the result on
-    /// every painted frame whether or not anything moved.
-    pub resolved: tessera_layout::cache::ResolveCache,
 
-    pub view: ViewTransform,
-    pub selection: crate::selection::Selection,
     pub active_tool: Tool,
     pub drag: Option<Drag>,
-    /// The frame being edited on canvas, and its live buffer.
-    pub editing: Option<(FrameId, EditBuffer)>,
-
-    pub current_path: Option<PathBuf>,
-    pub dirty: bool,
     pub status: Option<Status>,
 
-    /// Every copied frame, so cutting four objects pastes four.
+    /// Every copied frame, so cutting four objects pastes four. Shared, so
+    /// that a copy in one document pastes into another.
     pub clipboard: Vec<Clipboard>,
-    /// The pen tool's path under construction, if any.
-    pub pen: Option<crate::pen::PenPath>,
-    /// Where the pointer is while the pen is drawing, so the segment being
-    /// aimed at can be previewed before it is committed.
-    pub pen_cursor: Option<tessera_geometry::DocPoint>,
-
-    /// Set once the viewport has sized itself and fitted the page.
-    pub fitted: bool,
 }
 
 impl TesseraApp {
     /// Build the state with no windowing system involved.
     pub fn headless() -> Self {
-        Self {
-            document: Document::new(),
+        let mut documents = slotmap::SlotMap::with_key();
+        let active = documents.insert(OpenDocument::new());
 
-            history: History::new(UNDO_LIMIT),
+        Self {
+            documents,
+            active,
             shaper: Shaper::new(),
-            resolved: tessera_layout::cache::ResolveCache::default(),
-            view: ViewTransform::default(),
-            selection: crate::selection::Selection::default(),
             active_tool: Tool::Select,
             drag: None,
-            editing: None,
-            current_path: None,
-            dirty: false,
             status: None,
             clipboard: Vec::new(),
-            pen: None,
-            pen_cursor: None,
-            fitted: false,
         }
     }
 
+    /// The document being worked on.
+    pub fn active(&self) -> &OpenDocument {
+        &self.documents[self.active]
+    }
+
+    pub fn active_mut(&mut self) -> &mut OpenDocument {
+        &mut self.documents[self.active]
+    }
+
+    pub fn open_count(&self) -> usize {
+        self.documents.len()
+    }
+
+    /// Lay the active document out.
+    ///
+    /// Here rather than at the call sites because the document and the shaper
+    /// live on different structs, and splitting the borrow needs both fields
+    /// named in one place.
+    pub fn resolve_active(&mut self) -> &tessera_layout::ResolvedDocument {
+        let key = self.active;
+        self.documents[key].resolve(&mut self.shaper)
+    }
+
+    /// Lay the active document out afresh, ignoring the cache, and hand back
+    /// the result by value.
+    ///
+    /// Export needs an owned result: the cached form borrows `self`, and the
+    /// caller goes on to ask `self` for the page bounds.
+    pub fn resolve_uncached(&mut self) -> tessera_layout::ResolvedDocument {
+        let key = self.active;
+        tessera_layout::resolve::resolve(self.documents[key].document(), &mut self.shaper)
+    }
+
     pub fn default_layer(&self) -> LayerId {
-        self.document
+        self.active()
+            .document()
             .default_layer()
             .expect("a document always has at least one layer in milestone 0")
     }
 
     pub fn first_page_bounds(&self) -> DocRect {
-        self.document.first_page_bounds()
+        self.active().document().first_page_bounds()
     }
 
-    /// Replace the document wholesale, as open and undo do. Stories travel
-    /// inside the document, so nothing else needs replacing alongside it.
+    /// Replace the document wholesale, as open and undo do.
     pub fn replace_document(&mut self, document: Document) {
-        self.document = document;
-        self.selection.clear();
-        self.editing = None;
+        self.active_mut().replace_document(document);
         self.drag = None;
     }
 
     /// The window title, marking unsaved work with a leading asterisk.
     pub fn window_title(&self) -> String {
-        let name = self
-            .current_path
-            .as_ref()
-            .and_then(|p| p.file_name())
-            .map_or_else(|| "Untitled".to_string(), |n| n.to_string_lossy().into());
-        if self.dirty {
-            format!("*{name} - Tessera Publisher")
-        } else {
-            format!("{name} - Tessera Publisher")
-        }
+        format!("{} - Tessera Publisher", self.active().title())
     }
 }
 
@@ -158,22 +158,23 @@ mod tests {
     #[test]
     fn a_fresh_state_is_clean_and_untitled() {
         let app = TesseraApp::headless();
-        assert!(!app.dirty);
-        assert!(app.current_path.is_none());
+        assert!(!app.active().dirty);
+        assert!(app.active().current_path.is_none());
         assert_eq!(app.window_title(), "Untitled - Tessera Publisher");
     }
 
     #[test]
     fn an_unsaved_document_is_marked_in_the_title() {
         let mut app = TesseraApp::headless();
-        app.dirty = true;
+        app.active_mut().dirty = true;
         assert!(app.window_title().starts_with('*'));
     }
 
     #[test]
     fn a_saved_document_shows_its_file_name() {
+        use std::path::PathBuf;
         let mut app = TesseraApp::headless();
-        app.current_path = Some(PathBuf::from("/tmp/poster.tessera"));
+        app.active_mut().current_path = Some(PathBuf::from("/tmp/poster.tessera"));
         assert_eq!(app.window_title(), "poster.tessera - Tessera Publisher");
     }
 }

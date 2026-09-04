@@ -55,7 +55,7 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
     ui.heading("Properties");
     ui.separator();
 
-    if state.selection.is_empty() {
+    if state.active().selection.is_empty() {
         ui.colored_label(Theme::TEXT_MUTED, "No selection");
         return;
     }
@@ -63,14 +63,14 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
     // Geometry fields edit one frame. With several selected there is no single
     // value to show, and silently editing only the first would be worse than
     // saying so.
-    let Some(id) = state.selection.single() else {
+    let Some(id) = state.active().selection.single() else {
         ui.colored_label(
             Theme::TEXT_MUTED,
-            format!("{} objects selected", state.selection.len()),
+            format!("{} objects selected", state.active().selection.len()),
         );
         return;
     };
-    let Some(frame) = state.document.frame(id).cloned() else {
+    let Some(frame) = state.active().document().frame(id).cloned() else {
         ui.colored_label(Theme::TEXT_MUTED, "No selection");
         return;
     };
@@ -126,7 +126,8 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
         tessera_document::nodes::FrameKind::Text { story } => {
             ui.label("Text");
             let mut text = state
-                .document
+                .active()
+                .document()
                 .story(*story)
                 .map(|s| s.text.clone())
                 .unwrap_or_default();
@@ -192,7 +193,7 @@ pub fn status_bar(ui: &mut Ui, state: &TesseraApp) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.colored_label(
                 Theme::TEXT_MUTED,
-                format!("{:.0}%", state.view.zoom * 100.0),
+                format!("{:.0}%", state.active().view.zoom * 100.0),
             );
         });
     });

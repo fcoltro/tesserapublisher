@@ -36,7 +36,7 @@ fn the_milestone_0_sentence_holds() {
 
     // --- A new document opens with one spread.
     let mut state = TesseraApp::headless();
-    assert_eq!(state.document.spread_ids().count(), 1);
+    assert_eq!(state.active().document().spread_ids().count(), 1);
     assert_eq!(
         (
             state.first_page_bounds().width,
@@ -56,6 +56,7 @@ fn the_milestone_0_sentence_holds() {
         }),
     );
     let rect_id = state
+        .active()
         .selection
         .single()
         .expect("the new rectangle is selected");
@@ -78,6 +79,7 @@ fn the_milestone_0_sentence_holds() {
         }),
     );
     let text_id = state
+        .active()
         .selection
         .single()
         .expect("the new text frame is selected");
@@ -90,7 +92,7 @@ fn the_milestone_0_sentence_holds() {
     );
 
     // --- The text is really shaped, not merely stored.
-    let resolved = tessera_layout::resolve::resolve(&state.document, &mut state.shaper);
+    let resolved = state.resolve_uncached();
     let shaped_glyphs: usize = resolved
         .items
         .iter()
@@ -108,7 +110,7 @@ fn the_milestone_0_sentence_holds() {
 
     // --- Save.
     save_to_path(&mut state, &path).expect("save");
-    assert!(!state.dirty, "a saved document is not dirty");
+    assert!(!state.active().dirty, "a saved document is not dirty");
 
     // --- Quit and launch again.
     drop(state);
@@ -116,10 +118,15 @@ fn the_milestone_0_sentence_holds() {
     open_from_path(&mut reopened, &path).expect("open");
 
     // --- Find the rectangle and the text exactly as they were left.
-    assert_eq!(reopened.document.frames.len(), 2, "both frames survived");
+    assert_eq!(
+        reopened.active().document().frames.len(),
+        2,
+        "both frames survived"
+    );
 
     let rect = reopened
-        .document
+        .active()
+        .document()
         .frame(rect_id)
         .expect("the rectangle survived, under its original id");
     assert_eq!(rect.bounds.width, 200.0);
@@ -128,7 +135,8 @@ fn the_milestone_0_sentence_holds() {
 
     assert_eq!(
         reopened
-            .document
+            .active()
+            .document()
             .stories
             .values()
             .next()
@@ -172,7 +180,7 @@ fn undo_reaches_back_through_the_whole_session() {
 
     apply(&mut state, Command::AddRectangle(bounds));
     apply(&mut state, Command::AddTextFrame(bounds));
-    let id = state.selection.single().expect("selected");
+    let id = state.active().selection.single().expect("selected");
     apply(
         &mut state,
         Command::SetText {
@@ -180,14 +188,14 @@ fn undo_reaches_back_through_the_whole_session() {
             text: "x".to_string(),
         },
     );
-    assert_eq!(state.document.frames.len(), 2);
+    assert_eq!(state.active().document().frames.len(), 2);
 
     apply(&mut state, Command::Undo); // the text
     apply(&mut state, Command::Undo); // the text frame
     apply(&mut state, Command::Undo); // the rectangle
 
     assert_eq!(
-        state.document.frames.len(),
+        state.active().document().frames.len(),
         0,
         "every step of the session must be undoable"
     );
@@ -208,7 +216,7 @@ fn a_document_saved_then_exported_twice_produces_the_same_pdf() {
             height: 40.0,
         }),
     );
-    let id = state.selection.single().expect("selected");
+    let id = state.active().selection.single().expect("selected");
     apply(
         &mut state,
         Command::SetText {

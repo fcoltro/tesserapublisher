@@ -88,13 +88,13 @@ impl Command {
 /// So a group goes through the very functions a drag goes through — rotated
 /// about its old centre, then mapped from its old box onto its new one.
 fn retarget(state: &mut TesseraApp, id: FrameId, bounds: DocRect, placement: Transform) {
-    let Some(frame) = state.document.frame(id) else {
+    let Some(frame) = state.active().document().frame(id) else {
         return;
     };
     let (from, was) = (frame.bounds, frame.transform);
     let is_group = matches!(frame.kind, tessera_document::nodes::FrameKind::Group(_));
 
-    if let Some(f) = state.document.frame_mut(id) {
+    if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
         f.bounds = bounds;
         f.transform = placement;
     }
@@ -107,11 +107,11 @@ fn retarget(state: &mut TesseraApp, id: FrameId, bounds: DocRect, placement: Tra
     // the drag gestures use, so a number typed into a field and a handle
     // dragged on canvas cannot mean different things.
     let map = crate::transform::footprint_map(from, was, bounds, placement);
-    for leaf in state.document.descendants(id) {
+    for leaf in state.active().document().descendants(id) {
         if leaf == id {
             continue;
         }
-        if let Some(f) = state.document.frame_mut(leaf) {
+        if let Some(f) = state.active_mut().document_mut().frame_mut(leaf) {
             f.transform = f.transform.then(map);
         }
     }
@@ -119,8 +119,8 @@ fn retarget(state: &mut TesseraApp, id: FrameId, bounds: DocRect, placement: Tra
 
 pub fn apply(state: &mut TesseraApp, command: Command) {
     if command.mutates() {
-        state.history.record(&state.document);
-        state.dirty = true;
+        state.active_mut().record_history();
+        state.active_mut().dirty = true;
     }
 
     match command {
@@ -131,7 +131,10 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         Command::AddPath(bounds, path) => add(state, bounds, FrameKind::Path(path), Color::BLACK),
 
         Command::AddTextFrame(bounds) => {
-            let story = state.document.add_story(Story::default());
+            let story = state
+                .active_mut()
+                .document_mut()
+                .add_story(Story::default());
             // A text frame's own fill is the box behind the glyphs, so it is
             // transparent by default rather than painting a white rectangle
             // over whatever it sits on.
@@ -150,14 +153,15 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::SetBounds { id, bounds } => {
             let placement = state
-                .document
+                .active()
+                .document()
                 .frame(id)
                 .map_or(Transform::IDENTITY, |f| f.transform);
             retarget(state, id, bounds, placement);
         }
 
         Command::SetRotation { id, degrees } => {
-            let Some(frame) = state.document.frame(id) else {
+            let Some(frame) = state.active().document().frame(id) else {
                 return;
             };
             let (bounds, was) = (frame.bounds, frame.transform);
@@ -172,30 +176,33 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         }
 
         Command::SetFill { id, color } => {
-            if let Some(frame) = state.document.frame_mut(id) {
+            if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
                 frame.fill = color;
             }
         }
 
         Command::SetText { id, text } => {
             if let Some(FrameKind::Text { story }) =
-                state.document.frame(id).map(|f| f.kind.clone())
-                && let Some(s) = state.document.story_mut(story)
+                state.active().document().frame(id).map(|f| f.kind.clone())
+                && let Some(s) = state.active_mut().document_mut().story_mut(story)
             {
                 s.text = text;
             }
         }
 
         Command::TranslateSelection { dx, dy } => {
-            for id in state.selection.as_slice().to_vec() {
+            for id in state.active().selection.as_slice().to_vec() {
                 // Goes through the document so a group carries its children.
-                state.document.translate_frame(id, dx, dy);
+                state
+                    .active_mut()
+                    .document_mut()
+                    .translate_frame(id, dx, dy);
             }
         }
 
         Command::SetTransforms(entries) => {
             for (id, bounds, placement) in entries {
-                if let Some(frame) = state.document.frame_mut(id) {
+                if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
                     frame.bounds = bounds;
                     frame.transform = placement;
                 }
@@ -203,36 +210,36 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         }
 
         Command::GroupSelection => {
-            if let Some(group) = state.document.group(state.selection.as_slice()) {
-                state.selection.set(group);
-            }
+            state.active_mut().group_selection();
         }
 
         Command::UngroupSelection => {
             let freed: Vec<_> = state
+                .active()
                 .selection
                 .as_slice()
                 .to_vec()
                 .into_iter()
-                .flat_map(|id| state.document.ungroup(id))
+                .flat_map(|id| state.active_mut().document_mut().ungroup(id))
                 .collect();
             // Selecting the freed children is what lets a second ungroup
             // reach a nested group without re-selecting by hand.
             if !freed.is_empty() {
-                state.selection.replace_all(freed);
+                state.active_mut().selection.replace_all(freed);
             }
         }
 
         Command::DeleteSelection => {
-            for id in state.selection.as_slice().to_vec() {
-                state.document.remove_frame(id);
+            for id in state.active().selection.as_slice().to_vec() {
+                state.active_mut().document_mut().remove_frame(id);
             }
-            state.selection.clear();
-            state.editing = None;
+            state.active_mut().selection.clear();
+            state.active_mut().editing = None;
         }
 
         Command::DuplicateSelection => {
             let copies: Vec<FrameId> = state
+                .active()
                 .selection
                 .as_slice()
                 .to_vec()
@@ -241,14 +248,15 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 .collect();
             // Select the copies, so a second Ctrl+D duplicates them rather
             // than making a second copy of the originals.
-            state.selection.replace_all(copies);
+            state.active_mut().selection.replace_all(copies);
         }
 
         Command::CopySelection => {
             let items: Vec<Clipboard> = state
+                .active()
                 .selection
                 .iter()
-                .filter_map(|id| clipboard_item(&state.document, id))
+                .filter_map(|id| clipboard_item(state.active().document(), id))
                 .collect();
             if !items.is_empty() {
                 let count = items.len();
@@ -280,14 +288,14 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                     // would edit the original.
                     if let (FrameKind::Text { .. }, Some(story)) = (&frame.kind, item.story) {
                         frame.kind = FrameKind::Text {
-                            story: state.document.add_story(story),
+                            story: state.active_mut().document_mut().add_story(story),
                         };
                     }
                     let layer = state.default_layer();
-                    state.document.add_frame(layer, frame)
+                    state.active_mut().document_mut().add_frame(layer, frame)
                 })
                 .collect();
-            state.selection.replace_all(pasted);
+            state.active_mut().selection.replace_all(pasted);
         }
 
         Command::MoveSelectionInZ(how) => {
@@ -302,23 +310,23 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             //
             // A one-step move must start from the end it is moving toward; a
             // move-to-the-end must start from the far end.
-            let mut ids = state.selection.as_slice().to_vec();
+            let mut ids = state.active().selection.as_slice().to_vec();
             if matches!(how, ZMove::Forward | ZMove::ToBack) {
                 ids.reverse();
             }
             for id in ids {
-                state.document.move_in_z(id, how);
+                state.active_mut().document_mut().move_in_z(id, how);
             }
         }
 
         Command::Undo => {
-            if let Some(previous) = state.history.undo(&state.document) {
+            if let Some(previous) = state.active_mut().undo() {
                 restore(state, previous);
             }
         }
 
         Command::Redo => {
-            if let Some(next) = state.history.redo(&state.document) {
+            if let Some(next) = state.active_mut().redo() {
                 restore(state, next);
             }
         }
@@ -327,7 +335,7 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
 fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
     let layer = state.default_layer();
-    let id = state.document.add_frame(
+    let id = state.active_mut().document_mut().add_frame(
         layer,
         Frame {
             bounds,
@@ -337,17 +345,17 @@ fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
             transform: Transform::IDENTITY,
         },
     );
-    state.selection.set(id);
+    state.active_mut().selection.set(id);
 }
 
 /// Restore a snapshot, keeping the selection honest.
 fn restore(state: &mut TesseraApp, document: Document) {
-    state.document = document;
+    *state.active_mut().document_mut() = document;
     // Undoing a delete brings frames back still selected; undoing a create
     // must not leave handles floating around a frame that is gone.
-    state.selection.retain_existing(&state.document);
-    state.editing = None;
-    state.dirty = true;
+    state.active_mut().retain_existing_selection();
+    state.active_mut().editing = None;
+    state.active_mut().dirty = true;
 }
 
 fn clipboard_item(document: &Document, id: FrameId) -> Option<Clipboard> {
@@ -362,22 +370,22 @@ fn clipboard_item(document: &Document, id: FrameId) -> Option<Clipboard> {
 /// Copy one frame, offset, with its own story if it had one.
 fn duplicate_one(state: &mut TesseraApp, id: FrameId) -> Option<FrameId> {
     const OFFSET: f64 = 12.0;
-    let mut frame = state.document.frame(id).cloned()?;
+    let mut frame = state.active().document().frame(id).cloned()?;
     frame.bounds.x += OFFSET;
     frame.bounds.y += OFFSET;
 
     // Give the copy its own story, or editing the copy would edit the
     // original — the same aliasing trap as the frame/story split.
     if let FrameKind::Text { story } = frame.kind
-        && let Some(content) = state.document.story(story).cloned()
+        && let Some(content) = state.active().document().story(story).cloned()
     {
         frame.kind = FrameKind::Text {
-            story: state.document.add_story(content),
+            story: state.active_mut().document_mut().add_story(content),
         };
     }
 
     let layer = state.default_layer();
-    Some(state.document.add_frame(layer, frame))
+    Some(state.active_mut().document_mut().add_frame(layer, frame))
 }
 
 #[cfg(test)]
@@ -397,10 +405,10 @@ mod tests {
     fn two_selected() -> (TesseraApp, FrameId, FrameId) {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddRectangle(bounds()));
-        let a = state.selection.single().expect("a");
+        let a = state.active().selection.single().expect("a");
         apply(&mut state, Command::AddRectangle(bounds()));
-        let b = state.selection.single().expect("b");
-        state.selection.replace_all([a, b]);
+        let b = state.active().selection.single().expect("b");
+        state.active_mut().selection.replace_all([a, b]);
         (state, a, b)
     }
 
@@ -408,15 +416,15 @@ mod tests {
     fn adding_a_rectangle_selects_only_it() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddRectangle(bounds()));
-        assert_eq!(state.document.frames.len(), 1);
-        assert_eq!(state.selection.len(), 1);
+        assert_eq!(state.active().document().frames.len(), 1);
+        assert_eq!(state.active().selection.len(), 1);
     }
 
     #[test]
     fn a_text_frame_gets_its_own_story() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddTextFrame(bounds()));
-        assert_eq!(state.document.stories.len(), 1);
+        assert_eq!(state.active().document().stories.len(), 1);
     }
 
     #[test]
@@ -424,7 +432,7 @@ mod tests {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddRectangle(bounds()));
         apply(&mut state, Command::Undo);
-        assert_eq!(state.document.frames.len(), 0);
+        assert_eq!(state.active().document().frames.len(), 0);
     }
 
     #[test]
@@ -433,7 +441,7 @@ mod tests {
         apply(&mut state, Command::AddRectangle(bounds()));
         apply(&mut state, Command::Undo);
         apply(&mut state, Command::Redo);
-        assert_eq!(state.document.frames.len(), 1);
+        assert_eq!(state.active().document().frames.len(), 1);
     }
 
     #[test]
@@ -442,7 +450,7 @@ mod tests {
         apply(&mut state, Command::AddRectangle(bounds()));
         apply(&mut state, Command::Undo);
         assert!(
-            state.selection.is_empty(),
+            state.active().selection.is_empty(),
             "handles must not float around a frame that no longer exists"
         );
     }
@@ -451,12 +459,12 @@ mod tests {
     fn deleting_several_frames_is_one_undo_step() {
         let (mut state, _, _) = two_selected();
         apply(&mut state, Command::DeleteSelection);
-        assert_eq!(state.document.frames.len(), 0);
+        assert_eq!(state.active().document().frames.len(), 0);
 
         apply(&mut state, Command::Undo);
 
         assert_eq!(
-            state.document.frames.len(),
+            state.active().document().frames.len(),
             2,
             "one action, one undo — not one per frame"
         );
@@ -469,8 +477,14 @@ mod tests {
 
         // Where the frames really are, not where their own boxes say: a move
         // is a change of placement, and `bounds` is in the frame's own space.
-        assert_eq!(state.document.frame(a).expect("a").corners()[0].x, 5.0);
-        assert_eq!(state.document.frame(b).expect("b").corners()[0].y, 7.0);
+        assert_eq!(
+            state.active().document().frame(a).expect("a").corners()[0].x,
+            5.0
+        );
+        assert_eq!(
+            state.active().document().frame(b).expect("b").corners()[0].y,
+            7.0
+        );
     }
 
     #[test]
@@ -480,18 +494,18 @@ mod tests {
         // angle -- and at a half turn, exactly backwards.
         let (mut state, a, _) = two_selected();
         for degrees in [0.0, 90.0, 180.0, -37.0] {
-            let frame = state.document.frame_mut(a).expect("a");
+            let frame = state.active_mut().document_mut().frame_mut(a).expect("a");
             let centre = frame.bounds.center();
             frame.transform = Transform::rotate_about(degrees, centre);
-            let before = state.document.frame(a).expect("a").centre();
+            let before = state.active().document().frame(a).expect("a").centre();
 
-            state.selection.set(a);
+            state.active_mut().selection.set(a);
             apply(
                 &mut state,
                 Command::TranslateSelection { dx: 20.0, dy: 0.0 },
             );
 
-            let after = state.document.frame(a).expect("a").centre();
+            let after = state.active().document().frame(a).expect("a").centre();
             assert!(
                 (after.x - before.x - 20.0).abs() < 1e-9 && (after.y - before.y).abs() < 1e-9,
                 "at {degrees} degrees it moved {:?} rather than 20 to the right",
@@ -505,10 +519,10 @@ mod tests {
         let (mut state, a, b) = two_selected();
         apply(&mut state, Command::DuplicateSelection);
 
-        assert_eq!(state.document.frames.len(), 4);
-        assert_eq!(state.selection.len(), 2);
+        assert_eq!(state.active().document().frames.len(), 4);
+        assert_eq!(state.active().selection.len(), 2);
         assert!(
-            !state.selection.contains(a) && !state.selection.contains(b),
+            !state.active().selection.contains(a) && !state.active().selection.contains(b),
             "a second duplicate should copy the copies"
         );
     }
@@ -517,7 +531,7 @@ mod tests {
     fn duplicating_a_text_frame_gives_the_copy_its_own_story() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddTextFrame(bounds()));
-        let original = state.selection.single().expect("selected");
+        let original = state.active().selection.single().expect("selected");
         apply(
             &mut state,
             Command::SetText {
@@ -527,7 +541,7 @@ mod tests {
         );
 
         apply(&mut state, Command::DuplicateSelection);
-        let copy = state.selection.single().expect("copy");
+        let copy = state.active().selection.single().expect("copy");
         apply(
             &mut state,
             Command::SetText {
@@ -536,12 +550,18 @@ mod tests {
             },
         );
 
-        let FrameKind::Text { story } = state.document.frame(original).expect("f").kind.clone()
+        let FrameKind::Text { story } = state
+            .active()
+            .document()
+            .frame(original)
+            .expect("f")
+            .kind
+            .clone()
         else {
             panic!("expected text");
         };
         assert_eq!(
-            state.document.story(story).expect("story").text,
+            state.active().document().story(story).expect("story").text,
             "one",
             "editing the copy must not edit the original"
         );
@@ -550,12 +570,16 @@ mod tests {
     #[test]
     fn copy_touches_neither_the_document_nor_the_undo_stack() {
         let (mut state, _, _) = two_selected();
-        let depth = state.history.undo_depth();
+        let depth = state.active().history.undo_depth();
 
         apply(&mut state, Command::CopySelection);
 
-        assert_eq!(state.document.frames.len(), 2);
-        assert_eq!(state.history.undo_depth(), depth, "copy is not an edit");
+        assert_eq!(state.active().document().frames.len(), 2);
+        assert_eq!(
+            state.active().history.undo_depth(),
+            depth,
+            "copy is not an edit"
+        );
     }
 
     #[test]
@@ -564,15 +588,15 @@ mod tests {
         apply(&mut state, Command::CopySelection);
         apply(&mut state, Command::Paste);
 
-        assert_eq!(state.document.frames.len(), 4);
-        assert_eq!(state.selection.len(), 2, "the pastes are selected");
+        assert_eq!(state.active().document().frames.len(), 4);
+        assert_eq!(state.active().selection.len(), 2, "the pastes are selected");
     }
 
     #[test]
     fn paste_with_an_empty_clipboard_does_nothing() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::Paste);
-        assert_eq!(state.document.frames.len(), 0);
+        assert_eq!(state.active().document().frames.len(), 0);
     }
 
     #[test]
@@ -580,17 +604,17 @@ mod tests {
         let (mut state, _, _) = two_selected();
 
         apply(&mut state, Command::CutSelection);
-        assert_eq!(state.document.frames.len(), 0);
+        assert_eq!(state.active().document().frames.len(), 0);
 
         apply(&mut state, Command::Paste);
-        assert_eq!(state.document.frames.len(), 2);
+        assert_eq!(state.active().document().frames.len(), 2);
     }
 
     #[test]
     fn a_pasted_text_frame_carries_its_text() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddTextFrame(bounds()));
-        let id = state.selection.single().expect("selected");
+        let id = state.active().selection.single().expect("selected");
         apply(
             &mut state,
             Command::SetText {
@@ -603,28 +627,37 @@ mod tests {
         apply(&mut state, Command::DeleteSelection);
         apply(&mut state, Command::Paste);
 
-        let pasted = state.selection.single().expect("pasted");
-        let FrameKind::Text { story } = state.document.frame(pasted).expect("f").kind.clone()
+        let pasted = state.active().selection.single().expect("pasted");
+        let FrameKind::Text { story } = state
+            .active()
+            .document()
+            .frame(pasted)
+            .expect("f")
+            .kind
+            .clone()
         else {
             panic!("expected text");
         };
-        assert_eq!(state.document.story(story).expect("story").text, "carried");
+        assert_eq!(
+            state.active().document().story(story).expect("story").text,
+            "carried"
+        );
     }
 
     #[test]
     fn changing_z_order_is_undoable() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddRectangle(bounds()));
-        let a = state.selection.single().expect("a");
+        let a = state.active().selection.single().expect("a");
         apply(&mut state, Command::AddRectangle(bounds()));
-        let b = state.selection.single().expect("b");
+        let b = state.active().selection.single().expect("b");
 
-        state.selection.set(a);
+        state.active_mut().selection.set(a);
         apply(&mut state, Command::MoveSelectionInZ(ZMove::ToFront));
-        assert_eq!(state.document.paint_order(), vec![b, a]);
+        assert_eq!(state.active().document().paint_order(), vec![b, a]);
 
         apply(&mut state, Command::Undo);
-        assert_eq!(state.document.paint_order(), vec![a, b]);
+        assert_eq!(state.active().document().paint_order(), vec![a, b]);
     }
 
     #[test]
@@ -633,13 +666,13 @@ mod tests {
         for _ in 0..3 {
             apply(&mut state, Command::AddRectangle(bounds()));
         }
-        let order = state.document.paint_order();
+        let order = state.active().document().paint_order();
         let (a, b, c) = (order[0], order[1], order[2]);
 
         // Raise the bottom two: they end up above c, still a-then-b.
-        state.selection.replace_all([a, b]);
+        state.active_mut().selection.replace_all([a, b]);
         apply(&mut state, Command::MoveSelectionInZ(ZMove::ToFront));
-        assert_eq!(state.document.paint_order(), vec![c, a, b]);
+        assert_eq!(state.active().document().paint_order(), vec![c, a, b]);
     }
 
     #[test]
@@ -650,13 +683,13 @@ mod tests {
         for _ in 0..3 {
             apply(&mut state, Command::AddRectangle(bounds()));
         }
-        let order = state.document.paint_order();
+        let order = state.active().document().paint_order();
         let (a, b, c) = (order[0], order[1], order[2]);
 
-        state.selection.replace_all([a, b]);
+        state.active_mut().selection.replace_all([a, b]);
         apply(&mut state, Command::MoveSelectionInZ(ZMove::Forward));
 
-        assert_eq!(state.document.paint_order(), vec![c, a, b]);
+        assert_eq!(state.active().document().paint_order(), vec![c, a, b]);
     }
 
     #[test]
@@ -665,13 +698,13 @@ mod tests {
         for _ in 0..3 {
             apply(&mut state, Command::AddRectangle(bounds()));
         }
-        let order = state.document.paint_order();
+        let order = state.active().document().paint_order();
         let (a, b, c) = (order[0], order[1], order[2]);
 
-        state.selection.replace_all([b, c]);
+        state.active_mut().selection.replace_all([b, c]);
         apply(&mut state, Command::MoveSelectionInZ(ZMove::ToBack));
 
-        assert_eq!(state.document.paint_order(), vec![b, c, a]);
+        assert_eq!(state.active().document().paint_order(), vec![b, c, a]);
     }
 
     #[test]
@@ -691,24 +724,27 @@ mod tests {
             },
         );
 
-        assert_eq!(state.document.frame(a).expect("frame").fill, red);
-        assert_eq!(state.document.frame(b).expect("frame").fill, Color::BLACK);
+        assert_eq!(state.active().document().frame(a).expect("frame").fill, red);
+        assert_eq!(
+            state.active().document().frame(b).expect("frame").fill,
+            Color::BLACK
+        );
     }
 
     #[test]
     fn undo_with_nothing_recorded_does_nothing() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::Undo);
-        assert_eq!(state.document.frames.len(), 0);
+        assert_eq!(state.active().document().frames.len(), 0);
     }
 
     #[test]
     fn an_ellipse_is_added_as_an_ellipse() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddEllipse(bounds()));
-        let id = state.selection.single().expect("selected");
+        let id = state.active().selection.single().expect("selected");
         assert!(matches!(
-            state.document.frame(id).expect("frame").kind,
+            state.active().document().frame(id).expect("frame").kind,
             FrameKind::Ellipse
         ));
     }
@@ -722,8 +758,15 @@ mod tests {
 
         apply(&mut state, Command::AddPath(bounds(), path.clone()));
 
-        let id = state.selection.single().expect("selected");
-        let FrameKind::Path(stored) = state.document.frame(id).expect("frame").kind.clone() else {
+        let id = state.active().selection.single().expect("selected");
+        let FrameKind::Path(stored) = state
+            .active()
+            .document()
+            .frame(id)
+            .expect("frame")
+            .kind
+            .clone()
+        else {
             panic!("expected a path frame");
         };
         assert_eq!(stored, path, "the path must survive unchanged");
@@ -740,10 +783,10 @@ mod tests {
         path.line_to((10.0, 0.0));
         apply(&mut state, Command::AddPath(bounds(), path.clone()));
 
-        let json = serde_json::to_string(&state.document).expect("serialize");
+        let json = serde_json::to_string(&state.active().document()).expect("serialize");
         let back: Document = serde_json::from_str(&json).expect("deserialize");
 
-        let id = state.selection.single().expect("selected");
+        let id = state.active().selection.single().expect("selected");
         let FrameKind::Path(stored) = back.frame(id).expect("frame survived").kind.clone() else {
             panic!("expected a path frame");
         };
@@ -754,11 +797,16 @@ mod tests {
     fn rotation_is_normalised_into_a_half_turn_either_way() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddRectangle(bounds()));
-        let id = state.selection.single().expect("selected");
+        let id = state.active().selection.single().expect("selected");
 
         for (given, expected) in [(0.0, 0.0), (90.0, 90.0), (370.0, 10.0), (-190.0, 170.0)] {
             apply(&mut state, Command::SetRotation { id, degrees: given });
-            let got = state.document.frame(id).expect("frame").rotation_degrees();
+            let got = state
+                .active()
+                .document()
+                .frame(id)
+                .expect("frame")
+                .rotation_degrees();
             assert!(
                 (got - expected).abs() < 1e-9,
                 "{given} normalised to {got}, expected {expected}"
@@ -770,11 +818,16 @@ mod tests {
     fn rotating_is_undoable() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddRectangle(bounds()));
-        let id = state.selection.single().expect("selected");
+        let id = state.active().selection.single().expect("selected");
         apply(&mut state, Command::SetRotation { id, degrees: 45.0 });
         apply(&mut state, Command::Undo);
         assert_eq!(
-            state.document.frame(id).expect("frame").rotation_degrees(),
+            state
+                .active()
+                .document()
+                .frame(id)
+                .expect("frame")
+                .rotation_degrees(),
             0.0
         );
     }
@@ -791,7 +844,7 @@ mod tests {
                 height: 20.0,
             }),
         );
-        let a = state.selection.single().expect("a");
+        let a = state.active().selection.single().expect("a");
         apply(
             &mut state,
             Command::AddRectangle(DocRect {
@@ -801,8 +854,8 @@ mod tests {
                 height: 20.0,
             }),
         );
-        let b = state.selection.single().expect("b");
-        state.selection.replace_all([a, b]);
+        let b = state.active().selection.single().expect("b");
+        state.active_mut().selection.replace_all([a, b]);
         (state, a, b)
     }
 
@@ -811,10 +864,14 @@ mod tests {
         let (mut state, a, b) = two_apart_selected();
         apply(&mut state, Command::GroupSelection);
 
-        let g = state.selection.single().expect("the group is selected");
+        let g = state
+            .active()
+            .selection
+            .single()
+            .expect("the group is selected");
         assert_ne!(g, a);
         assert_ne!(g, b);
-        assert_eq!(state.document.top_level_order(), vec![g]);
+        assert_eq!(state.active().document().top_level_order(), vec![g]);
     }
 
     #[test]
@@ -823,7 +880,7 @@ mod tests {
         apply(&mut state, Command::GroupSelection);
         apply(&mut state, Command::Undo);
 
-        assert_eq!(state.document.top_level_order(), vec![a, b]);
+        assert_eq!(state.active().document().top_level_order(), vec![a, b]);
     }
 
     #[test]
@@ -836,8 +893,14 @@ mod tests {
             Command::TranslateSelection { dx: 10.0, dy: 4.0 },
         );
 
-        assert_eq!(state.document.frame(a).expect("a").corners()[0].x, 10.0);
-        assert_eq!(state.document.frame(b).expect("b").corners()[0].x, 110.0);
+        assert_eq!(
+            state.active().document().frame(a).expect("a").corners()[0].x,
+            10.0
+        );
+        assert_eq!(
+            state.active().document().frame(b).expect("b").corners()[0].x,
+            110.0
+        );
     }
 
     #[test]
@@ -846,9 +909,9 @@ mod tests {
         apply(&mut state, Command::GroupSelection);
         apply(&mut state, Command::UngroupSelection);
 
-        assert_eq!(state.selection.len(), 2);
-        assert!(state.selection.contains(a));
-        assert!(state.selection.contains(b));
+        assert_eq!(state.active().selection.len(), 2);
+        assert!(state.active().selection.contains(a));
+        assert!(state.active().selection.contains(b));
     }
 
     #[test]
@@ -858,7 +921,7 @@ mod tests {
         apply(&mut state, Command::DeleteSelection);
 
         assert!(
-            state.document.paint_order().is_empty(),
+            state.active().document().paint_order().is_empty(),
             "an orphaned child would be an invisible, unselectable object"
         );
     }
@@ -866,16 +929,20 @@ mod tests {
     #[test]
     fn grouping_one_frame_does_nothing() {
         let (mut state, a, _) = two_apart_selected();
-        state.selection.set(a);
+        state.active_mut().selection.set(a);
         apply(&mut state, Command::GroupSelection);
-        assert_eq!(state.selection.single(), Some(a), "still just the frame");
+        assert_eq!(
+            state.active().selection.single(),
+            Some(a),
+            "still just the frame"
+        );
     }
 
     // --- a group's box carries its contents ------------------------------
 
     /// Two 10x10 squares, at x = 0 and x = 90, grouped.
     fn grouped_pair(state: &mut TesseraApp) -> (FrameId, FrameId, FrameId) {
-        let layer = state.document.default_layer().expect("layer");
+        let layer = state.active().document().default_layer().expect("layer");
         let square = |x: f64| tessera_document::nodes::Frame {
             bounds: DocRect {
                 x,
@@ -888,9 +955,19 @@ mod tests {
             fill: Color::BLACK,
             stroke: None,
         };
-        let a = state.document.add_frame(layer, square(0.0));
-        let b = state.document.add_frame(layer, square(90.0));
-        let g = state.document.group(&[a, b]).expect("grouped");
+        let a = state
+            .active_mut()
+            .document_mut()
+            .add_frame(layer, square(0.0));
+        let b = state
+            .active_mut()
+            .document_mut()
+            .add_frame(layer, square(90.0));
+        let g = state
+            .active_mut()
+            .document_mut()
+            .group(&[a, b])
+            .expect("grouped");
         (g, a, b)
     }
 
@@ -901,7 +978,7 @@ mod tests {
         // a box around.
         let mut state = TesseraApp::headless();
         let (g, a, b) = grouped_pair(&mut state);
-        let before = state.document.frame(g).expect("group").bounds;
+        let before = state.active().document().frame(g).expect("group").bounds;
 
         apply(
             &mut state,
@@ -916,14 +993,14 @@ mod tests {
 
         // Where the children really are, placement included -- a child now
         // follows a group by transform, so its own box does not move.
-        let far = state.document.frame(b).expect("b").centre();
-        let near = state.document.frame(a).expect("a").centre();
+        let far = state.active().document().frame(b).expect("b").centre();
+        let near = state.active().document().frame(a).expect("a").centre();
         assert!(
             (far.x - near.x - 180.0).abs() < 1e-9,
             "the children should have spread with the box: {near:?} {far:?}"
         );
 
-        let widths = state.document.frame(b).expect("b").corners();
+        let widths = state.active().document().frame(b).expect("b").corners();
         let width = (widths[1].x - widths[0].x).hypot(widths[1].y - widths[0].y);
         assert!(
             (width - 20.0).abs() < 1e-9,
@@ -935,7 +1012,7 @@ mod tests {
     fn turning_a_group_in_the_inspector_turns_its_children() {
         let mut state = TesseraApp::headless();
         let (g, a, _) = grouped_pair(&mut state);
-        let was = state.document.frame(a).expect("a").centre();
+        let was = state.active().document().frame(a).expect("a").centre();
 
         apply(
             &mut state,
@@ -945,7 +1022,7 @@ mod tests {
             },
         );
 
-        let child = state.document.frame(a).expect("a");
+        let child = state.active().document().frame(a).expect("a");
         assert!(
             (child.rotation_degrees() - 90.0).abs() < 1e-9,
             "the child turns on its own axis too, got {}",
@@ -957,7 +1034,15 @@ mod tests {
             "and swings about the group's centre: {was:?} -> {now:?}"
         );
         assert!(
-            (state.document.frame(g).expect("group").rotation_degrees() - 90.0).abs() < 1e-9,
+            (state
+                .active()
+                .document()
+                .frame(g)
+                .expect("group")
+                .rotation_degrees()
+                - 90.0)
+                .abs()
+                < 1e-9,
             "and the group records its own angle"
         );
     }
@@ -975,7 +1060,7 @@ mod tests {
                 height: 10.0,
             }),
         );
-        let id = state.selection.single().expect("selected");
+        let id = state.active().selection.single().expect("selected");
         let wanted = DocRect {
             x: 5.0,
             y: 6.0,
@@ -983,6 +1068,9 @@ mod tests {
             height: 80.0,
         };
         apply(&mut state, Command::SetBounds { id, bounds: wanted });
-        assert_eq!(state.document.frame(id).expect("frame").bounds, wanted);
+        assert_eq!(
+            state.active().document().frame(id).expect("frame").bounds,
+            wanted
+        );
     }
 }

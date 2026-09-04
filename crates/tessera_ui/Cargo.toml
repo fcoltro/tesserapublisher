@@ -17,6 +17,7 @@ tessera_io.workspace = true
 tessera_text.workspace = true
 tessera_color.workspace = true
 tessera_geometry.workspace = true
+slotmap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 egui.workspace = true

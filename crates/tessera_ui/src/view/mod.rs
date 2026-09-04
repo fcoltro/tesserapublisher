@@ -76,8 +76,8 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
         });
 
         ui.menu_button("Edit", |ui| {
-            let can_undo = state.history.can_undo();
-            let can_redo = state.history.can_redo();
+            let can_undo = state.active().history.can_undo();
+            let can_redo = state.active().history.can_redo();
             if ui
                 .add_enabled(can_undo, egui::Button::new("Undo"))
                 .clicked()
@@ -95,7 +95,7 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
 
             ui.separator();
 
-            let has_selection = !state.selection.is_empty();
+            let has_selection = !state.active().selection.is_empty();
             let can_paste = !state.clipboard.is_empty();
 
             if ui
@@ -128,7 +128,7 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
             }
 
             if ui.button("Select All").clicked() {
-                state.selection.replace_all(state.document.paint_order());
+                state.active_mut().select_all();
                 ui.close();
             }
 
@@ -144,16 +144,20 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
         });
 
         ui.menu_button("Object", |ui| {
-            let has_selection = !state.selection.is_empty();
+            let has_selection = !state.active().selection.is_empty();
 
             let is_group = state
+                .active()
                 .selection
                 .single()
-                .and_then(|id| state.document.frame(id))
+                .and_then(|id| state.active().document().frame(id))
                 .is_some_and(|f| matches!(f.kind, tessera_document::nodes::FrameKind::Group(_)));
 
             if ui
-                .add_enabled(state.selection.len() >= 2, egui::Button::new("Group"))
+                .add_enabled(
+                    state.active().selection.len() >= 2,
+                    egui::Button::new("Group"),
+                )
                 .clicked()
             {
                 apply(state, Command::GroupSelection);
@@ -225,11 +229,11 @@ fn accelerators(ui: &Ui, state: &mut TesseraApp) {
         apply(state, Command::Paste);
     }
     if pressed(cmd, egui::Key::A) {
-        state.selection.replace_all(state.document.paint_order());
+        state.active_mut().select_all();
     }
 
     // Everything below needs something selected.
-    if state.selection.is_empty() {
+    if state.active().selection.is_empty() {
         return;
     }
     if pressed(cmd, egui::Key::X) {
