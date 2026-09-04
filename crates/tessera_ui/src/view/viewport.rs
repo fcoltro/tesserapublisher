@@ -118,6 +118,13 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     let caret = caret_geometry(state);
     draw_overlays(ui, rect, state, caret.as_ref());
 
+    // The spatial verbs, beside what they act on. After the overlays so it
+    // sits above the handles, and before the cursor so the pointer is still
+    // painted over everything.
+    if let Some(box_on_screen) = selection_screen_rect(state, rect) {
+        crate::view::canvas_toolbar::show(ui, state, box_on_screen, rect);
+    }
+
     // Last, so the pointer is painted over everything it points at.
     show_cursor(ui, &response, rect, state);
 }
@@ -1214,6 +1221,33 @@ fn ellipse_points(b: DocRect, to_screen: &impl Fn(DocPoint) -> egui::Pos2) -> Ve
             })
         })
         .collect()
+}
+
+/// The selection's box on screen, or `None` when nothing is selected.
+fn selection_screen_rect(state: &TesseraApp, rect: Rect) -> Option<Rect> {
+    let doc = state.active().document();
+    let boxes: Vec<DocRect> = state
+        .active()
+        .selection
+        .iter()
+        .filter_map(|id| doc.visual_bounds(id))
+        .collect();
+    let union = crate::align::bounding_box(&boxes)?;
+
+    let to_screen = |p: DocPoint| {
+        let s = state.active().view.doc_to_screen(p);
+        egui::pos2(rect.min.x + s.x, rect.min.y + s.y)
+    };
+    Some(Rect::from_min_max(
+        to_screen(DocPoint {
+            x: union.x,
+            y: union.y,
+        }),
+        to_screen(DocPoint {
+            x: union.x + union.width,
+            y: union.y + union.height,
+        }),
+    ))
 }
 
 fn draw_overlays(

@@ -5,6 +5,7 @@
 //! attaching to a `Context`. That matches eframe 0.35 handing the app a root
 //! `Ui`, so the whole window is one tree.
 
+pub mod canvas_toolbar;
 pub mod panels;
 pub mod text_edit;
 pub mod vello_host;
