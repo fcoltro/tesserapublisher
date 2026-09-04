@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 4;
+pub const FORMAT_VERSION: u32 = 5;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -113,6 +113,22 @@ fn migrate(value: &mut serde_json::Value, from: u32) {
     // rewrite. The version still moves, so that a build without them refuses
     // a document that uses them rather than silently dropping them on the
     // next save.
+
+    // 4 -> 5: the document gained page setup — margins, bleed, slug, and
+    // whether pages face — and a spread gained guides.
+    //
+    // One bump for all of it, deliberately. A format version costs a
+    // migration test, so six changes delivered together cost one and six
+    // delivered separately cost six. That is why milestone 1.5 has a phase
+    // whose whole job is the page.
+    //
+    // Nothing to rewrite. Every field carries `serde(default)`, and each
+    // default is the truth about a document that never had the field: no
+    // margins, no bleed, no slug, pages that do not face, no guides. A
+    // fabricated default — 10mm margins, say — would invent a decision the
+    // user never made, and would do it silently, to every old document.
+    //
+    // The version moves anyway, for the same reason 3 -> 4 did.
 }
 
 /// Rewrite every `{ bounds, rotation }` object into `{ bounds, transform }`.

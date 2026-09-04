@@ -9,7 +9,9 @@ use proptest::prelude::*;
 use tessera_color::Color;
 use tessera_document::document::Document;
 use tessera_document::format;
-use tessera_document::nodes::{Frame, FrameKind, Stroke};
+use tessera_document::nodes::{
+    Axis, DocumentSetup, Frame, FrameKind, Guide, Insets, Margins, Stroke,
+};
 use tessera_geometry::{DocPoint, DocRect, Transform};
 
 fn temp_path(name: &str) -> std::path::PathBuf {
@@ -427,4 +429,116 @@ fn a_version_2_rotation_becomes_the_placement_that_means_the_same_thing() {
             "corner landed at {corner:?}, the old model says {expected:?}"
         );
     }
+}
+
+
+// --- page setup, guides, and the version-5 bump -------------------------
+
+#[test]
+fn page_setup_and_guides_survive_a_round_trip() {
+    // They are document data now, so the round-trip guarantee covers them.
+    let path = temp_path("page-setup-round-trip.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut original = Document::new();
+    original.setup = DocumentSetup {
+        margins: Margins {
+            top: 36.0,
+            bottom: 42.0,
+            inside: 60.0,
+            outside: 24.0,
+        },
+        bleed: Insets::uniform(9.0),
+        slug: Insets {
+            top: 18.0,
+            bottom: 0.0,
+            left: 0.0,
+            right: 0.0,
+        },
+        facing_pages: true,
+    };
+    let spread = original.spread_ids().next().expect("a spread");
+    original.add_guide(
+        spread,
+        Guide {
+            axis: Axis::Vertical,
+            position: 123.5,
+            locked: true,
+        },
+    );
+
+    format::save(&original, &path).expect("save");
+    let reopened = format::load(&path).expect("load");
+
+    assert_eq!(reopened.setup, original.setup, "the setup came back");
+    assert_eq!(
+        reopened.guides_of(spread),
+        original.guides_of(spread),
+        "and so did the guide"
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_version_four_document_still_opens_and_gains_no_setup_it_never_had() {
+    // Everything phase B added carries serde(default), so a version-4
+    // document needs no rewriting. "Needs no rewriting" is a claim; this is
+    // the test that lets it fail.
+    let path = temp_path("v4-migration.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut original = Document::new();
+    let layer = original.default_layer().expect("a layer");
+    original.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: 12.0,
+                y: 34.0,
+                width: 56.0,
+                height: 78.0,
+            },
+            transform: Transform::IDENTITY,
+            kind: FrameKind::Rectangle,
+            fill: Color::BLACK,
+            stroke: None,
+        },
+    );
+
+    format::save(&original, &path).expect("save");
+    format::rewrite_version_for_test(&path, 4).expect("stamp it as version 4");
+
+    let reopened = format::load(&path).expect("a version-4 document still opens");
+    assert_eq!(reopened.frames.len(), 1, "its frames survived");
+    assert_eq!(
+        reopened.setup,
+        DocumentSetup::default(),
+        "and it gained no margins it never had"
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
+    let path = temp_path("v99-refusal.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    format::save(&Document::new(), &path).expect("save");
+    format::rewrite_version_for_test(&path, 99).expect("stamp");
+
+    let error = format::load(&path).expect_err("a newer format must be refused");
+    assert!(
+        matches!(error, format::FormatError::NewerFormat { found: 99, .. }),
+        "got {error}"
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn the_format_version_is_five() {
+    // Phase B's one bump. If this changes, a migration step is owed.
+    assert_eq!(format::FORMAT_VERSION, 5);
 }
