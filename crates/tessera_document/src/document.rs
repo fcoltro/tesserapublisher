@@ -240,6 +240,32 @@ impl Document {
             .map_or(DEFAULT_PAGE, |p| p.bounds)
     }
 
+    /// Replace the page setup.
+    ///
+    /// A setter rather than a public field write, because **the revision has
+    /// to move**. The resolved document carries every page's margin, bleed
+    /// and slug rectangles, and the resolve cache is keyed on the revision —
+    /// so a setup written straight into the field left the canvas showing the
+    /// old margins until something else happened to bump the counter. It
+    /// looked like the margins only updating when you moved an object,
+    /// because that is exactly what it was.
+    pub fn set_setup(&mut self, setup: DocumentSetup) {
+        self.setup = setup;
+        self.revision += 1;
+    }
+
+    /// Resize every page. Per-page sizes are milestone 3.
+    pub fn set_page_size(&mut self, width: f64, height: f64) {
+        let ids: Vec<_> = self.pages.keys().collect();
+        for id in ids {
+            if let Some(page) = self.pages.get_mut(id) {
+                page.bounds.width = width;
+                page.bounds.height = height;
+            }
+        }
+        self.revision += 1;
+    }
+
     pub fn add_frame(&mut self, layer: LayerId, frame: Frame) -> FrameId {
         let id = self.frames.insert(frame);
         if let Some(l) = self.layers.get_mut(layer) {
@@ -820,6 +846,29 @@ mod tests {
             axis: Axis::Vertical,
             position,
             locked: false,
+        }
+    }
+
+    #[test]
+    fn changing_the_setup_moves_the_revision() {
+        // The resolve cache is keyed on this. Without the bump the canvas
+        // keeps drawing the old margins until something else changes.
+        let mut doc = super::Document::new();
+        let before = doc.revision();
+        let mut setup = doc.setup;
+        setup.margins = Margins::uniform(36.0);
+        doc.set_setup(setup);
+        assert_ne!(doc.revision(), before);
+    }
+
+    #[test]
+    fn resizing_the_pages_moves_the_revision() {
+        let mut doc = super::Document::new();
+        let before = doc.revision();
+        doc.set_page_size(595.0, 842.0);
+        assert_ne!(doc.revision(), before);
+        for page in doc.pages.values() {
+            assert_eq!((page.bounds.width, page.bounds.height), (595.0, 842.0));
         }
     }
 

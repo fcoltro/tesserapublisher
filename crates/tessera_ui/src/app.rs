@@ -162,7 +162,7 @@ impl TesseraApp {
             return;
         };
 
-        match tessera_document::format::save(self.active().document(), &path) {
+        match crate::recovery::write_copy(self.active().document(), &path) {
             Ok(()) => {
                 self.recovery.last_saved_revision = revision;
                 self.recovery.last_write = std::time::Instant::now();

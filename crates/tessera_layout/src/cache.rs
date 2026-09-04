@@ -59,6 +59,37 @@ impl ResolveCache {
 
 #[cfg(test)]
 mod tests {
+    /// The regression this cache once caused.
+    ///
+    /// The page rectangles travel inside the resolved document, so a change
+    /// to the page setup has to invalidate the cache like any other. It did
+    /// not: `setup` was written straight into the field and the revision
+    /// never moved, so the canvas kept drawing the old margins until
+    /// something else — moving an object — happened to bump the counter.
+    ///
+    /// Found by using the application, which is what the hand checks are for.
+    #[test]
+    fn changing_the_page_setup_invalidates_the_cache() {
+        use tessera_document::nodes::Margins;
+
+        let mut doc = Document::new();
+        let mut shaper = Shaper::new();
+        let mut cache = ResolveCache::default();
+
+        let before = cache.get(&doc, &mut shaper).pages[0].margins;
+
+        let mut setup = doc.setup;
+        setup.margins = Margins::uniform(36.0);
+        doc.set_setup(setup);
+
+        let after = cache.get(&doc, &mut shaper).pages[0].margins;
+        assert_ne!(
+            before, after,
+            "the cache handed back the margins from before the change"
+        );
+        assert_eq!(cache.resolves(), 2, "and it really did resolve again");
+    }
+
     use super::*;
     use tessera_color::Color;
     use tessera_document::nodes::{Frame, FrameKind};

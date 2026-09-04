@@ -406,20 +406,16 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         }
 
         Command::SetDocumentSetup(setup) => {
-            state.active_mut().document_mut().setup = setup;
+            state.active_mut().document_mut().set_setup(setup);
         }
 
         Command::SetPageSize { width, height } => {
-            // Every page, because per-page sizes are milestone 3. Doing them
-            // all in one command keeps it one undo entry.
-            let doc = state.active_mut().document_mut();
-            let ids: Vec<_> = doc.pages.keys().collect();
-            for id in ids {
-                if let Some(page) = doc.pages.get_mut(id) {
-                    page.bounds.width = width;
-                    page.bounds.height = height;
-                }
-            }
+            // Every page, because per-page sizes are milestone 3. One command
+            // for all of them keeps it one undo entry.
+            state
+                .active_mut()
+                .document_mut()
+                .set_page_size(width, height);
         }
 
         Command::SetStroke { id, stroke } => {

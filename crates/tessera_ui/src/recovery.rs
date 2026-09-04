@@ -14,6 +14,8 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use tessera_document::document::Document;
+
 use crate::app::{Status, TesseraApp};
 use crate::prefs::Preferences;
 
@@ -76,6 +78,24 @@ impl Default for Recovery {
     fn default() -> Self {
         Self::new(0)
     }
+}
+
+/// Write the recovery copy, creating its directory if it is not there yet.
+///
+/// The directory is the point. `write_atomic` writes a `.tmp` sibling and
+/// renames it, which fails with "the system cannot find the path specified"
+/// when the folder does not exist — and on a machine that had never saved a
+/// preference, it never did, because `Preferences::save_to` was the only
+/// thing creating it. So autosave failed on every fresh install, once every
+/// thirty seconds, and said so in the status bar.
+///
+/// Found by using the application.
+pub fn write_copy(document: &Document, path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+    }
+    tessera_document::format::save(document, path).map_err(|e| e.to_string())
 }
 
 // --- testable core -----------------------------------------------------
@@ -159,6 +179,22 @@ mod tests {
     #[test]
     fn the_interval_is_not_so_long_that_a_crash_costs_real_work() {
         assert!(Recovery::INTERVAL <= Duration::from_secs(60));
+    }
+
+    #[test]
+    fn writing_the_copy_creates_the_directory_it_needs() {
+        // The bug this exists for: write_atomic renames a .tmp sibling into
+        // place, which cannot work if the folder is not there. Nothing else
+        // creates it on a fresh install.
+        let dir = std::env::temp_dir().join("tessera-recovery-missing-dir/deeper");
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join("tessera-recovery-missing-dir"));
+        let path = dir.join("recovery.tessera");
+        assert!(!dir.exists(), "the directory must start absent");
+
+        write_copy(&Document::new(), &path).expect("it should create the directory");
+        assert!(path.exists(), "and then the file");
+
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join("tessera-recovery-missing-dir"));
     }
 
     #[test]
