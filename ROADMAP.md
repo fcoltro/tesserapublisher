@@ -306,19 +306,26 @@ stand on it — and because PDF export already ships without a bleed box.
   slug.
 - [ ] **B2 — Facing pages.** The flag, and correct left/right spread geometry.
 - [ ] **B3 — Guides as document data.** A guide is an axis, a position and a
-  spread. Landing here rather than at milestone 4 costs nothing extra, because
+  spread — spread-level only; page-level guides differ only once pages within
+  a spread move independently, which is milestone 3's concern. Landing here rather than at milestone 4 costs nothing extra, because
   the format bump is already being paid — and it is what lets phase C's rulers
   actually yield a guide.
-- [ ] **B4 — `ColorRef::{ Direct, Swatch }`.** The indirection between an
-  object and a named colour, reserved now with only `Direct` constructible.
-  Swatches arrive at milestone 5; adding the indirection then would mean
-  migrating every fill and every stroke in every saved document. *This is the
-  one deliberately speculative item in the milestone, and it is speculative
-  only in the sense that milestone 5 is already written down.*
+- [ ] ~~**B4 — `ColorRef::{ Direct, Swatch }`.**~~ **Dropped 2026-09-04, to
+  milestone 5 where it belongs.** The argument for reserving it early was that
+  adding the indirection at milestone 5 would mean migrating every fill and
+  stroke in every saved document. Reading `format/mod.rs` undermines that:
+  `rotation_to_transform` already does exactly this kind of mechanical JSON
+  rewrite in about twenty lines, and wrapping every colour in `Direct` is the
+  same shape of walk. The cost is therefore roughly equal now and later, the
+  benefit before milestone 5 is nil, and reserving a shape before swatch
+  semantics are designed risks reserving the wrong one. YAGNI.
 - [ ] **B5 — A spread renders as a spread.** `build_scene` takes one page
   today. Margins, bleed and slug are drawn.
-- [ ] **B6 — Format version 3**, with migration tests from version 2 and from
-  a hand-built version 1.
+- [ ] **B6 — Format version 5**, with a migration test proving a version-4
+  document still opens and gains no setup it never had. *Not version 3: the
+  format is already at 4 — 2 added frame rotation, 3 replaced it with a full
+  affine transform, 4 added stroke alignment, caps, joins and dashes. The
+  earlier entry here was written from a stale reading and is corrected.*
 - [ ] **B7 — Document setup inspector**, the "no selection" state: preset,
   size, orientation, facing pages, margins, bleed, slug.
 - [ ] **B8 — `TrimBox` and `BleedBox` in the PDF.** Exporting a document that
