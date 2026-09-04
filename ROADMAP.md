@@ -70,10 +70,10 @@ Never "done" until shipping; re-checked at the close of every milestone.
   Retrofitting this costs many times what designing for it does, and a
   publishing tool that a screen reader cannot describe is not finished.
   Re-checked at the close of every milestone.
-- [ ] **Performance is measured, not asserted.** A benchmark over a 500-frame
-  document guards resolve and scene-build time, and the interactive frame
-  budget is 16.7 ms. A number nothing measures is a wish. *(Lands as
-  milestone 1.5, A7.)*
+- [x] **Performance is measured, not asserted.** A guard over a 500-frame
+  document holds resolve and scene-build time under one whole frame. Baseline
+  on the development machine, 2026-09-03: **0.41 ms**, roughly fifty times
+  under the ceiling. A number nothing measures is a wish.
 
 ---
 
@@ -234,18 +234,31 @@ Nothing here appears on screen and nothing here touches the file format. Each
 task is a small, pure, independently testable piece that later work stands on.
 Built first because retrofitting any of them is many times the cost.
 
-- [ ] **A1 — Units.** A `Unit` type over mm, pt, px, inches and picas, with
+> **Status 2026-09-03: six of ten done, one partial, three not started.**
+>
+> A phase-A item has no sentence a person can perform — that is what makes it
+> phase A. So `[x]` here means the narrower thing: the code exists, its tests
+> pass, and nothing about it is visible to check by hand. Where a visual check
+> *is* owed, the item stays `[~]` and says so. This is a deliberate reading of
+> the legend above, not an exemption from it.
+>
+> A5, A6 and A10 are not started. **A5 must be done with a person present**:
+> it restructures `TesseraApp`, which is the milestone-0 spine, across roughly
+> 290 call sites, and its acceptance is milestone 0's sentence performed by
+> hand. A6 and A10 both depend on it.
+
+- [x] **A1 — Units.** A `Unit` type over mm, pt, px, inches and picas, with
   parsing (`12mm`, `1p6`, `.5in`), formatting and conversion. Property-tested
   round-trips. Every numeric field in the application depends on it.
-- [ ] **A2 — Preferences store.** A versioned struct written through
+- [x] **A2 — Preferences store.** A versioned struct written through
   `tessera_io::write_atomic` to the platform config directory, defaulting
   cleanly when absent and **reporting** — never swallowing — a corrupt one.
   First consumers: the preferred unit and the theme.
-- [ ] **A3 — Affine decomposition.** `Transform::decompose()` into scale,
+- [x] **A3 — Affine decomposition.** `Transform::decompose()` into scale,
   shear, rotation and translation, with a recompose property test. Callers of
   `rotation_degrees()` migrate off its no-shear assumption one at a time.
   Unblocks shear, scale-as-percentage and the reference point.
-- [ ] **A4 — Anchor resolution.** The nine-point anchor as a type, and the
+- [x] **A4 — Anchor resolution.** The nine-point anchor as a type, and the
   resolution of scale, rotation and flip about it. Pure geometry, no UI.
 - [ ] **A5 — The open-document container.** `TesseraApp` holds `document`,
   `history`, `resolved`, `view` and `selection` as flat fields; all five are
@@ -256,13 +269,15 @@ Built first because retrofitting any of them is many times the cost.
   `Command` enum, asserted by a test that no path in the UI takes a mutable
   document directly. Undo integrity, the command palette and any future
   scripting all rest on this holding.
-- [ ] **A7 — Performance harness.** A benchmark that builds a 500-frame
+- [x] **A7 — Performance harness.** A benchmark that builds a 500-frame
   document and measures resolve and scene build, with a regression assertion.
   *The 16.7 ms budget in the spec is a wish until something measures it.*
-- [ ] **A8 — Theme tokens, light and dark**, with a test asserting WCAG AA
+- [x] **A8 — Theme tokens, light and dark**, with a test asserting WCAG AA
   contrast for every foreground-on-background pair rather than checking by eye.
-- [ ] **A9 — Icon cache.** Lucide paths parse to `BezPath` once and are cached
-  by `Icon`, instead of being re-parsed on every paint.
+- [~] **A9 — Icon cache.** Lucide paths parse to `BezPath` once and are cached
+  by `Icon`, instead of being re-parsed on every paint. *Tests cover the
+  geometry and the cache; the tool strip has not been looked at since the
+  change, so the pixels are unverified.*
 - [ ] **A10 — Autosave and crash recovery.** A periodic atomic write to a
   recovery path, detected and offered on the next launch. Data safety belongs
   with the cross-cutting rules, not at milestone 7.
