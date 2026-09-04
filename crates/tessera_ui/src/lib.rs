@@ -4,6 +4,7 @@
 //! painted through `egui::Painter`, a single `command` layer, and a `view`
 //! module that only draws.
 
+pub mod align;
 pub mod app;
 pub mod camera;
 pub mod command;

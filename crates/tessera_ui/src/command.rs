@@ -112,6 +112,14 @@ pub enum Command {
     /// renderer and the PDF writer both already draw as nothing.
     ClearFill(FrameId),
 
+    /// Line the selection up on one edge, against a chosen target.
+    Align {
+        edge: crate::align::Edge,
+        to: crate::align::AlignTo,
+    },
+    /// Space the selection's centres evenly along an axis.
+    Distribute(tessera_document::nodes::Axis),
+
     Undo,
     Redo,
 }
@@ -123,6 +131,36 @@ impl Command {
         // Copy reads the document without changing it, so it must not push an
         // undo entry: Ctrl+C should never need a Ctrl+Z to unwind.
         !matches!(self, Self::Undo | Self::Redo | Self::CopySelection)
+    }
+}
+
+/// The rectangle an alignment lines objects up against.
+///
+/// `Selection` depends on where the objects happen to be; the others do not,
+/// and that difference is the whole reason the choice exists.
+fn align_target(
+    state: &TesseraApp,
+    to: crate::align::AlignTo,
+    rects: &[DocRect],
+) -> Option<DocRect> {
+    use crate::align::AlignTo;
+
+    let doc = state.active().document();
+    let page = doc.page_ids().next()?;
+
+    match to {
+        AlignTo::Selection => crate::align::bounding_box(rects),
+        AlignTo::Margins => doc.margin_rect(page),
+        AlignTo::Page => doc.pages.get(page).map(|p| p.bounds),
+        AlignTo::Spread => {
+            let spread = doc.spread_of(page)?;
+            let all: Vec<_> = doc
+                .pages_of(spread)
+                .iter()
+                .filter_map(|p| doc.pages.get(*p).map(|page| page.bounds))
+                .collect();
+            crate::align::bounding_box(&all)
+        }
     }
 }
 
@@ -461,6 +499,43 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             }
         }
 
+        Command::Align { edge, to } => {
+            let ids: Vec<_> = state.active().selection.as_slice().to_vec();
+            let doc = state.active().document();
+            let rects: Vec<_> = ids.iter().filter_map(|id| doc.visual_bounds(*id)).collect();
+            if rects.len() != ids.len() || rects.is_empty() {
+                return;
+            }
+
+            let Some(target) = align_target(state, to, &rects) else {
+                return;
+            };
+            let deltas = crate::align::align_deltas(&rects, target, edge);
+            for (id, (dx, dy)) in ids.iter().zip(deltas) {
+                state
+                    .active_mut()
+                    .document_mut()
+                    .translate_frame(*id, dx, dy);
+            }
+        }
+
+        Command::Distribute(axis) => {
+            let ids: Vec<_> = state.active().selection.as_slice().to_vec();
+            let doc = state.active().document();
+            let rects: Vec<_> = ids.iter().filter_map(|id| doc.visual_bounds(*id)).collect();
+            if rects.len() != ids.len() {
+                return;
+            }
+
+            let deltas = crate::align::distribute_deltas(&rects, axis);
+            for (id, (dx, dy)) in ids.iter().zip(deltas) {
+                state
+                    .active_mut()
+                    .document_mut()
+                    .translate_frame(*id, dx, dy);
+            }
+        }
+
         Command::Undo => {
             if let Some(previous) = state.active_mut().undo() {
                 restore(state, previous);
@@ -532,6 +607,105 @@ fn duplicate_one(state: &mut TesseraApp, id: FrameId) -> Option<FrameId> {
 
 #[cfg(test)]
 mod tests {
+    use crate::align::{AlignTo, Edge};
+    use tessera_document::nodes::Axis;
+
+    fn add_rect(state: &mut TesseraApp, x: f64, y: f64) -> FrameId {
+        apply(
+            state,
+            Command::AddRectangle(DocRect {
+                x,
+                y,
+                width: 20.0,
+                height: 10.0,
+            }),
+        );
+        state
+            .active()
+            .selection
+            .single()
+            .expect("the new rectangle")
+    }
+
+    #[test]
+    fn aligning_left_is_one_undo_entry_for_the_whole_selection() {
+        let mut state = TesseraApp::headless();
+        let a = add_rect(&mut state, 10.0, 0.0);
+        let b = add_rect(&mut state, 90.0, 0.0);
+        state.active_mut().selection.replace_all([a, b]);
+
+        apply(
+            &mut state,
+            Command::Align {
+                edge: Edge::Left,
+                to: AlignTo::Selection,
+            },
+        );
+        let left_of =
+            |s: &TesseraApp, id| s.active().document().visual_bounds(id).expect("bounds").x;
+        assert!((left_of(&state, a) - left_of(&state, b)).abs() < 1e-9);
+
+        apply(&mut state, Command::Undo);
+        assert!(
+            (left_of(&state, b) - 90.0).abs() < 1e-9,
+            "one undo put the whole alignment back"
+        );
+    }
+
+    #[test]
+    fn aligning_to_the_page_moves_a_lone_object() {
+        // Aligning to the selection could not: a single object is already
+        // flush with its own bounding box.
+        let mut state = TesseraApp::headless();
+        let a = add_rect(&mut state, 300.0, 0.0);
+        state.active_mut().selection.replace_all([a]);
+
+        apply(
+            &mut state,
+            Command::Align {
+                edge: Edge::Left,
+                to: AlignTo::Page,
+            },
+        );
+        let x = state
+            .active()
+            .document()
+            .visual_bounds(a)
+            .expect("bounds")
+            .x;
+        assert!(
+            x.abs() < 1e-9,
+            "it should sit on the page's left edge, got {x}"
+        );
+    }
+
+    #[test]
+    fn distributing_three_objects_is_one_undo_entry() {
+        let mut state = TesseraApp::headless();
+        let a = add_rect(&mut state, 0.0, 0.0);
+        let b = add_rect(&mut state, 20.0, 0.0);
+        let c = add_rect(&mut state, 200.0, 0.0);
+        state.active_mut().selection.replace_all([a, b, c]);
+
+        apply(&mut state, Command::Distribute(Axis::Horizontal));
+        let mid = state
+            .active()
+            .document()
+            .visual_bounds(b)
+            .expect("bounds")
+            .x;
+        assert!((mid - 100.0).abs() < 1e-9, "the middle landed at {mid}");
+
+        apply(&mut state, Command::Undo);
+        let back = state
+            .active()
+            .document()
+            .visual_bounds(b)
+            .expect("bounds")
+            .x;
+        assert!((back - 20.0).abs() < 1e-9);
+    }
+
     #[test]
     fn swapping_exchanges_the_fill_and_the_stroke_colour() {
         let mut state = TesseraApp::headless();
