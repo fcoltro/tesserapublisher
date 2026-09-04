@@ -350,7 +350,7 @@ Split into three plans, because these are three subsystems that each produce
 working software alone: **C-i the rail** (C1–C5), **C-ii the surface**
 (C6–C9), **C-iii the chrome** (C10–C13).
 
-> **Status 2026-09-04: C-i and C-ii are code complete. C-iii not started.**
+> **Status 2026-09-04: C-i, C-ii and C-iii are all built. C13 remains.**
 >
 > 462 tests pass and clippy is clean at `-D warnings`.
 >
@@ -360,7 +360,11 @@ working software alone: **C-i the rail** (C1–C5), **C-ii the surface**
 > regression tests at the level the failure was really at. That is the
 > argument for the hand checks, made concrete.
 >
-> C-ii's own sentence has not been performed by hand.
+> C-ii's and C-iii's sentences have not been performed by hand. What remains
+> unbuilt across the whole of phase C: the icon set (C13), clipping the
+> document to a screen mode's revealed rectangle, moving or deleting a placed
+> guide, and page navigation in the status bar — each recorded against its own
+> item below rather than summarised away.
 
 - [x] **C1 — Inspector shell** with a stable section order — Transform, Fill,
   Stroke, Text, Frame. The *order* is what keeps a hidden section from moving
@@ -381,32 +385,37 @@ working software alone: **C-i the rail** (C1–C5), **C-ii the surface**
 - [x] **C5 — Fill and stroke proxy**, with swap, defaults and none, on `X`,
   `D` and `/` — bound below the text-editing guard so typing never triggers
   them.
-- [~] **C6 — Align and distribute.** All four targets exist in the model —
-  selection, margins, page, spread — and each is tested. *Only "to the
-  selection" is reachable from the interface; the other three wait on a
-  target picker.*
+- [x] **C6 — Align and distribute**, to the selection, the margins, the page
+  and the spread — every target reachable from the Object menu and the command
+  palette, with a test asserting each one is in the action list by name.
 - [~] **C7 — Canvas toolbar**: six aligns and two distributes, beside the
-  object, appearing only for two or more. Placement is tested against the
-  window's edges. *Flip and rotate 90° are not on it, and the buttons carry
-  short text labels rather than Lucide glyphs — those come with C13.*
+  object, appearing only for two or more; placement tested against the
+  window's edges. Flip and rotate 90° exist as commands and are reachable from
+  the menu and the palette. *They are not on the toolbar itself, and its
+  buttons carry short text labels rather than Lucide glyphs — C13.*
 - [~] **C8 — Rulers**, with a 1-2-5 tick ladder, a unit selector that saves
   the preference, and a guide you can drag off either one — dropped back on a
   ruler, the drag is cancelled (B3). *The zero point is fixed at the first
   page's top-left; it is not yet a widget you can drag. An existing guide
   cannot be moved or deleted once placed — the commands exist and are tested,
   the canvas interaction does not.*
-- [~] **C9 — Screen modes.** All four exist and are tested, and `W` puts the
-  interface away and brings it back: handles, frame edges, margin and bleed
-  rules, rulers, guides and the canvas toolbar all go, and the surround
-  becomes the fixed neutral grey of D8. *`W` toggles Normal and Preview only —
-  Bleed and Slug are not reachable without a View menu (C12) — and the
-  document is not yet clipped to the revealed rectangle, so Preview hides the
-  furniture without cropping the pasteboard.*
-- [ ] **C10 — Status bar**: zoom control and page navigator.
-- [ ] **C11 — Command palette** over the `Command` enum (A6), showing each
+- [~] **C9 — Screen modes.** All four are reachable from the View menu and
+  the palette, and `W` toggles Normal and Preview. In any printing mode the
+  handles, frame edges, margin and bleed rules, rulers, guides and canvas
+  toolbar all go, and the surround becomes the fixed neutral grey of D8.
+  *The document is not yet clipped to the revealed rectangle, so Preview hides
+  the furniture without cropping the pasteboard.*
+- [~] **C10 — Status bar**: a zoom that can be typed, stepped along a
+  1-2-5-ish ladder, or fitted, beside the message area. *The page count is
+  shown; navigation between pages waits on the pages panel at milestone 3.*
+- [x] **C11 — Command palette** over the `Command` enum (A6), showing each
   command's shortcut beside it.
-- [ ] **C12 — Layout, Type, View and Window menus**, carrying only commands
-  that exist.
+- [~] **C12 — Menus**, generated from the same action list the palette reads,
+  so a command cannot be in one and missing from the other. File, Edit, Object
+  and View exist. *Layout, Type and Window do not — they have no commands yet,
+  and the rule this milestone works to is that a group with no actions gets no
+  menu. A menu entry for an unbuilt feature is the lie the previous codebase
+  told often.*
 - [ ] **C13 — Icon set** grown to roughly 60 Lucide glyphs (A9).
 
 **Explicitly not in M1.5:** corner radius, opacity, effects, object styles,
