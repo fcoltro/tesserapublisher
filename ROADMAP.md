@@ -346,16 +346,34 @@ stand on it — and because PDF export already ships without a bleed box.
 
 The interface, built last, on foundations that now exist.
 
-- [ ] **C1 — Inspector shell** with a stable section order — Transform, Fill,
-  Stroke, Text, Frame — where an inapplicable section hides without the others
-  moving up to fill the gap.
-- [ ] **C2 — Reference-point proxy**, with the chosen anchor also drawn on the
-  selection itself (A4).
-- [ ] **C3 — Numeric fields**: unit parsing (A1), constrain-proportions chain,
-  scale as a percentage, shear (A3).
-- [ ] **C4 — Stroke section**: weight, style, alignment, cap, join, colour —
-  the shipped model, reachable at last.
-- [ ] **C5 — Fill and stroke proxy**, with swap, defaults and none.
+Split into three plans, because these are three subsystems that each produce
+working software alone: **C-i the rail** (C1–C5), **C-ii the surface**
+(C6–C9), **C-iii the chrome** (C10–C13).
+
+> **Status 2026-09-04: C-i is code complete. C-ii and C-iii not started.**
+>
+> 415 tests pass and clippy is clean at `-D warnings`. **The sentence has not
+> been performed by hand**, so this is code complete rather than complete.
+
+- [x] **C1 — Inspector shell** with a stable section order — Transform, Fill,
+  Stroke, Text, Frame. The *order* is what keeps a hidden section from moving
+  anything: universal sections first, so only Text and Frame can be absent and
+  they come last. *(D1's original wording — hiding moves nothing — was not
+  implementable, and the spec is amended.)*
+- [x] **C2 — Reference-point proxy**, with the chosen anchor also drawn on the
+  selection itself (A4). Settling `Anchor::shear`'s sign found that phase A's
+  decomposition never pinned which way a positive shear leaned; it does now.
+- [~] **C3 — Numeric fields**: scale as a percentage, rotation and shear, all
+  read from one `Decomposition` and written back as deltas about the reference
+  point (A3). *The constrain-proportions chain is not built, and X/Y/W/H still
+  scrub in points rather than parsing units — `measure` exists and the
+  transform fields have not been moved onto it.*
+- [x] **C4 — Stroke section**: weight, colour, alignment, cap, join, miter
+  limit and dash presets — the shipped model, reachable at last. The miter
+  limit and the dash offset appear only when they mean something.
+- [x] **C5 — Fill and stroke proxy**, with swap, defaults and none, on `X`,
+  `D` and `/` — bound below the text-editing guard so typing never triggers
+  them.
 - [ ] **C6 — Align and distribute**, to the selection, the margins, the page
   and the spread (B1).
 - [ ] **C7 — Canvas toolbar**: align, distribute, flip, rotate 90°. Spatial
