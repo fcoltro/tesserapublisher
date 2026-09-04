@@ -11,6 +11,7 @@ pub mod cursor;
 pub mod file_ops;
 pub mod icons;
 pub mod pen;
+pub mod prefs;
 pub mod selection;
 pub mod theme;
 pub mod tools;

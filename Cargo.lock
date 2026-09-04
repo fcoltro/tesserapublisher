@@ -3672,6 +3672,7 @@ dependencies = [
  "kurbo",
  "proptest",
  "rfd",
+ "serde",
  "serde_json",
  "tessera_color",
  "tessera_document",
