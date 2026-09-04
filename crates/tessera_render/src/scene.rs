@@ -86,6 +86,14 @@ const MARGIN_RULE: [f32; 4] = [0.78, 0.24, 0.72, 1.0];
 /// themselves where the page was, and one of them was eventually going to be
 /// wrong.
 pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform) -> Scene {
+    build_scene_with(resolved, view, true)
+}
+
+/// As [`build_scene`], but able to leave the non-printing rules out.
+///
+/// The printing screen modes show the page as it will come off the press, and
+/// a margin rule is not on the press.
+pub fn build_scene_with(resolved: &ResolvedDocument, view: ViewTransform, rules: bool) -> Scene {
     let mut scene = Scene::new();
     let transform = view.to_affine();
     let hairline = hairline(view);
@@ -124,7 +132,7 @@ pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform) -> Scene {
     // is deliberately not drawn — it has no distinct meaning until screen
     // modes arrive, and two identical rectangles teach the reader nothing.
     let rule = KurboStroke::new(hairline);
-    for page in &resolved.pages {
+    for page in resolved.pages.iter().filter(|_| rules) {
         if page.bleed != page.bounds {
             scene.stroke(
                 &rule,

@@ -7,6 +7,7 @@
 
 pub mod canvas_toolbar;
 pub mod panels;
+pub mod rulers;
 pub mod text_edit;
 pub mod vello_host;
 pub mod viewport;
@@ -42,7 +43,39 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
 
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
-        .show(ui, |ui| viewport::show(ui, frame, state));
+        .show(ui, |ui| {
+            // The rulers reserve their strips first, so the canvas is
+            // whatever is left. Painting them happens after the viewport, so
+            // the canvas rect they measure is already known — a ruler that
+            // guessed it would be a frame behind every pan.
+            let mut across = egui::Rect::NOTHING;
+            let mut down = egui::Rect::NOTHING;
+
+            if state.screen_mode.shows_chrome() {
+                Panel::top("ruler-across")
+                    .exact_size(rulers::THICKNESS)
+                    .resizable(false)
+                    .show(ui, |ui| {
+                        across = ui.max_rect();
+                        // The corner where the rulers meet is the unit
+                        // selector, as it has been in every layout tool.
+                        ui.horizontal(|ui| rulers::unit_selector(ui, state));
+                    });
+                Panel::left("ruler-down")
+                    .exact_size(rulers::THICKNESS)
+                    .resizable(false)
+                    .show(ui, |ui| {
+                        down = ui.max_rect();
+                    });
+            }
+
+            let canvas = ui.available_rect_before_wrap();
+            viewport::show(ui, frame, state);
+
+            if state.screen_mode.shows_chrome() {
+                rulers::paint(ui, state, canvas, across, down);
+            }
+        });
 }
 
 fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {

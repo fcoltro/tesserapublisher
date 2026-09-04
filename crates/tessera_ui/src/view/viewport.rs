@@ -52,7 +52,16 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // Everything downstream uses the snapped box, so what is drawn, what is
     // rendered into, and what the pointer is measured against all agree.
     let rect = pixel_snapped(allocated, ui.ctx().pixels_per_point());
-    ui.painter().rect_filled(rect, 0.0, Theme::CANVAS_BG);
+    // In a printing mode the surround is a fixed neutral grey in both
+    // themes. Perceived colour shifts with what surrounds it, so a designer
+    // judging an ink against a dark chrome in one theme and a light one in
+    // the other would be judging two different inks. See D8.
+    let surround = if state.screen_mode.shows_chrome() {
+        Theme::CANVAS_BG
+    } else {
+        Theme::PREVIEW_SURROUND
+    };
+    ui.painter().rect_filled(rect, 0.0, surround);
 
     if !state.active().fitted && rect.width() > 1.0 {
         let page = state.first_page_bounds();
@@ -88,8 +97,10 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
         // canvas repainting at sixty frames a second lays out nothing. The
         // scene is still rebuilt every frame, because the camera is baked into
         // it -- see `tessera_layout::cache`.
+        // Read before resolving: resolve_active borrows the whole of state.
+        let rules = state.screen_mode.shows_chrome();
         let resolved = state.resolve_active();
-        let scene = tessera_render::scene::build_scene(resolved, view);
+        let scene = tessera_render::scene::build_scene_with(resolved, view, rules);
 
         ui.painter().add(egui_wgpu::Callback::new_paint_callback(
             rect,
@@ -116,12 +127,16 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // Measured before drawing, because laying the text out needs the shaper
     // mutably and drawing only needs to read.
     let caret = caret_geometry(state);
-    draw_overlays(ui, rect, state, caret.as_ref());
+    if state.screen_mode.shows_chrome() {
+        draw_overlays(ui, rect, state, caret.as_ref());
+    }
 
     // The spatial verbs, beside what they act on. After the overlays so it
     // sits above the handles, and before the cursor so the pointer is still
     // painted over everything.
-    if let Some(box_on_screen) = selection_screen_rect(state, rect) {
+    if state.screen_mode.shows_chrome()
+        && let Some(box_on_screen) = selection_screen_rect(state, rect)
+    {
         crate::view::canvas_toolbar::show(ui, state, box_on_screen, rect);
     }
 
@@ -344,6 +359,16 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
     }
     if delete_pressed && !state.active().selection.is_empty() {
         apply(state, Command::DeleteSelection);
+    }
+
+    // `W` puts the interface away and brings it back — InDesign's key, and
+    // the one gesture worth having on a single stroke.
+    if ui.input(|i| i.modifiers.is_none() && i.key_pressed(egui::Key::W)) {
+        state.screen_mode = if state.screen_mode == crate::app::ScreenMode::Normal {
+            crate::app::ScreenMode::Preview
+        } else {
+            crate::app::ScreenMode::Normal
+        };
     }
 
     // The fill and stroke proxy's three keys. Unmodified, so they sit here

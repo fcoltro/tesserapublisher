@@ -127,6 +127,15 @@ impl Theme {
     pub const FRAME_EDGE: Color32 = Palette::DARK.frame_edge;
     /// The reference point a rotation turns about.
     pub const REFERENCE_MARK: f32 = 4.0;
+
+    /// The surround in a printing screen mode.
+    ///
+    /// **Not a palette colour.** It is the same in light and dark on purpose:
+    /// perceived colour shifts with what surrounds it, so a designer choosing
+    /// an ink against a dark chrome in one theme and a light one in the other
+    /// would be choosing two different inks. The surround is therefore held
+    /// constant at the moment colour is being judged. See D8.
+    pub const PREVIEW_SURROUND: Color32 = Color32::from_rgb(0x80, 0x80, 0x80);
 }
 
 pub fn apply(ctx: &Context) {

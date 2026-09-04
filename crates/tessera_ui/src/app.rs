@@ -43,6 +43,58 @@ impl Status {
     }
 }
 
+/// How much of the document is shown, and whether the interface is.
+///
+/// The three printing modes exist so a designer can see the page as it will
+/// come off the press, without guides and handles over it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScreenMode {
+    /// Everything: pasteboard, guides, handles, rules, rulers.
+    #[default]
+    Normal,
+    /// The trim alone, as it will print.
+    Preview,
+    /// The trim and its bleed.
+    Bleed,
+    /// The trim, its bleed and its slug.
+    Slug,
+}
+
+impl ScreenMode {
+    pub const ALL: [ScreenMode; 4] = [
+        ScreenMode::Normal,
+        ScreenMode::Preview,
+        ScreenMode::Bleed,
+        ScreenMode::Slug,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ScreenMode::Normal => "Normal",
+            ScreenMode::Preview => "Preview",
+            ScreenMode::Bleed => "Bleed",
+            ScreenMode::Slug => "Slug",
+        }
+    }
+
+    /// Whether the interface's own furniture is drawn: handles, frame edges,
+    /// guides, margin and bleed rules, rulers, the canvas toolbar.
+    pub fn shows_chrome(self) -> bool {
+        matches!(self, ScreenMode::Normal)
+    }
+
+    /// How much of a page this mode reveals.
+    pub fn revealed(self, page: &tessera_layout::ResolvedPage) -> tessera_geometry::DocRect {
+        match self {
+            // Normal shows the pasteboard too, so it reveals everything; the
+            // widest rectangle a page has is its slug.
+            ScreenMode::Normal | ScreenMode::Slug => page.slug,
+            ScreenMode::Preview => page.bounds,
+            ScreenMode::Bleed => page.bleed,
+        }
+    }
+}
+
 slotmap::new_key_type! {
     /// Which open document. A key rather than an index, so that closing one
     /// document cannot silently renumber another.
@@ -64,6 +116,9 @@ pub struct TesseraApp {
     pub shaper: Shaper,
 
     pub active_tool: Tool,
+
+    /// How much of the document is shown, and whether the interface is.
+    pub screen_mode: ScreenMode,
 
     /// The point transforms resolve about.
     ///
@@ -106,6 +161,7 @@ impl TesseraApp {
             active,
             shaper: Shaper::new(),
             active_tool: Tool::Select,
+            screen_mode: ScreenMode::default(),
             anchor: tessera_geometry::Anchor::default(),
             constrain_proportions: false,
             drag: None,
@@ -245,6 +301,57 @@ impl Default for TesseraApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn page_with(bleed: f64, slug: f64) -> tessera_layout::ResolvedPage {
+        let trim = DocRect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+        };
+        let grown = |by: f64| DocRect {
+            x: trim.x - by,
+            y: trim.y - by,
+            width: trim.width + by * 2.0,
+            height: trim.height + by * 2.0,
+        };
+        tessera_layout::ResolvedPage {
+            bounds: trim,
+            margins: trim,
+            bleed: grown(bleed),
+            slug: grown(slug),
+        }
+    }
+
+    #[test]
+    fn only_normal_shows_the_interface_furniture() {
+        assert!(ScreenMode::Normal.shows_chrome());
+        for mode in [ScreenMode::Preview, ScreenMode::Bleed, ScreenMode::Slug] {
+            assert!(!mode.shows_chrome(), "{mode:?} showed guides and handles");
+        }
+    }
+
+    #[test]
+    fn each_printing_mode_reveals_more_than_the_last() {
+        let page = page_with(9.0, 18.0);
+        let preview = ScreenMode::Preview.revealed(&page).width;
+        let bleed = ScreenMode::Bleed.revealed(&page).width;
+        let slug = ScreenMode::Slug.revealed(&page).width;
+        assert!(preview < bleed, "bleed must show more than preview");
+        assert!(bleed < slug, "slug must show more than bleed");
+    }
+
+    #[test]
+    fn preview_reveals_exactly_the_trim() {
+        // What comes off the guillotine, and nothing else.
+        let page = page_with(9.0, 18.0);
+        assert_eq!(ScreenMode::Preview.revealed(&page), page.bounds);
+    }
+
+    #[test]
+    fn a_new_application_starts_in_normal() {
+        assert_eq!(TesseraApp::headless().screen_mode, ScreenMode::Normal);
+    }
 
     #[test]
     fn a_fresh_state_is_clean_and_untitled() {
