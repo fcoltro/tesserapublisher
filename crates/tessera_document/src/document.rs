@@ -5,7 +5,7 @@ use slotmap::SlotMap;
 use tessera_geometry::{DocPoint, DocRect, Transform};
 
 use crate::ids::{FrameId, LayerId, PageId, SpreadId, StoryId};
-use crate::nodes::{Frame, FrameKind, Layer, Page, Spread};
+use crate::nodes::{DocumentSetup, Frame, FrameKind, Layer, Page, Spread};
 use tessera_text::story::Story;
 
 /// Stories are addressed by id and live at the document level, so a threaded
@@ -41,6 +41,14 @@ pub struct Document {
     pub stories: StoryMap,
     /// Spread paint and navigation order.
     pub spread_order: Vec<SpreadId>,
+
+    /// Margins, bleed, slug, and whether pages face each other.
+    ///
+    /// `serde(default)` so a document written before page setup existed loads
+    /// with none of it — which is the truth about that document, rather than
+    /// a default it never chose.
+    #[serde(default)]
+    pub setup: DocumentSetup,
     /// Bumped on every mutation. The renderer rebuilds its scene only when
     /// this moves, so panning the camera does not rebuild anything.
     ///
@@ -59,6 +67,7 @@ impl Document {
             spreads: SlotMap::with_key(),
             stories: StoryMap::with_key(),
             spread_order: Vec::new(),
+            setup: DocumentSetup::default(),
             revision: 0,
         };
 

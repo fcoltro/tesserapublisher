@@ -205,6 +205,86 @@ pub struct Layer {
     pub frames: Vec<FrameId>,
 }
 
+/// Distances **inward** from a page's edge to its type area.
+///
+/// Inside and outside rather than left and right, because that is what a
+/// margin means in a bound document: the inside margin is the one against the
+/// spine, and on a left-hand page it falls on the right. Storing left and
+/// right would put the margins on the wrong side of every alternate page — an
+/// error that first shows up at the printer.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct Margins {
+    pub top: f64,
+    pub bottom: f64,
+    /// Toward the spine on a facing-page spread; the left edge otherwise.
+    pub inside: f64,
+    /// Away from the spine; the right edge otherwise.
+    pub outside: f64,
+}
+
+impl Margins {
+    pub fn uniform(all: f64) -> Self {
+        Self {
+            top: all,
+            bottom: all,
+            inside: all,
+            outside: all,
+        }
+    }
+}
+
+/// Distances **outward** from a page's edge.
+///
+/// Bleed and slug both grow away from the page, so these are left and right:
+/// there is no spine to be inside of.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct Insets {
+    pub top: f64,
+    pub bottom: f64,
+    pub left: f64,
+    pub right: f64,
+}
+
+impl Insets {
+    pub fn uniform(all: f64) -> Self {
+        Self {
+            top: all,
+            bottom: all,
+            left: all,
+            right: all,
+        }
+    }
+
+    /// Whether this inset moves anything at all.
+    pub fn is_zero(self) -> bool {
+        self.top == 0.0 && self.bottom == 0.0 && self.left == 0.0 && self.right == 0.0
+    }
+}
+
+/// Which side of a spread a page sits on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageSide {
+    /// A verso: its spine is on the right.
+    Left,
+    /// A recto: its spine is on the left.
+    Right,
+    /// Not part of a facing-page spread, so it has no spine.
+    Single,
+}
+
+/// The document's page setup.
+///
+/// Page **size** is deliberately absent: it already lives in [`Page::bounds`],
+/// and holding it in two places would mean deciding, forever, which one is
+/// right when they disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct DocumentSetup {
+    pub margins: Margins,
+    pub bleed: Insets,
+    pub slug: Insets,
+    pub facing_pages: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Page {
     pub bounds: DocRect,
@@ -218,6 +298,31 @@ pub struct Spread {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn a_fresh_setup_has_no_margins_bleed_or_slug() {
+        // A document that never had them has none. Inventing 10mm would be
+        // fabricating a decision the user never made.
+        let setup = DocumentSetup::default();
+        assert_eq!(setup.margins, Margins::default());
+        assert_eq!(setup.bleed, Insets::default());
+        assert_eq!(setup.slug, Insets::default());
+        assert!(!setup.facing_pages);
+    }
+
+    #[test]
+    fn margins_are_uniform_when_every_edge_matches() {
+        let m = Margins::uniform(36.0);
+        assert_eq!((m.top, m.bottom, m.inside, m.outside), (36.0, 36.0, 36.0, 36.0));
+    }
+
+    #[test]
+    fn insets_are_uniform_when_every_edge_matches() {
+        let b = Insets::uniform(8.5);
+        assert_eq!((b.top, b.bottom, b.left, b.right), (8.5, 8.5, 8.5, 8.5));
+    }
+
     use super::*;
 
     fn stroke() -> Stroke {
