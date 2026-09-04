@@ -85,10 +85,17 @@ pub enum DragKind {
     Marquee,
     /// Moving the selection.
     ///
-    /// Carries each frame's bounds at the moment the drag began, so the move
-    /// is computed from the origin rather than accumulated per frame — which
-    /// would drift, and would make a single undo entry impossible.
-    Move { origins: Vec<(FrameId, DocRect)> },
+    /// Carries each frame's **placement** at the moment the drag began, so the
+    /// move is computed from the origin rather than accumulated per frame —
+    /// which would drift, and would make a single undo entry impossible.
+    ///
+    /// The placement, not the bounds: `bounds` is expressed in the frame's own
+    /// space, and a pointer delta is in document space. Adding one to the
+    /// other turns the move by the frame's own angle, which sent a rotated
+    /// frame off sideways and a half-turned one backwards.
+    Move {
+        origins: Vec<(FrameId, tessera_geometry::Transform)>,
+    },
     /// Resizing by a handle.
     ///
     /// Carries the box the gesture started from and the starting state of

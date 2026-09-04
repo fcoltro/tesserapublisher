@@ -75,20 +75,37 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
         return;
     };
 
+    // Position is asked in document space and size in the frame's own space,
+    // which is what each of them means. `bounds` is the frame's own box, so it
+    // answers W and H directly — but it does not move when the frame does,
+    // because a move is a change of placement.
+    let origin = frame.corners()[0];
+    let (mut x, mut y) = (origin.x, origin.y);
     let mut bounds = frame.bounds;
-    let mut changed = false;
+    let (mut moved, mut resized) = (false, false);
 
     ui.label("Position and size (pt)");
     egui::Grid::new("bounds").num_columns(2).show(ui, |ui| {
-        changed |= scrub(ui, "X", &mut bounds.x);
-        changed |= scrub(ui, "Y", &mut bounds.y);
+        moved |= scrub(ui, "X", &mut x);
+        moved |= scrub(ui, "Y", &mut y);
         ui.end_row();
-        changed |= scrub(ui, "W", &mut bounds.width);
-        changed |= scrub(ui, "H", &mut bounds.height);
+        resized |= scrub(ui, "W", &mut bounds.width);
+        resized |= scrub(ui, "H", &mut bounds.height);
         ui.end_row();
     });
 
-    if changed {
+    if moved {
+        // Translated in document space, so a turned frame goes where the
+        // number says rather than off along its own axes.
+        apply(
+            state,
+            Command::TranslateSelection {
+                dx: x - origin.x,
+                dy: y - origin.y,
+            },
+        );
+    }
+    if resized {
         apply(state, Command::SetBounds { id, bounds });
     }
 
