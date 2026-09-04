@@ -64,6 +64,17 @@ pub enum Command {
     /// twenty objects a single undo entry.
     SetTransforms(Vec<(FrameId, DocRect, Transform)>),
 
+    /// Replace the whole page setup at once.
+    ///
+    /// One command for the whole struct rather than one per field, so that a
+    /// page-setup edit is a single undo entry instead of four.
+    SetDocumentSetup(tessera_document::nodes::DocumentSetup),
+    /// Resize every page in the document.
+    SetPageSize {
+        width: f64,
+        height: f64,
+    },
+
     Undo,
     Redo,
 }
@@ -319,6 +330,23 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             }
         }
 
+        Command::SetDocumentSetup(setup) => {
+            state.active_mut().document_mut().setup = setup;
+        }
+
+        Command::SetPageSize { width, height } => {
+            // Every page, because per-page sizes are milestone 3. Doing them
+            // all in one command keeps it one undo entry.
+            let doc = state.active_mut().document_mut();
+            let ids: Vec<_> = doc.pages.keys().collect();
+            for id in ids {
+                if let Some(page) = doc.pages.get_mut(id) {
+                    page.bounds.width = width;
+                    page.bounds.height = height;
+                }
+            }
+        }
+
         Command::Undo => {
             if let Some(previous) = state.active_mut().undo() {
                 restore(state, previous);
@@ -390,6 +418,58 @@ fn duplicate_one(state: &mut TesseraApp, id: FrameId) -> Option<FrameId> {
 
 #[cfg(test)]
 mod tests {
+    use tessera_document::nodes::{DocumentSetup, Insets, Margins};
+
+    #[test]
+    fn setting_the_page_setup_is_one_undoable_step() {
+        let mut state = TesseraApp::headless();
+        let before = state.active().document().setup;
+
+        let wanted = DocumentSetup {
+            margins: Margins::uniform(36.0),
+            bleed: Insets::uniform(9.0),
+            slug: Insets::default(),
+            facing_pages: true,
+        };
+        apply(&mut state, Command::SetDocumentSetup(wanted));
+        assert_eq!(state.active().document().setup, wanted);
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(
+            state.active().document().setup,
+            before,
+            "one undo puts the whole setup back, not one field of it"
+        );
+    }
+
+    #[test]
+    fn resizing_the_page_resizes_every_page_in_one_step() {
+        let mut state = TesseraApp::headless();
+        let spread = state
+            .active()
+            .document()
+            .spread_ids()
+            .next()
+            .expect("a spread");
+        state.active_mut().document_mut().add_page_to(spread);
+
+        apply(
+            &mut state,
+            Command::SetPageSize {
+                width: 595.0,
+                height: 842.0,
+            },
+        );
+        for page in state.active().document().pages.values() {
+            assert_eq!((page.bounds.width, page.bounds.height), (595.0, 842.0));
+        }
+
+        apply(&mut state, Command::Undo);
+        for page in state.active().document().pages.values() {
+            assert_ne!(page.bounds.width, 595.0, "one undo put every page back");
+        }
+    }
+
     use super::*;
 
     fn bounds() -> DocRect {

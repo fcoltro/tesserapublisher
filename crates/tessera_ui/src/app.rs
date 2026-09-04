@@ -73,6 +73,14 @@ pub struct TesseraApp {
 
     /// When the crash-recovery copy was last written.
     pub recovery: crate::recovery::Recovery,
+
+    /// What the application remembers between runs.
+    ///
+    /// Defaults here rather than being read from disk, because `headless` is
+    /// what the tests build and a test must not depend on whatever this
+    /// machine's config directory happens to hold. The real application calls
+    /// [`TesseraApp::load_preferences`] once at startup.
+    pub prefs: crate::prefs::Preferences,
 }
 
 impl TesseraApp {
@@ -90,6 +98,27 @@ impl TesseraApp {
             status: None,
             clipboard: Vec::new(),
             recovery: crate::recovery::Recovery::default(),
+            prefs: crate::prefs::Preferences::default(),
+        }
+    }
+
+    /// Read the stored preferences, reporting rather than swallowing trouble.
+    ///
+    /// Called once at startup. A first run is silent; a damaged file or one
+    /// from a newer build says so in the status bar, because in both cases
+    /// the user's settings were just discarded.
+    pub fn load_preferences(&mut self) {
+        let Some(path) = crate::prefs::Preferences::path() else {
+            self.status = Some(Status::error(
+                "This system reports no configuration directory, so Tessera \
+                 cannot remember your preferences.",
+            ));
+            return;
+        };
+        let (prefs, complaint) = crate::prefs::Preferences::load_from(&path);
+        self.prefs = prefs;
+        if let Some(message) = complaint {
+            self.status = Some(Status::error(message));
         }
     }
 

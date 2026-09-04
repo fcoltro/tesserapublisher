@@ -37,6 +37,7 @@ fn main() -> eframe::Result<()> {
             tessera_ui::view::vello_host::install(render_state)?;
 
             let mut app = TesseraApp::headless();
+            app.load_preferences();
             // Before the first frame: work from a session that did not close
             // is offered rather than quietly discarded.
             tessera_ui::recovery::offer_pending(&mut app);

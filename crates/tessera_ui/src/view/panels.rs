@@ -2,6 +2,7 @@
 
 use egui::{Sense, Ui, Vec2};
 use tessera_color::Color;
+use tessera_geometry::Unit;
 
 use crate::app::TesseraApp;
 use crate::command::{Command, apply};
@@ -56,7 +57,7 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
     ui.separator();
 
     if state.active().selection.is_empty() {
-        ui.colored_label(Theme::TEXT_MUTED, "No selection");
+        document_setup(ui, state);
         return;
     }
 
@@ -167,6 +168,128 @@ fn fill_picker(ui: &mut Ui, rgba: &mut [f32; 4]) -> bool {
     .changed();
     if changed {
         *rgba = [colour.r(), colour.g(), colour.b(), colour.a()];
+    }
+    changed
+}
+
+// --- document setup ----------------------------------------------------
+
+/// The inspector with nothing selected: the document's own properties.
+///
+/// InDesign shows the same thing in the same place, and it is the one part of
+/// its Properties panel worth keeping wholesale — with nothing selected, the
+/// document *is* the selection.
+pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
+    let unit = state.prefs.unit;
+    let mut setup = state.active().document().setup;
+    let page = state.first_page_bounds();
+    let (mut width, mut height) = (page.width, page.height);
+
+    ui.label("Page");
+    let mut resized = false;
+    egui::Grid::new("page-size").num_columns(2).show(ui, |ui| {
+        resized |= measure(ui, "W", &mut width, unit);
+        resized |= measure(ui, "H", &mut height, unit);
+        ui.end_row();
+    });
+    if resized {
+        apply(state, Command::SetPageSize { width, height });
+        return;
+    }
+
+    let mut changed = false;
+
+    ui.add_space(Theme::SPACING_SM);
+    changed |= ui
+        .checkbox(&mut setup.facing_pages, "Facing pages")
+        .changed();
+
+    // The labels change with the binding, because the fields themselves mean
+    // something different: with facing pages on, the wide margin is the one
+    // against the spine and swaps sides between left-hand and right-hand
+    // pages. Calling it "Left" then would be a lie on half the document.
+    let (near, far) = if setup.facing_pages {
+        ("Inside", "Outside")
+    } else {
+        ("Left", "Right")
+    };
+
+    ui.add_space(Theme::SPACING_MD);
+    ui.label("Margins");
+    egui::Grid::new("margins").num_columns(2).show(ui, |ui| {
+        changed |= measure(ui, "Top", &mut setup.margins.top, unit);
+        changed |= measure(ui, "Bottom", &mut setup.margins.bottom, unit);
+        ui.end_row();
+        changed |= measure(ui, near, &mut setup.margins.inside, unit);
+        changed |= measure(ui, far, &mut setup.margins.outside, unit);
+        ui.end_row();
+    });
+
+    ui.add_space(Theme::SPACING_MD);
+    ui.label("Bleed");
+    egui::Grid::new("bleed").num_columns(2).show(ui, |ui| {
+        changed |= measure(ui, "Top", &mut setup.bleed.top, unit);
+        changed |= measure(ui, "Bottom", &mut setup.bleed.bottom, unit);
+        ui.end_row();
+        changed |= measure(ui, "Left", &mut setup.bleed.left, unit);
+        changed |= measure(ui, "Right", &mut setup.bleed.right, unit);
+        ui.end_row();
+    });
+
+    ui.add_space(Theme::SPACING_MD);
+    ui.label("Slug");
+    egui::Grid::new("slug").num_columns(2).show(ui, |ui| {
+        changed |= measure(ui, "Top", &mut setup.slug.top, unit);
+        changed |= measure(ui, "Bottom", &mut setup.slug.bottom, unit);
+        ui.end_row();
+        changed |= measure(ui, "Left", &mut setup.slug.left, unit);
+        changed |= measure(ui, "Right", &mut setup.slug.right, unit);
+        ui.end_row();
+    });
+
+    if changed {
+        // One command for the whole struct: a page-setup edit is one undo
+        // entry, not one per field touched.
+        apply(state, Command::SetDocumentSetup(setup));
+    }
+
+    ui.add_space(Theme::SPACING_LG);
+    ui.colored_label(
+        Theme::TEXT_MUTED,
+        format!("Measurements in {}", unit_name(unit)),
+    );
+}
+
+fn unit_name(unit: Unit) -> &'static str {
+    match unit {
+        Unit::Millimetres => "millimetres",
+        Unit::Points => "points",
+        Unit::Pixels => "pixels",
+        Unit::Inches => "inches",
+        Unit::Picas => "picas",
+    }
+}
+
+/// A numeric field holding a measurement.
+///
+/// The document stores points; this shows and edits the user's preferred unit
+/// and converts at the edge, which is the only place a conversion belongs.
+fn measure(ui: &mut Ui, label: &str, points: &mut f64, unit: Unit) -> bool {
+    let mut shown = unit.from_points(*points);
+    let changed = ui
+        .horizontal(|ui| {
+            ui.colored_label(Theme::TEXT_MUTED, label);
+            ui.add(
+                egui::DragValue::new(&mut shown)
+                    .speed(0.25)
+                    .fixed_decimals(2)
+                    .suffix(format!(" {}", unit.suffix())),
+            )
+            .changed()
+        })
+        .inner;
+    if changed {
+        *points = unit.to_points(shown);
     }
     changed
 }
