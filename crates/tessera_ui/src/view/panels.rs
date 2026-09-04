@@ -219,18 +219,145 @@ fn fill_section(
     }
 }
 
+/// Common dash patterns, in multiples of the stroke's own width.
+///
+/// Relative to the width so that a dashed hairline and a dashed 6 pt rule read
+/// as the same pattern rather than the thick one looking almost solid.
+const DASH_PRESETS: [(&str, &[f64]); 3] = [
+    ("Solid", &[]),
+    ("Dashed", &[3.0, 2.0]),
+    ("Dotted", &[0.0, 2.0]),
+];
+
 fn stroke_section(
     ui: &mut Ui,
-    _state: &mut TesseraApp,
-    _id: tessera_document::ids::FrameId,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::FrameId,
     frame: &tessera_document::nodes::Frame,
 ) {
-    // Filled in by the next task. The section exists now so that its position
-    // in the order is fixed before anything is built into it.
-    match &frame.stroke {
-        Some(s) => ui.colored_label(Theme::TEXT_MUTED, format!("{:.2} pt", s.width)),
-        None => ui.colored_label(Theme::TEXT_MUTED, "None"),
+    use tessera_document::nodes::{LineCap, LineJoin, Stroke, StrokeAlign};
+
+    let mut on = frame.stroke.is_some();
+    if ui.checkbox(&mut on, "Stroked").changed() {
+        // Turning it on gives the stroke the model's own default: what
+        // everything drew before the extra properties existed.
+        let stroke = on.then(|| Stroke::new(Color::BLACK, 1.0));
+        apply(state, Command::SetStroke { id, stroke });
+        return;
+    }
+
+    let Some(existing) = frame.stroke.clone() else {
+        return;
     };
+    let mut stroke = existing.clone();
+    let unit = state.prefs.unit;
+
+    measure(ui, "Weight", &mut stroke.width, unit);
+
+    let [r, g, b, a] = stroke.color.to_rgb_f32();
+    let mut rgba = [r, g, b, a];
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::TEXT_MUTED, "Colour");
+        if fill_picker(ui, &mut rgba) {
+            stroke.color = Color::Rgb {
+                r: rgba[0],
+                g: rgba[1],
+                b: rgba[2],
+                a: rgba[3],
+            };
+        }
+    });
+
+    // Alignment is the one stroke property that changes geometry rather than
+    // appearance, which is why the model carries it and why it sits first.
+    segmented(
+        ui,
+        "Align",
+        &mut stroke.align,
+        &[
+            ("Centre", StrokeAlign::Center),
+            ("Inside", StrokeAlign::Inside),
+            ("Outside", StrokeAlign::Outside),
+        ],
+    );
+
+    segmented(
+        ui,
+        "Cap",
+        &mut stroke.cap,
+        &[
+            ("Butt", LineCap::Butt),
+            ("Round", LineCap::Round),
+            ("Square", LineCap::Square),
+        ],
+    );
+
+    segmented(
+        ui,
+        "Join",
+        &mut stroke.join,
+        &[
+            ("Miter", LineJoin::Miter),
+            ("Round", LineJoin::Round),
+            ("Bevel", LineJoin::Bevel),
+        ],
+    );
+
+    // Shown only when it means something. A miter limit on a rounded join is
+    // a control that does nothing, which is worse than one that is absent.
+    if stroke.join == LineJoin::Miter {
+        ui.horizontal(|ui| {
+            ui.colored_label(Theme::TEXT_MUTED, "Miter limit");
+            ui.add(
+                egui::DragValue::new(&mut stroke.miter_limit)
+                    .speed(0.1)
+                    .range(1.0..=100.0),
+            );
+        });
+    }
+
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::TEXT_MUTED, "Dashes");
+        for (label, pattern) in DASH_PRESETS {
+            let scaled: Vec<f64> = pattern.iter().map(|d| d * stroke.width.max(0.1)).collect();
+            let selected = dashes_match(&stroke.dashes, &scaled);
+            if ui.selectable_label(selected, label).clicked() {
+                stroke.dashes = scaled;
+            }
+        }
+    });
+
+    if stroke.is_dashed() {
+        measure(ui, "Dash offset", &mut stroke.dash_offset, unit);
+    }
+
+    if stroke != existing {
+        // The whole struct, so an edit is one undo entry rather than one per
+        // property touched.
+        apply(
+            state,
+            Command::SetStroke {
+                id,
+                stroke: Some(stroke),
+            },
+        );
+    }
+}
+
+fn dashes_match(a: &[f64], b: &[f64]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6)
+}
+
+/// A row of mutually exclusive choices, the shape a three-way property wants.
+fn segmented<T: PartialEq + Copy>(ui: &mut Ui, label: &str, value: &mut T, options: &[(&str, T)]) {
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::TEXT_MUTED, label);
+        for (text, candidate) in options {
+            if ui.selectable_label(*value == *candidate, *text).clicked() {
+                *value = *candidate;
+            }
+        }
+    });
 }
 
 fn text_section(

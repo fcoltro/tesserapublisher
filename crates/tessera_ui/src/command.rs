@@ -75,6 +75,16 @@ pub enum Command {
         height: f64,
     },
 
+    /// Give a frame a stroke, or take it away.
+    ///
+    /// `Option`, because "no stroke" is a value the inspector must be able to
+    /// set and is the state every shape starts in. The whole struct travels
+    /// at once so that an edit is one undo entry rather than one per property.
+    SetStroke {
+        id: FrameId,
+        stroke: Option<tessera_document::nodes::Stroke>,
+    },
+
     Undo,
     Redo,
 }
@@ -347,6 +357,12 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             }
         }
 
+        Command::SetStroke { id, stroke } => {
+            if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
+                f.stroke = stroke;
+            }
+        }
+
         Command::Undo => {
             if let Some(previous) = state.active_mut().undo() {
                 restore(state, previous);
@@ -418,6 +434,100 @@ fn duplicate_one(state: &mut TesseraApp, id: FrameId) -> Option<FrameId> {
 
 #[cfg(test)]
 mod tests {
+    use tessera_document::nodes::{LineCap, LineJoin, Stroke, StrokeAlign};
+
+    fn one_rect(state: &mut TesseraApp) -> FrameId {
+        apply(
+            state,
+            Command::AddRectangle(DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 10.0,
+            }),
+        );
+        state
+            .active()
+            .selection
+            .single()
+            .expect("the new rectangle")
+    }
+
+    #[test]
+    fn a_stroke_can_be_given_and_taken_away() {
+        let mut state = TesseraApp::headless();
+        let id = one_rect(&mut state);
+        assert!(
+            state
+                .active()
+                .document()
+                .frame(id)
+                .expect("frame")
+                .stroke
+                .is_none(),
+            "a shape starts with no stroke"
+        );
+
+        let stroke = Stroke {
+            color: Color::BLACK,
+            width: 3.0,
+            align: StrokeAlign::Inside,
+            cap: LineCap::Round,
+            join: LineJoin::Bevel,
+            miter_limit: 4.0,
+            dashes: vec![6.0, 3.0],
+            dash_offset: 0.0,
+        };
+        apply(
+            &mut state,
+            Command::SetStroke {
+                id,
+                stroke: Some(stroke.clone()),
+            },
+        );
+        assert_eq!(
+            state.active().document().frame(id).expect("frame").stroke,
+            Some(stroke),
+            "every property survived, not just the width"
+        );
+
+        apply(&mut state, Command::SetStroke { id, stroke: None });
+        assert!(
+            state
+                .active()
+                .document()
+                .frame(id)
+                .expect("frame")
+                .stroke
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn setting_a_stroke_is_one_undo_entry_covering_every_property() {
+        let mut state = TesseraApp::headless();
+        let id = one_rect(&mut state);
+
+        apply(
+            &mut state,
+            Command::SetStroke {
+                id,
+                stroke: Some(Stroke::new(Color::BLACK, 2.0)),
+            },
+        );
+        apply(&mut state, Command::Undo);
+        assert!(
+            state
+                .active()
+                .document()
+                .frame(id)
+                .expect("frame")
+                .stroke
+                .is_none(),
+            "one undo removes the whole stroke, not one of its fields"
+        );
+    }
+
     use tessera_document::nodes::{DocumentSetup, Insets, Margins};
 
     #[test]
