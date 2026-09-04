@@ -79,7 +79,7 @@ not. They land in the inspector (values) or the canvas toolbar (spatial verbs).
 | Rotation angle | ✅ inspector | — | done |
 | **Shear angle** | ✗ | view | **M1.5** |
 | Rotate 90° CW / CCW | ✗ | view | **M1.5** |
-| Flip horizontal / vertical | partial | view | **M1.5** |
+| Flip horizontal / vertical | only by dragging a handle through itself — no command, no button | view | **M1.5** |
 | Stroke weight | ✗ | **surface** | **M1.5** |
 | Stroke style (solid, dashed) | ✗ | **surface** | **M1.5** |
 | Stroke alignment, cap, join | ✗ | **surface** | **M1.5** |

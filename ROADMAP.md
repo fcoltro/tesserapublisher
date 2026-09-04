@@ -119,9 +119,14 @@ threading, swatches, preflight, images, CMYK, print marks.
 
 Making the skeleton pleasant to use. No new file-format surface area.
 
-> **Status 2026-09-02: code complete, awaiting the manual check.**
-> Every item below is built and tested. As with milestone 0, the boxes stay
-> unticked until a person performs the sentence in the running application.
+> **Status 2026-09-03: the original scope is code complete, awaiting the
+> manual check; five items were added afterwards and are not built.**
+> Everything down to the undo-entry line is built and tested. As with
+> milestone 0, the boxes stay unticked until a person performs the sentence in
+> the running application. The five items below that line came out of the
+> InDesign reading on 2026-09-03 — the reference point, shear, align and
+> distribute, corner options, and the remaining tools — and no code exists for
+> any of them.
 >
 > A first run on 2026-09-02 produced a punch list, worked through in
 > `docs/UX-PASS-1.md`: painted Lucide cursors, transform zones that do not
