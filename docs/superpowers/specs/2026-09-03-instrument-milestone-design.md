@@ -72,10 +72,18 @@ rebuild spec.
 ### D1 — No control panel. One inspector, with a stable address.
 
 Every value lives in the right-hand inspector, in sections whose order never
-changes: **Transform, Fill, Stroke, Text, Frame**. A section that does not
-apply to the selection is hidden, and the sections that remain **do not move
-up to fill the gap**. Position is learnable only if it is constant, and a
-control that relocates by context is one the hand cannot find without the eye.
+changes: **Transform, Fill, Stroke, Text, Frame**. Position is learnable only
+if it is constant, and a control that relocates by context is one the hand
+cannot find without the eye.
+
+*Amended 2026-09-04.* This first read: "a section that does not apply is
+hidden, and the sections that remain do not move up to fill the gap." That is
+not implementable — hiding something in a vertical stack moves everything
+below it. What makes the promise true is the **order**, not the hiding.
+Sections run most-universal first, so the ones that can be absent are always
+last: Transform, Fill and Stroke apply to every frame and therefore never
+move, while Text and Frame come after everything a user reaches for often.
+Hiding them costs nothing.
 
 *Rejected: an InDesign-style contextual strip above the canvas.* It fails on
 two counts. Distance — the fields sit at the top of the window while the object
