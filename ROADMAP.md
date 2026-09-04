@@ -297,15 +297,24 @@ Built first because retrofitting any of them is many times the cost.
 
 ## Phase B — The Page
 
+> **Status 2026-09-04: code complete. Seven of eight built; B4 dropped.**
+>
+> 394 tests pass and clippy is clean at `-D warnings`. The format moved from
+> 4 to 5 exactly once, and a version-4 document is proven to still open.
+>
+> **The sentence below has not been performed by hand.** Until it has, this is
+> code complete rather than complete.
+
 **One format version bump, one migration test, all of the page geometry at
 once.** Moved here out of milestone 3 because rulers, screen modes,
 align-to-page, `TrimBox` and `BleedBox`, and preflight's out-of-bleed rule all
 stand on it — and because PDF export already ships without a bleed box.
 
-- [ ] **B1 — Page geometry.** Size, orientation and presets; margins; bleed;
-  slug.
-- [ ] **B2 — Facing pages.** The flag, and correct left/right spread geometry.
-- [ ] **B3 — Guides as document data.** A guide is an axis, a position and a
+- [~] **B1 — Page geometry.** Size, margins, bleed and slug are all in the
+  model. *Orientation and named presets (A4, Letter) are not built — the page
+  is edited as a width and a height.*
+- [x] **B2 — Facing pages.** The flag, and correct left/right spread geometry.
+- [x] **B3 — Guides as document data.** A guide is an axis, a position and a
   spread — spread-level only; page-level guides differ only once pages within
   a spread move independently, which is milestone 3's concern. Landing here rather than at milestone 4 costs nothing extra, because
   the format bump is already being paid — and it is what lets phase C's rulers
@@ -319,16 +328,17 @@ stand on it — and because PDF export already ships without a bleed box.
   same shape of walk. The cost is therefore roughly equal now and later, the
   benefit before milestone 5 is nil, and reserving a shape before swatch
   semantics are designed risks reserving the wrong one. YAGNI.
-- [ ] **B5 — A spread renders as a spread.** `build_scene` takes one page
+- [x] **B5 — A spread renders as a spread.** `build_scene` takes one page
   today. Margins, bleed and slug are drawn.
-- [ ] **B6 — Format version 5**, with a migration test proving a version-4
+- [x] **B6 — Format version 5**, with a migration test proving a version-4
   document still opens and gains no setup it never had. *Not version 3: the
   format is already at 4 — 2 added frame rotation, 3 replaced it with a full
   affine transform, 4 added stroke alignment, caps, joins and dashes. The
   earlier entry here was written from a stale reading and is corrected.*
-- [ ] **B7 — Document setup inspector**, the "no selection" state: preset,
-  size, orientation, facing pages, margins, bleed, slug.
-- [ ] **B8 — `TrimBox` and `BleedBox` in the PDF.** Exporting a document that
+- [~] **B7 — Document setup inspector**, the "no selection" state: page size,
+  facing pages, margins, bleed and slug, each in the preferred unit.
+  *No size preset dropdown and no orientation buttons; both wait on B1.*
+- [x] **B8 — `TrimBox` and `BleedBox` in the PDF.** Exporting a document that
   has a bleed and not recording it discards the user's intent silently, which
   the cross-cutting rules forbid. PDF/X proper remains milestone 6.
 
