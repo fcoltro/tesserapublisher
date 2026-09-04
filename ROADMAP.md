@@ -310,9 +310,9 @@ once.** Moved here out of milestone 3 because rulers, screen modes,
 align-to-page, `TrimBox` and `BleedBox`, and preflight's out-of-bleed rule all
 stand on it — and because PDF export already ships without a bleed box.
 
-- [~] **B1 — Page geometry.** Size, margins, bleed and slug are all in the
-  model. *Orientation and named presets (A4, Letter) are not built — the page
-  is edited as a width and a height.*
+- [x] **B1 — Page geometry.** Size, margins, bleed and slug, with named
+  presets (A3/A4/A5/Letter/Legal/Tabloid) and an orientation that turns a page
+  without losing its paper.
 - [x] **B2 — Facing pages.** The flag, and correct left/right spread geometry.
 - [x] **B3 — Guides as document data.** A guide is an axis, a position and a
   spread — spread-level only; page-level guides differ only once pages within
@@ -335,9 +335,9 @@ stand on it — and because PDF export already ships without a bleed box.
   format is already at 4 — 2 added frame rotation, 3 replaced it with a full
   affine transform, 4 added stroke alignment, caps, joins and dashes. The
   earlier entry here was written from a stale reading and is corrected.*
-- [~] **B7 — Document setup inspector**, the "no selection" state: page size,
-  facing pages, margins, bleed and slug, each in the preferred unit.
-  *No size preset dropdown and no orientation buttons; both wait on B1.*
+- [x] **B7 — Document setup inspector**, the "no selection" state: preset,
+  size, orientation, facing pages, margins, bleed and slug, each in the
+  preferred unit.
 - [x] **B8 — `TrimBox` and `BleedBox` in the PDF.** Exporting a document that
   has a bleed and not recording it discards the user's intent silently, which
   the cross-cutting rules forbid. PDF/X proper remains milestone 6.

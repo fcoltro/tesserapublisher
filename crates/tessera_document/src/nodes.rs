@@ -272,6 +272,108 @@ pub enum PageSide {
     Single,
 }
 
+/// A named page size, in points.
+///
+/// The model stores a width and a height and nothing else — a preset is only
+/// a way of naming a pair a person recognises. Kept here rather than in the
+/// interface because "A4 is 210 by 297 millimetres" is knowledge about
+/// documents, and a test can hold it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PagePreset {
+    A3,
+    A4,
+    A5,
+    Letter,
+    Legal,
+    Tabloid,
+}
+
+impl PagePreset {
+    pub const ALL: [PagePreset; 6] = [
+        PagePreset::A3,
+        PagePreset::A4,
+        PagePreset::A5,
+        PagePreset::Letter,
+        PagePreset::Legal,
+        PagePreset::Tabloid,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            PagePreset::A3 => "A3",
+            PagePreset::A4 => "A4",
+            PagePreset::A5 => "A5",
+            PagePreset::Letter => "Letter",
+            PagePreset::Legal => "Legal",
+            PagePreset::Tabloid => "Tabloid",
+        }
+    }
+
+    /// Portrait width and height, in points.
+    pub fn size(self) -> (f64, f64) {
+        // The ISO sizes are defined in millimetres and the US ones in inches,
+        // so each is written in its own unit and converted here rather than
+        // carrying a rounded point value that matches neither.
+        const MM: f64 = 72.0 / 25.4;
+        const IN: f64 = 72.0;
+        match self {
+            PagePreset::A3 => (297.0 * MM, 420.0 * MM),
+            PagePreset::A4 => (210.0 * MM, 297.0 * MM),
+            PagePreset::A5 => (148.0 * MM, 210.0 * MM),
+            PagePreset::Letter => (8.5 * IN, 11.0 * IN),
+            PagePreset::Legal => (8.5 * IN, 14.0 * IN),
+            PagePreset::Tabloid => (11.0 * IN, 17.0 * IN),
+        }
+    }
+
+    /// The preset matching a size, in either orientation.
+    ///
+    /// Within a twentieth of a point, because a size that arrived through
+    /// millimetres and back will not be bit-identical and should still be
+    /// recognised as the paper it is.
+    pub fn matching(width: f64, height: f64) -> Option<PagePreset> {
+        const TOLERANCE: f64 = 0.05;
+        PagePreset::ALL.into_iter().find(|preset| {
+            let (w, h) = preset.size();
+            let same = (w - width).abs() < TOLERANCE && (h - height).abs() < TOLERANCE;
+            let turned = (h - width).abs() < TOLERANCE && (w - height).abs() < TOLERANCE;
+            same || turned
+        })
+    }
+}
+
+/// Which way round a page is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Orientation {
+    Portrait,
+    Landscape,
+}
+
+impl Orientation {
+    /// A square page is portrait: it has to be one of them, and portrait is
+    /// what a new document is.
+    pub fn of(width: f64, height: f64) -> Self {
+        if width > height {
+            Orientation::Landscape
+        } else {
+            Orientation::Portrait
+        }
+    }
+
+    /// `(width, height)` turned to this orientation.
+    pub fn apply(self, width: f64, height: f64) -> (f64, f64) {
+        let (long, short) = if width > height {
+            (width, height)
+        } else {
+            (height, width)
+        };
+        match self {
+            Orientation::Portrait => (short, long),
+            Orientation::Landscape => (long, short),
+        }
+    }
+}
+
 /// The document's page setup.
 ///
 /// Page **size** is deliberately absent: it already lives in [`Page::bounds`],
@@ -323,6 +425,67 @@ pub struct Spread {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a4_is_two_hundred_and_ten_by_two_hundred_and_ninety_seven_millimetres() {
+        let (w, h) = PagePreset::A4.size();
+        assert!((w - 210.0 * 72.0 / 25.4).abs() < 1e-9);
+        assert!((h - 297.0 * 72.0 / 25.4).abs() < 1e-9);
+    }
+
+    #[test]
+    fn letter_is_eight_and_a_half_by_eleven_inches() {
+        assert_eq!(PagePreset::Letter.size(), (612.0, 792.0));
+    }
+
+    #[test]
+    fn every_preset_is_taller_than_it_is_wide() {
+        // `size` is defined as the portrait pair; `Orientation::apply` turns
+        // it. A preset entered the other way round would silently make the
+        // landscape button do nothing.
+        for preset in PagePreset::ALL {
+            let (w, h) = preset.size();
+            assert!(h > w, "{} is stored landscape", preset.name());
+        }
+    }
+
+    #[test]
+    fn a_preset_is_recognised_in_either_orientation() {
+        let (w, h) = PagePreset::A4.size();
+        assert_eq!(PagePreset::matching(w, h), Some(PagePreset::A4));
+        assert_eq!(PagePreset::matching(h, w), Some(PagePreset::A4), "turned");
+    }
+
+    #[test]
+    fn a_size_that_is_no_preset_matches_nothing() {
+        assert_eq!(PagePreset::matching(123.0, 456.0), None);
+    }
+
+    #[test]
+    fn a_preset_survives_a_trip_through_millimetres() {
+        // Which is what the document setup panel does to it, so a size that
+        // came back a hair off must still be recognised as the paper it is.
+        let (w, h) = PagePreset::A4.size();
+        let mm = |v: f64| (v / (72.0 / 25.4) * 100.0).round() / 100.0 * (72.0 / 25.4);
+        assert_eq!(PagePreset::matching(mm(w), mm(h)), Some(PagePreset::A4));
+    }
+
+    #[test]
+    fn turning_a_page_landscape_swaps_its_sides() {
+        assert_eq!(Orientation::Landscape.apply(210.0, 297.0), (297.0, 210.0));
+        assert_eq!(Orientation::Portrait.apply(297.0, 210.0), (210.0, 297.0));
+    }
+
+    #[test]
+    fn turning_a_page_to_the_orientation_it_already_has_changes_nothing() {
+        assert_eq!(Orientation::Portrait.apply(210.0, 297.0), (210.0, 297.0));
+    }
+
+    #[test]
+    fn a_square_page_is_portrait() {
+        // It has to be one of them, and portrait is what a new document is.
+        assert_eq!(Orientation::of(500.0, 500.0), Orientation::Portrait);
+    }
 
     #[test]
     fn a_fresh_setup_has_no_margins_bleed_or_slug() {

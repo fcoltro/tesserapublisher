@@ -2,6 +2,7 @@
 
 use egui::{Sense, Ui, Vec2};
 use tessera_color::Color;
+use tessera_document::nodes::{Orientation, PagePreset};
 use tessera_geometry::{Anchor, Unit};
 
 use crate::app::TesseraApp;
@@ -659,6 +660,60 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
     let (mut width, mut height) = (page.width, page.height);
 
     ui.label("Page");
+
+    // The preset names a pair of numbers the user recognises; the model still
+    // stores only a width and a height. "Custom" is not a value — it is what
+    // no preset matching looks like.
+    let current = PagePreset::matching(width, height);
+    let mut wanted = None;
+    egui::ComboBox::from_id_salt("page-preset")
+        .selected_text(current.map_or("Custom", PagePreset::name))
+        .show_ui(ui, |ui| {
+            for preset in PagePreset::ALL {
+                if ui
+                    .selectable_label(current == Some(preset), preset.name())
+                    .clicked()
+                {
+                    wanted = Some(preset);
+                }
+            }
+        });
+    if let Some(preset) = wanted {
+        // Applied in the orientation the page already has, so choosing A4 for
+        // a landscape document does not silently turn it upright.
+        let (w, h) = preset.size();
+        let (w, h) = Orientation::of(width, height).apply(w, h);
+        apply(
+            state,
+            Command::SetPageSize {
+                width: w,
+                height: h,
+            },
+        );
+        return;
+    }
+
+    let orientation = Orientation::of(width, height);
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::TEXT_MUTED, "Orientation");
+        for (label, which) in [
+            ("Portrait", Orientation::Portrait),
+            ("Landscape", Orientation::Landscape),
+        ] {
+            if ui.selectable_label(orientation == which, label).clicked() && orientation != which {
+                let (w, h) = which.apply(width, height);
+                wanted = None;
+                apply(
+                    state,
+                    Command::SetPageSize {
+                        width: w,
+                        height: h,
+                    },
+                );
+            }
+        }
+    });
+
     let mut resized = false;
     egui::Grid::new("page-size").num_columns(2).show(ui, |ui| {
         resized |= measure(ui, "W", &mut width, unit);
