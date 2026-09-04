@@ -8,8 +8,10 @@
 
 pub mod spaces;
 pub mod transform;
+pub mod unit;
 pub mod view;
 
 pub use spaces::{DocPoint, DocRect, ScreenPoint};
 pub use transform::Transform;
+pub use unit::Unit;
 pub use view::ViewTransform;
