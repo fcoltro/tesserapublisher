@@ -11,6 +11,9 @@
 //! Lucide is ISC-licensed; icons inherited from Feather are MIT. See
 //! `ATTRIBUTION.md`.
 
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
 use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke};
 use kurbo::{BezPath, PathEl};
 
@@ -19,7 +22,7 @@ const GRID: f32 = 24.0;
 /// Lucide's stroke width, in grid units.
 const STROKE: f32 = 2.0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Icon {
     Select,
     Rectangle,
@@ -172,6 +175,45 @@ impl Icon {
     }
 }
 
+/// Parsed path data, built on first use and shared thereafter.
+///
+/// The paths are static text and never change, so parsing them per paint was
+/// pure waste — one allocation per icon per frame, and the tool strip alone
+/// draws a dozen.
+static GEOMETRY: OnceLock<HashMap<Icon, Vec<BezPath>>> = OnceLock::new();
+
+impl Icon {
+    /// This icon's outlines, in the 24×24 Lucide grid.
+    pub fn geometry(self) -> &'static [BezPath] {
+        GEOMETRY
+            .get_or_init(|| {
+                ALL.into_iter()
+                    .map(|icon| {
+                        let parsed = icon
+                            .paths()
+                            .iter()
+                            .map(|data| {
+                                BezPath::from_svg(data).unwrap_or_else(|error| {
+                                    // Path data is a compile-time constant in
+                                    // this file, so a failure here is a typo
+                                    // in the source rather than a runtime
+                                    // condition. `every_icon_parses` catches
+                                    // it first; naming the icon makes it
+                                    // findable if it somehow does not.
+                                    panic!("icon {icon:?} has malformed path data: {error}")
+                                })
+                            })
+                            .collect();
+                        (icon, parsed)
+                    })
+                    .collect()
+            })
+            .get(&self)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+}
+
 /// Paint `icon` to fill `rect`, stroked in `color`.
 ///
 /// The icon is scaled uniformly from its 24-unit grid, so the stroke stays
@@ -206,14 +248,7 @@ pub fn paint_rotated(
     // thing regardless of how large the icon is drawn.
     let tolerance = 0.05 / f64::from(scale.max(f32::EPSILON));
 
-    for data in icon.paths() {
-        let Ok(path) = BezPath::from_svg(data) else {
-            // Unreachable: `every_icon_parses` pins this at test time. Drawing
-            // nothing is still better than panicking in a paint loop.
-            debug_assert!(false, "icon path failed to parse: {data}");
-            continue;
-        };
-
+    for path in icon.geometry() {
         let mut run: Vec<Pos2> = Vec::new();
         let flush = |run: &mut Vec<Pos2>| {
             if run.len() > 1 {
@@ -283,6 +318,32 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_cache_parses_every_icon_to_at_least_one_subpath() {
+        for icon in ALL {
+            let geometry = icon.geometry();
+            assert!(
+                !geometry.is_empty(),
+                "{icon:?} produced no geometry — its path data is malformed"
+            );
+            for path in geometry {
+                assert!(
+                    path.elements().len() > 1,
+                    "{icon:?} produced an empty subpath"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_same_icon_hands_back_the_same_allocation() {
+        // Parsing on every paint is what this cache exists to stop, so the
+        // test pins the pointer rather than the contents.
+        let first = Icon::Select.geometry().as_ptr();
+        let second = Icon::Select.geometry().as_ptr();
+        assert_eq!(first, second);
     }
 
     #[test]
