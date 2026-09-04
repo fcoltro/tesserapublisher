@@ -37,6 +37,24 @@ fn page() -> DocRect {
     }
 }
 
+/// The test page, resolved with no margins, bleed or slug — so nothing
+/// non-printing is drawn and every asserted pixel belongs to the content.
+fn resolved_page() -> tessera_layout::ResolvedPage {
+    tessera_layout::ResolvedPage {
+        bounds: page(),
+        margins: page(),
+        bleed: page(),
+        slug: page(),
+    }
+}
+
+fn empty_doc() -> ResolvedDocument {
+    ResolvedDocument {
+        items: Vec::new(),
+        pages: vec![resolved_page()],
+    }
+}
+
 fn rect_doc(bounds: DocRect, fill: Color) -> ResolvedDocument {
     ResolvedDocument {
         items: vec![ResolvedItem {
@@ -45,6 +63,7 @@ fn rect_doc(bounds: DocRect, fill: Color) -> ResolvedDocument {
             transform: Transform::IDENTITY,
             kind: ResolvedKind::Rectangle { fill, stroke: None },
         }],
+        pages: vec![resolved_page()],
     }
 }
 
@@ -57,11 +76,7 @@ fn pixel(pixels: &[u8], x: usize, y: usize) -> [u8; 3] {
 #[ignore = "needs a GPU adapter; run with -- --ignored"]
 fn an_empty_page_renders_white() {
     let mut renderer = HeadlessRenderer::new(W, H).expect("adapter");
-    let scene = build_scene(
-        &ResolvedDocument::default(),
-        ViewTransform::default(),
-        page(),
-    );
+    let scene = build_scene(&empty_doc(), ViewTransform::default());
     let pixels = renderer.render(&scene).expect("render");
 
     assert_eq!(pixels.len(), (W * H * 4) as usize, "tightly packed RGBA8");
@@ -83,7 +98,6 @@ fn a_black_rectangle_renders_black_where_it_sits_and_nowhere_else() {
             Color::BLACK,
         ),
         ViewTransform::default(),
-        page(),
     );
     let pixels = renderer.render(&scene).expect("render");
 
@@ -113,7 +127,6 @@ fn read_back_drops_row_padding_rather_than_shearing_the_image() {
             Color::BLACK,
         ),
         ViewTransform::default(),
-        page(),
     );
     let pixels = renderer.render(&scene).expect("render");
 
@@ -144,7 +157,7 @@ fn the_camera_transform_moves_what_is_rendered() {
     );
 
     let at_origin = renderer
-        .render(&build_scene(&doc, ViewTransform::default(), page()))
+        .render(&build_scene(&doc, ViewTransform::default()))
         .expect("render");
     assert_eq!(pixel(&at_origin, 10, 10), [0, 0, 0]);
 
@@ -153,9 +166,7 @@ fn the_camera_transform_moves_what_is_rendered() {
         pan: DocPoint { x: -50.0, y: 0.0 },
         zoom: 1.0,
     };
-    let after = renderer
-        .render(&build_scene(&doc, panned, page()))
-        .expect("render");
+    let after = renderer.render(&build_scene(&doc, panned)).expect("render");
     assert_eq!(pixel(&after, 10, 10), [255, 255, 255], "moved away");
     assert_eq!(pixel(&after, 60, 10), [0, 0, 0], "moved here");
 }
@@ -172,6 +183,7 @@ fn text_puts_dark_pixels_on_the_page() {
     let mut renderer = HeadlessRenderer::new(W, H).expect("adapter");
     let scene = build_scene(
         &ResolvedDocument {
+            pages: vec![resolved_page()],
             items: vec![ResolvedItem {
                 frame: FrameId::default(),
                 bounds: DocRect {
@@ -188,7 +200,6 @@ fn text_puts_dark_pixels_on_the_page() {
             }],
         },
         ViewTransform::default(),
-        page(),
     );
     let pixels = renderer.render(&scene).expect("render");
 
@@ -213,11 +224,7 @@ fn rotating_a_bar_moves_the_pixels_it_covers() {
         width: 80.0,
         height: 10.0,
     };
-    let upright = build_scene(
-        &rect_doc(bar, Color::BLACK),
-        ViewTransform::default(),
-        page(),
-    );
+    let upright = build_scene(&rect_doc(bar, Color::BLACK), ViewTransform::default());
     let pixels = renderer.render(&upright).expect("render");
     assert_eq!(pixel(&pixels, 20, 50), [0, 0, 0], "upright: across");
     assert_eq!(pixel(&pixels, 50, 20), [255, 255, 255], "upright: not up");
@@ -225,7 +232,7 @@ fn rotating_a_bar_moves_the_pixels_it_covers() {
     // Turned a quarter turn about its own centre, those swap.
     let mut doc = rect_doc(bar, Color::BLACK);
     doc.items[0].transform = Transform::rotate_about(90.0, doc.items[0].bounds.center());
-    let turned = build_scene(&doc, ViewTransform::default(), page());
+    let turned = build_scene(&doc, ViewTransform::default());
     let pixels = renderer.render(&turned).expect("render");
     assert_eq!(pixel(&pixels, 50, 20), [0, 0, 0], "turned: up the page");
     assert_eq!(

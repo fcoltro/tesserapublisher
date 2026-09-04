@@ -338,7 +338,10 @@ mod tests {
     #[test]
     fn margins_are_uniform_when_every_edge_matches() {
         let m = Margins::uniform(36.0);
-        assert_eq!((m.top, m.bottom, m.inside, m.outside), (36.0, 36.0, 36.0, 36.0));
+        assert_eq!(
+            (m.top, m.bottom, m.inside, m.outside),
+            (36.0, 36.0, 36.0, 36.0)
+        );
     }
 
     #[test]
@@ -346,8 +349,6 @@ mod tests {
         let b = Insets::uniform(8.5);
         assert_eq!((b.top, b.bottom, b.left, b.right), (8.5, 8.5, 8.5, 8.5));
     }
-
-    use super::*;
 
     fn stroke() -> Stroke {
         Stroke::new(Color::BLACK, 4.0)

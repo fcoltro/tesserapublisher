@@ -21,8 +21,19 @@ fn page() -> DocRect {
     }
 }
 
+/// The test page, resolved with no margins, bleed or slug.
+fn resolved_page() -> tessera_layout::ResolvedPage {
+    tessera_layout::ResolvedPage {
+        bounds: page(),
+        margins: page(),
+        bleed: page(),
+        slug: page(),
+    }
+}
+
 fn one(kind: ResolvedKind, bounds: DocRect) -> ResolvedDocument {
     ResolvedDocument {
+        pages: vec![resolved_page()],
         items: vec![ResolvedItem {
             frame: FrameId::default(),
             transform: Transform::IDENTITY,
@@ -190,6 +201,7 @@ fn several_items_all_reach_the_content_stream() {
     let shaped = shaper.shape(&Story::new("Hi"), 400.0);
 
     let doc = ResolvedDocument {
+        pages: vec![resolved_page()],
         items: vec![
             ResolvedItem {
                 frame: FrameId::default(),

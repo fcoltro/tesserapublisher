@@ -56,18 +56,17 @@ fn crowded_document() -> Document {
 #[test]
 fn resolving_and_building_five_hundred_frames_stays_fast() {
     let document = crowded_document();
-    let page = document.first_page_bounds();
     let view = ViewTransform::default();
     let mut shaper = Shaper::new();
 
     // One untimed pass, so that lazily built caches are not charged to the
     // measurement.
     let warm = tessera_layout::resolve(&document, &mut shaper);
-    let _ = tessera_render::scene::build_scene(&warm, view, page);
+    let _ = tessera_render::scene::build_scene(&warm, view);
 
     let started = Instant::now();
     let resolved = tessera_layout::resolve(&document, &mut shaper);
-    let _scene = tessera_render::scene::build_scene(&resolved, view, page);
+    let _scene = tessera_render::scene::build_scene(&resolved, view);
     let elapsed = started.elapsed();
 
     println!(

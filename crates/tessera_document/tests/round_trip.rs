@@ -431,7 +431,6 @@ fn a_version_2_rotation_becomes_the_placement_that_means_the_same_thing() {
     }
 }
 
-
 // --- page setup, guides, and the version-5 bump -------------------------
 
 #[test]

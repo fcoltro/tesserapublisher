@@ -66,8 +66,26 @@ fn stroked_rect(bounds: Rect, offset: f64) -> Rect {
     bounds.inflate(offset.max(-limit), offset.max(-limit))
 }
 
-/// Build the scene for one page of a resolved document.
-pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRect) -> Scene {
+/// The non-printing rule drawn around a page's bleed.
+///
+/// Red is the press convention, and it is the one colour a designer already
+/// reads as "this will be trimmed off".
+const BLEED_RULE: [f32; 4] = [0.85, 0.22, 0.18, 1.0];
+
+/// The non-printing rule drawn around a page's type area.
+///
+/// Magenta, again by convention — distinct from the bleed's red at a glance
+/// even for the most common colour-vision deficiencies, which red and green
+/// would not be.
+const MARGIN_RULE: [f32; 4] = [0.78, 0.24, 0.72, 1.0];
+
+/// Build the scene for a resolved document.
+///
+/// The pages come from `resolved`, not from a parameter. While the caller
+/// passed a page rectangle separately, the screen and the PDF each decided for
+/// themselves where the page was, and one of them was eventually going to be
+/// wrong.
+pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform) -> Scene {
     let mut scene = Scene::new();
     let transform = view.to_affine();
     let hairline = hairline(view);
@@ -85,15 +103,47 @@ pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRe
         k
     };
 
-    // The page itself, so the document reads as paper rather than as objects
-    // floating on the pasteboard.
-    scene.fill(
-        Fill::NonZero,
-        transform,
-        to_peniko(&Color::WHITE),
-        None,
-        &page.to_kurbo(),
-    );
+    // The pages themselves, so the document reads as paper rather than as
+    // objects floating on the pasteboard. Every page of the spread, so facing
+    // pages appear side by side.
+    for page in &resolved.pages {
+        scene.fill(
+            Fill::NonZero,
+            transform,
+            to_peniko(&Color::WHITE),
+            None,
+            &page.bounds.to_kurbo(),
+        );
+    }
+
+    // The guides that describe each page, drawn under its contents so that
+    // objects sit on top of them rather than being cut by them.
+    //
+    // Each is drawn only when it says something the trim does not: an
+    // unset bleed is the trim, and a rule on top of a rule is noise. The slug
+    // is deliberately not drawn — it has no distinct meaning until screen
+    // modes arrive, and two identical rectangles teach the reader nothing.
+    let rule = KurboStroke::new(hairline);
+    for page in &resolved.pages {
+        if page.bleed != page.bounds {
+            scene.stroke(
+                &rule,
+                transform,
+                AlphaColor::<Srgb>::new(BLEED_RULE),
+                None,
+                &page.bleed.to_kurbo(),
+            );
+        }
+        if page.margins != page.bounds {
+            scene.stroke(
+                &rule,
+                transform,
+                AlphaColor::<Srgb>::new(MARGIN_RULE),
+                None,
+                &page.margins.to_kurbo(),
+            );
+        }
+    }
 
     for item in &resolved.items {
         let rect: Rect = item.bounds.to_kurbo();
@@ -209,15 +259,30 @@ mod tests {
     }
 
     fn empty_scene() -> Scene {
-        build_scene(
-            &ResolvedDocument::default(),
-            ViewTransform::default(),
-            page(),
-        )
+        build_scene(&one_page(vec![]), ViewTransform::default())
+    }
+
+    /// The default page, resolved with no margins, bleed or slug.
+    fn resolved_page() -> tessera_layout::ResolvedPage {
+        tessera_layout::ResolvedPage {
+            bounds: page(),
+            margins: page(),
+            bleed: page(),
+            slug: page(),
+        }
+    }
+
+    /// A document holding one page and the given items.
+    fn one_page(items: Vec<ResolvedItem>) -> ResolvedDocument {
+        ResolvedDocument {
+            items,
+            pages: vec![resolved_page()],
+        }
     }
 
     fn one_item(kind: ResolvedKind, bounds: DocRect) -> ResolvedDocument {
         ResolvedDocument {
+            pages: vec![resolved_page()],
             items: vec![ResolvedItem {
                 frame: FrameId::default(),
                 transform: Transform::IDENTITY,
@@ -251,7 +316,6 @@ mod tests {
                 },
             ),
             ViewTransform::default(),
-            page(),
         );
 
         assert!(
@@ -277,7 +341,6 @@ mod tests {
                 bounds,
             ),
             ViewTransform::default(),
-            page(),
         );
         let stroked = build_scene(
             &one_item(
@@ -288,7 +351,6 @@ mod tests {
                 bounds,
             ),
             ViewTransform::default(),
-            page(),
         );
 
         assert!(
@@ -314,7 +376,6 @@ mod tests {
                 bounds,
             ),
             ViewTransform::default(),
-            page(),
         );
         let ellipse = build_scene(
             &one_item(
@@ -325,7 +386,6 @@ mod tests {
                 bounds,
             ),
             ViewTransform::default(),
-            page(),
         );
 
         assert_ne!(
@@ -356,7 +416,6 @@ mod tests {
                 },
             ),
             ViewTransform::default(),
-            page(),
         );
 
         // Glyphs are encoded as runs, not as path segments: Vello resolves
@@ -390,7 +449,6 @@ mod tests {
                 },
             ),
             ViewTransform::default(),
-            page(),
         );
 
         assert!(scene.encoding().resources.glyph_runs.is_empty());

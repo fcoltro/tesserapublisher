@@ -854,7 +854,10 @@ mod tests {
         let removed = doc.remove_guide(spread, 1).expect("the middle one");
         assert_eq!(removed.position, 20.0);
         assert_eq!(
-            doc.guides_of(spread).iter().map(|g| g.position).collect::<Vec<_>>(),
+            doc.guides_of(spread)
+                .iter()
+                .map(|g| g.position)
+                .collect::<Vec<_>>(),
             vec![10.0, 30.0]
         );
     }
@@ -865,7 +868,6 @@ mod tests {
         let spread = doc.spread_ids().next().expect("a spread");
         assert!(doc.remove_guide(spread, 7).is_none());
     }
-
 
     #[test]
     fn a_page_has_no_side_when_pages_do_not_face() {
