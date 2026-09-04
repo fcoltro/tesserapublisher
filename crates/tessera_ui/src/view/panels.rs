@@ -52,6 +52,55 @@ fn tool_button(ui: &mut Ui, tool: Tool, active: bool) -> egui::Response {
 
 // --- inspector ---------------------------------------------------------
 
+/// The inspector's sections, in the order they are drawn.
+///
+/// The order is the whole design. Hiding a section moves everything below it,
+/// so the sections that apply to every frame come first and the ones that can
+/// be absent come last — hiding one then never moves a control the user
+/// reaches for often. A control that relocates by context is one the hand
+/// cannot find without the eye.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    Transform,
+    Fill,
+    Stroke,
+    Text,
+    Frame,
+}
+
+impl Section {
+    /// Display order. Universal sections first; see the type's note.
+    pub const ALL: [Section; 5] = [
+        Section::Transform,
+        Section::Fill,
+        Section::Stroke,
+        Section::Text,
+        Section::Frame,
+    ];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Section::Transform => "Transform",
+            Section::Fill => "Fill",
+            Section::Stroke => "Stroke",
+            Section::Text => "Text",
+            Section::Frame => "Frame",
+        }
+    }
+
+    /// Whether this section says anything about `frame`.
+    pub fn applies_to(self, frame: &tessera_document::nodes::Frame) -> bool {
+        use tessera_document::nodes::FrameKind;
+        match self {
+            // Every frame has a place, a fill and a stroke — even when the
+            // stroke is None, which is a value the section can set.
+            Section::Transform | Section::Fill | Section::Stroke => true,
+            Section::Text => matches!(frame.kind, FrameKind::Text { .. }),
+            Section::Frame => matches!(frame.kind, FrameKind::Group(_)),
+        }
+    }
+}
+
 pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
     ui.heading("Properties");
     ui.separator();
@@ -76,6 +125,28 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
         return;
     };
 
+    for section in Section::ALL {
+        if !section.applies_to(&frame) {
+            continue;
+        }
+        ui.add_space(Theme::SPACING_MD);
+        ui.label(section.title());
+        match section {
+            Section::Transform => transform_section(ui, state, id, &frame),
+            Section::Fill => fill_section(ui, state, id, &frame),
+            Section::Stroke => stroke_section(ui, state, id, &frame),
+            Section::Text => text_section(ui, state, id, &frame),
+            Section::Frame => frame_section(ui, &frame),
+        }
+    }
+}
+
+fn transform_section(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::FrameId,
+    frame: &tessera_document::nodes::Frame,
+) {
     // Position is asked in document space and size in the frame's own space,
     // which is what each of them means. `bounds` is the frame's own box, so it
     // answers W and H directly — but it does not move when the frame does,
@@ -85,7 +156,6 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
     let mut bounds = frame.bounds;
     let (mut moved, mut resized) = (false, false);
 
-    ui.label("Position and size (pt)");
     egui::Grid::new("bounds").num_columns(2).show(ui, |ui| {
         moved |= scrub(ui, "X", &mut x);
         moved |= scrub(ui, "Y", &mut y);
@@ -120,42 +190,77 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
             apply(state, Command::SetRotation { id, degrees });
         }
     });
+}
 
-    ui.add_space(Theme::SPACING_MD);
-
-    match &frame.kind {
-        tessera_document::nodes::FrameKind::Text { story } => {
-            ui.label("Text");
-            let mut text = state
-                .active()
-                .document()
-                .story(*story)
-                .map(|s| s.text.clone())
-                .unwrap_or_default();
-            if ui.text_edit_multiline(&mut text).changed() {
-                apply(state, Command::SetText { id, text });
-            }
-        }
-        _ => {
-            ui.label("Fill");
-            let [r, g, b, a] = frame.fill.to_rgb_f32();
-            let mut rgba = [r, g, b, a];
-            if fill_picker(ui, &mut rgba) {
-                apply(
-                    state,
-                    Command::SetFill {
-                        id,
-                        color: Color::Rgb {
-                            r: rgba[0],
-                            g: rgba[1],
-                            b: rgba[2],
-                            a: rgba[3],
-                        },
-                    },
-                );
-            }
-        }
+fn fill_section(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::FrameId,
+    frame: &tessera_document::nodes::Frame,
+) {
+    // Every frame has a fill, a text frame included — its background. The
+    // previous arrangement showed this only for non-text frames, so a text
+    // frame's own fill was unreachable.
+    let [r, g, b, a] = frame.fill.to_rgb_f32();
+    let mut rgba = [r, g, b, a];
+    if fill_picker(ui, &mut rgba) {
+        apply(
+            state,
+            Command::SetFill {
+                id,
+                color: Color::Rgb {
+                    r: rgba[0],
+                    g: rgba[1],
+                    b: rgba[2],
+                    a: rgba[3],
+                },
+            },
+        );
     }
+}
+
+fn stroke_section(
+    ui: &mut Ui,
+    _state: &mut TesseraApp,
+    _id: tessera_document::ids::FrameId,
+    frame: &tessera_document::nodes::Frame,
+) {
+    // Filled in by the next task. The section exists now so that its position
+    // in the order is fixed before anything is built into it.
+    match &frame.stroke {
+        Some(s) => ui.colored_label(Theme::TEXT_MUTED, format!("{:.2} pt", s.width)),
+        None => ui.colored_label(Theme::TEXT_MUTED, "None"),
+    };
+}
+
+fn text_section(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::FrameId,
+    frame: &tessera_document::nodes::Frame,
+) {
+    let tessera_document::nodes::FrameKind::Text { story } = &frame.kind else {
+        return;
+    };
+    let mut text = state
+        .active()
+        .document()
+        .story(*story)
+        .map(|s| s.text.clone())
+        .unwrap_or_default();
+    if ui.text_edit_multiline(&mut text).changed() {
+        apply(state, Command::SetText { id, text });
+    }
+}
+
+fn frame_section(ui: &mut Ui, frame: &tessera_document::nodes::Frame) {
+    let tessera_document::nodes::FrameKind::Group(children) = &frame.kind else {
+        return;
+    };
+    ui.colored_label(
+        Theme::TEXT_MUTED,
+        format!("{} objects grouped", children.len()),
+    );
 }
 
 fn fill_picker(ui: &mut Ui, rgba: &mut [f32; 4]) -> bool {
@@ -320,4 +425,69 @@ pub fn status_bar(ui: &mut Ui, state: &TesseraApp) {
             );
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tessera_document::nodes::{Frame, FrameKind};
+    use tessera_geometry::{DocRect, Transform};
+
+    fn rect_frame() -> Frame {
+        Frame {
+            bounds: DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 10.0,
+            },
+            transform: Transform::IDENTITY,
+            kind: FrameKind::Rectangle,
+            fill: Color::BLACK,
+            stroke: None,
+        }
+    }
+
+    #[test]
+    fn the_sections_that_can_be_absent_come_last() {
+        // This is what makes D1 true. Hiding a section moves everything below
+        // it, so the ones that apply to every frame must sit above the ones
+        // that do not — then hiding never moves anything reached for often.
+        let frame = rect_frame();
+        let last_present = Section::ALL
+            .iter()
+            .rposition(|s| s.applies_to(&frame))
+            .expect("some section applies");
+        if let Some(first_absent) = Section::ALL.iter().position(|s| !s.applies_to(&frame)) {
+            assert!(
+                first_absent > last_present,
+                "an absent section sits above a present one, so hiding it                  would move the present one"
+            );
+        }
+    }
+
+    #[test]
+    fn transform_fill_and_stroke_apply_to_every_frame() {
+        let frame = rect_frame();
+        for section in [Section::Transform, Section::Fill, Section::Stroke] {
+            assert!(section.applies_to(&frame), "{section:?} must never move");
+        }
+    }
+
+    #[test]
+    fn the_text_section_belongs_only_to_a_text_frame() {
+        assert!(!Section::Text.applies_to(&rect_frame()));
+    }
+
+    #[test]
+    fn the_frame_section_belongs_only_to_a_group() {
+        assert!(!Section::Frame.applies_to(&rect_frame()));
+    }
+
+    #[test]
+    fn every_section_has_a_title() {
+        for section in Section::ALL {
+            assert!(!section.title().is_empty(), "{section:?} has no title");
+        }
+    }
 }
