@@ -5,7 +5,7 @@ use slotmap::SlotMap;
 use tessera_geometry::{DocPoint, DocRect, Transform};
 
 use crate::ids::{FrameId, LayerId, PageId, SpreadId, StoryId};
-use crate::nodes::{DocumentSetup, Frame, FrameKind, Layer, Page, Spread};
+use crate::nodes::{DocumentSetup, Frame, FrameKind, Layer, Page, PageSide, Spread};
 use tessera_text::story::Story;
 
 /// Stories are addressed by id and live at the document level, so a threaded
@@ -115,6 +115,96 @@ impl Document {
     /// have all been removed, which milestone 0 cannot produce.
     pub fn default_layer(&self) -> Option<LayerId> {
         self.layer_ids().next()
+    }
+
+    /// The pages of a spread, in reading order.
+    pub fn pages_of(&self, spread: SpreadId) -> Vec<PageId> {
+        self.spreads
+            .get(spread)
+            .map(|s| s.pages.clone())
+            .unwrap_or_default()
+    }
+
+    /// Which spread holds this page.
+    pub fn spread_of(&self, page: PageId) -> Option<SpreadId> {
+        self.spread_order
+            .iter()
+            .copied()
+            .find(|s| self.pages_of(*s).contains(&page))
+    }
+
+    /// Which side of its spread this page sits on.
+    ///
+    /// `Single` wherever there is no spine to be inside of: pages that do not
+    /// face, and a spread holding only one page.
+    pub fn page_side(&self, page: PageId) -> PageSide {
+        if !self.setup.facing_pages {
+            return PageSide::Single;
+        }
+        let Some(spread) = self.spread_of(page) else {
+            return PageSide::Single;
+        };
+        let pages = self.pages_of(spread);
+        if pages.len() < 2 {
+            return PageSide::Single;
+        }
+        match pages.iter().position(|p| *p == page) {
+            Some(0) => PageSide::Left,
+            Some(_) => PageSide::Right,
+            None => PageSide::Single,
+        }
+    }
+
+    /// Add a page to a spread, sized like the one before it.
+    pub fn add_page_to(&mut self, spread: SpreadId) -> PageId {
+        let bounds = self
+            .pages_of(spread)
+            .last()
+            .and_then(|p| self.pages.get(*p))
+            .map_or_else(|| self.first_page_bounds(), |p| p.bounds);
+
+        let page = self.pages.insert(Page {
+            bounds,
+            layers: Vec::new(),
+        });
+        if let Some(s) = self.spreads.get_mut(spread) {
+            s.pages.push(page);
+        }
+        self.revision += 1;
+        page
+    }
+
+    /// The type area: the page inset by its margins.
+    ///
+    /// Which physical edge the inside margin falls on depends on the page's
+    /// side, which is the whole reason [`Margins`] is not left-and-right.
+    pub fn margin_rect(&self, page: PageId) -> Option<DocRect> {
+        let bounds = self.pages.get(page)?.bounds;
+        let m = self.setup.margins;
+        let (left, right) = match self.page_side(page) {
+            // A verso's spine is on its right.
+            PageSide::Left => (m.outside, m.inside),
+            PageSide::Right | PageSide::Single => (m.inside, m.outside),
+        };
+        Some(inset_each(bounds, m.top, m.bottom, left, right))
+    }
+
+    /// The page plus its bleed.
+    pub fn bleed_rect(&self, page: PageId) -> Option<DocRect> {
+        let b = self.setup.bleed;
+        let bounds = self.pages.get(page)?.bounds;
+        Some(outset_each(bounds, b.top, b.bottom, b.left, b.right))
+    }
+
+    /// The page plus its slug.
+    ///
+    /// Measured from the trim rather than from the bleed, so that a slug
+    /// narrower than the bleed does not read as a negative one. On a press
+    /// sheet the two are independent distances from the trim.
+    pub fn slug_rect(&self, page: PageId) -> Option<DocRect> {
+        let s = self.setup.slug;
+        let bounds = self.pages.get(page)?.bounds;
+        Some(outset_each(bounds, s.top, s.bottom, s.left, s.right))
     }
 
     pub fn first_page_bounds(&self) -> DocRect {
@@ -669,8 +759,140 @@ impl Default for Document {
     }
 }
 
+/// `rect` pulled inward by a different amount on each edge, never past
+/// inside-out.
+///
+/// An inverted rectangle draws as a shape turned inside out and hit-tests as
+/// nothing, so a margin wider than the page collapses to zero instead.
+fn inset_each(rect: DocRect, top: f64, bottom: f64, left: f64, right: f64) -> DocRect {
+    DocRect {
+        x: rect.x + left,
+        y: rect.y + top,
+        width: (rect.width - left - right).max(0.0),
+        height: (rect.height - top - bottom).max(0.0),
+    }
+}
+
+/// `rect` pushed outward by a different amount on each edge.
+///
+/// Named apart from the two-argument `grown` above, which insets uniformly.
+fn outset_each(rect: DocRect, top: f64, bottom: f64, left: f64, right: f64) -> DocRect {
+    DocRect {
+        x: rect.x - left,
+        y: rect.y - top,
+        width: rect.width + left + right,
+        height: rect.height + top + bottom,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::nodes::{Insets, Margins, PageSide};
+
+    #[test]
+    fn a_page_has_no_side_when_pages_do_not_face() {
+        let doc = super::Document::new();
+        let page = doc.page_ids().next().expect("a new document has a page");
+        assert_eq!(doc.page_side(page), PageSide::Single);
+    }
+
+    #[test]
+    fn the_first_page_of_a_facing_spread_is_a_verso_and_the_second_a_recto() {
+        let mut doc = super::Document::new();
+        doc.setup.facing_pages = true;
+
+        let spread = doc.spread_ids().next().expect("a spread");
+        let first = doc.pages_of(spread)[0];
+        // A one-page spread still has no facing partner.
+        assert_eq!(doc.page_side(first), PageSide::Single);
+
+        let second = doc.add_page_to(spread);
+        assert_eq!(doc.page_side(first), PageSide::Left, "verso");
+        assert_eq!(doc.page_side(second), PageSide::Right, "recto");
+    }
+
+    #[test]
+    fn a_page_knows_which_spread_holds_it() {
+        let doc = super::Document::new();
+        let page = doc.page_ids().next().expect("a page");
+        let spread = doc.spread_of(page).expect("it is in a spread");
+        assert!(doc.pages_of(spread).contains(&page));
+    }
+
+    #[test]
+    fn margins_inset_the_page_from_every_edge() {
+        let mut doc = super::Document::new();
+        doc.setup.margins = Margins::uniform(36.0);
+        let page = doc.page_ids().next().expect("a page");
+        let bounds = doc.pages[page].bounds;
+
+        let inner = doc.margin_rect(page).expect("a margin rect");
+        assert_eq!(inner.x, bounds.x + 36.0);
+        assert_eq!(inner.y, bounds.y + 36.0);
+        assert_eq!(inner.width, bounds.width - 72.0);
+        assert_eq!(inner.height, bounds.height - 72.0);
+    }
+
+    #[test]
+    fn the_inside_margin_swaps_sides_between_verso_and_recto() {
+        // The whole reason margins are inside/outside rather than left/right.
+        let mut doc = super::Document::new();
+        doc.setup.facing_pages = true;
+        doc.setup.margins = Margins {
+            top: 10.0,
+            bottom: 10.0,
+            inside: 60.0,
+            outside: 20.0,
+        };
+        let spread = doc.spread_ids().next().expect("a spread");
+        let verso = doc.pages_of(spread)[0];
+        let recto = doc.add_page_to(spread);
+
+        let v = doc.margin_rect(verso).expect("verso");
+        let r = doc.margin_rect(recto).expect("recto");
+        let vb = doc.pages[verso].bounds;
+        let rb = doc.pages[recto].bounds;
+
+        assert_eq!(v.x, vb.x + 20.0, "verso: the outside margin is on the left");
+        assert_eq!(r.x, rb.x + 60.0, "recto: the inside margin is on the left");
+    }
+
+    #[test]
+    fn bleed_grows_outward_rather_than_inward() {
+        let mut doc = super::Document::new();
+        doc.setup.bleed = Insets::uniform(9.0);
+        let page = doc.page_ids().next().expect("a page");
+        let bounds = doc.pages[page].bounds;
+
+        let bleed = doc.bleed_rect(page).expect("a bleed rect");
+        assert_eq!(bleed.x, bounds.x - 9.0);
+        assert_eq!(bleed.width, bounds.width + 18.0);
+    }
+
+    #[test]
+    fn the_slug_lies_outside_the_bleed() {
+        let mut doc = super::Document::new();
+        doc.setup.bleed = Insets::uniform(9.0);
+        doc.setup.slug = Insets::uniform(18.0);
+        let page = doc.page_ids().next().expect("a page");
+
+        let bleed = doc.bleed_rect(page).expect("bleed");
+        let slug = doc.slug_rect(page).expect("slug");
+        assert!(slug.x < bleed.x, "the slug is further out than the bleed");
+        assert!(slug.width > bleed.width);
+    }
+
+    #[test]
+    fn margins_wider_than_the_page_collapse_rather_than_inverting() {
+        // An inside-out rectangle draws as a shape turned inside out and
+        // hit-tests as nothing. Collapsing to zero is the honest degenerate.
+        let mut doc = super::Document::new();
+        doc.setup.margins = Margins::uniform(10_000.0);
+        let page = doc.page_ids().next().expect("a page");
+        let inner = doc.margin_rect(page).expect("a rect");
+        assert!(inner.width >= 0.0 && inner.height >= 0.0);
+    }
+
     use super::*;
     use crate::nodes::{Frame, FrameKind};
     use tessera_color::Color;
