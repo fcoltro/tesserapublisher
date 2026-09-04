@@ -61,7 +61,7 @@ pub fn new_document(state: &mut TesseraApp) {
 /// failed to start.
 pub fn export_pdf_to_path(state: &mut TesseraApp, path: &Path) -> Result<(), ExportError> {
     let resolved = state.resolve_uncached();
-    let bytes = tessera_pdf::export(&resolved, state.first_page_bounds())?;
+    let bytes = tessera_pdf::export(&resolved)?;
     tessera_io::atomic::write_atomic(path, &bytes)?;
     state.status = Some(Status::info(format!("Exported {}", path.display())));
     Ok(())

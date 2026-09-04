@@ -22,6 +22,13 @@ fn page() -> DocRect {
 }
 
 /// The test page, resolved with no margins, bleed or slug.
+fn empty_doc() -> ResolvedDocument {
+    ResolvedDocument {
+        items: Vec::new(),
+        pages: vec![resolved_page()],
+    }
+}
+
 fn resolved_page() -> tessera_layout::ResolvedPage {
     tessera_layout::ResolvedPage {
         bounds: page(),
@@ -64,7 +71,7 @@ fn black_rect(bounds: DocRect) -> ResolvedDocument {
 
 #[test]
 fn an_empty_document_produces_a_valid_pdf_header_and_trailer() {
-    let bytes = tessera_pdf::export(&ResolvedDocument::default(), page()).expect("export");
+    let bytes = tessera_pdf::export(&empty_doc()).expect("export");
 
     assert!(bytes.starts_with(b"%PDF-1."), "must carry a PDF header");
     assert!(
@@ -75,7 +82,7 @@ fn an_empty_document_produces_a_valid_pdf_header_and_trailer() {
 
 #[test]
 fn the_media_box_matches_the_page_size() {
-    let bytes = tessera_pdf::export(&ResolvedDocument::default(), page()).expect("export");
+    let bytes = tessera_pdf::export(&empty_doc()).expect("export");
     let text = String::from_utf8_lossy(&bytes);
 
     assert!(text.contains("612"), "the media box must carry the width");
@@ -84,8 +91,7 @@ fn the_media_box_matches_the_page_size() {
 
 #[test]
 fn a_rectangle_emits_a_path_and_a_fill_operator() {
-    let bytes =
-        tessera_pdf::export(&black_rect(rect(10.0, 10.0, 50.0, 50.0)), page()).expect("export");
+    let bytes = tessera_pdf::export(&black_rect(rect(10.0, 10.0, 50.0, 50.0))).expect("export");
     let text = String::from_utf8_lossy(&bytes);
 
     assert!(text.contains(" re"), "a rectangle path operator");
@@ -96,8 +102,7 @@ fn a_rectangle_emits_a_path_and_a_fill_operator() {
 fn a_rectangle_is_flipped_into_pdf_coordinates() {
     // 10pt from the document top, 50pt tall, on a 792pt page, must sit
     // 792 - 10 - 50 = 732 from the PDF bottom.
-    let bytes =
-        tessera_pdf::export(&black_rect(rect(10.0, 10.0, 50.0, 50.0)), page()).expect("export");
+    let bytes = tessera_pdf::export(&black_rect(rect(10.0, 10.0, 50.0, 50.0))).expect("export");
     let text = String::from_utf8_lossy(&bytes);
 
     assert!(
@@ -113,16 +118,13 @@ fn a_text_frame_embeds_a_subsetted_font() {
     assert!(shaped.glyph_count() > 0, "the fixture must actually shape");
     let full_font_size = shaped.fonts[0].data.len();
 
-    let bytes = tessera_pdf::export(
-        &one(
-            ResolvedKind::Text {
-                shaped,
-                color: Color::BLACK,
-            },
-            rect(20.0, 20.0, 400.0, 40.0),
-        ),
-        page(),
-    )
+    let bytes = tessera_pdf::export(&one(
+        ResolvedKind::Text {
+            shaped,
+            color: Color::BLACK,
+        },
+        rect(20.0, 20.0, 400.0, 40.0),
+    ))
     .expect("export");
     let text = String::from_utf8_lossy(&bytes);
 
@@ -148,16 +150,13 @@ fn text_is_positioned_by_the_same_glyphs_the_renderer_drew() {
     let shaped = shaper.shape(&Story::new("Hi"), 400.0);
     let first_x = shaped.lines[0].glyphs[0].x;
 
-    let bytes = tessera_pdf::export(
-        &one(
-            ResolvedKind::Text {
-                shaped,
-                color: Color::BLACK,
-            },
-            rect(20.0, 20.0, 400.0, 40.0),
-        ),
-        page(),
-    )
+    let bytes = tessera_pdf::export(&one(
+        ResolvedKind::Text {
+            shaped,
+            color: Color::BLACK,
+        },
+        rect(20.0, 20.0, 400.0, 40.0),
+    ))
     .expect("export");
     let text = String::from_utf8_lossy(&bytes);
 
@@ -176,16 +175,13 @@ fn an_empty_text_frame_exports_without_a_font() {
     let mut shaper = Shaper::new();
     let shaped = shaper.shape(&Story::new(""), 400.0);
 
-    let bytes = tessera_pdf::export(
-        &one(
-            ResolvedKind::Text {
-                shaped,
-                color: Color::BLACK,
-            },
-            rect(20.0, 20.0, 400.0, 40.0),
-        ),
-        page(),
-    )
+    let bytes = tessera_pdf::export(&one(
+        ResolvedKind::Text {
+            shaped,
+            color: Color::BLACK,
+        },
+        rect(20.0, 20.0, 400.0, 40.0),
+    ))
     .expect("export");
 
     assert!(bytes.starts_with(b"%PDF-1."));
@@ -233,8 +229,7 @@ fn several_items_all_reach_the_content_stream() {
         ],
     };
 
-    let text =
-        String::from_utf8_lossy(&tessera_pdf::export(&doc, page()).expect("export")).into_owned();
+    let text = String::from_utf8_lossy(&tessera_pdf::export(&doc).expect("export")).into_owned();
 
     assert!(text.contains(" re"), "the rectangle");
     assert!(
@@ -242,4 +237,65 @@ fn several_items_all_reach_the_content_stream() {
         "the ellipse curves"
     );
     assert!(text.contains("/FontFile2"), "the text");
+}
+
+// --- the trim and the bleed --------------------------------------------
+
+/// A page with a bleed all round, resolved as the document would resolve it.
+fn bled_page(bleed: f64) -> tessera_layout::ResolvedPage {
+    let p = page();
+    tessera_layout::ResolvedPage {
+        bounds: p,
+        margins: p,
+        bleed: DocRect {
+            x: p.x - bleed,
+            y: p.y - bleed,
+            width: p.width + bleed * 2.0,
+            height: p.height + bleed * 2.0,
+        },
+        slug: p,
+    }
+}
+
+#[test]
+fn every_export_records_a_trim_box_and_a_bleed_box() {
+    // A printer reads TrimBox and BleedBox, not MediaBox. Writing only the
+    // one discards where the guillotine goes.
+    let text =
+        String::from_utf8_lossy(&tessera_pdf::export(&empty_doc()).expect("export")).into_owned();
+    assert!(text.contains("/TrimBox"), "the trim must be recorded");
+    assert!(text.contains("/BleedBox"), "and so must the bleed");
+}
+
+#[test]
+fn a_bleed_grows_the_media_box_without_moving_the_content() {
+    // The origin stays at the trim corner. If it did not, setting a bleed
+    // would shift every object on the page — a silent rewrite of the layout.
+    let bounds = rect(10.0, 10.0, 50.0, 50.0);
+
+    let plain = ResolvedDocument {
+        items: black_rect(bounds).items,
+        pages: vec![resolved_page()],
+    };
+    let bled = ResolvedDocument {
+        items: black_rect(bounds).items,
+        pages: vec![bled_page(9.0)],
+    };
+
+    let a = tessera_pdf::export(&plain).expect("export");
+    let b = tessera_pdf::export(&bled).expect("export");
+
+    let content_of = |bytes: &[u8]| {
+        let text = String::from_utf8_lossy(bytes).into_owned();
+        let start = text.find("re").expect("a rectangle in the content stream");
+        text[start.saturating_sub(40)..start].to_string()
+    };
+    assert_eq!(
+        content_of(&a),
+        content_of(&b),
+        "the object sits at the same coordinates with and without a bleed"
+    );
+
+    let text = String::from_utf8_lossy(&b).into_owned();
+    assert!(text.contains("/MediaBox"), "and the media box is present");
 }

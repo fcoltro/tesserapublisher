@@ -33,6 +33,22 @@ pub enum PdfError {
 /// PDF's origin is bottom-left; the document's is top-left. **This is the only
 /// place that conversion happens.** Scattering the flip is how an exporter
 /// ends up subtly disagreeing with the screen.
+/// The page a document with no pages exports as. Unreachable through the
+/// application, which always has one; a default beats a panic in a writer.
+const DEFAULT_PAGE: tessera_layout::ResolvedPage = tessera_layout::ResolvedPage {
+    bounds: LETTER,
+    margins: LETTER,
+    bleed: LETTER,
+    slug: LETTER,
+};
+
+const LETTER: DocRect = DocRect {
+    x: 0.0,
+    y: 0.0,
+    width: 612.0,
+    height: 792.0,
+};
+
 fn to_pdf_y(page: DocRect, doc_y: f64, height: f64) -> f64 {
     page.height - doc_y - height
 }
@@ -52,7 +68,12 @@ struct EmbeddedFont {
     file_ref: Ref,
 }
 
-pub fn export(resolved: &ResolvedDocument, page: DocRect) -> Result<Vec<u8>, PdfError> {
+pub fn export(resolved: &ResolvedDocument) -> Result<Vec<u8>, PdfError> {
+    // The page comes from the resolved document rather than from a parameter,
+    // so the screen and the PDF cannot disagree about where the trim is.
+    // Milestone 3 makes this every page; today it is the first.
+    let resolved_page = resolved.pages.first().copied().unwrap_or(DEFAULT_PAGE);
+    let page = resolved_page.bounds;
     let mut pdf = Pdf::new();
     let mut next = 1;
     let mut alloc = || {
@@ -74,9 +95,29 @@ pub fn export(resolved: &ResolvedDocument, page: DocRect) -> Result<Vec<u8>, Pdf
 
     {
         let mut page_obj = pdf.page(page_id);
+        // MediaBox must contain everything imaged, so it is the bleed when
+        // there is one. TrimBox is the finished page — where the guillotine
+        // goes — and BleedBox is how far the ink runs past it. A printer reads
+        // those two, not MediaBox, so exporting a document with a bleed and
+        // recording only one rectangle discards the user's intent silently.
+        //
+        // The origin stays at the trim corner, so adding a bleed does not
+        // move a single object on the page; the boxes grow around the content
+        // rather than shifting it.
+        let bleed = resolved_page.bleed;
+        let media = Rect::new(
+            (bleed.x - page.x) as f32,
+            (bleed.y - page.y) as f32,
+            (bleed.x - page.x + bleed.width) as f32,
+            (bleed.y - page.y + bleed.height) as f32,
+        );
+        let trim = Rect::new(0.0, 0.0, page.width as f32, page.height as f32);
+
         page_obj
             .parent(page_tree_id)
-            .media_box(Rect::new(0.0, 0.0, page.width as f32, page.height as f32))
+            .media_box(media)
+            .trim_box(trim)
+            .bleed_box(media)
             .contents(content_id);
         let mut resources = page_obj.resources();
         let mut font_dict = resources.fonts();
