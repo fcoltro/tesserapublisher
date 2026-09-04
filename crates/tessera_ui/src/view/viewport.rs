@@ -449,8 +449,9 @@ fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
     let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape));
 
     if let Some(text) = text {
-        // Live update without an undo entry per keystroke; the whole editing
-        // session became one undo step when it began.
+        // undo-bracketed: live update without an entry per keystroke. The
+        // whole editing session became one undo step when it began, in
+        // `begin_editing`.
         if let Some(tessera_document::nodes::FrameKind::Text { story }) =
             state.active().document().frame(id).map(|f| f.kind.clone())
             && let Some(s) = state.active_mut().document_mut().story_mut(story)
@@ -777,6 +778,9 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
         {
             let (dx, dy) = state.drag.as_ref().expect("just matched").delta();
             let by = tessera_geometry::Transform::translate(dx, dy);
+            // undo-bracketed: preview only. `drag_stopped` below restores
+            // the starting state and reapplies the move through a Command,
+            // so the gesture is one entry rather than one per pointer move.
             for (id, origin) in origins {
                 if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
                     // Composed onto the placement, in document space. Added to
@@ -792,9 +796,9 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
     {
         match drag.kind {
             DragKind::Move { ref origins } => {
-                // One undo entry for the whole gesture: put everything back,
-                // then apply the move as a single command. Otherwise a drag
-                // would fill the undo stack frame by frame.
+                // undo-bracketed: one entry for the whole gesture. Put
+                // everything back, then apply the move as a single command.
+                // Otherwise a drag would fill the undo stack frame by frame.
                 let (dx, dy) = drag.delta();
                 for (id, origin) in origins {
                     if let Some(f) = state.active_mut().document_mut().frame_mut(*id) {
@@ -897,6 +901,8 @@ fn transform_gesture(
         if let Some(drag) = state.drag.clone()
             && let Some(entries) = transform_result(&drag, ui)
         {
+            // undo-bracketed: preview only, restored and reapplied once
+            // when the drag stops — see the comment below.
             for (id, bounds, placement) in entries {
                 if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
                     f.bounds = bounds;
@@ -913,6 +919,8 @@ fn transform_gesture(
         && let DragKind::Scale { ref leaves, .. } | DragKind::Rotate { ref leaves, .. } = drag.kind
         && let Some(entries) = transform_result(&drag, ui)
     {
+        // undo-bracketed: the restore half of the gesture. The Command
+        // below is what the undo stack actually sees.
         for (id, bounds, placement) in leaves {
             if let Some(f) = state.active_mut().document_mut().frame_mut(*id) {
                 f.bounds = *bounds;

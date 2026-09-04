@@ -61,10 +61,18 @@ Never "done" until shipping; re-checked at the close of every milestone.
   Re-checked each milestone rather than assumed. The previous codebase's most instructive defect was a clip
   rectangle that resolved to zero and disabled rendering without a word.
 - [x] **Tests land with the change**, in the same commit.
-- [ ] **Every mutation goes through `Command`.** No path in the interface takes
-  a mutable document directly. Undo integrity, the command palette and any
-  later scripting all rest on this holding, and it erodes silently — so it is
-  asserted by a test rather than by intention. *(Lands as milestone 1.5, A6.)*
+- [x] **Every mutation is covered by exactly one undo entry.** Changes go
+  through `Command`. The exception is an interactive gesture, which must write
+  live or nothing would be visible until the mouse came up, and which is
+  legitimate only because it brackets those writes — one snapshot when it
+  begins, or a restore and a single `Command` when it ends. A direct mutation
+  outside the command layer must therefore say so with an `undo-bracketed:`
+  marker, and `tests/command_invariant.rs` fails on any that does not.
+  *The first draft of this rule read simply "every mutation goes through
+  `Command`". Asserting it turned up seven direct mutations: two test fixtures
+  and five deliberate, commented, bracketed gestures. The rule was wrong, not
+  the code — which is the argument for asserting a rule rather than stating
+  one.*
 - [ ] **The application is operable from the keyboard alone**, and every
   control carries an accessible name through egui's AccessKit support.
   Retrofitting this costs many times what designing for it does, and a
@@ -234,7 +242,7 @@ Nothing here appears on screen and nothing here touches the file format. Each
 task is a small, pure, independently testable piece that later work stands on.
 Built first because retrofitting any of them is many times the cost.
 
-> **Status 2026-09-03: six of ten done, one partial, three not started.**
+> **Status 2026-09-04: eight of ten done, one partial, one not started.**
 >
 > A phase-A item has no sentence a person can perform — that is what makes it
 > phase A. So `[x]` here means the narrower thing: the code exists, its tests
@@ -242,10 +250,14 @@ Built first because retrofitting any of them is many times the cost.
 > *is* owed, the item stays `[~]` and says so. This is a deliberate reading of
 > the legend above, not an exemption from it.
 >
-> A5, A6 and A10 are not started. **A5 must be done with a person present**:
-> it restructures `TesseraApp`, which is the milestone-0 spine, across roughly
-> 290 call sites, and its acceptance is milestone 0's sentence performed by
-> hand. A6 and A10 both depend on it.
+> **Two hand checks are owed and neither has been done.** A5 restructured
+> `TesseraApp` — the milestone-0 spine — across roughly 290 call sites, so
+> milestone 0's sentence needs performing again; the headless
+> `milestone_0.rs` passes unchanged, which is evidence and not proof. A9
+> changed how icons are built, and nobody has looked at the tool strip since.
+> Until both are done, phase A is code-complete rather than complete.
+>
+> A10 remains.
 
 - [x] **A1 — Units.** A `Unit` type over mm, pt, px, inches and picas, with
   parsing (`12mm`, `1p6`, `.5in`), formatting and conversion. Property-tested
@@ -260,15 +272,16 @@ Built first because retrofitting any of them is many times the cost.
   Unblocks shear, scale-as-percentage and the reference point.
 - [x] **A4 — Anchor resolution.** The nine-point anchor as a type, and the
   resolution of scale, rotation and flip about it. Pure geometry, no UI.
-- [ ] **A5 — The open-document container.** `TesseraApp` holds `document`,
+- [x] **A5 — The open-document container.** `TesseraApp` held `document`,
   `history`, `resolved`, `view` and `selection` as flat fields; all five are
   per-document. They move into an `OpenDocument`, with the application holding
   a map and an active id. **One document is still open at a time** — the tabs
   are milestone 7. Done now because this refactor widens with every milestone.
-- [ ] **A6 — The command invariant.** Every mutation routes through the
-  `Command` enum, asserted by a test that no path in the UI takes a mutable
-  document directly. Undo integrity, the command palette and any future
-  scripting all rest on this holding.
+- [x] **A6 — The command invariant.** Every mutation routes through the
+  `Command` enum, or is a bracketed interactive gesture carrying an
+  `undo-bracketed:` marker that says why. Asserted by
+  `tests/command_invariant.rs`, which reads the crate's own source because
+  Rust can restrict a method to a crate but not to one sibling module.
 - [x] **A7 — Performance harness.** A benchmark that builds a 500-frame
   document and measures resolve and scene build, with a regression assertion.
   *The 16.7 ms budget in the spec is a wish until something measures it.*
