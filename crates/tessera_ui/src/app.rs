@@ -131,6 +131,12 @@ pub struct TesseraApp {
     /// Application state, like the anchor: a way of working rather than a
     /// property of any one object.
     pub constrain_proportions: bool,
+    /// A guide being dragged off a ruler, and where it is now.
+    ///
+    /// View state: the guide does not exist in the document until the drag
+    /// ends, so an abandoned drag leaves nothing behind and costs no undo
+    /// entry.
+    pub guide_drag: Option<(tessera_document::nodes::Axis, f64)>,
     pub drag: Option<Drag>,
     pub status: Option<Status>,
 
@@ -164,6 +170,7 @@ impl TesseraApp {
             screen_mode: ScreenMode::default(),
             anchor: tessera_geometry::Anchor::default(),
             constrain_proportions: false,
+            guide_drag: None,
             drag: None,
             status: None,
             clipboard: Vec::new(),

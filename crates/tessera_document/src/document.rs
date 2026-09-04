@@ -240,6 +240,16 @@ impl Document {
             .map_or(DEFAULT_PAGE, |p| p.bounds)
     }
 
+    /// Mark the document changed.
+    ///
+    /// For the few edits made through a `&mut` field rather than a method of
+    /// their own. The resolve cache is keyed on the revision, so an edit that
+    /// forgets to move it is invisible until something else does — which is
+    /// exactly the bug the page setup once had.
+    pub fn touch(&mut self) {
+        self.revision += 1;
+    }
+
     /// Replace the page setup.
     ///
     /// A setter rather than a public field write, because **the revision has

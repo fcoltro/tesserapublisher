@@ -74,6 +74,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
 
             if state.screen_mode.shows_chrome() {
                 rulers::paint(ui, state, canvas, across, down);
+                rulers::drag_out(ui, state, canvas, across, down);
             }
         });
 }

@@ -138,6 +138,96 @@ pub fn paint(ui: &Ui, state: &TesseraApp, canvas: Rect, horizontal: Rect, vertic
     }
 }
 
+/// Let a guide be pulled off a ruler.
+///
+/// The top ruler yields a horizontal guide and the left ruler a vertical one:
+/// you drag the line out in the direction it will lie across.
+///
+/// Nothing is written to the document until the drag ends, so an abandoned
+/// drag costs neither a guide nor an undo entry.
+pub fn drag_out(ui: &Ui, state: &mut TesseraApp, canvas: Rect, across: Rect, down: Rect) {
+    use tessera_document::nodes::{Axis, Guide};
+
+    let view = state.active().view;
+    let doc_at = |pos: egui::Pos2| {
+        view.screen_to_doc(tessera_geometry::ScreenPoint {
+            x: pos.x - canvas.min.x,
+            y: pos.y - canvas.min.y,
+        })
+    };
+
+    let pointer = ui.ctx().pointer_latest_pos();
+    let down_now = ui.ctx().input(|i| i.pointer.primary_down());
+    let released = ui.ctx().input(|i| i.pointer.primary_released());
+
+    if state.guide_drag.is_none()
+        && down_now
+        && let Some(pos) = pointer
+    {
+        if across.contains(pos) {
+            state.guide_drag = Some((Axis::Horizontal, doc_at(pos).y));
+        } else if down.contains(pos) {
+            state.guide_drag = Some((Axis::Vertical, doc_at(pos).x));
+        }
+    }
+
+    let Some((axis, _)) = state.guide_drag else {
+        return;
+    };
+
+    if let Some(pos) = pointer {
+        let at = doc_at(pos);
+        let position = match axis {
+            Axis::Horizontal => at.y,
+            Axis::Vertical => at.x,
+        };
+        state.guide_drag = Some((axis, position));
+
+        // The line under the pointer, so the drag is visible before it lands.
+        let painter = ui.painter_at(canvas);
+        let hair = egui::Stroke::new(1.0, Theme::GUIDE);
+        let _drawn = match axis {
+            Axis::Horizontal => painter.line_segment(
+                [
+                    egui::pos2(canvas.min.x, pos.y),
+                    egui::pos2(canvas.max.x, pos.y),
+                ],
+                hair,
+            ),
+            Axis::Vertical => painter.line_segment(
+                [
+                    egui::pos2(pos.x, canvas.min.y),
+                    egui::pos2(pos.x, canvas.max.y),
+                ],
+                hair,
+            ),
+        };
+    }
+
+    if released {
+        let (axis, position) = state.guide_drag.take().expect("just matched");
+        // Dropped back on a ruler rather than on the page: the gesture is
+        // cancelled, which is how a guide is thrown away.
+        let landed_on_canvas = pointer.is_some_and(|p| canvas.contains(p));
+        // Bound before applying: the lookup borrows `state`, and the command
+        // needs it mutably.
+        let spread = state.active().document().spread_ids().next();
+        if landed_on_canvas && let Some(spread) = spread {
+            crate::command::apply(
+                state,
+                crate::command::Command::AddGuide {
+                    spread,
+                    guide: Guide {
+                        axis,
+                        position,
+                        locked: false,
+                    },
+                },
+            );
+        }
+    }
+}
+
 /// The unit selector, at the corner where the two rulers meet.
 ///
 /// Writes the preference **and saves it**, so the choice survives a restart —

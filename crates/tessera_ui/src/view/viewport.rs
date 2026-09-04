@@ -1382,6 +1382,34 @@ fn draw_overlays(
         }
     }
 
+    // Ruler guides, under the objects and above the page: they describe the
+    // page rather than sitting on it.
+    if let Some(spread) = state.active().document().spread_ids().next() {
+        let hair = Stroke::new(1.0, Theme::GUIDE);
+        for guide in state.active().document().guides_of(spread) {
+            match guide.axis {
+                tessera_document::nodes::Axis::Horizontal => {
+                    let y = to_screen(DocPoint {
+                        x: 0.0,
+                        y: guide.position,
+                    })
+                    .y;
+                    painter
+                        .line_segment([egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)], hair);
+                }
+                tessera_document::nodes::Axis::Vertical => {
+                    let x = to_screen(DocPoint {
+                        x: guide.position,
+                        y: 0.0,
+                    })
+                    .x;
+                    painter
+                        .line_segment([egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)], hair);
+                }
+            }
+        }
+    }
+
     // The pen's path under construction, with its anchors and handles.
     if let Some(pen) = &state.active().pen {
         let path = pen.to_bezpath_at(0.0, 0.0);

@@ -128,6 +128,10 @@ impl Theme {
     /// The reference point a rotation turns about.
     pub const REFERENCE_MARK: f32 = 4.0;
 
+    /// A ruler guide. Cyan, the convention, and distinct from the magenta
+    /// margin rule and the red bleed rule at a glance.
+    pub const GUIDE: Color32 = Color32::from_rgb(0x2C, 0xC8, 0xD8);
+
     /// The surround in a printing screen mode.
     ///
     /// **Not a palette colour.** It is the same in light and dark on purpose:

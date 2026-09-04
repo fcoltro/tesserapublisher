@@ -350,10 +350,17 @@ Split into three plans, because these are three subsystems that each produce
 working software alone: **C-i the rail** (C1–C5), **C-ii the surface**
 (C6–C9), **C-iii the chrome** (C10–C13).
 
-> **Status 2026-09-04: C-i is code complete. C-ii and C-iii not started.**
+> **Status 2026-09-04: C-i and C-ii are code complete. C-iii not started.**
 >
-> 415 tests pass and clippy is clean at `-D warnings`. **The sentence has not
-> been performed by hand**, so this is code complete rather than complete.
+> 462 tests pass and clippy is clean at `-D warnings`.
+>
+> **Two bugs in this work were found by using the application, not by the
+> suite** — page setup not invalidating the resolve cache, and autosave
+> failing on a directory that had never been created. Both now have
+> regression tests at the level the failure was really at. That is the
+> argument for the hand checks, made concrete.
+>
+> C-ii's own sentence has not been performed by hand.
 
 - [x] **C1 — Inspector shell** with a stable section order — Transform, Fill,
   Stroke, Text, Frame. The *order* is what keeps a hidden section from moving
@@ -374,13 +381,27 @@ working software alone: **C-i the rail** (C1–C5), **C-ii the surface**
 - [x] **C5 — Fill and stroke proxy**, with swap, defaults and none, on `X`,
   `D` and `/` — bound below the text-editing guard so typing never triggers
   them.
-- [ ] **C6 — Align and distribute**, to the selection, the margins, the page
-  and the spread (B1).
-- [ ] **C7 — Canvas toolbar**: align, distribute, flip, rotate 90°. Spatial
-  verbs beside the object; values stay in the rail.
-- [ ] **C8 — Rulers**, with a unit selector and a zero-point widget — and
-  dragging one out yields a guide (B3).
-- [ ] **C9 — Screen modes**: Normal, Preview, Bleed and Slug, all four (B1).
+- [~] **C6 — Align and distribute.** All four targets exist in the model —
+  selection, margins, page, spread — and each is tested. *Only "to the
+  selection" is reachable from the interface; the other three wait on a
+  target picker.*
+- [~] **C7 — Canvas toolbar**: six aligns and two distributes, beside the
+  object, appearing only for two or more. Placement is tested against the
+  window's edges. *Flip and rotate 90° are not on it, and the buttons carry
+  short text labels rather than Lucide glyphs — those come with C13.*
+- [~] **C8 — Rulers**, with a 1-2-5 tick ladder, a unit selector that saves
+  the preference, and a guide you can drag off either one — dropped back on a
+  ruler, the drag is cancelled (B3). *The zero point is fixed at the first
+  page's top-left; it is not yet a widget you can drag. An existing guide
+  cannot be moved or deleted once placed — the commands exist and are tested,
+  the canvas interaction does not.*
+- [~] **C9 — Screen modes.** All four exist and are tested, and `W` puts the
+  interface away and brings it back: handles, frame edges, margin and bleed
+  rules, rulers, guides and the canvas toolbar all go, and the surround
+  becomes the fixed neutral grey of D8. *`W` toggles Normal and Preview only —
+  Bleed and Slug are not reachable without a View menu (C12) — and the
+  document is not yet clipped to the revealed rectangle, so Preview hides the
+  furniture without cropping the pasteboard.*
 - [ ] **C10 — Status bar**: zoom control and page navigator.
 - [ ] **C11 — Command palette** over the `Command` enum (A6), showing each
   command's shortcut beside it.

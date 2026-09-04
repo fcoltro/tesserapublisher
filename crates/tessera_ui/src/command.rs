@@ -120,6 +120,20 @@ pub enum Command {
     /// Space the selection's centres evenly along an axis.
     Distribute(tessera_document::nodes::Axis),
 
+    AddGuide {
+        spread: tessera_document::ids::SpreadId,
+        guide: tessera_document::nodes::Guide,
+    },
+    MoveGuide {
+        spread: tessera_document::ids::SpreadId,
+        index: usize,
+        position: f64,
+    },
+    RemoveGuide {
+        spread: tessera_document::ids::SpreadId,
+        index: usize,
+    },
+
     Undo,
     Redo,
 }
@@ -532,6 +546,31 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             }
         }
 
+        Command::AddGuide { spread, guide } => {
+            state.active_mut().document_mut().add_guide(spread, guide);
+        }
+
+        Command::MoveGuide {
+            spread,
+            index,
+            position,
+        } => {
+            let doc = state.active_mut().document_mut();
+            if let Some(s) = doc.spreads.get_mut(spread)
+                && let Some(guide) = s.guides.get_mut(index)
+            {
+                guide.position = position;
+                doc.touch();
+            }
+        }
+
+        Command::RemoveGuide { spread, index } => {
+            state
+                .active_mut()
+                .document_mut()
+                .remove_guide(spread, index);
+        }
+
         Command::Undo => {
             if let Some(previous) = state.active_mut().undo() {
                 restore(state, previous);
@@ -603,6 +642,121 @@ fn duplicate_one(state: &mut TesseraApp, id: FrameId) -> Option<FrameId> {
 
 #[cfg(test)]
 mod tests {
+    use tessera_document::nodes::Guide;
+
+    fn only_spread(state: &TesseraApp) -> tessera_document::ids::SpreadId {
+        state
+            .active()
+            .document()
+            .spread_ids()
+            .next()
+            .expect("a spread")
+    }
+
+    #[test]
+    fn adding_a_guide_is_one_undoable_step() {
+        let mut state = TesseraApp::headless();
+        let spread = only_spread(&state);
+        apply(
+            &mut state,
+            Command::AddGuide {
+                spread,
+                guide: Guide {
+                    axis: Axis::Vertical,
+                    position: 120.0,
+                    locked: false,
+                },
+            },
+        );
+        assert_eq!(state.active().document().guides_of(spread).len(), 1);
+
+        apply(&mut state, Command::Undo);
+        assert!(
+            state.active().document().guides_of(spread).is_empty(),
+            "one undo takes the guide away again"
+        );
+    }
+
+    #[test]
+    fn moving_a_guide_puts_it_where_it_was_asked_for() {
+        let mut state = TesseraApp::headless();
+        let spread = only_spread(&state);
+        apply(
+            &mut state,
+            Command::AddGuide {
+                spread,
+                guide: Guide {
+                    axis: Axis::Horizontal,
+                    position: 40.0,
+                    locked: false,
+                },
+            },
+        );
+        apply(
+            &mut state,
+            Command::MoveGuide {
+                spread,
+                index: 0,
+                position: 200.0,
+            },
+        );
+        assert_eq!(
+            state.active().document().guides_of(spread)[0].position,
+            200.0
+        );
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(
+            state.active().document().guides_of(spread)[0].position,
+            40.0,
+            "one undo for the whole drag, not one per pointer move"
+        );
+    }
+
+    #[test]
+    fn removing_a_guide_leaves_the_others_in_place() {
+        let mut state = TesseraApp::headless();
+        let spread = only_spread(&state);
+        for position in [10.0, 20.0, 30.0] {
+            apply(
+                &mut state,
+                Command::AddGuide {
+                    spread,
+                    guide: Guide {
+                        axis: Axis::Vertical,
+                        position,
+                        locked: false,
+                    },
+                },
+            );
+        }
+        apply(&mut state, Command::RemoveGuide { spread, index: 1 });
+
+        let left: Vec<_> = state
+            .active()
+            .document()
+            .guides_of(spread)
+            .iter()
+            .map(|g| g.position)
+            .collect();
+        assert_eq!(left, vec![10.0, 30.0]);
+    }
+
+    #[test]
+    fn moving_a_guide_that_is_not_there_does_nothing_rather_than_panicking() {
+        let mut state = TesseraApp::headless();
+        let spread = only_spread(&state);
+        apply(
+            &mut state,
+            Command::MoveGuide {
+                spread,
+                index: 7,
+                position: 10.0,
+            },
+        );
+        assert!(state.active().document().guides_of(spread).is_empty());
+    }
+
     use crate::align::{AlignTo, Edge};
     use tessera_document::nodes::Axis;
 
