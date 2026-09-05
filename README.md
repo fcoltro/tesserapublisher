@@ -30,6 +30,12 @@ There is no webview and no TypeScript.
 - **[Design](docs/superpowers/specs/2026-09-01-tessera-rebuild-design.md)** —
   architecture, the crate graph, five numbered decisions with their rejected
   alternatives, risks, and what is deliberately out of scope.
+- **[Instrument spec](docs/superpowers/specs/2026-09-03-instrument-milestone-design.md)** —
+  the interface design: eight numbered decisions, what InDesign gets right,
+  and the three of its surfaces Tessera refuses.
+- **[InDesign parity](docs/INDESIGN-PARITY.md)** — every element of an
+  InDesign window, read against this codebase, priced as a model gap or a
+  missing surface, and assigned to a milestone.
 - **[Roadmap](ROADMAP.md)** — milestones 0 through 8. Each states its
   acceptance criteria as sentences a person can perform, not as a list of
   components that exist.

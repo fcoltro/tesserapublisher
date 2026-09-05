@@ -9,6 +9,11 @@ this project exists.
 surface. No webview. See
 [the rebuild design](docs/superpowers/specs/2026-09-01-tessera-rebuild-design.md).
 
+**Interface:** InDesign-informed, not InDesign-shaped. The element-by-element
+comparison is [`docs/INDESIGN-PARITY.md`](docs/INDESIGN-PARITY.md); the
+direction is
+[the Instrument spec](docs/superpowers/specs/2026-09-03-instrument-milestone-design.md).
+
 ---
 
 ## How to read this file
@@ -56,6 +61,27 @@ Never "done" until shipping; re-checked at the close of every milestone.
   Re-checked each milestone rather than assumed. The previous codebase's most instructive defect was a clip
   rectangle that resolved to zero and disabled rendering without a word.
 - [x] **Tests land with the change**, in the same commit.
+- [x] **Every mutation is covered by exactly one undo entry.** Changes go
+  through `Command`. The exception is an interactive gesture, which must write
+  live or nothing would be visible until the mouse came up, and which is
+  legitimate only because it brackets those writes — one snapshot when it
+  begins, or a restore and a single `Command` when it ends. A direct mutation
+  outside the command layer must therefore say so with an `undo-bracketed:`
+  marker, and `tests/command_invariant.rs` fails on any that does not.
+  *The first draft of this rule read simply "every mutation goes through
+  `Command`". Asserting it turned up seven direct mutations: two test fixtures
+  and five deliberate, commented, bracketed gestures. The rule was wrong, not
+  the code — which is the argument for asserting a rule rather than stating
+  one.*
+- [ ] **The application is operable from the keyboard alone**, and every
+  control carries an accessible name through egui's AccessKit support.
+  Retrofitting this costs many times what designing for it does, and a
+  publishing tool that a screen reader cannot describe is not finished.
+  Re-checked at the close of every milestone.
+- [x] **Performance is measured, not asserted.** A guard over a 500-frame
+  document holds resolve and scene-build time under one whole frame. Baseline
+  on the development machine, 2026-09-03: **0.41 ms**, roughly fifty times
+  under the ceiling. A number nothing measures is a wish.
 
 ---
 
@@ -114,9 +140,14 @@ threading, swatches, preflight, images, CMYK, print marks.
 
 Making the skeleton pleasant to use. No new file-format surface area.
 
-> **Status 2026-09-02: code complete, awaiting the manual check.**
-> Every item below is built and tested. As with milestone 0, the boxes stay
-> unticked until a person performs the sentence in the running application.
+> **Status 2026-09-03: the original scope is code complete, awaiting the
+> manual check; five items were added afterwards and are not built.**
+> Everything down to the undo-entry line is built and tested. As with
+> milestone 0, the boxes stay unticked until a person performs the sentence in
+> the running application. The five items below that line came out of the
+> InDesign reading on 2026-09-03 — the reference point, shear, align and
+> distribute, corner options, and the remaining tools — and no code exists for
+> any of them.
 >
 > A first run on 2026-09-02 produced a punch list, worked through in
 > `docs/UX-PASS-1.md`: painted Lucide cursors, transform zones that do not
@@ -147,12 +178,281 @@ Making the skeleton pleasant to use. No new file-format surface area.
 - [x] Grouping and ungrouping, including nested groups.
 - [x] Numeric transform fields with drag-to-scrub, including rotation.
 - [x] Every gesture records exactly one undo entry, on completion.
+- [ ] **Reference point**: transforms resolve about a chosen one of nine
+  anchors, which subsumes the from-centre scaling missing above.
+- [ ] **Shear**, with an honest affine decomposition replacing
+  `Transform::rotation_degrees()`'s assumption that no shear exists.
+- [ ] **Align and distribute** across a multiple selection.
+- [ ] Corner options and corner radius. *(Model change: a format version
+  bump.)*
+- [ ] Direct-select and zoom tools; add, delete and convert anchor points;
+  polygon; scissors.
+
+---
+
+# Milestone 1.5 — The Foundation and the Instrument
+
+**Three ordered phases. The invisible things first, the page second, the
+interface last.**
+
+> Prompted by reading an InDesign screenshot against the codebase on
+> 2026-09-03. Design:
+> [the Instrument spec](docs/superpowers/specs/2026-09-03-instrument-milestone-design.md).
+
+`Stroke` carries alignment, caps, joins, miter limit, dashes and dash offset —
+built, tested, and exposed nowhere. `Color` models CMYK and spot; nothing can
+create either. The inspector renders position, size, rotation, text and fill,
+and stops.
+
+This does not break the rule that defers the workspace to milestone 7. That
+rule forbids chrome *ahead of* capability. This is the surface for capability
+already finished.
+
+**The phases are strictly ordered.** Phase A builds the things that have no
+UI and no file-format surface, and that half of everything below depends on.
+Phase B makes the page a real page — the single format version bump of this
+milestone, batched deliberately because each bump costs a migration test and
+five scattered bumps cost five. Phase C is the interface, which cannot be
+built well before either.
+
+Every task lands with its tests in one commit. A task that cannot is too big
+and gets split.
+
+### Acceptance
+
+> Select a rectangle. Set its position and size numerically with the reference
+> point on its centre, and watch it scale about that point — with the anchor
+> mark visible on the object as it does. Type `12mm` into a field reading
+> points and see it convert. Give the rectangle a 3 pt dashed stroke, aligned
+> inside, with round caps, and see it on the canvas. Swap fill and stroke with
+> one key. Select three objects and align their left edges from the toolbar
+> beside them. Shear one. Press `Ctrl`+`K`, type "flip", and flip it. Read its
+> position off a ruler in millimetres, switch the ruler to picas, and watch
+> every field in the application follow. Drag a guide off that ruler and align
+> the object to the page margin. Give the document a 3 mm bleed and see it
+> drawn. Press `W` and see the handles, frame edges, guides and rulers go,
+> leaving the page on a neutral surround; press it again and get them back.
+> Switch to the light theme and read every label. Save, quit, reopen, and find
+> the page setup and the guide exactly as they were left. Force-quit instead,
+> relaunch, and be offered the recovered document.
+
+## Phase A — Foundations
+
+Nothing here appears on screen and nothing here touches the file format. Each
+task is a small, pure, independently testable piece that later work stands on.
+Built first because retrofitting any of them is many times the cost.
+
+> **Status 2026-09-04: ten of ten done. Complete.**
+>
+> A phase-A item has no sentence a person can perform — that is what makes it
+> phase A. So `[x]` here means the narrower thing: the code exists, its tests
+> pass, and nothing about it is visible to check by hand. Where a visual check
+> *is* owed, the item stays `[~]` and says so. This is a deliberate reading of
+> the legend above, not an exemption from it.
+>
+> **Two hand checks are owed and neither has been done.** A5 restructured
+> `TesseraApp` — the milestone-0 spine — across roughly 290 call sites, so
+> milestone 0's sentence needs performing again; the headless
+> `milestone_0.rs` passes unchanged, which is evidence and not proof. A9
+> changed how icons are built, and nobody has looked at the tool strip since.
+> Until both are done, phase A is code-complete rather than complete.
+>
+> Every task is built and the one visual check A9 was waiting for has been
+> made. Phase B is next, and it is planned separately.
+
+- [x] **A1 — Units.** A `Unit` type over mm, pt, px, inches and picas, with
+  parsing (`12mm`, `1p6`, `.5in`), formatting and conversion. Property-tested
+  round-trips. Every numeric field in the application depends on it.
+- [x] **A2 — Preferences store.** A versioned struct written through
+  `tessera_io::write_atomic` to the platform config directory, defaulting
+  cleanly when absent and **reporting** — never swallowing — a corrupt one.
+  First consumers: the preferred unit and the theme.
+- [x] **A3 — Affine decomposition.** `Transform::decompose()` into scale,
+  shear, rotation and translation, with a recompose property test. Callers of
+  `rotation_degrees()` migrate off its no-shear assumption one at a time.
+  Unblocks shear, scale-as-percentage and the reference point.
+- [x] **A4 — Anchor resolution.** The nine-point anchor as a type, and the
+  resolution of scale, rotation and flip about it. Pure geometry, no UI.
+- [x] **A5 — The open-document container.** `TesseraApp` held `document`,
+  `history`, `resolved`, `view` and `selection` as flat fields; all five are
+  per-document. They move into an `OpenDocument`, with the application holding
+  a map and an active id. **One document is still open at a time** — the tabs
+  are milestone 7. Done now because this refactor widens with every milestone.
+- [x] **A6 — The command invariant.** Every mutation routes through the
+  `Command` enum, or is a bracketed interactive gesture carrying an
+  `undo-bracketed:` marker that says why. Asserted by
+  `tests/command_invariant.rs`, which reads the crate's own source because
+  Rust can restrict a method to a crate but not to one sibling module.
+- [x] **A7 — Performance harness.** A benchmark that builds a 500-frame
+  document and measures resolve and scene build, with a regression assertion.
+  *The 16.7 ms budget in the spec is a wish until something measures it.*
+- [x] **A8 — Theme tokens, light and dark**, with a test asserting WCAG AA
+  contrast for every foreground-on-background pair rather than checking by eye.
+- [x] **A9 — Icon cache.** Lucide paths parse to `BezPath` once and are cached
+  by `Icon`, instead of being re-parsed on every paint. *Verified by eye on
+  2026-09-04: a screenshot of the running application shows the tool strip
+  drawing correctly through the cache.*
+- [x] **A10 — Autosave and crash recovery.** A periodic atomic write to a
+  recovery path, detected and offered on the next launch. Data safety belongs
+  with the cross-cutting rules, not at milestone 7.
+
+## Phase B — The Page
+
+> **Status 2026-09-04: complete. All eight built; B4 dropped deliberately.**
+>
+> 394 tests pass and clippy is clean at `-D warnings`. The format moved from
+> 4 to 5 exactly once, and a version-4 document is proven to still open.
+>
+> **The sentence below has not been performed by hand.** Until it has, this is
+> code complete rather than complete.
+
+**One format version bump, one migration test, all of the page geometry at
+once.** Moved here out of milestone 3 because rulers, screen modes,
+align-to-page, `TrimBox` and `BleedBox`, and preflight's out-of-bleed rule all
+stand on it — and because PDF export already ships without a bleed box.
+
+- [x] **B1 — Page geometry.** Size, margins, bleed and slug, with named
+  presets (A3/A4/A5/Letter/Legal/Tabloid) and an orientation that turns a page
+  without losing its paper.
+- [x] **B2 — Facing pages.** The flag, and correct left/right spread geometry.
+- [x] **B3 — Guides as document data.** A guide is an axis, a position and a
+  spread — spread-level only; page-level guides differ only once pages within
+  a spread move independently, which is milestone 3's concern. Landing here rather than at milestone 4 costs nothing extra, because
+  the format bump is already being paid — and it is what lets phase C's rulers
+  actually yield a guide.
+- [ ] ~~**B4 — `ColorRef::{ Direct, Swatch }`.**~~ **Dropped 2026-09-04, to
+  milestone 5 where it belongs.** The argument for reserving it early was that
+  adding the indirection at milestone 5 would mean migrating every fill and
+  stroke in every saved document. Reading `format/mod.rs` undermines that:
+  `rotation_to_transform` already does exactly this kind of mechanical JSON
+  rewrite in about twenty lines, and wrapping every colour in `Direct` is the
+  same shape of walk. The cost is therefore roughly equal now and later, the
+  benefit before milestone 5 is nil, and reserving a shape before swatch
+  semantics are designed risks reserving the wrong one. YAGNI.
+- [x] **B5 — A spread renders as a spread.** `build_scene` takes one page
+  today. Margins, bleed and slug are drawn.
+- [x] **B6 — Format version 5**, with a migration test proving a version-4
+  document still opens and gains no setup it never had. *Not version 3: the
+  format is already at 4 — 2 added frame rotation, 3 replaced it with a full
+  affine transform, 4 added stroke alignment, caps, joins and dashes. The
+  earlier entry here was written from a stale reading and is corrected.*
+- [x] **B7 — Document setup inspector**, the "no selection" state: preset,
+  size, orientation, facing pages, margins, bleed and slug, each in the
+  preferred unit.
+- [x] **B8 — `TrimBox` and `BleedBox` in the PDF.** Exporting a document that
+  has a bleed and not recording it discards the user's intent silently, which
+  the cross-cutting rules forbid. PDF/X proper remains milestone 6.
+
+## Phase C — The Instrument
+
+The interface, built last, on foundations that now exist.
+
+Split into three plans, because these are three subsystems that each produce
+working software alone: **C-i the rail** (C1–C5), **C-ii the surface**
+(C6–C9), **C-iii the chrome** (C10–C13).
+
+> **Status 2026-09-04: all three parts built. Twelve of fourteen items done.**
+>
+> 462 tests pass and clippy is clean at `-D warnings`.
+>
+> **Two bugs in this work were found by using the application, not by the
+> suite** — page setup not invalidating the resolve cache, and autosave
+> failing on a directory that had never been created. Both now have
+> regression tests at the level the failure was really at. That is the
+> argument for the hand checks, made concrete.
+>
+> **Two items stay partial, and both for reasons outside phase C.** C10 shows
+> the page count but cannot navigate between pages, which waits on the pages
+> panel at milestone 3. C12's menus are generated from the action list, so
+> Layout, Type and Window have no menus because they have no commands yet —
+> and a menu entry for an unbuilt feature is the lie this codebase was rebuilt
+> to stop telling. Neither is work phase C can finish.
+>
+> **The sentences have not been performed by hand.** Three sessions of real
+> use found four bugs the suite missed — the resolve cache never invalidating
+> on a page-setup change, autosave failing on a directory nothing created, a
+> click in the inspector ending an on-canvas edit, and a recovery file
+> surviving a clean quit. Every one is fixed with a regression test at the
+> level the failure was really at. That is the argument for the hand checks,
+> made four times over.
+
+- [x] **C1 — Inspector shell** with a stable section order — Transform, Fill,
+  Stroke, Text, Frame. The *order* is what keeps a hidden section from moving
+  anything: universal sections first, so only Text and Frame can be absent and
+  they come last. *(D1's original wording — hiding moves nothing — was not
+  implementable, and the spec is amended.)*
+- [x] **C2 — Reference-point proxy**, with the chosen anchor also drawn on the
+  selection itself (A4). Settling `Anchor::shear`'s sign found that phase A's
+  decomposition never pinned which way a positive shear leaned; it does now.
+- [x] **C3 — Numeric fields**: every field parses a unit suffix (A1) — typing
+  `12mm` into a field showing points converts it — with a
+  constrain-proportions chain, scale as a percentage, rotation and shear, all
+  read from one `Decomposition` and written back as deltas about the
+  reference point (A3).
+- [x] **C4 — Stroke section**: weight, colour, alignment, cap, join, miter
+  limit and dash presets — the shipped model, reachable at last. The miter
+  limit and the dash offset appear only when they mean something.
+- [x] **C5 — Fill and stroke proxy**, with swap, defaults and none, on `X`,
+  `D` and `/` — bound below the text-editing guard so typing never triggers
+  them.
+- [x] **C6 — Align and distribute**, to the selection, the margins, the page
+  and the spread — every target reachable from the Object menu and the command
+  palette, with a test asserting each one is in the action list by name.
+- [x] **C7 — Canvas toolbar**: six aligns, two distributes, two flips and two
+  quarter-turns, beside the object, appearing only for two or more, in real
+  Lucide glyphs. Placement is tested against the window's edges.
+- [x] **C8 — Rulers**, with a 1-2-5 tick ladder, a unit selector that saves
+  the preference, and a guide you can drag off either one — dropped back on a
+  ruler, the drag is cancelled (B3). A placed guide can be grabbed, moved as
+  one undo entry, and thrown away by dropping it off the canvas. The zero
+  point is a widget: drag it onto the page to count from there, double-click
+  it to put it back on the page's own corner.
+- [x] **C9 — Screen modes**: Normal, Preview, Bleed and Slug, all four,
+  reachable from the View menu and the palette, with `W` toggling the first
+  two. A printing mode hides the handles, frame edges, rules, rulers, guides
+  and canvas toolbar, paints the surround the fixed neutral grey of D8, and
+  **crops the document to what it reveals** — so Preview shows the trim as it
+  will print rather than merely hiding the furniture around it.
+- [~] **C10 — Status bar**: a zoom that can be typed, stepped along a
+  1-2-5-ish ladder, or fitted, beside the message area. *The page count is
+  shown; navigation between pages waits on the pages panel at milestone 3.*
+- [x] **C11 — Command palette** over the `Command` enum (A6), showing each
+  command's shortcut beside it.
+- [~] **C12 — Menus**, generated from the same action list the palette reads,
+  so a command cannot be in one and missing from the other. File, Edit, Object
+  and View exist. *Layout, Type and Window do not — they have no commands yet,
+  and the rule this milestone works to is that a group with no actions gets no
+  menu. A menu entry for an unbuilt feature is the lie the previous codebase
+  told often.*
+- [x] **C13 — Icon set**: 31 Lucide glyphs, up from 14, **converted
+  mechanically from the official package's own SVG geometry** rather than
+  transcribed — the icon tests prove a path parses and that it fits the grid,
+  neither of which proves it is the glyph it claims to be. Every surface that
+  shows a picture now shows a real one: the tool strip, the canvas toolbar,
+  the fill and stroke proxy, the zoom controls.
+  *The spec guessed "roughly sixty". That number was wrong, not the work:
+  there are 31 places a picture beats a word, and the remaining surfaces —
+  the palette, the menus, the inspector's fields — are lists of text where an
+  icon would be noise. Padding to sixty would have meant adding glyphs nothing
+  draws.*
+
+**Explicitly not in M1.5:** corner radius, opacity, effects, object styles,
+gradients, the swatches panel, text wrap, frame fitting, text-frame options,
+image links, parent pages, the pages panel, the layers panel, snapping,
+dockable panels, document tabs.
 
 ---
 
 # Milestone 2 — Typography
 
 The reason a layout tool is not a drawing tool.
+
+> **Design approved 2026-09-05:**
+> [milestone 2 typography](docs/superpowers/specs/2026-09-05-milestone-2-typography-design.md).
+>
+> The one-line version: `Story` holds a single `TextStyle` for all of its
+> text, so nothing in the model can express a bold word. That is the whole of
+> this milestone'''s difficulty.
 
 ### Acceptance
 
@@ -162,17 +462,94 @@ The reason a layout tool is not a drawing tool.
 > change the style, and watch every one of them update. Type in a language
 > that needs an IME and see the composition preview on the canvas.
 
-- [ ] Font enumeration and family/style resolution across all three platforms.
-- [ ] Character formatting: family, weight, style, size, leading, tracking,
-  kerning, case, baseline shift.
-- [ ] Paragraph formatting: alignment, justification, indents, space before
-  and after, hyphenation, drop caps.
-- [ ] Paragraph and character styles, with live cascade on edit.
-- [ ] Text selection by click-drag, double-click word, triple-click paragraph.
-- [ ] IME composition rendered on canvas — **verified on Windows; Linux and
-  macOS recorded as unverified.**
-- [ ] Right-to-left and bidirectional text render correctly.
-- [ ] Typography inspector panel.
+> **Phases 1 to 4 built, 2026-09-05.** 608 headless tests and 6 GPU-backed
+> ones pass, clippy clean at `-D warnings`. **The acceptance sentence has not
+> been performed by hand.** Four bugs in three sessions of real use were found
+> by hand and missed by the suite, which is the whole argument for doing it.
+
+- [~] Font enumeration and family/style resolution. `Shaper::families()`
+  enumerates fontique, sorted and deduplicated, built on first ask. A family
+  the machine lacks is substituted by parley and **marked** in the inspector,
+  which is the visible half. *Exercised on Windows only; the enumeration is
+  fontique's and platform-independent, but "across all three platforms" is a
+  claim no test here has earned.*
+- [x] Character formatting: family, weight, style, size, leading and tracking
+  are in the model, reach the screen and the PDF, and are settable from the
+  inspector. A story shapes run by run. *Case and baseline shift stay modelled
+  but unshaped, and so have no controls.*
+- [~] Paragraph formatting. Alignment works and is settable. *Indents, space
+  before and after, hyphenation and drop caps are in the model and preserved by
+  the format, but have no controls and are not drawn* — parley lays out a whole
+  story as one layout, so a per-paragraph measure or a gap between paragraphs
+  cannot be expressed. The same constraint means a story whose paragraphs
+  disagree about alignment is left ragged-left rather than shown wrong in one of
+  them. **All of it needs one layout per paragraph, which also reaches the caret
+  and is its own piece of work.** Justification is available as an alignment;
+  H&J parameters are not modelled.
+- [x] Paragraph and character styles, with live cascade on edit. Define from
+  what the panel shows, attach to a range, edit the style and everything drawn
+  through it follows. The shape cache is keyed on **resolved** formatting so a
+  style edit is visible; keying on the runs would have made styles silently not
+  work.
+- [x] Text selection by click-drag, double-click word, triple-click paragraph.
+- [ ] IME composition rendered on canvas -> **moved to milestone 2.5.** It is
+  a windowing concern rather than a text-model one, and the only item here
+  that no headless test can reach; leaving it in would have made the whole
+  milestone unverifiable by the suite.
+- [ ] Right-to-left and bidirectional text render correctly. parley shapes
+  bidi text already; nothing here has been tested against it, and the caret
+  arithmetic assumes visual order follows logical order.
+- [x] Typography inspector panel. Family, size, leading, tracking, weight,
+  italic, alignment, and the two style pickers with a New button that defines a
+  style from what is shown. A field the selection disagrees about reads `Mixed`
+  rather than a number, because a zero there is a lie the reader cannot see
+  through.
+
+### What this milestone corrected on its way through
+
+Recorded because each was a wrong belief rather than a missing feature.
+
+- `Story::style` held the whole story's formatting and was what the shaper read,
+  so runs were built for two phases without being consulted. Removing it at
+  format version 7 is what made two live-path bugs *reachable*: the keystroke
+  path wrote `story.text` alone, leaving the runs describing a length the text
+  no longer had, and formatting applied while a caret was live was undone by the
+  next letter typed.
+- `ShapeKey` was built from `story.runs`, which do not change when a named style
+  does — so "change the style and watch both follow" would have failed silently.
+  Keyed on resolved formatting now.
+- `ParagraphStyle` had two places for character formatting and the cascade read
+  only one, so half of them did nothing.
+- A run could straddle a paragraph boundary, and `resolve_run` reads the
+  paragraph a run *starts* in — so styling one paragraph restyled its
+  neighbour. The trap in the fix was `merge_equal_neighbours`, which folded the
+  split runs straight back in the same call.
+- Three format-migration tests in phase 2 passed while testing nothing, because
+  `rewrite_version_for_test` round-trips through the current model. Every
+  migration test since is built from a hand-made archive and checked by
+  disabling the migration to confirm it goes red.
+
+---
+
+# Milestone 2.5 — Input Methods
+
+**Split out of milestone 2 on 2026-09-05.** Composition is a windowing
+concern, not a text-model one, and it is the one piece of typography no
+headless test can reach. Keeping it visible as its own milestone beats folding
+it into platform work, where an unverifiable item quietly becomes an
+unverified one.
+
+### Acceptance
+
+> Type in a language that needs an input method and see the composition
+> preview on the canvas, in the frame, in the frame's own font — not in a
+> floating box over the top of it. Commit it and find the text where the
+> preview was.
+
+- [ ] Composition preview rendered on canvas, in the frame.
+- [ ] Candidate window positioned against the caret.
+- [ ] **Verified on Windows**, with Linux and macOS recorded as unverified
+  until someone has done it.
 
 ---
 
@@ -189,11 +566,18 @@ The reason a layout tool is not a drawing tool.
 - [ ] Add, delete and duplicate pages — **all undoable.** (The previous
   implementation never made add or remove page undoable, because no inverse
   was ever written. D5's snapshot undo removes that failure mode.)
-- [ ] Facing-page spreads with correct left/right geometry.
+- [ ] Facing-page spreads with correct left/right geometry. → **moved to
+  milestone 1.5, phase B**, along with page size, margins, bleed, slug, and a
+  spread that renders as a spread. Tracked there, not here.
 - [ ] Master pages, applied by drag, rendered behind page content.
 - [ ] Master item override, promoting one item to a local editable copy.
 - [ ] Layers panel: named layers, reorder, visibility, lock.
-- [ ] Document setup: page size, orientation, margins, bleed, slug.
+- [ ] Document setup: page size, orientation, margins, bleed, slug. → **moved
+  to milestone 1.5, phase B.** Too much stands on it to leave it this late:
+  rulers, screen modes, align-to-page, `TrimBox` and `BleedBox`, and
+  preflight's out-of-bleed rule. Per-page size overrides stay here.
+- [ ] Screen modes Bleed and Slug → **moved to milestone 1.5, phase C**, since
+  phase B supplies the geometry they need.
 
 ---
 
@@ -207,11 +591,16 @@ The reason a layout tool is not a drawing tool.
 > across two pages, resize the first, and watch the text reflow through the
 > chain. See the connector lines between linked frames when one is selected.
 
-- [ ] Rulers with unit selection (mm, pt, px, in, picas).
-- [ ] Ruler guides, margin guides, column guides.
+- [ ] Rulers with unit selection (mm, pt, px, in, picas) → **moved to
+  milestone 1.5**: the unit type to phase A, the ruler to phase C.
+- [ ] Ruler guides → **moved to milestone 1.5**: the data to phase B, the
+  drag-out to phase C. They rode along free on a format bump that was being
+  paid anyway. Margin guides are drawn by phase B; **column guides stay here**,
+  because columns are text-frame geometry that phase B does not model.
 - [ ] Snapping solver with a pixel-threshold lock and visible indicators.
 - [ ] Baseline grid with a per-frame lock toggle.
-- [ ] Multi-column text frames with gutter control.
+- [ ] Multi-column text frames with gutter control, **frame inset, and
+  vertical justification**.
 - [ ] **Text threading**: overflow flows to the next frame, and a resize
   reflows the whole chain.
 - [ ] **Thread connector lines drawn on selection.** (The previous
@@ -244,6 +633,12 @@ The reason a layout tool is not a drawing tool.
 - [ ] Document output intent with on-screen soft proofing.
 - [ ] Linear and radial gradients; drop shadow; multiply, screen and overlay
   blending.
+- [ ] **Object opacity** as a field distinct from blend mode, and distinct
+  again from a fill colour's alpha.
+- [ ] **A graphic frame is not a shape.** The placeholder frame InDesign draws
+  with an X is a container with its own inner transform; making that explicit
+  in the model is what "content-within-frame" above depends on.
+- [ ] **Object styles**, cascading on edit the way paragraph styles do.
 
 ---
 
@@ -268,6 +663,8 @@ application.
   modified links, low resolution, colour-space mismatch, missing fonts,
   objects outside the bleed.
 - [ ] Preflight panel with click-to-jump, errors sorted above warnings.
+- [ ] **A live preflight indicator in the status bar**, so the document's
+  state is visible without opening the panel.
 - [ ] PDF/X-1a and PDF/X-4 export.
 - [ ] CMYK conversion through the document's output intent.
 - [ ] `MediaBox`, `TrimBox`, `BleedBox`; crop, bleed and registration marks,
@@ -298,10 +695,14 @@ milestone the layout is fixed: a tool strip, one inspector, and the canvas.
 - [ ] Named workspaces, saved and restored, with presets.
 - [ ] Full menu bar with accelerators.
 - [ ] A keyboard shortcut for every common command, user-remappable.
-- [ ] Theme tokens complete; light and dark both finished.
-- [ ] Multiple open documents.
-- [ ] Preferences dialog.
-- [ ] Autosave and crash recovery, surfaced on relaunch.
+- [ ] Theme tokens complete; light and dark both finished → **moved to
+  milestone 1.5, phase A**, with contrast asserted by a test.
+- [ ] Preferences dialog. *The store itself lands in milestone 1.5 phase A,
+  because phase A introduces two preferences and they need somewhere to live.*
+- [ ] Autosave and crash recovery → **moved to milestone 1.5, phase A.** Data
+  safety belongs with the cross-cutting rules, not eight milestones away.
+- [ ] Multiple open documents. *The structure lands in milestone 1.5 phase A;
+  what remains here is the tab bar and switching between them.*
 
 ---
 

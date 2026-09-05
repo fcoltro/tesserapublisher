@@ -77,6 +77,22 @@ impl Transform {
         )
     }
 
+    /// Horizontal shear by `degrees` about `about`.
+    ///
+    /// Points move along `x` in proportion to their distance from `about` in
+    /// `y`. Positive leans the **top** to the right — the italic slant, and
+    /// the same sign [`Transform::decompose`] reports.
+    pub fn shear_about(degrees: f64, about: DocPoint) -> Self {
+        if degrees == 0.0 {
+            return Self::IDENTITY;
+        }
+        let m = degrees.to_radians().tan();
+        // x' = x - m*(y - about.y), y' = y.
+        Self {
+            coefficients: [1.0, 0.0, -m, 1.0, m * about.y, 0.0],
+        }
+    }
+
     pub fn apply(self, p: DocPoint) -> DocPoint {
         let [a, b, c, d, e, f] = self.coefficients;
         DocPoint {
@@ -137,6 +153,85 @@ impl Transform {
     }
 }
 
+/// A transform read back as the four things a user adjusts.
+///
+/// The order is **translate · rotate · shear · scale**. Any other order gives
+/// different numbers for the same matrix, so it is fixed here and nowhere
+/// else.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Decomposition {
+    pub scale_x: f64,
+    pub scale_y: f64,
+    pub shear_degrees: f64,
+    pub rotation_degrees: f64,
+    pub translation: (f64, f64),
+}
+
+impl Decomposition {
+    pub const IDENTITY: Self = Self {
+        scale_x: 1.0,
+        scale_y: 1.0,
+        shear_degrees: 0.0,
+        rotation_degrees: 0.0,
+        translation: (0.0, 0.0),
+    };
+}
+
+impl Transform {
+    /// Read this transform as scale, shear, rotation and translation.
+    ///
+    /// Replaces [`Transform::rotation_degrees`], which is correct only while
+    /// no shear exists. That method stays until its last caller has moved.
+    pub fn decompose(self) -> Decomposition {
+        let [a, b, c, d, e, f] = self.coefficients;
+
+        let scale_x = a.hypot(b);
+        let determinant = a * d - b * c;
+
+        // A transform that collapses a shape to a line or a point has no
+        // rotation or shear to report. Saying so beats dividing by zero and
+        // reporting NaN into a numeric field.
+        if scale_x == 0.0 || determinant == 0.0 {
+            return Decomposition {
+                scale_x: 0.0,
+                scale_y: 0.0,
+                shear_degrees: 0.0,
+                rotation_degrees: 0.0,
+                translation: (e, f),
+            };
+        }
+
+        Decomposition {
+            scale_x,
+            scale_y: determinant / scale_x,
+            // Negated so that a positive shear leans the *top* to the
+            // right — the italic slant a designer expects. Document space
+            // has y increasing downward, so the unnegated matrix leans the
+            // bottom instead, which reads backwards.
+            shear_degrees: -((a * c + b * d) / determinant).atan().to_degrees(),
+            rotation_degrees: b.atan2(a).to_degrees(),
+            translation: (e, f),
+        }
+    }
+
+    /// Build a transform from the parts [`Transform::decompose`] reports.
+    pub fn from_decomposition(d: Decomposition) -> Self {
+        let (sin, cos) = d.rotation_degrees.to_radians().sin_cos();
+        // Negated to match `decompose`; see the note there.
+        let m = -d.shear_degrees.to_radians().tan();
+        Self {
+            coefficients: [
+                d.scale_x * cos,
+                d.scale_x * sin,
+                d.scale_y * (m * cos - sin),
+                d.scale_y * (m * sin + cos),
+                d.translation.0,
+                d.translation.1,
+            ],
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,6 +245,92 @@ mod tests {
     }
 
     const P: DocPoint = DocPoint { x: 3.0, y: 7.0 };
+
+    #[test]
+    fn the_identity_decomposes_to_nothing() {
+        let d = Transform::IDENTITY.decompose();
+        assert!((d.scale_x - 1.0).abs() < 1e-12);
+        assert!((d.scale_y - 1.0).abs() < 1e-12);
+        assert!(d.shear_degrees.abs() < 1e-12);
+        assert!(d.rotation_degrees.abs() < 1e-12);
+        assert_eq!(d.translation, (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_pure_rotation_reports_only_rotation() {
+        let t = Transform::rotate_about(30.0, DocPoint::ZERO);
+        let d = t.decompose();
+        assert!((d.rotation_degrees - 30.0).abs() < 1e-9);
+        assert!((d.scale_x - 1.0).abs() < 1e-9);
+        assert!((d.scale_y - 1.0).abs() < 1e-9);
+        assert!(d.shear_degrees.abs() < 1e-9);
+    }
+
+    #[test]
+    fn decomposition_agrees_with_the_old_rotation_reader_when_there_is_no_shear() {
+        for degrees in [0.0, 15.0, 90.0, 179.0, -47.5] {
+            let t = Transform::rotate_about(degrees, DocPoint { x: 3.0, y: 7.0 });
+            assert!(
+                (t.decompose().rotation_degrees - t.rotation_degrees()).abs() < 1e-9,
+                "disagreed at {degrees} degrees"
+            );
+        }
+    }
+
+    #[test]
+    fn a_transform_recomposes_to_itself() {
+        for (sx, sy, shear, rot, tx, ty) in [
+            (1.0, 1.0, 0.0, 0.0, 0.0, 0.0),
+            (2.0, 3.0, 0.0, 45.0, 10.0, -4.0),
+            (1.5, 0.5, 20.0, -30.0, -100.0, 250.0),
+            (-2.0, 1.0, 0.0, 0.0, 0.0, 0.0),
+        ] {
+            let built = Transform::from_decomposition(Decomposition {
+                scale_x: sx,
+                scale_y: sy,
+                shear_degrees: shear,
+                rotation_degrees: rot,
+                translation: (tx, ty),
+            });
+            let again = Transform::from_decomposition(built.decompose());
+            for i in 0..6 {
+                assert!(
+                    (built.coefficients[i] - again.coefficients[i]).abs() < 1e-9,
+                    "coefficient {i} drifted for {sx},{sy},{shear},{rot}: {} vs {}",
+                    built.coefficients[i],
+                    again.coefficients[i]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_positive_shear_leans_the_top_to_the_right() {
+        // The sign has a meaning and this is it. The round-trip test below
+        // passes under either convention, so without this nothing pins which
+        // way a positive number leans.
+        let t = Transform::from_decomposition(Decomposition {
+            shear_degrees: 45.0,
+            ..Decomposition::IDENTITY
+        });
+        // A point one unit *above* the origin, y being down.
+        let above = t.apply(DocPoint { x: 0.0, y: -1.0 });
+        assert!(
+            above.x > 0.0,
+            "a positive shear must lean the top to the right, got {above:?}"
+        );
+    }
+
+    #[test]
+    fn a_collapsed_transform_reports_zero_rather_than_dividing_by_it() {
+        let flat = Transform::from_affine(kurbo::Affine::new([0.0, 0.0, 0.0, 0.0, 5.0, 6.0]));
+        let d = flat.decompose();
+        assert_eq!(d.scale_x, 0.0);
+        assert_eq!(d.scale_y, 0.0);
+        assert_eq!(d.rotation_degrees, 0.0);
+        assert_eq!(d.shear_degrees, 0.0);
+        assert_eq!(d.translation, (5.0, 6.0));
+    }
 
     #[test]
     fn the_identity_moves_nothing() {

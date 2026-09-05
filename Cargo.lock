@@ -3658,6 +3658,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "slotmap",
  "tessera_color",
  "unicode-segmentation",
 ]
@@ -3672,7 +3673,9 @@ dependencies = [
  "kurbo",
  "proptest",
  "rfd",
+ "serde",
  "serde_json",
+ "slotmap",
  "tessera_color",
  "tessera_document",
  "tessera_geometry",

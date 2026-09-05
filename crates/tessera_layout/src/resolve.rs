@@ -51,10 +51,41 @@ pub struct ResolvedItem {
 pub struct ResolvedDocument {
     /// Back to front. The last item paints on top.
     pub items: Vec<ResolvedItem>,
+    /// Every page, with the rectangles that describe it.
+    ///
+    /// Computed once here so that the screen and the PDF cannot disagree
+    /// about where the trim is. While each computed its own, one of them was
+    /// eventually going to be wrong.
+    pub pages: Vec<ResolvedPage>,
+}
+
+/// One page, with the rectangles that describe it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResolvedPage {
+    /// The trim: the paper itself.
+    pub bounds: DocRect,
+    /// The type area, inset by the margins.
+    pub margins: DocRect,
+    /// The trim plus its bleed.
+    pub bleed: DocRect,
+    /// The trim plus its slug.
+    pub slug: DocRect,
 }
 
 /// Resolve every visible frame, in paint order.
 pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
+    let pages = doc
+        .page_ids()
+        .filter_map(|id| {
+            Some(ResolvedPage {
+                bounds: doc.pages.get(id)?.bounds,
+                margins: doc.margin_rect(id)?,
+                bleed: doc.bleed_rect(id)?,
+                slug: doc.slug_rect(id)?,
+            })
+        })
+        .collect();
+
     let mut items = Vec::new();
 
     for id in doc.paint_order() {
@@ -95,9 +126,23 @@ pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
                 let Some(story) = doc.story(*story) else {
                     continue;
                 };
+                // The document is what resolves named styles, so it is what
+                // the shaper is handed.
+                //
+                // Colour is still one per frame rather than one per run: the
+                // shaper's brush is `()` and the consumer paints, so a run's
+                // own colour has nowhere to travel yet. Taken from the first
+                // run's resolved format, which is right for every story that
+                // has one colour and wrong for none that exist today.
+                let colour = story
+                    .runs
+                    .first()
+                    .map(|run| story.resolve_run(run, doc))
+                    .and_then(|f| f.colour)
+                    .unwrap_or(tessera_color::Color::BLACK);
                 ResolvedKind::Text {
-                    shaped: shaper.shape(story, frame.bounds.width),
-                    color: story.style.color.clone(),
+                    shaped: shaper.shape(story, doc, frame.bounds.width),
+                    color: colour,
                 }
             }
         };
@@ -110,7 +155,7 @@ pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
         });
     }
 
-    ResolvedDocument { items }
+    ResolvedDocument { items, pages }
 }
 
 #[cfg(test)]
@@ -342,5 +387,27 @@ mod tests {
             b.height().abs() < 1e-9,
             "an axis with no extent must not blow up"
         );
+    }
+}
+
+#[cfg(test)]
+mod page_tests {
+    use super::*;
+    use tessera_document::nodes::{Insets, Margins};
+
+    #[test]
+    fn resolving_carries_every_pages_rectangles() {
+        let mut doc = Document::new();
+        doc.setup.margins = Margins::uniform(36.0);
+        doc.setup.bleed = Insets::uniform(9.0);
+
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+
+        assert_eq!(resolved.pages.len(), doc.page_ids().count());
+        let page = resolved.pages[0];
+        assert_eq!(page.margins.width, page.bounds.width - 72.0);
+        assert_eq!(page.bleed.width, page.bounds.width + 18.0);
+        assert_eq!(page.slug, page.bounds, "no slug set means no slug drawn");
     }
 }

@@ -51,7 +51,6 @@ vello = "0.10"
 # Geometry and text.
 kurbo                = { version = "0.13", features = ["serde"] }
 parley               = "0.11"
-skrifa               = "0.44"
 unicode-segmentation = "1.13"
 
 # Document model and format.

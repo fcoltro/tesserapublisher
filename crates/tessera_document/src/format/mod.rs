@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 4;
+pub const FORMAT_VERSION: u32 = 7;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -113,6 +113,165 @@ fn migrate(value: &mut serde_json::Value, from: u32) {
     // rewrite. The version still moves, so that a build without them refuses
     // a document that uses them rather than silently dropping them on the
     // next save.
+
+    // 4 -> 5: the document gained page setup — margins, bleed, slug, and
+    // whether pages face — and a spread gained guides.
+    //
+    // One bump for all of it, deliberately. A format version costs a
+    // migration test, so six changes delivered together cost one and six
+    // delivered separately cost six. That is why milestone 1.5 has a phase
+    // whose whole job is the page.
+    //
+    // Nothing to rewrite. Every field carries `serde(default)`, and each
+    // default is the truth about a document that never had the field: no
+    // margins, no bleed, no slug, pages that do not face, no guides. A
+    // fabricated default — 10mm margins, say — would invent a decision the
+    // user never made, and would do it silently, to every old document.
+    //
+    // The version moves anyway, for the same reason 3 -> 4 did.
+
+    // 5 -> 6: a story gained character and paragraph runs, so that it can
+    // hold more than one formatting.
+    //
+    // **This one rewrites, and it has to.** The run lists carry an invariant
+    // — sorted, non-overlapping, covering exactly the text — and `serde`'s
+    // default for a missing list is an empty one. An older story loaded
+    // without this step would arrive with text and no runs, which satisfies
+    // no version of that invariant. Every other migration so far could lean
+    // on a default being the truth about an older document; this is the first
+    // where the default is a lie.
+    if from < 6 {
+        stories_gain_runs(value);
+    }
+
+    // 6 -> 7: the document gained named style tables and a text default, and
+    // a story lost the single `style` it had carried since milestone 0.
+    //
+    // The style folds into every run — `run.local` **over** it, so a run that
+    // already states a size keeps its own — and then the field goes. Nothing
+    // about how a document looks changes, which is the whole bar for a
+    // migration that removes something.
+    if from < 7 {
+        stories_fold_style_into_runs(value);
+    }
+}
+
+/// Fold each story's one style into its runs, then drop it.
+fn stories_fold_style_into_runs(value: &mut serde_json::Value) {
+    use serde_json::{Map, Value};
+
+    match value {
+        Value::Object(map) => {
+            if map.contains_key("text") && map.contains_key("style") {
+                let mut base = Map::new();
+                if let Some(style) = map.get("style").and_then(Value::as_object) {
+                    for (from, to) in [
+                        ("family", "family"),
+                        ("size", "size"),
+                        ("line_height", "line_height"),
+                        ("color", "colour"),
+                    ] {
+                        if let Some(v) = style.get(from) {
+                            base.insert(to.to_string(), v.clone());
+                        }
+                    }
+                }
+
+                if let Some(runs) = map.get_mut("runs").and_then(Value::as_array_mut) {
+                    for run in runs {
+                        let Some(run) = run.as_object_mut() else {
+                            continue;
+                        };
+                        let local = run
+                            .entry("local")
+                            .or_insert_with(|| Value::Object(Map::new()));
+                        if let Some(local) = local.as_object_mut() {
+                            // The run's own wins; the style fills the gaps.
+                            for (k, v) in &base {
+                                local.entry(k.clone()).or_insert_with(|| v.clone());
+                            }
+                        }
+                    }
+                }
+
+                map.remove("style");
+            }
+
+            for child in map.values_mut() {
+                stories_fold_style_into_runs(child);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                stories_fold_style_into_runs(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Give every story one run and one paragraph, from the style it already had.
+///
+/// Walks the whole tree rather than reaching for `stories`, for the same
+/// reason [`rotation_to_transform`] does: how `SlotMap` encodes its slots is
+/// its business. A story is recognised by carrying `text` and `style`
+/// together and no `runs` of its own.
+fn stories_gain_runs(value: &mut serde_json::Value) {
+    use serde_json::{Map, Value};
+
+    match value {
+        Value::Object(map) => {
+            let is_story =
+                map.contains_key("text") && map.contains_key("style") && !map.contains_key("runs");
+
+            if is_story {
+                let length = map
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .map_or(0, |t| t.len());
+
+                // The old single style becomes the one run's formatting, so
+                // nothing about how the story looks changes.
+                let mut local = Map::new();
+                if let Some(style) = map.get("style").and_then(Value::as_object) {
+                    for (from, to) in [
+                        ("family", "family"),
+                        ("size", "size"),
+                        ("line_height", "line_height"),
+                        ("color", "colour"),
+                    ] {
+                        if let Some(v) = style.get(from) {
+                            local.insert(to.to_string(), v.clone());
+                        }
+                    }
+                }
+
+                let (runs, paragraphs) = if length == 0 {
+                    // An empty story has no runs, not one empty run.
+                    (Value::Array(vec![]), Value::Array(vec![]))
+                } else {
+                    let range = serde_json::json!({ "start": 0, "end": length });
+                    (
+                        serde_json::json!([{ "range": range, "local": local }]),
+                        serde_json::json!([{ "range": range }]),
+                    )
+                };
+
+                map.insert("runs".to_string(), runs);
+                map.insert("paragraphs".to_string(), paragraphs);
+            }
+
+            for child in map.values_mut() {
+                stories_gain_runs(child);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                stories_gain_runs(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Rewrite every `{ bounds, rotation }` object into `{ bounds, transform }`.

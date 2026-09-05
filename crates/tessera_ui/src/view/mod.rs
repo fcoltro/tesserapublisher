@@ -5,7 +5,11 @@
 //! attaching to a `Context`. That matches eframe 0.35 handing the app a root
 //! `Ui`, so the whole window is one tree.
 
+pub mod canvas_toolbar;
+pub mod palette;
 pub mod panels;
+pub mod rulers;
+pub mod styles;
 pub mod text_edit;
 pub mod vello_host;
 pub mod viewport;
@@ -25,6 +29,10 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
 
     Panel::top("menu").show(ui, |ui| menu_bar(ui, state));
 
+    // Above everything, so it can be reached from anywhere.
+    palette::show(ui, state);
+    styles::show(ui, state);
+
     Panel::bottom("status")
         .exact_size(24.0)
         .resizable(false)
@@ -41,157 +49,106 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
 
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
-        .show(ui, |ui| viewport::show(ui, frame, state));
+        .show(ui, |ui| {
+            // The rulers reserve their strips first, so the canvas is
+            // whatever is left. Painting them happens after the viewport, so
+            // the canvas rect they measure is already known — a ruler that
+            // guessed it would be a frame behind every pan.
+            let mut across = egui::Rect::NOTHING;
+            let mut down = egui::Rect::NOTHING;
+
+            if state.screen_mode.shows_chrome() {
+                // `response.rect` rather than the inner `ui.max_rect()`. A
+                // panel's content rect has the frame's margins taken off it,
+                // which on a 20-point strip leaves four — and the ruler paints
+                // into a painter clipped to what it is given, so the left
+                // ruler's numbers were being clipped away entirely. The strip
+                // is what the ruler measures and what it must paint into.
+                let across_panel = Panel::top("ruler-across")
+                    .exact_size(rulers::THICKNESS)
+                    .resizable(false)
+                    .frame(egui::Frame::NONE)
+                    .show(ui, |ui| {
+                        // The corner where the rulers meet is the unit
+                        // selector, as it has been in every layout tool.
+                        // The corner carries both: the zero point, then the
+                        // unit these rulers count in.
+                        ui.horizontal(|ui| {
+                            rulers::zero_point(ui, state);
+                            rulers::unit_selector(ui, state);
+                        });
+                    });
+                across = across_panel.response.rect;
+
+                let down_panel = Panel::left("ruler-down")
+                    .exact_size(rulers::THICKNESS)
+                    .resizable(false)
+                    .frame(egui::Frame::NONE)
+                    .show(ui, |_ui| {});
+                down = down_panel.response.rect;
+            }
+
+            let canvas = ui.available_rect_before_wrap();
+            viewport::show(ui, frame, state);
+
+            if state.screen_mode.shows_chrome() {
+                rulers::paint(ui, state, canvas, across, down);
+                rulers::drag_out(ui, state, canvas, across, down);
+                rulers::resolve_zero_drag(ui, state, canvas);
+            }
+        });
 }
 
-fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
-    egui::MenuBar::new().ui(ui, |ui| {
-        ui.menu_button("File", |ui| {
-            if ui.button("New").clicked() {
-                file_ops::new_document(state);
-                ui.close();
-            }
-            if ui.button("Open...").clicked() {
-                file_ops::open(state);
-                ui.close();
-            }
-            ui.separator();
-            if ui.button("Save").clicked() {
-                file_ops::save(state);
-                ui.close();
-            }
-            if ui.button("Save As...").clicked() {
-                file_ops::save_as(state);
-                ui.close();
-            }
-            ui.separator();
-            if ui.button("Export PDF...").clicked() {
-                file_ops::export_pdf(state);
-                ui.close();
-            }
-            ui.separator();
-            if ui.button("Quit").clicked() {
-                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-        });
-
-        ui.menu_button("Edit", |ui| {
-            let can_undo = state.history.can_undo();
-            let can_redo = state.history.can_redo();
-            if ui
-                .add_enabled(can_undo, egui::Button::new("Undo"))
-                .clicked()
-            {
-                apply(state, Command::Undo);
-                ui.close();
-            }
-            if ui
-                .add_enabled(can_redo, egui::Button::new("Redo"))
-                .clicked()
-            {
-                apply(state, Command::Redo);
-                ui.close();
-            }
-
-            ui.separator();
-
-            let has_selection = !state.selection.is_empty();
-            let can_paste = !state.clipboard.is_empty();
-
-            if ui
-                .add_enabled(has_selection, egui::Button::new("Cut"))
-                .clicked()
-            {
-                apply(state, Command::CutSelection);
-                ui.close();
-            }
-            if ui
-                .add_enabled(has_selection, egui::Button::new("Copy"))
-                .clicked()
-            {
-                apply(state, Command::CopySelection);
-                ui.close();
-            }
-            if ui
-                .add_enabled(can_paste, egui::Button::new("Paste"))
-                .clicked()
-            {
-                apply(state, Command::Paste);
-                ui.close();
-            }
-            if ui
-                .add_enabled(has_selection, egui::Button::new("Duplicate"))
-                .clicked()
-            {
-                apply(state, Command::DuplicateSelection);
-                ui.close();
-            }
-
-            if ui.button("Select All").clicked() {
-                state.selection.replace_all(state.document.paint_order());
-                ui.close();
-            }
-
-            ui.separator();
-
-            if ui
-                .add_enabled(has_selection, egui::Button::new("Delete"))
-                .clicked()
-            {
-                apply(state, Command::DeleteSelection);
-                ui.close();
-            }
-        });
-
-        ui.menu_button("Object", |ui| {
-            let has_selection = !state.selection.is_empty();
-
-            let is_group = state
-                .selection
-                .single()
-                .and_then(|id| state.document.frame(id))
-                .is_some_and(|f| matches!(f.kind, tessera_document::nodes::FrameKind::Group(_)));
-
-            if ui
-                .add_enabled(state.selection.len() >= 2, egui::Button::new("Group"))
-                .clicked()
-            {
-                apply(state, Command::GroupSelection);
-                ui.close();
-            }
-            if ui
-                .add_enabled(is_group, egui::Button::new("Ungroup"))
-                .clicked()
-            {
-                apply(state, Command::UngroupSelection);
-                ui.close();
-            }
-
-            ui.separator();
-
-            for (label, how) in [
-                ("Bring to Front", ZMove::ToFront),
-                ("Bring Forward", ZMove::Forward),
-                ("Send Backward", ZMove::Backward),
-                ("Send to Back", ZMove::ToBack),
-            ] {
-                if ui
-                    .add_enabled(has_selection, egui::Button::new(label))
-                    .clicked()
-                {
-                    apply(state, Command::MoveSelectionInZ(how));
-                    ui.close();
-                }
-            }
-        });
-    });
-}
-
-/// Keyboard accelerators.
+/// The menu bar, built from the one action list.
 ///
-/// All use modifiers, so they cannot double-fire with the plain-key tool
-/// shortcuts the viewport handles. `consume_key` takes the event, so a
-/// shortcut never also reaches the canvas as text.
+/// A menu cannot carry a command the palette does not, or the other way
+/// round, because both read `actions::all()`. And a group with no actions
+/// gets no menu: **a menu entry for an unbuilt feature is the lie the previous
+/// codebase told often.**
+fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
+    use crate::actions::{self, Group};
+
+    // Menu order, not group order: Align sits inside Object and Tool inside
+    // View, so the bar has five menus rather than seven.
+    const MENUS: [&str; 5] = ["File", "Edit", "Object", "Type", "View"];
+
+    let mut chosen = None;
+    egui::MenuBar::new().ui(ui, |ui| {
+        for menu in MENUS {
+            let mut groups = Group::ALL
+                .into_iter()
+                .filter(|g| g.menu() == menu)
+                .peekable();
+            if groups.peek().is_none() {
+                continue;
+            }
+            ui.menu_button(menu, |ui| {
+                let mut first = true;
+                for group in Group::ALL.into_iter().filter(|g| g.menu() == menu) {
+                    if !first {
+                        ui.separator();
+                    }
+                    first = false;
+                    for action in actions::all().iter().filter(|a| a.group == group) {
+                        let label = match action.shortcut {
+                            Some(s) => format!("{}	{}", action.name, s),
+                            None => action.name.to_string(),
+                        };
+                        if ui.button(label).clicked() {
+                            chosen = Some(action.run);
+                            ui.close();
+                        }
+                    }
+                }
+            });
+        }
+    });
+
+    if let Some(run) = chosen {
+        actions::run(state, run);
+    }
+}
+
 fn accelerators(ui: &Ui, state: &mut TesseraApp) {
     let cmd = egui::Modifiers::COMMAND;
     let cmd_shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
@@ -221,15 +178,21 @@ fn accelerators(ui: &Ui, state: &mut TesseraApp) {
         apply(state, Command::Undo);
     }
 
+    // No modifier, so it must not fire while a caret is live — F11 is not a
+    // text key, but the guard is the rule rather than the exception.
+    if !state.active().editing.is_some() && pressed(egui::Modifiers::NONE, egui::Key::F11) {
+        crate::actions::run(state, crate::actions::Run::ToggleStyles);
+    }
+
     if pressed(cmd, egui::Key::V) {
         apply(state, Command::Paste);
     }
     if pressed(cmd, egui::Key::A) {
-        state.selection.replace_all(state.document.paint_order());
+        state.active_mut().select_all();
     }
 
     // Everything below needs something selected.
-    if state.selection.is_empty() {
+    if state.active().selection.is_empty() {
         return;
     }
     if pressed(cmd, egui::Key::X) {

@@ -66,11 +66,82 @@ fn stroked_rect(bounds: Rect, offset: f64) -> Rect {
     bounds.inflate(offset.max(-limit), offset.max(-limit))
 }
 
-/// Build the scene for one page of a resolved document.
-pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRect) -> Scene {
+/// The non-printing rule drawn around a page's bleed.
+///
+/// Red is the press convention, and it is the one colour a designer already
+/// reads as "this will be trimmed off".
+const BLEED_RULE: [f32; 4] = [0.85, 0.22, 0.18, 1.0];
+
+/// The non-printing rule drawn around a page's type area.
+///
+/// Magenta, again by convention — distinct from the bleed's red at a glance
+/// even for the most common colour-vision deficiencies, which red and green
+/// would not be.
+const MARGIN_RULE: [f32; 4] = [0.78, 0.24, 0.72, 1.0];
+
+/// What to include when building a scene.
+///
+/// A struct rather than a growing list of booleans, so a call reads as a
+/// description of what it wants rather than as three bare `true`s.
+#[derive(Debug, Clone, Copy)]
+pub struct SceneOptions {
+    /// Draw the non-printing margin and bleed rules.
+    pub rules: bool,
+    /// Show only what falls inside this rectangle.
+    ///
+    /// The printing screen modes crop to the trim, the bleed or the slug, so
+    /// what is on screen is what will come off the press. `None` shows
+    /// everything, pasteboard included.
+    pub clip: Option<DocRect>,
+}
+
+impl Default for SceneOptions {
+    fn default() -> Self {
+        Self {
+            rules: true,
+            clip: None,
+        }
+    }
+}
+
+/// Build the scene for a resolved document.
+///
+/// The pages come from `resolved`, not from a parameter. While the caller
+/// passed a page rectangle separately, the screen and the PDF each decided for
+/// themselves where the page was, and one of them was eventually going to be
+/// wrong.
+pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform) -> Scene {
+    build_scene_with(resolved, view, SceneOptions::default())
+}
+
+/// As [`build_scene`], but able to leave the non-printing rules out.
+///
+/// The printing screen modes show the page as it will come off the press, and
+/// a margin rule is not on the press.
+pub fn build_scene_with(
+    resolved: &ResolvedDocument,
+    view: ViewTransform,
+    options: SceneOptions,
+) -> Scene {
+    let rules = options.rules;
     let mut scene = Scene::new();
     let transform = view.to_affine();
     let hairline = hairline(view);
+
+    // Everything the document draws goes inside this layer, so a printing
+    // mode crops rather than merely hiding the furniture around the page.
+    let clipped = options.clip.is_some();
+    if let Some(area) = options.clip {
+        // A plain layer clipped to the area: vello has no dedicated clip
+        // blend, so the clip comes from the layer's own shape.
+        scene.push_layer(
+            Fill::NonZero,
+            vello::peniko::Mix::Normal,
+            1.0,
+            transform,
+            &area.to_kurbo(),
+        );
+    }
     // The whole stroke, not just its width: caps, joins and dashes are what
     // make a rule read as a rule rather than as a thin rectangle.
     let stroke_of = |s: &Stroke| {
@@ -85,15 +156,47 @@ pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRe
         k
     };
 
-    // The page itself, so the document reads as paper rather than as objects
-    // floating on the pasteboard.
-    scene.fill(
-        Fill::NonZero,
-        transform,
-        to_peniko(&Color::WHITE),
-        None,
-        &page.to_kurbo(),
-    );
+    // The pages themselves, so the document reads as paper rather than as
+    // objects floating on the pasteboard. Every page of the spread, so facing
+    // pages appear side by side.
+    for page in &resolved.pages {
+        scene.fill(
+            Fill::NonZero,
+            transform,
+            to_peniko(&Color::WHITE),
+            None,
+            &page.bounds.to_kurbo(),
+        );
+    }
+
+    // The guides that describe each page, drawn under its contents so that
+    // objects sit on top of them rather than being cut by them.
+    //
+    // Each is drawn only when it says something the trim does not: an
+    // unset bleed is the trim, and a rule on top of a rule is noise. The slug
+    // is deliberately not drawn — it has no distinct meaning until screen
+    // modes arrive, and two identical rectangles teach the reader nothing.
+    let rule = KurboStroke::new(hairline);
+    for page in resolved.pages.iter().filter(|_| rules) {
+        if page.bleed != page.bounds {
+            scene.stroke(
+                &rule,
+                transform,
+                AlphaColor::<Srgb>::new(BLEED_RULE),
+                None,
+                &page.bleed.to_kurbo(),
+            );
+        }
+        if page.margins != page.bounds {
+            scene.stroke(
+                &rule,
+                transform,
+                AlphaColor::<Srgb>::new(MARGIN_RULE),
+                None,
+                &page.margins.to_kurbo(),
+            );
+        }
+    }
 
     for item in &resolved.items {
         let rect: Rect = item.bounds.to_kurbo();
@@ -150,6 +253,10 @@ pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform, page: DocRe
         }
     }
 
+    if clipped {
+        scene.pop_layer();
+    }
+
     scene
 }
 
@@ -160,16 +267,29 @@ fn draw_text(
     shaped: &tessera_text::shape::ShapedText,
     color: &Color,
 ) {
-    // One draw call per font. `FontData` is the very handle the shaper used —
-    // the same `linebender_resource_handle` type peniko re-exports — so no
-    // conversion happens and the renderer cannot pick different bytes than
-    // the PDF writer will.
-    for (index, font) in shaped.fonts.iter().enumerate() {
-        let glyphs: Vec<Glyph> = shaped
-            .lines
+    // One draw call per run, because the size lives on the run. This was one
+    // call per font while a story had a single size; grouping by font alone
+    // would now draw a heading and its body text at whichever size happened
+    // to be asked for first.
+    //
+    // `FontData` is the very handle the shaper used — the same
+    // `linebender_resource_handle` type peniko re-exports — so no conversion
+    // happens and the renderer cannot pick different bytes than the PDF
+    // writer will.
+    for run in shaped.runs() {
+        let Some(font) = shaped.fonts.get(run.font_index) else {
+            continue;
+        };
+        if run.glyphs.is_empty() {
+            continue;
+        }
+        // The run's own colour when it states one; otherwise the frame's,
+        // which is what every story that nobody has coloured still uses.
+        let colour = run.colour.as_ref().unwrap_or(color);
+
+        let glyphs: Vec<Glyph> = run
+            .glyphs
             .iter()
-            .flat_map(|line| line.glyphs.iter())
-            .filter(|g| g.font_index == index)
             .map(|g| Glyph {
                 id: g.glyph_id,
                 x: (bounds.x + g.x) as f32,
@@ -177,27 +297,143 @@ fn draw_text(
             })
             .collect();
 
-        if glyphs.is_empty() {
-            continue;
-        }
-
         scene
             .draw_glyphs(font)
-            .font_size(shaped.font_size)
+            .font_size(run.size)
             .transform(transform)
-            .brush(to_peniko(color))
+            .brush(to_peniko(colour))
             .draw(Fill::NonZero, glyphs.into_iter());
     }
 }
 
 #[cfg(test)]
 mod tests {
+    /// A story shaped at two sizes must reach the scene as two draw calls.
+    ///
+    /// Grouping by font alone — which is what this did while a story had one
+    /// size — would draw a heading and its body at whichever size came first.
+    #[test]
+    fn each_run_is_drawn_at_its_own_size() {
+        use tessera_text::story::{CharacterFormat, Run, Story};
+
+        let sized = |size: f32, range: std::ops::Range<usize>| Run {
+            range,
+            style: None,
+            local: CharacterFormat {
+                size: Some(size),
+                ..CharacterFormat::default()
+            },
+        };
+
+        let mut one_size = Story::new("bigsmall");
+        one_size.runs = vec![sized(12.0, 0..8)];
+
+        let mut two_sizes = Story::new("bigsmall");
+        two_sizes.runs = vec![sized(24.0, 0..3), sized(9.0, 3..8)];
+
+        let mut shaper = tessera_text::shape::Shaper::new();
+        let uniform = shaper.shape(&one_size, &NoStyles::default(), 1000.0);
+        let mixed = shaper.shape(&two_sizes, &NoStyles::default(), 1000.0);
+
+        assert!(
+            mixed.runs().count() > uniform.runs().count(),
+            "two sizes should shape to more runs than one"
+        );
+
+        let build = |shaped: tessera_text::shape::ShapedText| {
+            build_scene(
+                &one_item(
+                    ResolvedKind::Text {
+                        shaped,
+                        color: Color::BLACK,
+                    },
+                    page(),
+                ),
+                ViewTransform::default(),
+            )
+        };
+
+        // Both draw glyphs; the mixed one draws them in more than one call.
+        assert!(!build(mixed).encoding().resources.glyph_runs.is_empty());
+        assert!(!build(uniform).encoding().resources.glyph_runs.is_empty());
+    }
+
+    #[test]
+    fn a_clip_really_reaches_the_encoding() {
+        // Preview must show the trim as it will print, not merely hide the
+        // furniture around it — so the clip has to be in the scene, not just
+        // in the options struct.
+        let doc = one_item(
+            ResolvedKind::Rectangle {
+                fill: Color::BLACK,
+                stroke: None,
+            },
+            DocRect {
+                x: 10.0,
+                y: 10.0,
+                width: 50.0,
+                height: 50.0,
+            },
+        );
+        let plain = build_scene_with(&doc, ViewTransform::default(), SceneOptions::default());
+        let cropped = build_scene_with(
+            &doc,
+            ViewTransform::default(),
+            SceneOptions {
+                rules: true,
+                clip: Some(page()),
+            },
+        );
+        assert!(
+            cropped.encoding().n_clips > plain.encoding().n_clips,
+            "the clip layer never reached the encoding"
+        );
+    }
+
+    #[test]
+    fn leaving_the_rules_out_draws_less() {
+        let mut doc = one_item(
+            ResolvedKind::Rectangle {
+                fill: Color::BLACK,
+                stroke: None,
+            },
+            DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 10.0,
+            },
+        );
+        // A margin inset from the trim, so there is a rule to leave out.
+        doc.pages[0].margins = DocRect {
+            x: 20.0,
+            y: 20.0,
+            width: page().width - 40.0,
+            height: page().height - 40.0,
+        };
+
+        let with_rules = build_scene_with(&doc, ViewTransform::default(), SceneOptions::default());
+        let without = build_scene_with(
+            &doc,
+            ViewTransform::default(),
+            SceneOptions {
+                rules: false,
+                clip: None,
+            },
+        );
+        assert!(
+            without.encoding().stream_offsets().path_data
+                < with_rules.encoding().stream_offsets().path_data,
+            "the margin rule was drawn in a printing mode"
+        );
+    }
+
     use super::*;
     use tessera_document::ids::FrameId;
     use tessera_geometry::Transform;
     use tessera_layout::resolve::ResolvedItem;
     use tessera_text::shape::Shaper;
-    use tessera_text::story::Story;
+    use tessera_text::story::{NoStyles, Story};
 
     fn page() -> DocRect {
         DocRect {
@@ -209,15 +445,30 @@ mod tests {
     }
 
     fn empty_scene() -> Scene {
-        build_scene(
-            &ResolvedDocument::default(),
-            ViewTransform::default(),
-            page(),
-        )
+        build_scene(&one_page(vec![]), ViewTransform::default())
+    }
+
+    /// The default page, resolved with no margins, bleed or slug.
+    fn resolved_page() -> tessera_layout::ResolvedPage {
+        tessera_layout::ResolvedPage {
+            bounds: page(),
+            margins: page(),
+            bleed: page(),
+            slug: page(),
+        }
+    }
+
+    /// A document holding one page and the given items.
+    fn one_page(items: Vec<ResolvedItem>) -> ResolvedDocument {
+        ResolvedDocument {
+            items,
+            pages: vec![resolved_page()],
+        }
     }
 
     fn one_item(kind: ResolvedKind, bounds: DocRect) -> ResolvedDocument {
         ResolvedDocument {
+            pages: vec![resolved_page()],
             items: vec![ResolvedItem {
                 frame: FrameId::default(),
                 transform: Transform::IDENTITY,
@@ -251,7 +502,6 @@ mod tests {
                 },
             ),
             ViewTransform::default(),
-            page(),
         );
 
         assert!(
@@ -277,7 +527,6 @@ mod tests {
                 bounds,
             ),
             ViewTransform::default(),
-            page(),
         );
         let stroked = build_scene(
             &one_item(
@@ -288,7 +537,6 @@ mod tests {
                 bounds,
             ),
             ViewTransform::default(),
-            page(),
         );
 
         assert!(
@@ -314,7 +562,6 @@ mod tests {
                 bounds,
             ),
             ViewTransform::default(),
-            page(),
         );
         let ellipse = build_scene(
             &one_item(
@@ -325,7 +572,6 @@ mod tests {
                 bounds,
             ),
             ViewTransform::default(),
-            page(),
         );
 
         assert_ne!(
@@ -338,7 +584,7 @@ mod tests {
     #[test]
     fn text_puts_exactly_its_glyphs_into_the_encoding() {
         let mut shaper = Shaper::new();
-        let shaped = shaper.shape(&Story::new("Hi"), 200.0);
+        let shaped = shaper.shape(&Story::new("Hi"), &NoStyles::default(), 200.0);
         let expected = shaped.glyph_count();
         assert!(expected > 0, "the fixture must actually shape");
 
@@ -356,7 +602,6 @@ mod tests {
                 },
             ),
             ViewTransform::default(),
-            page(),
         );
 
         // Glyphs are encoded as runs, not as path segments: Vello resolves
@@ -374,7 +619,7 @@ mod tests {
     #[test]
     fn text_with_no_glyphs_encodes_no_run_at_all() {
         let mut shaper = Shaper::new();
-        let shaped = shaper.shape(&Story::new(""), 200.0);
+        let shaped = shaper.shape(&Story::new(""), &NoStyles::default(), 200.0);
 
         let scene = build_scene(
             &one_item(
@@ -390,7 +635,6 @@ mod tests {
                 },
             ),
             ViewTransform::default(),
-            page(),
         );
 
         assert!(scene.encoding().resources.glyph_runs.is_empty());

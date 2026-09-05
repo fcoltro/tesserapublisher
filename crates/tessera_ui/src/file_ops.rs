@@ -18,9 +18,14 @@ const FILTER_NAME: &str = "Tessera Document";
 // --- testable cores ----------------------------------------------------
 
 pub fn save_to_path(state: &mut TesseraApp, path: &Path) -> Result<(), FormatError> {
-    format::save(&state.document, path)?;
-    state.current_path = Some(path.to_path_buf());
-    state.dirty = false;
+    format::save(state.active().document(), path)?;
+    state.active_mut().current_path = Some(path.to_path_buf());
+    state.active_mut().dirty = false;
+    // The work is safe in the user's own file now, so the recovery copy is
+    // not just redundant but misleading: left behind, it would offer to
+    // recover work that was already saved.
+    crate::recovery::Recovery::discard();
+    state.recovery.last_saved_revision = state.active().document().revision();
     state.status = Some(Status::info(format!("Saved {}", path.display())));
     Ok(())
 }
@@ -31,20 +36,20 @@ pub fn open_from_path(state: &mut TesseraApp, path: &Path) -> Result<(), FormatE
     let document = format::load(path)?;
 
     state.replace_document(document);
-    state.current_path = Some(path.to_path_buf());
-    state.dirty = false;
-    state.fitted = false;
-    state.history = tessera_document::history::History::new(200);
+    state.active_mut().current_path = Some(path.to_path_buf());
+    state.active_mut().dirty = false;
+    state.active_mut().fitted = false;
+    state.active_mut().history = tessera_document::history::History::new(200);
     state.status = Some(Status::info(format!("Opened {}", path.display())));
     Ok(())
 }
 
 pub fn new_document(state: &mut TesseraApp) {
     state.replace_document(Document::new());
-    state.current_path = None;
-    state.dirty = false;
-    state.fitted = false;
-    state.history = tessera_document::history::History::new(200);
+    state.active_mut().current_path = None;
+    state.active_mut().dirty = false;
+    state.active_mut().fitted = false;
+    state.active_mut().history = tessera_document::history::History::new(200);
     state.status = Some(Status::info("New document"));
 }
 
@@ -55,8 +60,8 @@ pub fn new_document(state: &mut TesseraApp) {
 /// screen. Note it needs no GPU: a document is exportable even if the surface
 /// failed to start.
 pub fn export_pdf_to_path(state: &mut TesseraApp, path: &Path) -> Result<(), ExportError> {
-    let resolved = tessera_layout::resolve::resolve(&state.document, &mut state.shaper);
-    let bytes = tessera_pdf::export(&resolved, state.first_page_bounds())?;
+    let resolved = state.resolve_uncached();
+    let bytes = tessera_pdf::export(&resolved)?;
     tessera_io::atomic::write_atomic(path, &bytes)?;
     state.status = Some(Status::info(format!("Exported {}", path.display())));
     Ok(())
@@ -86,7 +91,7 @@ fn pick_save_path(current: Option<&PathBuf>) -> Option<PathBuf> {
 }
 
 pub fn save(state: &mut TesseraApp) {
-    match state.current_path.clone() {
+    match state.active().current_path.clone() {
         Some(path) => {
             let result = save_to_path(state, &path);
             set_error(state, result);
@@ -97,7 +102,7 @@ pub fn save(state: &mut TesseraApp) {
 }
 
 pub fn save_as(state: &mut TesseraApp) {
-    let Some(mut path) = pick_save_path(state.current_path.as_ref()) else {
+    let Some(mut path) = pick_save_path(state.active().current_path.as_ref()) else {
         return; // cancelled
     };
     if path.extension().is_none() {
@@ -109,6 +114,7 @@ pub fn save_as(state: &mut TesseraApp) {
 
 pub fn export_pdf(state: &mut TesseraApp) {
     let suggested = state
+        .active()
         .current_path
         .as_ref()
         .map(|p| p.with_extension("pdf"))
@@ -181,7 +187,7 @@ mod tests {
         let mut reopened = TesseraApp::headless();
         open_from_path(&mut reopened, &path).expect("open");
 
-        assert_eq!(reopened.document.frames.len(), 1);
+        assert_eq!(reopened.active().document().frames.len(), 1);
     }
 
     #[test]
@@ -189,25 +195,25 @@ mod tests {
         let path = temp("dirty.tessera");
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddRectangle(bounds()));
-        assert!(state.dirty);
+        assert!(state.active().dirty);
 
         save_to_path(&mut state, &path).expect("save");
 
-        assert!(!state.dirty);
-        assert_eq!(state.current_path.as_deref(), Some(path.as_path()));
+        assert!(!state.active().dirty);
+        assert_eq!(state.active().current_path.as_deref(), Some(path.as_path()));
     }
 
     #[test]
     fn a_failed_open_reports_an_error_and_leaves_the_document_alone() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddRectangle(bounds()));
-        let before = state.document.frames.len();
+        let before = state.active().document().frames.len();
 
         let result = open_from_path(&mut state, Path::new("no_such_file.tessera"));
 
         assert!(result.is_err());
         assert_eq!(
-            state.document.frames.len(),
+            state.active().document().frames.len(),
             before,
             "a failed open must not clear the open document"
         );
@@ -225,20 +231,20 @@ mod tests {
         apply(&mut other, Command::AddRectangle(bounds()));
         open_from_path(&mut other, &path).expect("open");
 
-        assert!(!other.history.can_undo());
+        assert!(!other.active().history.can_undo());
     }
 
     #[test]
     fn a_new_document_is_empty_clean_and_untitled() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddRectangle(bounds()));
-        state.current_path = Some(temp("x.tessera"));
+        state.active_mut().current_path = Some(temp("x.tessera"));
 
         new_document(&mut state);
 
-        assert_eq!(state.document.frames.len(), 0);
-        assert!(!state.dirty);
-        assert!(state.current_path.is_none());
+        assert_eq!(state.active().document().frames.len(), 0);
+        assert!(!state.active().dirty);
+        assert!(state.active().current_path.is_none());
     }
 
     #[test]
@@ -246,7 +252,7 @@ mod tests {
         let path = temp("text_cycle.tessera");
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddTextFrame(bounds()));
-        let id = state.selection.single().expect("selected");
+        let id = state.active().selection.single().expect("selected");
         apply(
             &mut state,
             Command::SetText {
@@ -261,7 +267,8 @@ mod tests {
 
         assert_eq!(
             reopened
-                .document
+                .active()
+                .document()
                 .stories
                 .values()
                 .next()

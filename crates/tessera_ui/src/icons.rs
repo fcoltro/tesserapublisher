@@ -11,6 +11,9 @@
 //! Lucide is ISC-licensed; icons inherited from Feather are MIT. See
 //! `ATTRIBUTION.md`.
 
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
 use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke};
 use kurbo::{BezPath, PathEl};
 
@@ -19,7 +22,7 @@ const GRID: f32 = 24.0;
 /// Lucide's stroke width, in grid units.
 const STROKE: f32 = 2.0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Icon {
     Select,
     Rectangle,
@@ -39,6 +42,45 @@ pub enum Icon {
     /// The type tool before anything is drawn: a frame waiting to be dragged.
     TextFrame,
     Crosshair,
+
+    // The canvas toolbar's spatial verbs. Named for what they do here rather
+    // than for Lucide's own name, which describes the divider's axis; each
+    // one's source glyph is noted where its path data is.
+    AlignLeft,
+    AlignCentreH,
+    AlignRight,
+    AlignTop,
+    AlignMiddleV,
+    AlignBottom,
+    DistributeH,
+    DistributeV,
+    FlipHorizontal,
+    FlipVertical,
+    RotateCw,
+    RotateCcw,
+
+    // Typography: the inspector's character and paragraph controls, and the
+    // styles window.
+    Bold,
+    Italic,
+    AlignJustify,
+    Palette,
+    /// A paragraph mark, for the paragraph half of the text controls.
+    Pilcrow,
+    /// Aa, for the character half.
+    CaseSensitive,
+    /// Two letters at two sizes: the size control.
+    TypeSize,
+    Plus,
+    Duplicate,
+    Trash,
+
+    // The fill and stroke proxy, and the status bar's zoom.
+    Swap,
+    NoFill,
+    ZoomIn,
+    ZoomOut,
+    ZoomFit,
 }
 
 impl Icon {
@@ -138,6 +180,168 @@ impl Icon {
                 "M12 6V2",
                 "M12 18v4",
             ],
+
+            // lucide: align-start-vertical
+            Self::AlignLeft => &[
+                "M8 14 h5 a2 2 0 0 1 2 2 v2 a2 2 0 0 1 -2 2 h-5 a2 2 0 0 1 -2 -2 v-2 a2 2 0 0 1 2 -2 z",
+                "M8 4 h12 a2 2 0 0 1 2 2 v2 a2 2 0 0 1 -2 2 h-12 a2 2 0 0 1 -2 -2 v-2 a2 2 0 0 1 2 -2 z",
+                "M2 2v20",
+            ],
+            // lucide: align-center-vertical
+            Self::AlignCentreH => &[
+                "M12 2v20",
+                "M8 10H4a2 2 0 0 1-2-2V6c0-1.1.9-2 2-2h4",
+                "M16 10h4a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-4",
+                "M8 20H7a2 2 0 0 1-2-2v-2c0-1.1.9-2 2-2h1",
+                "M16 14h1a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-1",
+            ],
+            // lucide: align-end-vertical
+            Self::AlignRight => &[
+                "M4 4 h12 a2 2 0 0 1 2 2 v2 a2 2 0 0 1 -2 2 h-12 a2 2 0 0 1 -2 -2 v-2 a2 2 0 0 1 2 -2 z",
+                "M11 14 h5 a2 2 0 0 1 2 2 v2 a2 2 0 0 1 -2 2 h-5 a2 2 0 0 1 -2 -2 v-2 a2 2 0 0 1 2 -2 z",
+                "M22 22V2",
+            ],
+            // lucide: align-start-horizontal
+            Self::AlignTop => &[
+                "M6 6 h2 a2 2 0 0 1 2 2 v12 a2 2 0 0 1 -2 2 h-2 a2 2 0 0 1 -2 -2 v-12 a2 2 0 0 1 2 -2 z",
+                "M16 6 h2 a2 2 0 0 1 2 2 v5 a2 2 0 0 1 -2 2 h-2 a2 2 0 0 1 -2 -2 v-5 a2 2 0 0 1 2 -2 z",
+                "M22 2H2",
+            ],
+            // lucide: align-center-horizontal
+            Self::AlignMiddleV => &[
+                "M2 12h20",
+                "M10 16v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-4",
+                "M10 8V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v4",
+                "M20 16v1a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2v-1",
+                "M14 8V7c0-1.1.9-2 2-2h2a2 2 0 0 1 2 2v1",
+            ],
+            // lucide: align-end-horizontal
+            Self::AlignBottom => &[
+                "M6 2 h2 a2 2 0 0 1 2 2 v12 a2 2 0 0 1 -2 2 h-2 a2 2 0 0 1 -2 -2 v-12 a2 2 0 0 1 2 -2 z",
+                "M16 9 h2 a2 2 0 0 1 2 2 v5 a2 2 0 0 1 -2 2 h-2 a2 2 0 0 1 -2 -2 v-5 a2 2 0 0 1 2 -2 z",
+                "M22 22H2",
+            ],
+            // lucide: align-horizontal-distribute-center
+            Self::DistributeH => &[
+                "M6 5 h2 a2 2 0 0 1 2 2 v10 a2 2 0 0 1 -2 2 h-2 a2 2 0 0 1 -2 -2 v-10 a2 2 0 0 1 2 -2 z",
+                "M16 7 h2 a2 2 0 0 1 2 2 v6 a2 2 0 0 1 -2 2 h-2 a2 2 0 0 1 -2 -2 v-6 a2 2 0 0 1 2 -2 z",
+                "M17 22v-5",
+                "M17 7V2",
+                "M7 22v-3",
+                "M7 5V2",
+            ],
+            // lucide: align-vertical-distribute-center
+            Self::DistributeV => &[
+                "M22 17h-3",
+                "M22 7h-5",
+                "M5 17H2",
+                "M7 7H2",
+                "M7 14 h10 a2 2 0 0 1 2 2 v2 a2 2 0 0 1 -2 2 h-10 a2 2 0 0 1 -2 -2 v-2 a2 2 0 0 1 2 -2 z",
+                "M9 4 h6 a2 2 0 0 1 2 2 v2 a2 2 0 0 1 -2 2 h-6 a2 2 0 0 1 -2 -2 v-2 a2 2 0 0 1 2 -2 z",
+            ],
+            // lucide: flip-horizontal
+            Self::FlipHorizontal => &[
+                "M8 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h3",
+                "M16 3h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-3",
+                "M12 20v2",
+                "M12 14v2",
+                "M12 8v2",
+                "M12 2v2",
+            ],
+            // lucide: flip-vertical
+            Self::FlipVertical => &[
+                "M21 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v3",
+                "M21 16v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3",
+                "M4 12H2",
+                "M10 12H8",
+                "M16 12h-2",
+                "M22 12h-2",
+            ],
+            // lucide: rotate-cw
+            Self::RotateCw => &[
+                "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8",
+                "M21 3v5h-5",
+            ],
+            // lucide: rotate-ccw
+            Self::RotateCcw => &[
+                "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8",
+                "M3 3v5h5",
+            ],
+            // lucide: arrow-left-right
+            // lucide: bold
+            Self::Bold => {
+                &["M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8"]
+            }
+            // lucide: italic — three <line> elements, written as paths
+            Self::Italic => &["M19 4 10 4", "M14 20 5 20", "M15 4 9 20"],
+            // lucide: align-justify
+            Self::AlignJustify => &["M3 5h18", "M3 12h18", "M3 19h18"],
+            // lucide: palette — four <circle> dots written as arc pairs
+            Self::Palette => &[
+                "M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z",
+                "M14 6.5 A0.5 0.5 0 1 1 13 6.5 A0.5 0.5 0 1 1 14 6.5 Z",
+                "M18 10.5 A0.5 0.5 0 1 1 17 10.5 A0.5 0.5 0 1 1 18 10.5 Z",
+                "M7 12.5 A0.5 0.5 0 1 1 6 12.5 A0.5 0.5 0 1 1 7 12.5 Z",
+                "M9 7.5 A0.5 0.5 0 1 1 8 7.5 A0.5 0.5 0 1 1 9 7.5 Z",
+            ],
+            // lucide: pilcrow
+            Self::Pilcrow => &["M13 4v16", "M17 4v16", "M19 4H9.5a4.5 4.5 0 0 0 0 9H13"],
+            // lucide: case-sensitive
+            Self::CaseSensitive => &[
+                "m2 16 4.039-9.69a.5.5 0 0 1 .923 0L11 16",
+                "M22 9v7",
+                "M3.304 13h6.392",
+                "M22 12.5 A3.5 3.5 0 1 1 15 12.5 A3.5 3.5 0 1 1 22 12.5 Z",
+            ],
+            // lucide: a-large-small
+            Self::TypeSize => &[
+                "m15 16 2.536-7.328a1.02 1.02 1 0 1 1.928 0L22 16",
+                "M15.697 14h5.606",
+                "m2 16 4.039-9.69a.5.5 0 0 1 .923 0L11 16",
+                "M3.304 13h6.392",
+            ],
+            // lucide: plus
+            Self::Plus => &["M5 12h14", "M12 5v14"],
+            // lucide: copy — <rect width=14 height=14 x=8 y=8 rx=2> as a path
+            Self::Duplicate => &[
+                "M10 8 h10 a2 2 0 0 1 2 2 v10 a2 2 0 0 1 -2 2 h-10 a2 2 0 0 1 -2 -2 v-10 a2 2 0 0 1 2 -2 z",
+                "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2",
+            ],
+            // lucide: trash-2
+            Self::Trash => &[
+                "M10 11v6",
+                "M14 11v6",
+                "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6",
+                "M3 6h18",
+                "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
+            ],
+            Self::Swap => &["M8 3 4 7l4 4", "M4 7h16", "m16 21 4-4-4-4", "M20 17H4"],
+            // lucide: ban — the universal "none", and what a swatch of no
+            // colour has been in every drawing tool since MacPaint.
+            Self::NoFill => &[
+                "M22 12 A10 10 0 1 1 2 12 A10 10 0 1 1 22 12 Z",
+                "M4.929 4.929 19.07 19.071",
+            ],
+            // lucide: zoom-in
+            Self::ZoomIn => &[
+                "M19 11 A8 8 0 1 1 3 11 A8 8 0 1 1 19 11 Z",
+                "M21 21 L16.65 16.65",
+                "M11 8 L11 14",
+                "M8 11 L14 11",
+            ],
+            // lucide: zoom-out
+            Self::ZoomOut => &[
+                "M19 11 A8 8 0 1 1 3 11 A8 8 0 1 1 19 11 Z",
+                "M21 21 L16.65 16.65",
+                "M8 11 L14 11",
+            ],
+            // lucide: maximize
+            Self::ZoomFit => &[
+                "M8 3H5a2 2 0 0 0-2 2v3",
+                "M21 8V5a2 2 0 0 0-2-2h-3",
+                "M3 16v3a2 2 0 0 0 2 2h3",
+                "M16 21h3a2 2 0 0 0 2-2v-3",
+            ],
         }
     }
 
@@ -167,8 +371,78 @@ impl Icon {
             | Self::Scale
             | Self::TextCursor
             | Self::TextFrame
-            | Self::Crosshair => (12.0, 12.0),
+            | Self::Crosshair
+            // The toolbar's verbs are never cursors, so their hotspot is only
+            // ever the centre. Listed rather than caught by a wildcard, so
+            // that adding a cursor icon later still has to answer this.
+            | Self::AlignLeft
+            | Self::AlignCentreH
+            | Self::AlignRight
+            | Self::AlignTop
+            | Self::AlignMiddleV
+            | Self::AlignBottom
+            | Self::DistributeH
+            | Self::DistributeV
+            | Self::FlipHorizontal
+            | Self::FlipVertical
+            | Self::RotateCw
+            | Self::RotateCcw
+            | Self::Swap
+            | Self::NoFill
+            | Self::ZoomIn
+            | Self::ZoomOut
+            | Self::ZoomFit
+            // Typography glyphs sit in buttons, never under the pointer.
+            | Self::Bold
+            | Self::Italic
+            | Self::AlignJustify
+            | Self::Palette
+            | Self::Pilcrow
+            | Self::CaseSensitive
+            | Self::TypeSize
+            | Self::Plus
+            | Self::Duplicate
+            | Self::Trash => (12.0, 12.0),
         }
+    }
+}
+
+/// Parsed path data, built on first use and shared thereafter.
+///
+/// The paths are static text and never change, so parsing them per paint was
+/// pure waste — one allocation per icon per frame, and the tool strip alone
+/// draws a dozen.
+static GEOMETRY: OnceLock<HashMap<Icon, Vec<BezPath>>> = OnceLock::new();
+
+impl Icon {
+    /// This icon's outlines, in the 24×24 Lucide grid.
+    pub fn geometry(self) -> &'static [BezPath] {
+        GEOMETRY
+            .get_or_init(|| {
+                ALL.into_iter()
+                    .map(|icon| {
+                        let parsed = icon
+                            .paths()
+                            .iter()
+                            .map(|data| {
+                                BezPath::from_svg(data).unwrap_or_else(|error| {
+                                    // Path data is a compile-time constant in
+                                    // this file, so a failure here is a typo
+                                    // in the source rather than a runtime
+                                    // condition. `every_icon_parses` catches
+                                    // it first; naming the icon makes it
+                                    // findable if it somehow does not.
+                                    panic!("icon {icon:?} has malformed path data: {error}")
+                                })
+                            })
+                            .collect();
+                        (icon, parsed)
+                    })
+                    .collect()
+            })
+            .get(&self)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 }
 
@@ -206,14 +480,7 @@ pub fn paint_rotated(
     // thing regardless of how large the icon is drawn.
     let tolerance = 0.05 / f64::from(scale.max(f32::EPSILON));
 
-    for data in icon.paths() {
-        let Ok(path) = BezPath::from_svg(data) else {
-            // Unreachable: `every_icon_parses` pins this at test time. Drawing
-            // nothing is still better than panicking in a paint loop.
-            debug_assert!(false, "icon path failed to parse: {data}");
-            continue;
-        };
-
+    for path in icon.geometry() {
         let mut run: Vec<Pos2> = Vec::new();
         let flush = |run: &mut Vec<Pos2>| {
             if run.len() > 1 {
@@ -250,7 +517,7 @@ pub fn paint_rotated(
 }
 
 /// Every icon, for exhaustive tests and for building a palette.
-pub const ALL: [Icon; 14] = [
+pub const ALL: [Icon; 31] = [
     Icon::Select,
     Icon::Rectangle,
     Icon::Ellipse,
@@ -265,6 +532,23 @@ pub const ALL: [Icon; 14] = [
     Icon::TextCursor,
     Icon::TextFrame,
     Icon::Crosshair,
+    Icon::AlignLeft,
+    Icon::AlignCentreH,
+    Icon::AlignRight,
+    Icon::AlignTop,
+    Icon::AlignMiddleV,
+    Icon::AlignBottom,
+    Icon::DistributeH,
+    Icon::DistributeV,
+    Icon::FlipHorizontal,
+    Icon::FlipVertical,
+    Icon::RotateCw,
+    Icon::RotateCcw,
+    Icon::Swap,
+    Icon::NoFill,
+    Icon::ZoomIn,
+    Icon::ZoomOut,
+    Icon::ZoomFit,
 ];
 
 #[cfg(test)]
@@ -283,6 +567,32 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_cache_parses_every_icon_to_at_least_one_subpath() {
+        for icon in ALL {
+            let geometry = icon.geometry();
+            assert!(
+                !geometry.is_empty(),
+                "{icon:?} produced no geometry — its path data is malformed"
+            );
+            for path in geometry {
+                assert!(
+                    path.elements().len() > 1,
+                    "{icon:?} produced an empty subpath"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_same_icon_hands_back_the_same_allocation() {
+        // Parsing on every paint is what this cache exists to stop, so the
+        // test pins the pointer rather than the contents.
+        let first = Icon::Select.geometry().as_ptr();
+        let second = Icon::Select.geometry().as_ptr();
+        assert_eq!(first, second);
     }
 
     #[test]

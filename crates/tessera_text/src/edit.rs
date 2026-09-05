@@ -95,10 +95,103 @@ impl EditBuffer {
     }
 
     /// Insert text, replacing any selection. Also commits an IME composition.
+    /// Merge character formatting into a range of the buffer's own story.
+    ///
+    /// The buffer owns a story the document also holds, and the two are kept
+    /// in step by writing the buffer's copy over the document's on every
+    /// keystroke. Formatting has to reach *both* or the next keystroke would
+    /// undo it — so it arrives here rather than through a `story_mut`, which
+    /// would also hand every caller a way round the run invariant.
+    pub fn apply_character_format(
+        &mut self,
+        range: Range<usize>,
+        format: &crate::story::CharacterFormat,
+    ) {
+        self.story.apply_character_format(range, format);
+    }
+
+    /// As above, for the paragraphs a range touches.
+    pub fn apply_paragraph_format(
+        &mut self,
+        range: Range<usize>,
+        format: &crate::story::ParagraphFormat,
+    ) {
+        self.story.apply_paragraph_format(range, format);
+    }
+
+    /// Attach a named character style to a range of the buffer's own story.
+    pub fn set_character_style(
+        &mut self,
+        range: Range<usize>,
+        style: Option<crate::story::CharacterStyleId>,
+    ) {
+        self.story.set_character_style(range, style);
+    }
+
+    /// As above, for the paragraphs a range touches.
+    pub fn set_paragraph_style(
+        &mut self,
+        range: Range<usize>,
+        style: Option<crate::story::ParagraphStyleId>,
+    ) {
+        self.story.set_paragraph_style(range, style);
+    }
+
+    /// Fold a deleted character style into the buffer's own story.
+    pub fn flatten_character_style(
+        &mut self,
+        id: crate::story::CharacterStyleId,
+        format: &crate::story::CharacterFormat,
+    ) {
+        self.story.flatten_character_style(id, format);
+    }
+
+    /// Fold a deleted paragraph style into the buffer's own story.
+    pub fn flatten_paragraph_style(
+        &mut self,
+        id: crate::story::ParagraphStyleId,
+        format: &crate::story::ParagraphFormat,
+    ) {
+        self.story.flatten_paragraph_style(id, format);
+    }
+
+    /// Drop the local formatting in a range of the buffer's own story.
+    pub fn clear_character_overrides(&mut self, range: Range<usize>) {
+        self.story.clear_character_overrides(range);
+    }
+
+    /// As above, for the paragraphs a range touches.
+    pub fn clear_paragraph_overrides(&mut self, range: Range<usize>) {
+        self.story.clear_paragraph_overrides(range);
+    }
+
+    /// Detach a range of the buffer's own story from a character style.
+    pub fn clear_character_style_link(
+        &mut self,
+        range: Range<usize>,
+        id: crate::story::CharacterStyleId,
+        format: &crate::story::CharacterFormat,
+    ) {
+        self.story.clear_character_style_link(range, id, format);
+    }
+
+    /// As above, for the paragraphs a range touches.
+    pub fn clear_paragraph_style_link(
+        &mut self,
+        range: Range<usize>,
+        id: crate::story::ParagraphStyleId,
+        format: &crate::story::ParagraphFormat,
+    ) {
+        self.story.clear_paragraph_style_link(range, id, format);
+    }
+
     pub fn insert(&mut self, text: &str) {
         self.ime_preedit = None;
         self.delete_selection();
-        self.story.text.insert_str(self.cursor.position, text);
+        // Through the story, so the runs come with it. Writing to `text`
+        // directly would leave them describing a string that no longer
+        // exists — corruption, and its symptom appears far from here.
+        self.story.insert_text(self.cursor.position, text);
         self.set_cursor(self.cursor.position + text.len());
     }
 
@@ -109,9 +202,7 @@ impl EditBuffer {
         let Some(previous) = self.previous_grapheme(self.cursor.position) else {
             return;
         };
-        self.story
-            .text
-            .replace_range(previous..self.cursor.position, "");
+        self.story.delete_range(previous..self.cursor.position);
         self.set_cursor(previous);
     }
 
@@ -122,9 +213,7 @@ impl EditBuffer {
         let Some(next) = self.next_grapheme(self.cursor.position) else {
             return;
         };
-        self.story
-            .text
-            .replace_range(self.cursor.position..next, "");
+        self.story.delete_range(self.cursor.position..next);
     }
 
     pub fn move_left(&mut self, extend: bool) {
@@ -152,7 +241,7 @@ impl EditBuffer {
         let Some(range) = self.selection_range() else {
             return false;
         };
-        self.story.text.replace_range(range.clone(), "");
+        self.story.delete_range(range.clone());
         self.set_cursor(range.start);
         true
     }
@@ -332,5 +421,100 @@ mod tests {
         let mut b = buffer_at_end("ab");
         b.set_cursor(999);
         assert_eq!(b.cursor().position, 2);
+    }
+}
+
+#[cfg(test)]
+mod run_integrity {
+    use super::*;
+    use crate::story::{CharacterFormat, Run};
+
+    fn bold() -> CharacterFormat {
+        CharacterFormat {
+            weight: Some(700),
+            ..CharacterFormat::default()
+        }
+    }
+
+    /// A story reading "ab", the first character bold.
+    fn two_runs() -> Story {
+        let mut story = Story::new("ab");
+        story.runs = vec![
+            Run {
+                range: 0..1,
+                style: None,
+                local: bold(),
+            },
+            Run::plain(1..2),
+        ];
+        story
+    }
+
+    #[test]
+    fn typing_keeps_the_runs_describing_the_text() {
+        let mut buffer = EditBuffer::new(two_runs());
+        buffer.set_cursor(1);
+        buffer.insert("XYZ");
+
+        let story = buffer.story();
+        assert_eq!(story.text, "aXYZb");
+        assert!(
+            story.runs_are_sound(),
+            "runs {:?} no longer describe {:?}",
+            story.runs,
+            story.text
+        );
+    }
+
+    #[test]
+    fn typing_after_a_bold_character_continues_bold() {
+        let mut buffer = EditBuffer::new(two_runs());
+        buffer.set_cursor(1);
+        buffer.insert("X");
+
+        let story = buffer.story();
+        assert_eq!(
+            story.run_at(1).map(|r| r.local.clone()),
+            Some(bold()),
+            "the new character took the run to its left"
+        );
+    }
+
+    #[test]
+    fn backspacing_across_a_run_boundary_keeps_the_runs_sound() {
+        let mut buffer = EditBuffer::new(two_runs());
+        buffer.set_cursor(2);
+        buffer.delete_backward();
+        buffer.delete_backward();
+
+        let story = buffer.story();
+        assert_eq!(story.text, "");
+        assert!(story.runs_are_sound());
+        assert!(story.runs.is_empty());
+    }
+
+    #[test]
+    fn deleting_forward_keeps_the_runs_sound() {
+        let mut buffer = EditBuffer::new(two_runs());
+        buffer.set_cursor(0);
+        buffer.delete_forward();
+
+        let story = buffer.story();
+        assert_eq!(story.text, "b");
+        assert!(story.runs_are_sound());
+    }
+
+    #[test]
+    fn deleting_a_selection_keeps_the_runs_sound() {
+        let mut buffer = EditBuffer::new(Story::new("hello world"));
+        buffer.set_cursor(0);
+        buffer.move_right(true);
+        buffer.move_right(true);
+        buffer.move_right(true);
+        buffer.insert("X");
+
+        let story = buffer.story();
+        assert_eq!(story.text, "Xlo world");
+        assert!(story.runs_are_sound());
     }
 }
