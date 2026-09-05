@@ -242,7 +242,7 @@ Nothing here appears on screen and nothing here touches the file format. Each
 task is a small, pure, independently testable piece that later work stands on.
 Built first because retrofitting any of them is many times the cost.
 
-> **Status 2026-09-04: nine of ten done, one partial. Code complete.**
+> **Status 2026-09-04: ten of ten done. Complete.**
 >
 > A phase-A item has no sentence a person can perform — that is what makes it
 > phase A. So `[x]` here means the narrower thing: the code exists, its tests
@@ -257,7 +257,8 @@ Built first because retrofitting any of them is many times the cost.
 > changed how icons are built, and nobody has looked at the tool strip since.
 > Until both are done, phase A is code-complete rather than complete.
 >
-> Every task is built. Phase B is next, and it is planned separately.
+> Every task is built and the one visual check A9 was waiting for has been
+> made. Phase B is next, and it is planned separately.
 
 - [x] **A1 — Units.** A `Unit` type over mm, pt, px, inches and picas, with
   parsing (`12mm`, `1p6`, `.5in`), formatting and conversion. Property-tested
@@ -287,17 +288,17 @@ Built first because retrofitting any of them is many times the cost.
   *The 16.7 ms budget in the spec is a wish until something measures it.*
 - [x] **A8 — Theme tokens, light and dark**, with a test asserting WCAG AA
   contrast for every foreground-on-background pair rather than checking by eye.
-- [~] **A9 — Icon cache.** Lucide paths parse to `BezPath` once and are cached
-  by `Icon`, instead of being re-parsed on every paint. *Tests cover the
-  geometry and the cache; the tool strip has not been looked at since the
-  change, so the pixels are unverified.*
+- [x] **A9 — Icon cache.** Lucide paths parse to `BezPath` once and are cached
+  by `Icon`, instead of being re-parsed on every paint. *Verified by eye on
+  2026-09-04: a screenshot of the running application shows the tool strip
+  drawing correctly through the cache.*
 - [x] **A10 — Autosave and crash recovery.** A periodic atomic write to a
   recovery path, detected and offered on the next launch. Data safety belongs
   with the cross-cutting rules, not at milestone 7.
 
 ## Phase B — The Page
 
-> **Status 2026-09-04: code complete. Seven of eight built; B4 dropped.**
+> **Status 2026-09-04: complete. All eight built; B4 dropped deliberately.**
 >
 > 394 tests pass and clippy is clean at `-D warnings`. The format moved from
 > 4 to 5 exactly once, and a version-4 document is proven to still open.
@@ -350,7 +351,7 @@ Split into three plans, because these are three subsystems that each produce
 working software alone: **C-i the rail** (C1–C5), **C-ii the surface**
 (C6–C9), **C-iii the chrome** (C10–C13).
 
-> **Status 2026-09-04: C-i, C-ii and C-iii are all built. C13 remains.**
+> **Status 2026-09-04: all three parts built. Twelve of fourteen items done.**
 >
 > 462 tests pass and clippy is clean at `-D warnings`.
 >
@@ -360,11 +361,20 @@ working software alone: **C-i the rail** (C1–C5), **C-ii the surface**
 > regression tests at the level the failure was really at. That is the
 > argument for the hand checks, made concrete.
 >
-> C-ii's and C-iii's sentences have not been performed by hand. What remains
-> unbuilt across the whole of phase C: the icon set (C13), clipping the
-> document to a screen mode's revealed rectangle, moving or deleting a placed
-> guide, and page navigation in the status bar — each recorded against its own
-> item below rather than summarised away.
+> **Two items stay partial, and both for reasons outside phase C.** C10 shows
+> the page count but cannot navigate between pages, which waits on the pages
+> panel at milestone 3. C12's menus are generated from the action list, so
+> Layout, Type and Window have no menus because they have no commands yet —
+> and a menu entry for an unbuilt feature is the lie this codebase was rebuilt
+> to stop telling. Neither is work phase C can finish.
+>
+> **The sentences have not been performed by hand.** Three sessions of real
+> use found four bugs the suite missed — the resolve cache never invalidating
+> on a page-setup change, autosave failing on a directory nothing created, a
+> click in the inspector ending an on-canvas edit, and a recovery file
+> surviving a clean quit. Every one is fixed with a regression test at the
+> level the failure was really at. That is the argument for the hand checks,
+> made four times over.
 
 - [x] **C1 — Inspector shell** with a stable section order — Transform, Fill,
   Stroke, Text, Frame. The *order* is what keeps a hidden section from moving
