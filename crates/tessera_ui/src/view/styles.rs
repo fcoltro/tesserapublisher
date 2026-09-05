@@ -38,14 +38,31 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
 
 fn body(ui: &mut Ui, state: &mut TesseraApp) {
     ui.horizontal(|ui| {
-        for (label, kind) in [
-            ("Paragraph", StyleKind::Paragraph),
-            ("Character", StyleKind::Character),
+        for (icon, label, kind) in [
+            (
+                crate::icons::Icon::Pilcrow,
+                "Paragraph",
+                StyleKind::Paragraph,
+            ),
+            (
+                crate::icons::Icon::CaseSensitive,
+                "Character",
+                StyleKind::Character,
+            ),
         ] {
-            if ui
-                .selectable_label(state.styles_window.kind == kind, label)
-                .clicked()
-            {
+            let selected = state.styles_window.kind == kind;
+            let (spot, _) = ui.allocate_exact_size(egui::Vec2::splat(14.0), egui::Sense::hover());
+            crate::icons::paint(
+                ui.painter(),
+                spot,
+                icon,
+                if selected {
+                    Theme::TEXT_PRIMARY
+                } else {
+                    Theme::TEXT_MUTED
+                },
+            );
+            if ui.selectable_label(selected, label).clicked() {
                 state.styles_window.kind = kind;
             }
         }
@@ -97,7 +114,13 @@ fn paragraph_side(ui: &mut Ui, state: &mut TesseraApp) {
             }
 
             ui.add_space(Theme::SPACING_SM);
-            if ui.button("New").clicked() {
+            ui.horizontal(|ui| {
+            if crate::view::panels::icon_button(
+                ui,
+                crate::icons::Icon::Plus,
+                "New style, stating nothing",
+                false,
+            ) {
                 apply(
                     state,
                     Command::DefineParagraphStyle(ParagraphStyle {
@@ -118,8 +141,12 @@ fn paragraph_side(ui: &mut Ui, state: &mut TesseraApp) {
                     .last();
             }
             if let Some(id) = selected {
-                if ui.button("Duplicate").clicked()
-                    && let Some(existing) =
+                if crate::view::panels::icon_button(
+                    ui,
+                    crate::icons::Icon::Duplicate,
+                    "Duplicate this style",
+                    false,
+                ) && let Some(existing) =
                         state.active().document().paragraph_styles.get(id).cloned()
                 {
                     apply(
@@ -136,15 +163,17 @@ fn paragraph_side(ui: &mut Ui, state: &mut TesseraApp) {
                         .keys()
                         .last();
                 }
-                if ui
-                    .button("Delete")
-                    .on_hover_text("The text keeps how it looks")
-                    .clicked()
-                {
+                if crate::view::panels::icon_button(
+                    ui,
+                    crate::icons::Icon::Trash,
+                    "Delete — the text keeps how it looks",
+                    false,
+                ) {
                     apply(state, Command::DeleteParagraphStyle { id });
                     state.styles_window.paragraph = None;
                 }
             }
+            });
         });
 
         ui.separator();
@@ -306,7 +335,13 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp) {
             }
 
             ui.add_space(Theme::SPACING_SM);
-            if ui.button("New").clicked() {
+            ui.horizontal(|ui| {
+            if crate::view::panels::icon_button(
+                ui,
+                crate::icons::Icon::Plus,
+                "New style, stating nothing",
+                false,
+            ) {
                 apply(
                     state,
                     Command::DefineCharacterStyle(CharacterStyle {
@@ -319,8 +354,12 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp) {
                     state.active().document().character_styles.keys().last();
             }
             if let Some(id) = selected {
-                if ui.button("Duplicate").clicked()
-                    && let Some(existing) =
+                if crate::view::panels::icon_button(
+                    ui,
+                    crate::icons::Icon::Duplicate,
+                    "Duplicate this style",
+                    false,
+                ) && let Some(existing) =
                         state.active().document().character_styles.get(id).cloned()
                 {
                     apply(
@@ -333,15 +372,17 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp) {
                     state.styles_window.character =
                         state.active().document().character_styles.keys().last();
                 }
-                if ui
-                    .button("Delete")
-                    .on_hover_text("The text keeps how it looks")
-                    .clicked()
-                {
+                if crate::view::panels::icon_button(
+                    ui,
+                    crate::icons::Icon::Trash,
+                    "Delete — the text keeps how it looks",
+                    false,
+                ) {
                     apply(state, Command::DeleteCharacterStyle { id });
                     state.styles_window.character = None;
                 }
             }
+            });
         });
 
         ui.separator();

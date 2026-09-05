@@ -512,6 +512,13 @@ fn stroke_section(
     let [r, g, b, a] = stroke.color.to_rgb_f32();
     let mut rgba = [r, g, b, a];
     ui.horizontal(|ui| {
+        let (spot, _) = ui.allocate_exact_size(Vec2::splat(12.0), Sense::hover());
+        crate::icons::paint(
+            ui.painter(),
+            spot,
+            crate::icons::Icon::Palette,
+            Theme::TEXT_MUTED,
+        );
         ui.colored_label(Theme::TEXT_MUTED, "Colour");
         if fill_picker(ui, &mut rgba) {
             stroke.color = Color::Rgb {
@@ -601,6 +608,42 @@ fn stroke_section(
 
 fn dashes_match(a: &[f64], b: &[f64]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6)
+}
+
+/// A small square button drawn as a Lucide glyph.
+///
+/// `tooltip` is not decoration: an icon says what it means only to someone who
+/// already knows, so every one of these carries its own name.
+pub(crate) fn icon_button(ui: &mut Ui, icon: crate::icons::Icon, tooltip: &str, active: bool) -> bool {
+    let size = Vec2::splat(Theme::TOOL_SIZE * 0.72);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+
+    if active || response.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            3.0,
+            if active { Theme::ACCENT } else { Theme::HOVER_BG },
+        );
+    }
+    let tint = if active {
+        Theme::TEXT_PRIMARY
+    } else {
+        Theme::TEXT_MUTED
+    };
+    crate::icons::paint(ui.painter(), rect.shrink(4.0), icon, tint);
+
+    response.on_hover_text(tooltip).clicked()
+}
+
+/// A heading inside a section, with the glyph that names what follows.
+fn subheading(ui: &mut Ui, icon: crate::icons::Icon, label: &str) {
+    ui.add_space(Theme::SPACING_SM);
+    ui.horizontal(|ui| {
+        let size = Vec2::splat(12.0);
+        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+        crate::icons::paint(ui.painter(), rect, icon, Theme::TEXT_MUTED);
+        ui.colored_label(Theme::TEXT_MUTED, label);
+    });
 }
 
 /// A row of mutually exclusive choices, the shape a three-way property wants.
@@ -774,6 +817,8 @@ fn text_section(
         }
     };
 
+    subheading(ui, crate::icons::Icon::CaseSensitive, "Character");
+
     if let Some(family) = family_picker(ui, state, shown.family.as_deref(), &missing) {
         set_character(
             state,
@@ -861,78 +906,90 @@ fn text_section(
         }
     });
 
+    // Weight and slant on one row. Bold and Italic are toggles rather than a
+    // list, because that is how they are used: the numbered weights stay for
+    // the faces that have them, but the pair a person reaches for constantly
+    // should be one click and recognisable without reading.
+    let mut weight_change = None;
     ui.horizontal(|ui| {
         ui.colored_label(Theme::TEXT_MUTED, "Weight");
-        for (label, weight) in [
-            ("Light", 300u16),
-            ("Regular", 400),
-            ("Medium", 500),
-            ("Bold", 700),
-        ] {
-            if ui
-                .selectable_label(shown.weight == Some(weight), label)
-                .clicked()
-            {
-                set_character(
-                    state,
-                    story,
-                    target.clone(),
-                    CharacterFormat {
-                        weight: Some(weight),
-                        ..CharacterFormat::default()
-                    },
-                );
-            }
+        let bold = shown.weight.is_some_and(|w| w >= 600);
+        if icon_button(ui, crate::icons::Icon::Bold, "Bold", bold) {
+            // Off returns to 400 rather than to inherit: a toggle that cleared
+            // the property would leave a run bold whenever its style was.
+            weight_change = Some(if bold { 400 } else { 700 });
         }
-    });
-
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, "Style");
-        if ui
-            .selectable_label(shown.italic == Some(true), "Italic")
-            .clicked()
-        {
+        let italic = shown.italic == Some(true);
+        if icon_button(ui, crate::icons::Icon::Italic, "Italic", italic) {
             set_character(
                 state,
                 story,
                 target.clone(),
                 CharacterFormat {
-                    // A toggle: clicking an active Italic turns it off, which
-                    // needs `Some(false)` rather than `None` — `None` means
-                    // inherit and would leave it italic.
-                    italic: Some(shown.italic != Some(true)),
+                    // `Some(false)`, not `None`: `None` means inherit and would
+                    // leave the text italic when its style says so.
+                    italic: Some(!italic),
                     ..CharacterFormat::default()
                 },
             );
         }
-    });
-
-    // --- the paragraph half
-
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, "Align");
-        for (label, alignment) in [
-            ("Left", Alignment::Left),
-            ("Centre", Alignment::Centre),
-            ("Right", Alignment::Right),
-            ("Justify", Alignment::Justify),
-        ] {
+        ui.separator();
+        for (label, weight) in [("300", 300u16), ("400", 400), ("500", 500), ("700", 700)] {
             if ui
-                .selectable_label(paragraph.alignment == Some(alignment), label)
+                .selectable_label(shown.weight == Some(weight), label)
+                .on_hover_text(match weight {
+                    300 => "Light",
+                    400 => "Regular",
+                    500 => "Medium",
+                    _ => "Bold",
+                })
                 .clicked()
             {
-                set_paragraph(
-                    state,
-                    story,
-                    target.clone(),
-                    ParagraphFormat {
-                        alignment: Some(alignment),
-                        ..ParagraphFormat::default()
-                    },
-                );
+                weight_change = Some(weight);
             }
         }
     });
+    if let Some(weight) = weight_change {
+        set_character(
+            state,
+            story,
+            target.clone(),
+            CharacterFormat {
+                weight: Some(weight),
+                ..CharacterFormat::default()
+            },
+        );
+    }
+
+    // --- the paragraph half
+
+    subheading(ui, crate::icons::Icon::Pilcrow, "Paragraph");
+
+    let mut alignment_change = None;
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::TEXT_MUTED, "Align");
+        for (icon, name, alignment) in [
+            (crate::icons::Icon::AlignLeft, "Left", Alignment::Left),
+            (crate::icons::Icon::AlignCentreH, "Centre", Alignment::Centre),
+            (crate::icons::Icon::AlignRight, "Right", Alignment::Right),
+            (crate::icons::Icon::AlignJustify, "Justify", Alignment::Justify),
+        ] {
+            if icon_button(ui, icon, name, paragraph.alignment == Some(alignment)) {
+                alignment_change = Some(alignment);
+            }
+        }
+    });
+    if let Some(alignment) = alignment_change {
+        set_paragraph(
+            state,
+            story,
+            target.clone(),
+            ParagraphFormat {
+                alignment: Some(alignment),
+                ..ParagraphFormat::default()
+            },
+        );
+    }
 
     // Indents and paragraph spacing have no controls yet, and the reason is
     // the same one that limits alignment: parley lays out a whole story as one
@@ -1311,7 +1368,7 @@ fn style_rows(
         .map(|(id, s)| (id, s.name.clone()))
         .collect();
 
-    ui.add_space(Theme::SPACING_MD);
+    subheading(ui, crate::icons::Icon::Palette, "Styles");
 
     // --- paragraph styles
 
@@ -1341,10 +1398,12 @@ fn style_rows(
                     }
                 }
             });
-        define_paragraph = ui
-            .button("New")
-            .on_hover_text("Define a paragraph style from what is shown")
-            .clicked();
+        define_paragraph = icon_button(
+            ui,
+            crate::icons::Icon::Plus,
+            "Define a paragraph style from what is shown",
+            false,
+        );
     });
 
     if let Some(style) = attach_paragraph {
@@ -1400,10 +1459,12 @@ fn style_rows(
                     }
                 }
             });
-        define_character = ui
-            .button("New")
-            .on_hover_text("Define a character style from what is shown")
-            .clicked();
+        define_character = icon_button(
+            ui,
+            crate::icons::Icon::Plus,
+            "Define a character style from what is shown",
+            false,
+        );
     });
 
     if let Some(style) = attach_character {

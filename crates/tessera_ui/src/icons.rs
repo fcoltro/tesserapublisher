@@ -59,6 +59,22 @@ pub enum Icon {
     RotateCw,
     RotateCcw,
 
+    // Typography: the inspector's character and paragraph controls, and the
+    // styles window.
+    Bold,
+    Italic,
+    AlignJustify,
+    Palette,
+    /// A paragraph mark, for the paragraph half of the text controls.
+    Pilcrow,
+    /// Aa, for the character half.
+    CaseSensitive,
+    /// Two letters at two sizes: the size control.
+    TypeSize,
+    Plus,
+    Duplicate,
+    Trash,
+
     // The fill and stroke proxy, and the status bar's zoom.
     Swap,
     NoFill,
@@ -252,6 +268,53 @@ impl Icon {
                 "M3 3v5h5",
             ],
             // lucide: arrow-left-right
+            // lucide: bold
+            Self::Bold => &[
+                "M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8",
+            ],
+            // lucide: italic — three <line> elements, written as paths
+            Self::Italic => &["M19 4 10 4", "M14 20 5 20", "M15 4 9 20"],
+            // lucide: align-justify
+            Self::AlignJustify => &["M3 5h18", "M3 12h18", "M3 19h18"],
+            // lucide: palette — four <circle> dots written as arc pairs
+            Self::Palette => &[
+                "M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z",
+                "M14 6.5 A0.5 0.5 0 1 1 13 6.5 A0.5 0.5 0 1 1 14 6.5 Z",
+                "M18 10.5 A0.5 0.5 0 1 1 17 10.5 A0.5 0.5 0 1 1 18 10.5 Z",
+                "M7 12.5 A0.5 0.5 0 1 1 6 12.5 A0.5 0.5 0 1 1 7 12.5 Z",
+                "M9 7.5 A0.5 0.5 0 1 1 8 7.5 A0.5 0.5 0 1 1 9 7.5 Z",
+            ],
+            // lucide: pilcrow
+            Self::Pilcrow => &["M13 4v16", "M17 4v16", "M19 4H9.5a4.5 4.5 0 0 0 0 9H13"],
+            // lucide: case-sensitive
+            Self::CaseSensitive => &[
+                "m2 16 4.039-9.69a.5.5 0 0 1 .923 0L11 16",
+                "M22 9v7",
+                "M3.304 13h6.392",
+                "M22 12.5 A3.5 3.5 0 1 1 15 12.5 A3.5 3.5 0 1 1 22 12.5 Z",
+            ],
+            // lucide: a-large-small
+            Self::TypeSize => &[
+                "m15 16 2.536-7.328a1.02 1.02 1 0 1 1.928 0L22 16",
+                "M15.697 14h5.606",
+                "m2 16 4.039-9.69a.5.5 0 0 1 .923 0L11 16",
+                "M3.304 13h6.392",
+            ],
+            // lucide: plus
+            Self::Plus => &["M5 12h14", "M12 5v14"],
+            // lucide: copy — <rect width=14 height=14 x=8 y=8 rx=2> as a path
+            Self::Duplicate => &[
+                "M10 8 h10 a2 2 0 0 1 2 2 v10 a2 2 0 0 1 -2 2 h-10 a2 2 0 0 1 -2 -2 v-10 a2 2 0 0 1 2 -2 z",
+                "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2",
+            ],
+            // lucide: trash-2
+            Self::Trash => &[
+                "M10 11v6",
+                "M14 11v6",
+                "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6",
+                "M3 6h18",
+                "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
+            ],
             Self::Swap => &["M8 3 4 7l4 4", "M4 7h16", "m16 21 4-4-4-4", "M20 17H4"],
             // lucide: ban — the universal "none", and what a swatch of no
             // colour has been in every drawing tool since MacPaint.
@@ -328,7 +391,18 @@ impl Icon {
             | Self::NoFill
             | Self::ZoomIn
             | Self::ZoomOut
-            | Self::ZoomFit => (12.0, 12.0),
+            | Self::ZoomFit
+            // Typography glyphs sit in buttons, never under the pointer.
+            | Self::Bold
+            | Self::Italic
+            | Self::AlignJustify
+            | Self::Palette
+            | Self::Pilcrow
+            | Self::CaseSensitive
+            | Self::TypeSize
+            | Self::Plus
+            | Self::Duplicate
+            | Self::Trash => (12.0, 12.0),
         }
     }
 }
