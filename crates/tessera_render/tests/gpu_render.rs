@@ -62,6 +62,7 @@ fn rect_doc(bounds: DocRect, fill: Color) -> ResolvedDocument {
             frame: FrameId::default(),
             bounds,
             transform: Transform::IDENTITY,
+            spread_area: None,
             kind: ResolvedKind::Rectangle { fill, stroke: None },
         }],
         pages: vec![resolved_page()],
@@ -196,6 +197,7 @@ fn text_puts_dark_pixels_on_the_page() {
                     height: 60.0,
                 },
                 transform: Transform::IDENTITY,
+                spread_area: None,
                 kind: ResolvedKind::Text {
                     shaped,
                     color: Color::BLACK,

@@ -198,7 +198,32 @@ pub fn build_scene_with(
         }
     }
 
+    // One clip per spread, opened when the spread changes and closed after the
+    // last item on it. A frame may hang off its page onto the pasteboard, and
+    // may not reach into the next spread — which is a different sheet of paper,
+    // and looked like content flowing there.
+    let mut spread: Option<DocRect> = None;
+    let mut in_spread = false;
+
     for item in &resolved.items {
+        if item.spread_area != spread {
+            if in_spread {
+                scene.pop_layer();
+                in_spread = false;
+            }
+            spread = item.spread_area;
+            if let Some(area) = spread {
+                scene.push_layer(
+                    Fill::NonZero,
+                    vello::peniko::Mix::Normal,
+                    1.0,
+                    transform,
+                    &area.to_kurbo(),
+                );
+                in_spread = true;
+            }
+        }
+
         let rect: Rect = item.bounds.to_kurbo();
         // The frame's own space, then the camera. `bounds` is expressed in
         // that own space, so the item transform has to be applied to it
@@ -253,6 +278,9 @@ pub fn build_scene_with(
         }
     }
 
+    if in_spread {
+        scene.pop_layer();
+    }
     if clipped {
         scene.pop_layer();
     }
@@ -490,6 +518,7 @@ mod tests {
             items: vec![ResolvedItem {
                 frame: FrameId::default(),
                 transform: Transform::IDENTITY,
+                spread_area: None,
                 bounds,
                 kind,
             }],

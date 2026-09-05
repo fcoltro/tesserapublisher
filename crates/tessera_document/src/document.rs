@@ -291,6 +291,52 @@ impl Document {
         Some(outset_each(bounds, s.top, s.bottom, left, right))
     }
 
+    /// The area a spread owns: its pages, everything that bleeds off them, and
+    /// half the gap to its neighbours.
+    ///
+    /// A frame may hang off a page — that is what a pasteboard is for — but it
+    /// may not reach into the *next* spread, which is a different sheet of
+    /// paper. Content that appeared to run from one spread onto another was
+    /// reading as though it had flowed there.
+    pub fn spread_area(&self, spread: SpreadId) -> Option<DocRect> {
+        let pages = self.pages_of(spread);
+        let first = self.pages.get(*pages.first()?)?.bounds;
+        let last = self.pages.get(*pages.last()?)?.bounds;
+
+        let clearance = SPREAD_GAP / 2.0;
+        let outward = self
+            .setup
+            .bleed
+            .left
+            .max(self.setup.bleed.right)
+            .max(self.setup.slug.left)
+            .max(self.setup.slug.right)
+            .max(clearance);
+        let down = self.vertical_clearance() + clearance;
+
+        Some(DocRect {
+            x: first.x - outward,
+            y: first.y - down,
+            width: (last.x + last.width) - first.x + outward * 2.0,
+            height: first.height + down * 2.0,
+        })
+    }
+
+    /// Which spread a frame is drawn on, by way of its layer and page.
+    pub fn spread_of_frame(&self, frame: FrameId) -> Option<SpreadId> {
+        let owner = self.layer_ids().find(|l| {
+            self.layers
+                .get(*l)
+                .is_some_and(|layer| layer.frames.contains(&frame))
+        })?;
+        let page = self.page_ids().find(|p| {
+            self.pages
+                .get(*p)
+                .is_some_and(|page| page.layers.contains(&owner))
+        })?;
+        self.spread_of(page)
+    }
+
     /// Whether `at` falls on any page, as opposed to the pasteboard.
     ///
     /// Not `first_page_bounds().contains(..)`, which is what the cursor used
@@ -2711,5 +2757,33 @@ mod tests {
             x: bounds.x + bounds.width / 2.0,
             y: bounds.y + bounds.height + 4.0,
         }));
+    }
+
+    #[test]
+    fn a_spread_owns_its_pages_and_the_room_around_them() {
+        let mut doc = Document::new();
+        doc.add_page();
+        let first = doc.spread_order[0];
+        let second = doc.spread_order[1];
+
+        let a = doc.spread_area(first).expect("an area");
+        let b = doc.spread_area(second).expect("an area");
+
+        assert!(
+            a.y + a.height <= b.y + 1e-9,
+            "one spread's area must not reach into the next: {a:?} then {b:?}"
+        );
+        let page = doc.pages[doc.page_ids().next().expect("a page")].bounds;
+        assert!(a.y < page.y && a.x < page.x, "and it reaches past the page");
+    }
+
+    #[test]
+    fn a_frame_knows_which_spread_it_is_on() {
+        let mut doc = Document::new();
+        let page = doc.add_page();
+        let layer = doc.pages[page].layers[0];
+        let frame = doc.add_frame(layer, rect_frame());
+
+        assert_eq!(doc.spread_of_frame(frame), doc.spread_of(page));
     }
 }

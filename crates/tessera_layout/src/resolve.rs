@@ -44,6 +44,13 @@ pub struct ResolvedItem {
     /// The frame's own space, mapped onto the document. Both the renderer
     /// and the PDF writer apply this the same way, from this one value.
     pub transform: Transform,
+    /// The area this frame's spread owns.
+    ///
+    /// A frame may hang off its page — that is what a pasteboard is for — but
+    /// it may not reach into the next spread, which is a different sheet of
+    /// paper. Carried per item because the renderer walks a flat list and has
+    /// no other way to know which sheet it is drawing on.
+    pub spread_area: Option<DocRect>,
     pub kind: ResolvedKind,
 }
 
@@ -151,6 +158,7 @@ pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
             frame: id,
             bounds: frame.bounds,
             transform: frame.transform,
+            spread_area: doc.spread_of_frame(id).and_then(|s| doc.spread_area(s)),
             kind,
         });
     }
