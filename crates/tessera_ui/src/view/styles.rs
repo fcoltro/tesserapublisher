@@ -276,10 +276,8 @@ fn paragraph_fields(
         };
         optional_number(ui, label, value, 0.0, 0.25, -720.0..=720.0, " pt");
     }
-    // Hyphenation is the one paragraph property still stored without being
-    // drawn: parley does not hyphenate, so it needs a dictionary rather than a
-    // layout change.
-    ui.colored_label(Theme::ERROR, "Stored, but not yet drawn:");
+    // English only: `hypher` holds patterns per language and a story has no
+    // language to choose between them yet.
     optional_flag(ui, "Hyphenate", &mut edited.format.hyphenate);
 
     if let Some(based_on) = chosen_parent {

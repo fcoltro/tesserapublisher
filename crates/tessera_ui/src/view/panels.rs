@@ -1079,6 +1079,30 @@ fn text_section(
         );
     }
 
+    // Hyphenation. English only for now: `hypher` holds its patterns per
+    // language and a story has no language to pick one with.
+    let hyphenating = paragraph.hyphenate == Some(true);
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::TEXT_MUTED, "Hyphenate");
+        if ui
+            .selectable_label(hyphenating, "Break words")
+            .on_hover_text("English patterns")
+            .clicked()
+        {
+            set_paragraph(
+                state,
+                story,
+                target.clone(),
+                ParagraphFormat {
+                    // `Some(false)`, not `None`: `None` means inherit, and a
+                    // toggle built on it could never turn anything off.
+                    hyphenate: Some(!hyphenating),
+                    ..ParagraphFormat::default()
+                },
+            );
+        }
+    });
+
     /// Which field of a `ParagraphFormat` a row writes.
     type Set = fn(&mut ParagraphFormat, f32);
 
