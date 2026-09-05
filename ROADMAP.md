@@ -447,6 +447,16 @@ dockable panels, document tabs.
 
 The reason a layout tool is not a drawing tool.
 
+> **A design proposal exists and is not approved:**
+> [milestone 2 typography](docs/superpowers/specs/2026-09-05-milestone-2-typography-proposal.md).
+> It states the recommended decisions and, in its §7, the four questions that
+> want answering first — two of which change the shape of the work. **No code
+> should be written against it until those are settled.**
+>
+> The one-line version: `Story` holds a single `TextStyle` for all of its
+> text, so nothing in the model can express a bold word. That is the whole of
+> this milestone'''s difficulty.
+
 ### Acceptance
 
 > Set a paragraph in a chosen family, weight, size and leading. Adjust
