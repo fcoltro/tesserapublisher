@@ -399,12 +399,12 @@ working software alone: **C-i the rail** (C1–C5), **C-ii the surface**
   page's top-left; it is not yet a widget you can drag. An existing guide
   cannot be moved or deleted once placed — the commands exist and are tested,
   the canvas interaction does not.*
-- [~] **C9 — Screen modes.** All four are reachable from the View menu and
-  the palette, and `W` toggles Normal and Preview. In any printing mode the
-  handles, frame edges, margin and bleed rules, rulers, guides and canvas
-  toolbar all go, and the surround becomes the fixed neutral grey of D8.
-  *The document is not yet clipped to the revealed rectangle, so Preview hides
-  the furniture without cropping the pasteboard.*
+- [x] **C9 — Screen modes**: Normal, Preview, Bleed and Slug, all four,
+  reachable from the View menu and the palette, with `W` toggling the first
+  two. A printing mode hides the handles, frame edges, rules, rulers, guides
+  and canvas toolbar, paints the surround the fixed neutral grey of D8, and
+  **crops the document to what it reveals** — so Preview shows the trim as it
+  will print rather than merely hiding the furniture around it.
 - [~] **C10 — Status bar**: a zoom that can be typed, stepped along a
   1-2-5-ish ladder, or fitted, beside the message area. *The page count is
   shown; navigation between pages waits on the pages panel at milestone 3.*

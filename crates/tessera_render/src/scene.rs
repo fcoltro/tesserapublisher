@@ -79,6 +79,31 @@ const BLEED_RULE: [f32; 4] = [0.85, 0.22, 0.18, 1.0];
 /// would not be.
 const MARGIN_RULE: [f32; 4] = [0.78, 0.24, 0.72, 1.0];
 
+/// What to include when building a scene.
+///
+/// A struct rather than a growing list of booleans, so a call reads as a
+/// description of what it wants rather than as three bare `true`s.
+#[derive(Debug, Clone, Copy)]
+pub struct SceneOptions {
+    /// Draw the non-printing margin and bleed rules.
+    pub rules: bool,
+    /// Show only what falls inside this rectangle.
+    ///
+    /// The printing screen modes crop to the trim, the bleed or the slug, so
+    /// what is on screen is what will come off the press. `None` shows
+    /// everything, pasteboard included.
+    pub clip: Option<DocRect>,
+}
+
+impl Default for SceneOptions {
+    fn default() -> Self {
+        Self {
+            rules: true,
+            clip: None,
+        }
+    }
+}
+
 /// Build the scene for a resolved document.
 ///
 /// The pages come from `resolved`, not from a parameter. While the caller
@@ -86,17 +111,37 @@ const MARGIN_RULE: [f32; 4] = [0.78, 0.24, 0.72, 1.0];
 /// themselves where the page was, and one of them was eventually going to be
 /// wrong.
 pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform) -> Scene {
-    build_scene_with(resolved, view, true)
+    build_scene_with(resolved, view, SceneOptions::default())
 }
 
 /// As [`build_scene`], but able to leave the non-printing rules out.
 ///
 /// The printing screen modes show the page as it will come off the press, and
 /// a margin rule is not on the press.
-pub fn build_scene_with(resolved: &ResolvedDocument, view: ViewTransform, rules: bool) -> Scene {
+pub fn build_scene_with(
+    resolved: &ResolvedDocument,
+    view: ViewTransform,
+    options: SceneOptions,
+) -> Scene {
+    let rules = options.rules;
     let mut scene = Scene::new();
     let transform = view.to_affine();
     let hairline = hairline(view);
+
+    // Everything the document draws goes inside this layer, so a printing
+    // mode crops rather than merely hiding the furniture around the page.
+    let clipped = options.clip.is_some();
+    if let Some(area) = options.clip {
+        // A plain layer clipped to the area: vello has no dedicated clip
+        // blend, so the clip comes from the layer's own shape.
+        scene.push_layer(
+            Fill::NonZero,
+            vello::peniko::Mix::Normal,
+            1.0,
+            transform,
+            &area.to_kurbo(),
+        );
+    }
     // The whole stroke, not just its width: caps, joins and dashes are what
     // make a rule read as a rule rather than as a thin rectangle.
     let stroke_of = |s: &Stroke| {
@@ -208,6 +253,10 @@ pub fn build_scene_with(resolved: &ResolvedDocument, view: ViewTransform, rules:
         }
     }
 
+    if clipped {
+        scene.pop_layer();
+    }
+
     scene
 }
 
@@ -250,6 +299,76 @@ fn draw_text(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_clip_really_reaches_the_encoding() {
+        // Preview must show the trim as it will print, not merely hide the
+        // furniture around it — so the clip has to be in the scene, not just
+        // in the options struct.
+        let doc = one_item(
+            ResolvedKind::Rectangle {
+                fill: Color::BLACK,
+                stroke: None,
+            },
+            DocRect {
+                x: 10.0,
+                y: 10.0,
+                width: 50.0,
+                height: 50.0,
+            },
+        );
+        let plain = build_scene_with(&doc, ViewTransform::default(), SceneOptions::default());
+        let cropped = build_scene_with(
+            &doc,
+            ViewTransform::default(),
+            SceneOptions {
+                rules: true,
+                clip: Some(page()),
+            },
+        );
+        assert!(
+            cropped.encoding().n_clips > plain.encoding().n_clips,
+            "the clip layer never reached the encoding"
+        );
+    }
+
+    #[test]
+    fn leaving_the_rules_out_draws_less() {
+        let mut doc = one_item(
+            ResolvedKind::Rectangle {
+                fill: Color::BLACK,
+                stroke: None,
+            },
+            DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 10.0,
+            },
+        );
+        // A margin inset from the trim, so there is a rule to leave out.
+        doc.pages[0].margins = DocRect {
+            x: 20.0,
+            y: 20.0,
+            width: page().width - 40.0,
+            height: page().height - 40.0,
+        };
+
+        let with_rules = build_scene_with(&doc, ViewTransform::default(), SceneOptions::default());
+        let without = build_scene_with(
+            &doc,
+            ViewTransform::default(),
+            SceneOptions {
+                rules: false,
+                clip: None,
+            },
+        );
+        assert!(
+            without.encoding().stream_offsets().path_data
+                < with_rules.encoding().stream_offsets().path_data,
+            "the margin rule was drawn in a printing mode"
+        );
+    }
+
     use super::*;
     use tessera_document::ids::FrameId;
     use tessera_geometry::Transform;

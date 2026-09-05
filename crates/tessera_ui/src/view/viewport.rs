@@ -98,9 +98,18 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
         // scene is still rebuilt every frame, because the camera is baked into
         // it -- see `tessera_layout::cache`.
         // Read before resolving: resolve_active borrows the whole of state.
-        let rules = state.screen_mode.shows_chrome();
+        let mode = state.screen_mode;
         let resolved = state.resolve_active();
-        let scene = tessera_render::scene::build_scene_with(resolved, view, rules);
+        // A printing mode crops to what it reveals, so what is on screen is
+        // what will come off the press.
+        let clip = (!mode.shows_chrome())
+            .then(|| resolved.pages.first().map(|p| mode.revealed(p)))
+            .flatten();
+        let options = tessera_render::scene::SceneOptions {
+            rules: mode.shows_chrome(),
+            clip,
+        };
+        let scene = tessera_render::scene::build_scene_with(resolved, view, options);
 
         ui.painter().add(egui_wgpu::Callback::new_paint_callback(
             rect,
