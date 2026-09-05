@@ -1511,19 +1511,7 @@ pub fn status_bar(ui: &mut Ui, state: &mut TesseraApp) {
 
             ui.separator();
 
-            // The page count. Navigation arrives with the pages panel at
-            // milestone 3; this is the reading InDesign shows in the same
-            // corner, and it is true today.
-            let pages = state.active().document().page_ids().count();
-            let spreads = state.active().document().spread_ids().count();
-            ui.colored_label(
-                Theme::TEXT_MUTED,
-                format!(
-                    "{pages} page{} in {spreads} spread{}",
-                    if pages == 1 { "" } else { "s" },
-                    if spreads == 1 { "" } else { "s" }
-                ),
-            );
+            page_navigator(ui, state);
         });
     });
 }
@@ -1801,6 +1789,61 @@ fn overrides_row(
     });
 }
 
+/// Which page the document is turned to.
+///
+/// The first page of the current spread, because a spread is what is looked at
+/// and a page is what is operated on. `None` only for a document with no
+/// spreads at all, which nothing can produce.
+pub fn current_page(state: &TesseraApp) -> Option<tessera_document::ids::PageId> {
+    let doc = state.active().document();
+    let at = state
+        .active()
+        .current_spread
+        .min(doc.spread_order.len().saturating_sub(1));
+    doc.spread_order
+        .get(at)
+        .map(|s| doc.pages_of(*s))
+        .and_then(|pages| pages.first().copied())
+}
+
+/// Previous, "3 of 12", next — the reading InDesign shows in the same corner.
+///
+/// Milestone 1.5 recorded this as partial: it could say how many pages there
+/// were and not which one you were on, because there was only ever one.
+fn page_navigator(ui: &mut Ui, state: &mut TesseraApp) {
+    let spreads = state.active().document().spread_order.len();
+    let pages = state.active().document().page_ids().count();
+    // Clamped rather than trusted: removing the last spread leaves the index
+    // pointing past the end until something moves it.
+    let at = state.active().current_spread.min(spreads.saturating_sub(1));
+
+    // Right to left in this layout, so the controls are built in reverse and
+    // read forwards.
+    if glyph_button(ui, crate::icons::Icon::AlignRight, "Next spread").clicked() && at + 1 < spreads
+    {
+        state.active_mut().current_spread = at + 1;
+        state.active_mut().fitted = false;
+    }
+
+    let first = state
+        .active()
+        .document()
+        .spread_order
+        .get(at)
+        .map(|s| state.active().document().pages_of(*s))
+        .and_then(|p| p.first().copied());
+    let number = first
+        .and_then(|page| state.active().document().page_ids().position(|p| p == page))
+        .map_or(1, |i| i + 1);
+
+    ui.colored_label(Theme::TEXT_MUTED, format!("{number} of {pages}"));
+
+    if glyph_button(ui, crate::icons::Icon::AlignLeft, "Previous spread").clicked() && at > 0 {
+        state.active_mut().current_spread = at - 1;
+        state.active_mut().fitted = false;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2006,6 +2049,50 @@ mod tests {
             format_target(&state, first, first_story),
             0..19,
             "the caret is elsewhere, so this frame formats whole"
+        );
+    }
+
+    // --- page navigation ----------------------------------------------------
+
+    #[test]
+    fn turning_the_page_is_not_a_change_to_the_document() {
+        // View state: where somebody is looking is not part of what they are
+        // making, so it must not need saving or land in undo.
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddPage);
+        state.active_mut().dirty = false;
+
+        state.active_mut().current_spread = 1;
+
+        assert!(!state.active().dirty);
+    }
+
+    #[test]
+    fn the_current_page_follows_the_current_spread() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddPage);
+        let second = state
+            .active()
+            .document()
+            .page_ids()
+            .nth(1)
+            .expect("a second page");
+
+        state.active_mut().current_spread = 1;
+        assert_eq!(current_page(&state), Some(second));
+    }
+
+    #[test]
+    fn a_current_spread_past_the_end_still_names_a_page() {
+        // Removing the last spread leaves the index pointing past the end
+        // until something moves it, and the status bar draws before anything
+        // does.
+        let mut state = TesseraApp::headless();
+        state.active_mut().current_spread = 99;
+
+        assert!(
+            current_page(&state).is_some(),
+            "it clamps rather than showing nothing"
         );
     }
 }

@@ -109,8 +109,8 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
     use crate::actions::{self, Group};
 
     // Menu order, not group order: Align sits inside Object and Tool inside
-    // View, so the bar has five menus rather than seven.
-    const MENUS: [&str; 5] = ["File", "Edit", "Object", "Type", "View"];
+    // View, so the bar has six menus rather than eight groups.
+    const MENUS: [&str; 6] = ["File", "Edit", "Layout", "Object", "Type", "View"];
 
     let mut chosen = None;
     egui::MenuBar::new().ui(ui, |ui| {

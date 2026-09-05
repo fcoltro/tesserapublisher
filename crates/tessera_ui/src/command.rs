@@ -11,7 +11,7 @@
 
 use tessera_color::Color;
 use tessera_document::document::{Document, ZMove};
-use tessera_document::ids::{FrameId, StoryId};
+use tessera_document::ids::{FrameId, PageId, StoryId};
 use tessera_document::nodes::{Frame, FrameKind};
 use tessera_geometry::{DocRect, Transform};
 use tessera_text::story::{
@@ -199,6 +199,33 @@ pub enum Command {
     /// command only has to carry that result — which keeps scaling a group of
     /// twenty objects a single undo entry.
     SetTransforms(Vec<(FrameId, DocRect, Transform)>),
+
+    /// Add a page at the end of the document.
+    ///
+    /// Undoable, like everything else here, and that is worth saying: the
+    /// previous codebase never made adding or removing a page undoable,
+    /// because each would have needed an inverse written by hand and neither
+    /// ever was. Snapshot undo means there is nothing to write — but nothing
+    /// would notice if these stopped going through `Command`, so there are
+    /// tests.
+    AddPage,
+    /// Remove a page, its layers and everything on them.
+    ///
+    /// Refused for the last page by the document, which is where the rule
+    /// belongs: a command that could empty a document would be one every
+    /// caller had to remember not to send.
+    RemovePage {
+        id: PageId,
+    },
+    /// Copy a page and everything on it, directly after its own spread.
+    DuplicatePage {
+        id: PageId,
+    },
+    /// Move a spread to another place in the reading order.
+    MoveSpread {
+        from: usize,
+        to: usize,
+    },
 
     /// Replace the whole page setup at once.
     ///
@@ -848,6 +875,22 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             for id in ids {
                 state.active_mut().document_mut().move_in_z(id, how);
             }
+        }
+
+        Command::AddPage => {
+            state.active_mut().document_mut().add_page();
+        }
+
+        Command::RemovePage { id } => {
+            state.active_mut().document_mut().remove_page(id);
+        }
+
+        Command::DuplicatePage { id } => {
+            state.active_mut().document_mut().duplicate_page(id);
+        }
+
+        Command::MoveSpread { from, to } => {
+            state.active_mut().document_mut().move_spread(from, to);
         }
 
         Command::SetDocumentSetup(setup) => {
@@ -3817,5 +3860,98 @@ mod tests {
 
         let s = state.active().document().story(story).expect("story");
         assert!(s.has_character_overrides(0..2), "applied at once");
+    }
+
+    // --- pages ---------------------------------------------------------------
+
+    #[test]
+    fn adding_a_page_is_undoable() {
+        // The roadmap singles this out: the previous codebase never made add
+        // or remove page undoable, because no inverse was ever written.
+        let mut state = TesseraApp::headless();
+        assert_eq!(state.active().document().page_ids().count(), 1);
+
+        apply(&mut state, Command::AddPage);
+        assert_eq!(state.active().document().page_ids().count(), 2);
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().page_ids().count(), 1);
+    }
+
+    #[test]
+    fn undoing_a_page_removal_brings_back_what_was_on_it() {
+        // Snapshot undo makes the inverse free, and "free" is exactly the kind
+        // of claim worth a test — nothing else would notice if these stopped
+        // going through `Command`.
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddPage);
+
+        let page = state
+            .active()
+            .document()
+            .page_ids()
+            .nth(1)
+            .expect("the second page");
+        let layer = state.active().document().pages[page].layers[0];
+        // Straight onto the new page's layer, because `AddRectangle` puts it
+        // wherever the application is currently pointing.
+        let frame = state.active_mut().document_mut().add_frame(
+            layer,
+            Frame {
+                bounds: bounds(),
+                transform: Transform::default(),
+                kind: FrameKind::Rectangle,
+                fill: Color::BLACK,
+                stroke: None,
+            },
+        );
+
+        apply(&mut state, Command::RemovePage { id: page });
+        assert!(state.active().document().frame(frame).is_none());
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().page_ids().count(), 2);
+        assert!(
+            state.active().document().frame(frame).is_some(),
+            "the frame came back with its page"
+        );
+    }
+
+    #[test]
+    fn duplicating_and_moving_are_undoable_too() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddPage);
+        let first = state.active().document().page_ids().next().expect("a page");
+
+        apply(&mut state, Command::DuplicatePage { id: first });
+        assert_eq!(state.active().document().page_ids().count(), 3);
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().page_ids().count(), 2);
+
+        let order = state.active().document().spread_order.clone();
+        apply(&mut state, Command::MoveSpread { from: 1, to: 0 });
+        assert_ne!(state.active().document().spread_order, order);
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().spread_order, order);
+    }
+
+    #[test]
+    fn removing_the_last_page_is_refused_rather_than_obeyed() {
+        // The rule lives in the document, so no caller has to remember it.
+        let mut state = TesseraApp::headless();
+        let only = state.active().document().page_ids().next().expect("a page");
+
+        apply(&mut state, Command::RemovePage { id: only });
+
+        assert_eq!(state.active().document().page_ids().count(), 1);
+    }
+
+    #[test]
+    fn a_page_change_marks_the_document_dirty() {
+        // It is a change to what is being made, so it has to be saved.
+        let mut state = TesseraApp::headless();
+        assert!(!state.active().dirty);
+        apply(&mut state, Command::AddPage);
+        assert!(state.active().dirty);
     }
 }

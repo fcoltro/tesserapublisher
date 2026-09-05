@@ -24,10 +24,11 @@ pub enum Group {
     View,
     Tool,
     Type,
+    Layout,
 }
 
 impl Group {
-    pub const ALL: [Group; 7] = [
+    pub const ALL: [Group; 8] = [
         Group::File,
         Group::Edit,
         Group::Object,
@@ -35,6 +36,7 @@ impl Group {
         Group::View,
         Group::Tool,
         Group::Type,
+        Group::Layout,
     ];
 
     /// The menu this group appears under.
@@ -48,6 +50,7 @@ impl Group {
             Group::Object | Group::Align => "Object",
             Group::View | Group::Tool => "View",
             Group::Type => "Type",
+            Group::Layout => "Layout",
         }
     }
 }
@@ -73,6 +76,9 @@ pub enum Run {
 /// from the user — the ones a palette entry can run on its own.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Cmd {
+    AddPage,
+    RemovePage,
+    DuplicatePage,
     Undo,
     Redo,
     Cut,
@@ -352,6 +358,17 @@ pub fn all() -> &'static [Action] {
             Group::Type,
             ToggleStyles,
         ),
+        // The Layout menu, which milestone 1.5 left empty for want of exactly
+        // these commands. The menu bar is generated from this list, so adding
+        // them is what makes the menu appear.
+        a("Add page", None, Group::Layout, Command(AddPage)),
+        a(
+            "Duplicate page",
+            None,
+            Group::Layout,
+            Command(DuplicatePage),
+        ),
+        a("Delete page", None, Group::Layout, Command(RemovePage)),
         //
         a(
             "Selection tool",
@@ -420,6 +437,19 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         Run::ZoomToFit => state.active_mut().fitted = false,
         Run::Command(cmd) => {
             let command = match cmd {
+                // These three act on the spread being looked at, which is
+                // where "this page" means anything at all.
+                Cmd::AddPage => Command::AddPage,
+                Cmd::DuplicatePage | Cmd::RemovePage => {
+                    let Some(page) = crate::view::panels::current_page(state) else {
+                        return;
+                    };
+                    if cmd == Cmd::DuplicatePage {
+                        Command::DuplicatePage { id: page }
+                    } else {
+                        Command::RemovePage { id: page }
+                    }
+                }
                 Cmd::Undo => Command::Undo,
                 Cmd::Redo => Command::Redo,
                 Cmd::Cut => Command::CutSelection,

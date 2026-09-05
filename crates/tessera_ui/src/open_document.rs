@@ -40,6 +40,14 @@ pub struct OpenDocument {
     pub view: ViewTransform,
     pub selection: Selection,
 
+    /// Which spread the document is turned to, as an index into
+    /// `spread_order`.
+    ///
+    /// View state, beside the camera rather than in the document: where
+    /// somebody is looking is not part of what they are making. It must not
+    /// mark the document dirty, land in undo, or travel in the file.
+    pub current_spread: usize,
+
     /// The frame being edited on canvas, and its live buffer.
     pub editing: Option<(FrameId, EditBuffer)>,
 
@@ -65,6 +73,7 @@ impl OpenDocument {
             resolved: ResolveCache::default(),
             view: ViewTransform::default(),
             selection: Selection::default(),
+            current_spread: 0,
             editing: None,
             current_path: None,
             dirty: false,
