@@ -58,6 +58,13 @@ pub enum Icon {
     FlipVertical,
     RotateCw,
     RotateCcw,
+
+    // The fill and stroke proxy, and the status bar's zoom.
+    Swap,
+    NoFill,
+    ZoomIn,
+    ZoomOut,
+    ZoomFit,
 }
 
 impl Icon {
@@ -244,6 +251,34 @@ impl Icon {
                 "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8",
                 "M3 3v5h5",
             ],
+            // lucide: arrow-left-right
+            Self::Swap => &["M8 3 4 7l4 4", "M4 7h16", "m16 21 4-4-4-4", "M20 17H4"],
+            // lucide: ban — the universal "none", and what a swatch of no
+            // colour has been in every drawing tool since MacPaint.
+            Self::NoFill => &[
+                "M22 12 A10 10 0 1 1 2 12 A10 10 0 1 1 22 12 Z",
+                "M4.929 4.929 19.07 19.071",
+            ],
+            // lucide: zoom-in
+            Self::ZoomIn => &[
+                "M19 11 A8 8 0 1 1 3 11 A8 8 0 1 1 19 11 Z",
+                "M21 21 L16.65 16.65",
+                "M11 8 L11 14",
+                "M8 11 L14 11",
+            ],
+            // lucide: zoom-out
+            Self::ZoomOut => &[
+                "M19 11 A8 8 0 1 1 3 11 A8 8 0 1 1 19 11 Z",
+                "M21 21 L16.65 16.65",
+                "M8 11 L14 11",
+            ],
+            // lucide: maximize
+            Self::ZoomFit => &[
+                "M8 3H5a2 2 0 0 0-2 2v3",
+                "M21 8V5a2 2 0 0 0-2-2h-3",
+                "M3 16v3a2 2 0 0 0 2 2h3",
+                "M16 21h3a2 2 0 0 0 2-2v-3",
+            ],
         }
     }
 
@@ -288,7 +323,12 @@ impl Icon {
             | Self::FlipHorizontal
             | Self::FlipVertical
             | Self::RotateCw
-            | Self::RotateCcw => (12.0, 12.0),
+            | Self::RotateCcw
+            | Self::Swap
+            | Self::NoFill
+            | Self::ZoomIn
+            | Self::ZoomOut
+            | Self::ZoomFit => (12.0, 12.0),
         }
     }
 }
@@ -403,7 +443,7 @@ pub fn paint_rotated(
 }
 
 /// Every icon, for exhaustive tests and for building a palette.
-pub const ALL: [Icon; 26] = [
+pub const ALL: [Icon; 31] = [
     Icon::Select,
     Icon::Rectangle,
     Icon::Ellipse,
@@ -430,6 +470,11 @@ pub const ALL: [Icon; 26] = [
     Icon::FlipVertical,
     Icon::RotateCw,
     Icon::RotateCcw,
+    Icon::Swap,
+    Icon::NoFill,
+    Icon::ZoomIn,
+    Icon::ZoomOut,
+    Icon::ZoomFit,
 ];
 
 #[cfg(test)]

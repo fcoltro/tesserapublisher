@@ -414,11 +414,17 @@ working software alone: **C-i the rail** (C1–C5), **C-ii the surface**
   and the rule this milestone works to is that a group with no actions gets no
   menu. A menu entry for an unbuilt feature is the lie the previous codebase
   told often.*
-- [~] **C13 — Icon set**: 26 Lucide glyphs, up from 14 — the twelve the canvas
-  toolbar needed, **converted mechanically from the official package's own
-  SVG geometry** rather than transcribed, because the icon tests prove a path
-  parses and not that it draws the right thing. *Roughly sixty was the target;
-  the rest arrive as the surfaces that need them do.*
+- [x] **C13 — Icon set**: 31 Lucide glyphs, up from 14, **converted
+  mechanically from the official package's own SVG geometry** rather than
+  transcribed — the icon tests prove a path parses and that it fits the grid,
+  neither of which proves it is the glyph it claims to be. Every surface that
+  shows a picture now shows a real one: the tool strip, the canvas toolbar,
+  the fill and stroke proxy, the zoom controls.
+  *The spec guessed "roughly sixty". That number was wrong, not the work:
+  there are 31 places a picture beats a word, and the remaining surfaces —
+  the palette, the menus, the inspector's fields — are lists of text where an
+  icon would be noise. Padding to sixty would have meant adding glyphs nothing
+  draws.*
 
 **Explicitly not in M1.5:** corner radius, opacity, effects, object styles,
 gradients, the swatches panel, text wrap, frame fitting, text-frame options,

@@ -202,21 +202,29 @@ fn fill_stroke_proxy(
     );
 
     ui.horizontal(|ui| {
-        if ui
-            .small_button("⇄")
-            .on_hover_text("Swap fill and stroke (X)")
-            .clicked()
-        {
+        if glyph_button(ui, crate::icons::Icon::Swap, "Swap fill and stroke (X)").clicked() {
             apply(state, Command::SwapFillAndStroke(id));
         }
-        if ui.small_button("◼").on_hover_text("Defaults (D)").clicked() {
+        if glyph_button(ui, crate::icons::Icon::Rectangle, "Defaults (D)").clicked() {
             apply(state, Command::DefaultFillAndStroke(id));
         }
-        if ui.small_button("∅").on_hover_text("No fill (/)").clicked() {
+        if glyph_button(ui, crate::icons::Icon::NoFill, "No fill (/)").clicked() {
             apply(state, Command::ClearFill(id));
         }
     });
     ui.add_space(Theme::SPACING_SM);
+}
+
+/// A small icon button, for the places a word would be worse than a picture.
+fn glyph_button(ui: &mut Ui, icon: crate::icons::Icon, tip: &str) -> egui::Response {
+    const SIZE: f32 = 20.0;
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(SIZE), Sense::click());
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, Theme::RADIUS, Theme::HOVER_BG);
+    }
+    crate::icons::paint(ui.painter(), rect.shrink(3.0), icon, Theme::TEXT_PRIMARY);
+    response.on_hover_text(tip)
 }
 
 /// The nine-point reference proxy.
@@ -880,11 +888,11 @@ pub fn status_bar(ui: &mut Ui, state: &mut TesseraApp) {
             {
                 state.active_mut().view.zoom = percent / 100.0;
             }
-            if ui.small_button("+").on_hover_text("Zoom in").clicked() {
+            if glyph_button(ui, crate::icons::Icon::ZoomIn, "Zoom in").clicked() {
                 let next = stepped_zoom(state.active().view.zoom, true);
                 state.active_mut().view.zoom = next;
             }
-            if ui.small_button("−").on_hover_text("Zoom out").clicked() {
+            if glyph_button(ui, crate::icons::Icon::ZoomOut, "Zoom out").clicked() {
                 let next = stepped_zoom(state.active().view.zoom, false);
                 state.active_mut().view.zoom = next;
             }
