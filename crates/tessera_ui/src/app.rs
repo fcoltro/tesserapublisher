@@ -131,6 +131,21 @@ pub struct TesseraApp {
     /// Application state, like the anchor: a way of working rather than a
     /// property of any one object.
     pub constrain_proportions: bool,
+    /// Where the rulers count from, when it is not the page's own corner.
+    ///
+    /// View state, not document data: two people opening the same file should
+    /// not inherit each other's measuring habits. `None` means the first
+    /// page's top-left, which is where a measurement in a document is
+    /// normally taken from.
+    pub ruler_origin: Option<tessera_geometry::DocPoint>,
+
+    /// Whether the zero-point widget is being dragged.
+    ///
+    /// The drop is resolved after the canvas rectangle is known, which is not
+    /// until the panels have taken their share of the window — so the widget
+    /// records the gesture and something later decides where it landed.
+    pub zero_drag: bool,
+
     /// A placed guide being dragged on the canvas, by its index.
     ///
     /// View state: the document holds the guide where it was when the drag
@@ -180,6 +195,8 @@ impl TesseraApp {
             screen_mode: ScreenMode::default(),
             anchor: tessera_geometry::Anchor::default(),
             constrain_proportions: false,
+            ruler_origin: None,
+            zero_drag: false,
             guide_grab: None,
             guide_drag: None,
             drag: None,

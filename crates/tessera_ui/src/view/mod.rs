@@ -63,7 +63,12 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
                         across = ui.max_rect();
                         // The corner where the rulers meet is the unit
                         // selector, as it has been in every layout tool.
-                        ui.horizontal(|ui| rulers::unit_selector(ui, state));
+                        // The corner carries both: the zero point, then the
+                        // unit these rulers count in.
+                        ui.horizontal(|ui| {
+                            rulers::zero_point(ui, state);
+                            rulers::unit_selector(ui, state);
+                        });
                     });
                 Panel::left("ruler-down")
                     .exact_size(rulers::THICKNESS)
@@ -79,6 +84,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
             if state.screen_mode.shows_chrome() {
                 rulers::paint(ui, state, canvas, across, down);
                 rulers::drag_out(ui, state, canvas, across, down);
+                rulers::resolve_zero_drag(ui, state, canvas);
             }
         });
 }

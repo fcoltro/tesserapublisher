@@ -391,12 +391,12 @@ working software alone: **C-i the rail** (C1–C5), **C-ii the surface**
 - [x] **C7 — Canvas toolbar**: six aligns, two distributes, two flips and two
   quarter-turns, beside the object, appearing only for two or more, in real
   Lucide glyphs. Placement is tested against the window's edges.
-- [~] **C8 — Rulers**, with a 1-2-5 tick ladder, a unit selector that saves
+- [x] **C8 — Rulers**, with a 1-2-5 tick ladder, a unit selector that saves
   the preference, and a guide you can drag off either one — dropped back on a
   ruler, the drag is cancelled (B3). A placed guide can be grabbed, moved as
-  one undo entry, and thrown away by dropping it off the canvas. *The zero
-  point is fixed at the first page's top-left; it is not yet a widget you can
-  drag.*
+  one undo entry, and thrown away by dropping it off the canvas. The zero
+  point is a widget: drag it onto the page to count from there, double-click
+  it to put it back on the page's own corner.
 - [x] **C9 — Screen modes**: Normal, Preview, Bleed and Slug, all four,
   reachable from the View menu and the palette, with `W` toggling the first
   two. A printing mode hides the handles, frame edges, rules, rulers, guides

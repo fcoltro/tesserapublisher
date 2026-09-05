@@ -45,9 +45,14 @@ pub fn paint(ui: &Ui, state: &TesseraApp, canvas: Rect, horizontal: Rect, vertic
     let zoom = view.zoom;
     let step = tick_spacing(unit, zoom);
 
-    // The zero point is the first page's top-left corner: the origin a
-    // measurement in a document is actually taken from.
-    let origin = state.first_page_bounds();
+    // The zero point: wherever it has been dragged to, or the first page's
+    // top-left, which is where a measurement in a document is normally taken
+    // from.
+    let page = state.first_page_bounds();
+    let origin = state.ruler_origin.unwrap_or(DocPoint {
+        x: page.x,
+        y: page.y,
+    });
 
     for (strip, is_horizontal) in [(horizontal, true), (vertical, false)] {
         let painter = ui.painter_at(strip);
@@ -225,6 +230,86 @@ pub fn drag_out(ui: &Ui, state: &mut TesseraApp, canvas: Rect, across: Rect, dow
                 },
             );
         }
+    }
+}
+
+/// The zero-point widget, in the corner where the rulers meet.
+///
+/// Drag it onto the page to count from somewhere else; double-click it to put
+/// it back on the page's own corner. Both are what every layout tool does with
+/// this square, and the double-click matters more than it looks: a zero point
+/// dragged by accident is otherwise very hard to put back exactly.
+pub fn zero_point(ui: &mut Ui, state: &mut TesseraApp) {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::Vec2::splat(THICKNESS - 2.0),
+        egui::Sense::click_and_drag(),
+    );
+
+    let moved = state.ruler_origin.is_some();
+    let painter = ui.painter();
+    painter.rect_filled(rect, 2.0, Theme::PANEL_BG_ALT);
+    // Two short rules meeting at the corner: the shape of an origin.
+    let hair = egui::Stroke::new(
+        1.0,
+        if moved {
+            Theme::ACCENT
+        } else {
+            Theme::TEXT_MUTED
+        },
+    );
+    painter.line_segment(
+        [
+            egui::pos2(rect.min.x + 3.0, rect.max.y - 4.0),
+            egui::pos2(rect.max.x - 3.0, rect.max.y - 4.0),
+        ],
+        hair,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(rect.max.x - 4.0, rect.min.y + 3.0),
+            egui::pos2(rect.max.x - 4.0, rect.max.y - 3.0),
+        ],
+        hair,
+    );
+
+    if response.double_clicked() {
+        state.ruler_origin = None;
+        return;
+    }
+
+    if response.drag_started() {
+        state.zero_drag = true;
+    }
+
+    response.on_hover_text(if moved {
+        "Zero point — drag to move, double-click to reset"
+    } else {
+        "Zero point — drag onto the page to count from there"
+    });
+}
+
+/// Finish a zero-point drag, now that the canvas rectangle is known.
+///
+/// Dropped anywhere but the canvas, the gesture is abandoned and the origin
+/// stays where it was — dragging it onto a panel by accident should not move
+/// the measurements.
+pub fn resolve_zero_drag(ui: &Ui, state: &mut TesseraApp, canvas: Rect) {
+    if !state.zero_drag {
+        return;
+    }
+    if !ui.ctx().input(|i| i.pointer.primary_released()) {
+        return;
+    }
+    state.zero_drag = false;
+
+    if let Some(pos) = ui.ctx().pointer_latest_pos()
+        && canvas.contains(pos)
+    {
+        let view = state.active().view;
+        state.ruler_origin = Some(view.screen_to_doc(tessera_geometry::ScreenPoint {
+            x: pos.x - canvas.min.x,
+            y: pos.y - canvas.min.y,
+        }));
     }
 }
 
