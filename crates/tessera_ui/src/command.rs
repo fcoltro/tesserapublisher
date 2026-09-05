@@ -756,14 +756,22 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                     .document_mut()
                     .translate_frame(id, dx, dy);
             }
+            // Dragging an object to another page moves it to that page.
+            rehome_selection(state);
         }
 
         Command::SetTransforms(entries) => {
+            let moved: Vec<FrameId> = entries.iter().map(|(id, _, _)| *id).collect();
             for (id, bounds, placement) in entries {
                 if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
                     frame.bounds = bounds;
                     frame.transform = placement;
                 }
+            }
+            // The end of a drag: whatever was moved may have crossed onto
+            // another page, and belongs to it now.
+            for id in moved {
+                state.active_mut().document_mut().rehome_frame(id);
             }
         }
 
@@ -1098,7 +1106,14 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 }
 
 fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
-    let layer = state.default_layer();
+    // The layer of the page it is drawn on, not the first layer in the
+    // document. Everything used to land on page one whatever page it was drawn
+    // on, and was then clipped to page one's spread and vanished.
+    let layer = state
+        .active()
+        .document()
+        .layer_at(bounds.center())
+        .unwrap_or_else(|| state.default_layer());
     let id = state.active_mut().document_mut().add_frame(
         layer,
         Frame {
@@ -1110,6 +1125,17 @@ fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
         },
     );
     state.active_mut().selection.set(id);
+}
+
+/// Put every selected frame on the page it now sits on.
+///
+/// An object belongs to the spread it is on, so anything that moves one has to
+/// say so — otherwise it stays owned by the spread it was created on, and
+/// clipped to it.
+fn rehome_selection(state: &mut TesseraApp) {
+    for id in state.active().selection.as_slice().to_vec() {
+        state.active_mut().document_mut().rehome_frame(id);
+    }
 }
 
 /// Restore a snapshot, keeping the selection honest.
@@ -3953,5 +3979,86 @@ mod tests {
         assert!(!state.active().dirty);
         apply(&mut state, Command::AddPage);
         assert!(state.active().dirty);
+    }
+
+    // --- an object belongs to the page it is on -----------------------------
+
+    #[test]
+    fn a_rectangle_drawn_on_the_third_page_belongs_to_it() {
+        // Reported from real use: an object drawn on page three was clipped to
+        // page one's spread and disappeared. Everything landed on the first
+        // layer whatever page it was drawn on.
+        let mut state = TesseraApp::headless();
+        state.active_mut().document_mut().setup.facing_pages = false;
+        apply(&mut state, Command::AddPage);
+        apply(&mut state, Command::AddPage);
+
+        let third = state
+            .active()
+            .document()
+            .page_ids()
+            .nth(2)
+            .expect("a third page");
+        let page = state.active().document().pages[third].bounds;
+
+        apply(
+            &mut state,
+            Command::AddRectangle(DocRect {
+                x: page.x + 20.0,
+                y: page.y + 20.0,
+                width: 40.0,
+                height: 40.0,
+            }),
+        );
+        let id = state.active().selection.single().expect("selected");
+
+        assert_eq!(
+            state.active().document().spread_of_frame(id),
+            state.active().document().spread_of(third),
+            "it belongs to the spread it was drawn on"
+        );
+    }
+
+    #[test]
+    fn dragging_an_object_to_another_page_gives_it_to_that_page() {
+        let mut state = TesseraApp::headless();
+        state.active_mut().document_mut().setup.facing_pages = false;
+        apply(&mut state, Command::AddPage);
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let id = state.active().selection.single().expect("selected");
+
+        let second = state
+            .active()
+            .document()
+            .page_ids()
+            .nth(1)
+            .expect("a second page");
+        let target = state.active().document().pages[second].bounds;
+
+        apply(
+            &mut state,
+            Command::TranslateSelection {
+                dx: target.x + 50.0,
+                dy: target.y + 50.0,
+            },
+        );
+
+        assert_eq!(
+            state.active().document().spread_of_frame(id),
+            state.active().document().spread_of(second),
+            "the object went with the drag"
+        );
+    }
+
+    #[test]
+    fn an_object_that_stays_put_keeps_its_page() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let id = state.active().selection.single().expect("selected");
+        let before = state.active().document().spread_of_frame(id);
+
+        apply(&mut state, Command::TranslateSelection { dx: 1.0, dy: 1.0 });
+
+        assert_eq!(state.active().document().spread_of_frame(id), before);
     }
 }

@@ -64,7 +64,10 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     ui.painter().rect_filled(rect, 0.0, surround);
 
     if !state.active().fitted && rect.width() > 1.0 {
-        let page = state.first_page_bounds();
+        // The spread being looked at, not the first one. Turning the page sets
+        // `fitted` false so the camera follows — and while this fitted the
+        // first page, following meant snapping straight back to page one.
+        let page = current_spread_bounds(state).unwrap_or_else(|| state.first_page_bounds());
         camera::zoom_to_fit(
             &mut state.active_mut().view,
             page,
@@ -802,6 +805,25 @@ fn overset_marks(state: &TesseraApp, rect: Rect, painter: &egui::Painter, overse
             Theme::TEXT_PRIMARY,
         );
     }
+}
+
+/// The area the spread being looked at covers, for the camera to fit.
+fn current_spread_bounds(state: &TesseraApp) -> Option<DocRect> {
+    let open = state.active();
+    let doc = open.document();
+    let at = open
+        .current_spread
+        .min(doc.spread_order.len().saturating_sub(1));
+    let pages = doc.pages_of(*doc.spread_order.get(at)?);
+
+    let first = doc.pages.get(*pages.first()?)?.bounds;
+    let last = doc.pages.get(*pages.last()?)?.bounds;
+    Some(DocRect {
+        x: first.x,
+        y: first.y,
+        width: (last.x + last.width) - first.x,
+        height: first.height,
+    })
 }
 
 /// Whether the pointer is panning rather than working.

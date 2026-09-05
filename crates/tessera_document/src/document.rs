@@ -157,6 +157,70 @@ impl Document {
         self.layer_ids().next()
     }
 
+    /// The layer a frame drawn at `at` belongs on.
+    ///
+    /// The page under the point, or the nearest one when the point is out on
+    /// the pasteboard. **Not simply the first layer**, which is what everything
+    /// used to get: a frame drawn on page three belonged to page one, and so
+    /// was clipped to page one's spread and vanished.
+    pub fn layer_at(&self, at: DocPoint) -> Option<LayerId> {
+        let on = self.page_ids().find(|id| {
+            self.pages
+                .get(*id)
+                .is_some_and(|page| page.bounds.contains(at))
+        });
+
+        let page = on.or_else(|| {
+            // Off the page entirely: the nearest one, by how far the point is
+            // from its centre. Somewhere is better than page one.
+            self.page_ids().min_by(|a, b| {
+                let distance = |id: &PageId| {
+                    self.pages.get(*id).map_or(f64::MAX, |p| {
+                        let c = p.bounds.center();
+                        (c.x - at.x).powi(2) + (c.y - at.y).powi(2)
+                    })
+                };
+                distance(a)
+                    .partial_cmp(&distance(b))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+        })?;
+
+        self.pages.get(page)?.layers.first().copied()
+    }
+
+    /// Move a frame onto the layer of the page it now sits on.
+    ///
+    /// An object belongs to the spread it is on, so dragging one from page one
+    /// to page three has to change which spread owns it — otherwise it stays
+    /// clipped to the spread it was born on.
+    pub fn rehome_frame(&mut self, id: FrameId) {
+        let Some(frame) = self.frames.get(id) else {
+            return;
+        };
+        let at = frame.transform.apply(frame.bounds.center());
+        let Some(wanted) = self.layer_at(at) else {
+            return;
+        };
+
+        let current = self
+            .layer_ids()
+            .find(|l| self.layers.get(*l).is_some_and(|s| s.frames.contains(&id)));
+        if current == Some(wanted) {
+            return;
+        }
+
+        if let Some(from) = current
+            && let Some(layer) = self.layers.get_mut(from)
+        {
+            layer.frames.retain(|f| *f != id);
+        }
+        if let Some(layer) = self.layers.get_mut(wanted) {
+            layer.frames.push(id);
+        }
+        self.revision += 1;
+    }
+
     /// The pages of a spread, in reading order.
     pub fn pages_of(&self, spread: SpreadId) -> Vec<PageId> {
         self.spreads
@@ -2785,5 +2849,90 @@ mod tests {
         let frame = doc.add_frame(layer, rect_frame());
 
         assert_eq!(doc.spread_of_frame(frame), doc.spread_of(page));
+    }
+
+    #[test]
+    fn a_frame_drawn_on_the_third_page_belongs_to_the_third_page() {
+        // Reported from real use: an object drawn on page three was clipped to
+        // page one's spread and disappeared. Everything went on the first
+        // layer, whatever page it was drawn on.
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.add_page();
+        let third = doc.add_page();
+        let bounds = doc.pages[third].bounds;
+
+        let layer = doc
+            .layer_at(DocPoint {
+                x: bounds.x + 10.0,
+                y: bounds.y + 10.0,
+            })
+            .expect("a layer");
+
+        assert_eq!(layer, doc.pages[third].layers[0]);
+    }
+
+    #[test]
+    fn a_frame_out_on_the_pasteboard_joins_the_nearest_page() {
+        // Somewhere is better than page one.
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.add_page();
+        let second = doc.page_ids().nth(1).expect("a second page");
+        let bounds = doc.pages[second].bounds;
+
+        let layer = doc
+            .layer_at(DocPoint {
+                x: bounds.x - 200.0,
+                y: bounds.y + bounds.height / 2.0,
+            })
+            .expect("a layer");
+
+        assert_eq!(layer, doc.pages[second].layers[0]);
+    }
+
+    #[test]
+    fn dragging_a_frame_to_another_page_moves_it_to_that_page() {
+        use tessera_geometry::Transform;
+
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        let second = doc.add_page();
+        let first = doc.page_ids().next().expect("a page");
+
+        let layer = doc.pages[first].layers[0];
+        let frame = doc.add_frame(layer, rect_frame());
+        assert!(doc.layers[layer].frames.contains(&frame));
+
+        // Onto the second page, the way a drag would.
+        let target = doc.pages[second].bounds;
+        if let Some(f) = doc.frame_mut(frame) {
+            f.transform = Transform::translate(target.x + 20.0, target.y + 20.0);
+        }
+        doc.rehome_frame(frame);
+
+        assert!(
+            !doc.layers[layer].frames.contains(&frame),
+            "it left page one"
+        );
+        assert!(
+            doc.layers[doc.pages[second].layers[0]]
+                .frames
+                .contains(&frame),
+            "and joined page two"
+        );
+        assert_eq!(doc.spread_of_frame(frame), doc.spread_of(second));
+    }
+
+    #[test]
+    fn rehoming_a_frame_that_has_not_moved_changes_nothing() {
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("a layer");
+        let frame = doc.add_frame(layer, rect_frame());
+        let before = doc.revision();
+
+        doc.rehome_frame(frame);
+
+        assert_eq!(doc.revision(), before, "no move, no change");
     }
 }
