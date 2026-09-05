@@ -9,6 +9,7 @@ pub mod canvas_toolbar;
 pub mod palette;
 pub mod panels;
 pub mod rulers;
+pub mod styles;
 pub mod text_edit;
 pub mod vello_host;
 pub mod viewport;
@@ -30,6 +31,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
 
     // Above everything, so it can be reached from anywhere.
     palette::show(ui, state);
+    styles::show(ui, state);
 
     Panel::bottom("status")
         .exact_size(24.0)
@@ -100,7 +102,7 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
 
     // Menu order, not group order: Align sits inside Object and Tool inside
     // View, so the bar has five menus rather than seven.
-    const MENUS: [&str; 4] = ["File", "Edit", "Object", "View"];
+    const MENUS: [&str; 5] = ["File", "Edit", "Object", "Type", "View"];
 
     let mut chosen = None;
     egui::MenuBar::new().ui(ui, |ui| {
@@ -166,6 +168,12 @@ fn accelerators(ui: &Ui, state: &mut TesseraApp) {
         apply(state, Command::Redo);
     } else if pressed(cmd, egui::Key::Z) {
         apply(state, Command::Undo);
+    }
+
+    // No modifier, so it must not fire while a caret is live — F11 is not a
+    // text key, but the guard is the rule rather than the exception.
+    if !state.active().editing.is_some() && pressed(egui::Modifiers::NONE, egui::Key::F11) {
+        crate::actions::run(state, crate::actions::Run::ToggleStyles);
     }
 
     if pressed(cmd, egui::Key::V) {

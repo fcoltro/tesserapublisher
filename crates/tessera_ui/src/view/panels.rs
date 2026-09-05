@@ -1350,55 +1350,6 @@ fn style_rows(
         );
     }
 
-    // The style's own fields, shown only while one is selected. Editing them
-    // changes every paragraph drawn through the style, which is the whole
-    // reason a style exists rather than a set of overrides.
-    if let Some(id) = paragraph_style
-        && let Some(existing) = state
-            .active()
-            .document()
-            .paragraph_styles
-            .get(id)
-            .cloned()
-    {
-        let mut edited = existing.clone();
-        ui.indent("paragraph-style-fields", |ui| {
-            ui.horizontal(|ui| {
-                ui.colored_label(Theme::TEXT_MUTED, "Name");
-                ui.text_edit_singleline(&mut edited.name);
-            });
-            if let Some(size) = optional_number(
-                ui,
-                "Style size",
-                Some(edited.format.character.size.unwrap_or(12.0)),
-                0.25,
-                1.0..=1440.0,
-                " pt",
-            ) {
-                edited.format.character.size = Some(size);
-            }
-            ui.horizontal(|ui| {
-                ui.colored_label(Theme::TEXT_MUTED, "Style align");
-                for (label, alignment) in [
-                    ("Left", Alignment::Left),
-                    ("Centre", Alignment::Centre),
-                    ("Right", Alignment::Right),
-                    ("Justify", Alignment::Justify),
-                ] {
-                    if ui
-                        .selectable_label(edited.format.alignment == Some(alignment), label)
-                        .clicked()
-                    {
-                        edited.format.alignment = Some(alignment);
-                    }
-                }
-            });
-        });
-        if edited != existing {
-            apply(state, Command::EditParagraphStyle { id, style: edited });
-        }
-    }
-
     // --- character styles
 
     let mut attach_character = None;
@@ -1455,35 +1406,129 @@ fn style_rows(
         );
     }
 
-    if let Some(id) = character_style
-        && let Some(existing) = state
-            .active()
-            .document()
-            .character_styles
-            .get(id)
-            .cloned()
-    {
-        let mut edited = existing.clone();
-        ui.indent("character-style-fields", |ui| {
-            ui.horizontal(|ui| {
-                ui.colored_label(Theme::TEXT_MUTED, "Name");
-                ui.text_edit_singleline(&mut edited.name);
-            });
-            if let Some(size) = optional_number(
-                ui,
-                "Style size",
-                Some(edited.format.size.unwrap_or(12.0)),
-                0.25,
-                1.0..=1440.0,
-                " pt",
-            ) {
-                edited.format.size = Some(size);
-            }
-        });
-        if edited != existing {
-            apply(state, Command::EditCharacterStyle { id, style: edited });
-        }
+    overrides_row(ui, state, story, target, character_style, paragraph_style);
+}
+
+/// What the text says over and above its styles, and the four things you can do
+/// about it.
+///
+/// InDesign's `+`, Clear Overrides, Redefine Style and Break Link to Style. The
+/// row is absent when there is nothing to say — no overrides and no attached
+/// style means all four buttons would be no-ops.
+fn overrides_row(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    story: StoryId,
+    target: std::ops::Range<usize>,
+    character_style: Option<CharacterStyleId>,
+    paragraph_style: Option<ParagraphStyleId>,
+) {
+    let Some(current) = state.active().document().story(story).cloned() else {
+        return;
+    };
+    let character_overrides = current.has_character_overrides(target.clone());
+    let paragraph_overrides = current.has_paragraph_overrides(target.clone());
+    let attached = character_style.is_some() || paragraph_style.is_some();
+
+    if !character_overrides && !paragraph_overrides && !attached {
+        return;
     }
+
+    ui.add_space(Theme::SPACING_MD);
+    if character_overrides || paragraph_overrides {
+        ui.colored_label(
+            Theme::ERROR,
+            "+ this text states formatting of its own, over its styles",
+        );
+    }
+
+    ui.horizontal_wrapped(|ui| {
+        if character_overrides && ui.button("Clear character overrides").clicked() {
+            apply(
+                state,
+                Command::ClearCharacterOverrides {
+                    story,
+                    range: target.clone(),
+                },
+            );
+        }
+        if paragraph_overrides && ui.button("Clear paragraph overrides").clicked() {
+            apply(
+                state,
+                Command::ClearParagraphOverrides {
+                    story,
+                    range: target.clone(),
+                },
+            );
+        }
+    });
+
+    ui.horizontal_wrapped(|ui| {
+        // Redefine needs both a style to move and a difference to move it to.
+        if character_overrides
+            && let Some(id) = character_style
+            && ui
+                .button("Redefine character style")
+                .on_hover_text("Make the style say what this text says")
+                .clicked()
+        {
+            apply(
+                state,
+                Command::RedefineCharacterStyle {
+                    id,
+                    story,
+                    range: target.clone(),
+                },
+            );
+        }
+        if (paragraph_overrides || character_overrides)
+            && let Some(id) = paragraph_style
+            && ui
+                .button("Redefine paragraph style")
+                .on_hover_text("Make the style say what this text says")
+                .clicked()
+        {
+            apply(
+                state,
+                Command::RedefineParagraphStyle {
+                    id,
+                    story,
+                    range: target.clone(),
+                },
+            );
+        }
+    });
+
+    ui.horizontal_wrapped(|ui| {
+        if character_style.is_some()
+            && ui
+                .button("Break character link")
+                .on_hover_text("Detach the style, keeping how this looks")
+                .clicked()
+        {
+            apply(
+                state,
+                Command::BreakCharacterStyleLink {
+                    story,
+                    range: target.clone(),
+                },
+            );
+        }
+        if paragraph_style.is_some()
+            && ui
+                .button("Break paragraph link")
+                .on_hover_text("Detach the style, keeping how this looks")
+                .clicked()
+        {
+            apply(
+                state,
+                Command::BreakParagraphStyleLink {
+                    story,
+                    range: target.clone(),
+                },
+            );
+        }
+    });
 }
 
 #[cfg(test)]

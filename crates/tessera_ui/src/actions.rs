@@ -23,16 +23,18 @@ pub enum Group {
     Align,
     View,
     Tool,
+    Type,
 }
 
 impl Group {
-    pub const ALL: [Group; 6] = [
+    pub const ALL: [Group; 7] = [
         Group::File,
         Group::Edit,
         Group::Object,
         Group::Align,
         Group::View,
         Group::Tool,
+        Group::Type,
     ];
 
     /// The menu this group appears under.
@@ -45,6 +47,7 @@ impl Group {
             Group::Edit => "Edit",
             Group::Object | Group::Align => "Object",
             Group::View | Group::Tool => "View",
+            Group::Type => "Type",
         }
     }
 }
@@ -52,6 +55,7 @@ impl Group {
 /// What an action does, named rather than performed.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Run {
+    ToggleStyles,
     NewDocument,
     Open,
     Save,
@@ -339,6 +343,15 @@ pub fn all() -> &'static [Action] {
             Run::ScreenMode(crate::app::ScreenMode::Slug),
         ),
         a("Zoom to fit", None, Group::View, ZoomToFit),
+        // The Type menu, which milestone 1.5 left empty because it had no
+        // commands. A menu is generated from this list, so adding the action is
+        // what makes the menu appear.
+        a(
+            "Paragraph and character styles",
+            Some("F11"),
+            Group::Type,
+            ToggleStyles,
+        ),
         //
         a(
             "Selection tool",
@@ -398,6 +411,10 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         Run::Save => crate::file_ops::save(state),
         Run::SaveAs => crate::file_ops::save_as(state),
         Run::ExportPdf => crate::file_ops::export_pdf(state),
+        Run::ToggleStyles => {
+            let window = &mut state.styles_window;
+            window.open = !window.open;
+        }
         Run::PickTool(tool) => state.active_tool = tool,
         Run::ScreenMode(mode) => state.screen_mode = mode,
         Run::ZoomToFit => state.active_mut().fitted = false,

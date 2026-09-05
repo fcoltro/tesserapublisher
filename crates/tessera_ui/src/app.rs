@@ -101,6 +101,25 @@ slotmap::new_key_type! {
     pub struct DocumentKey;
 }
 
+/// Which kind of style the styles window is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StyleKind {
+    #[default]
+    Paragraph,
+    Character,
+}
+
+/// The styles window's own state.
+///
+/// Defaults to closed, so the window cannot appear unasked.
+#[derive(Debug, Clone, Default)]
+pub struct StylesWindow {
+    pub open: bool,
+    pub kind: StyleKind,
+    pub character: Option<tessera_text::story::CharacterStyleId>,
+    pub paragraph: Option<tessera_text::story::ParagraphStyleId>,
+}
+
 /// Everything the application holds.
 ///
 /// Constructed with [`TesseraApp::headless`] in tests, so the command layer,
@@ -116,6 +135,13 @@ pub struct TesseraApp {
     pub shaper: Shaper,
 
     pub active_tool: Tool,
+
+    /// The styles window: open or not, and which style is being edited.
+    ///
+    /// View state rather than document data. Which style you happen to have
+    /// selected in a panel is not part of the document and must not make it
+    /// dirty, land in undo, or travel in the file.
+    pub styles_window: StylesWindow,
 
     /// How much of the document is shown, and whether the interface is.
     pub screen_mode: ScreenMode,
@@ -192,6 +218,7 @@ impl TesseraApp {
             active,
             shaper: Shaper::new(),
             active_tool: Tool::Select,
+            styles_window: StylesWindow::default(),
             screen_mode: ScreenMode::default(),
             anchor: tessera_geometry::Anchor::default(),
             constrain_proportions: false,
