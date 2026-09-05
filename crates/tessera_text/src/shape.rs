@@ -61,6 +61,13 @@ pub(crate) struct Placed {
     /// pair for the ends. **Empty when nothing in the paragraph is
     /// transformed**, which is the ordinary case and costs nothing.
     pub map: Vec<(usize, usize)>,
+    /// What was handed to parley, which is the stored text only while nothing
+    /// is transformed. Kept because the soft hyphens live in it, and a line
+    /// that ends at one has to be told.
+    pub shaped_text: String,
+    /// Whether this paragraph hyphenates, and so whether a line ending at a
+    /// soft hyphen needs a real one drawn.
+    pub hyphenate: bool,
 }
 
 impl Placed {
@@ -84,6 +91,119 @@ impl Placed {
         let i = self.map.partition_point(|(_, at)| *at <= stored);
         let (shaped, _) = self.map[i.saturating_sub(1)];
         shaped
+    }
+}
+
+/// How much room a hyphenated line keeps for the hyphen it might need.
+///
+/// A little over the widest hyphen a text face is likely to have at 12pt.
+/// Reserving a fixed amount rather than the exact glyph's width means the
+/// measure does not depend on which font a line happens to end in — and the
+/// cost of being generous is a slightly shorter line, while the cost of being
+/// mean is a hyphen hanging into the margin.
+const HYPHEN_RESERVE: f64 = 6.0;
+
+/// Swap a line's trailing soft hyphen for the font's real one.
+///
+/// parley breaks at U+00AD and leaves it zero-width, which is right for a soft
+/// hyphen that is *not* at a break and wrong for one that is. Only the last
+/// glyph of the line can be affected: a soft hyphen anywhere else is still
+/// meant to be invisible.
+fn draw_the_hyphen(
+    runs: &mut [ShapedRun],
+    fonts: &[FontData],
+    shaped_text: &str,
+    line: &parley::Line<'_, Brush>,
+) {
+    // Does this line actually end at one? `text_range` is in shaped
+    // coordinates, which is where the soft hyphens live.
+    let range = line.text_range();
+    if !shaped_text[range].ends_with(SOFT_HYPHEN) {
+        return;
+    }
+
+    let Some(run) = runs.last_mut() else {
+        return;
+    };
+    let Some(glyph) = run.glyphs.last_mut() else {
+        return;
+    };
+    let Some(font) = fonts.get(run.font_index) else {
+        return;
+    };
+    let Some((id, advance)) = hyphen_of(font, run.size) else {
+        return;
+    };
+
+    glyph.glyph_id = id;
+    glyph.advance = advance;
+}
+
+/// The glyph a font draws a hyphen with, and how wide it is at `size`.
+///
+/// `None` when the font has no hyphen at all, in which case the soft hyphen is
+/// left as it was — an invisible break is a poor answer, and a wrong glyph is
+/// a worse one.
+fn hyphen_of(font: &FontData, size: f32) -> Option<(u32, f64)> {
+    use skrifa::MetadataProvider as _;
+
+    let font = skrifa::FontRef::from_index(font.data.as_ref(), font.index).ok()?;
+    let id = font.charmap().map('-')?;
+    let advance = font
+        .glyph_metrics(
+            skrifa::instance::Size::new(size),
+            skrifa::instance::LocationRef::default(),
+        )
+        .advance_width(id)?;
+    Some((id.to_u32(), f64::from(advance)))
+}
+
+/// The invisible break opportunity a hyphenated word carries.
+const SOFT_HYPHEN: char = '\u{00AD}';
+
+/// Byte offsets within `text` where a word may be broken.
+///
+/// English only, and deliberately: `hypher` holds patterns for thirty-odd
+/// languages behind features, but a story has no language to choose between
+/// them. Shipping the rest would be paying for what nothing can select. A
+/// `language` on `CharacterFormat` is what unlocks them.
+fn syllable_breaks(text: &str) -> Vec<usize> {
+    let mut breaks = Vec::new();
+
+    // Words, in the plain sense: runs of letters. Hyphenating across
+    // punctuation is not something the patterns describe.
+    let mut start = None;
+    for (offset, character) in text.char_indices() {
+        if character.is_alphabetic() {
+            start.get_or_insert(offset);
+            continue;
+        }
+        if let Some(from) = start.take() {
+            push_breaks(&mut breaks, text, from, offset);
+        }
+    }
+    if let Some(from) = start {
+        push_breaks(&mut breaks, text, from, text.len());
+    }
+
+    breaks
+}
+
+fn push_breaks(breaks: &mut Vec<usize>, text: &str, from: usize, to: usize) {
+    let word = &text[from..to];
+    // Nothing worth breaking, and `hypher`'s own bounds would refuse anyway.
+    if word.chars().count() < 5 {
+        return;
+    }
+    let mut at = from;
+    let mut syllables = hypher::hyphenate(word, hypher::Lang::English).peekable();
+    while let Some(syllable) = syllables.next() {
+        at += syllable.len();
+        // Not after the last syllable: that is the end of the word, and a
+        // break there is not a hyphenation.
+        if syllables.peek().is_some() {
+            breaks.push(at);
+        }
     }
 }
 
@@ -111,6 +231,7 @@ fn shaping_text(
     story: &Story,
     styles: &dyn Styles,
     stored: std::ops::Range<usize>,
+    hyphenate: bool,
 ) -> (String, Vec<Piece>, Vec<(usize, usize)>) {
     use crate::story::Case;
 
@@ -128,8 +249,25 @@ fn shaping_text(
         let format = story.resolve_run(run, styles);
         let case = format.case.unwrap_or(Case::Normal);
 
+        // Where a word may be broken, if this paragraph hyphenates. Soft
+        // hyphens rather than real ones: parley breaks at U+00AD and gives it
+        // no width when it does not, so a word carries its break points around
+        // without them showing. What parley does *not* do is draw a hyphen
+        // where it breaks — that is put back when the glyphs are built.
+        let breaks: Vec<usize> = if hyphenate {
+            syllable_breaks(&story.text[from..to])
+        } else {
+            Vec::new()
+        };
+
         for (offset, character) in story.text[from..to].char_indices() {
             let at = from + offset;
+            if breaks.contains(&offset) {
+                // The soft hyphen belongs to the character it precedes, so a
+                // caret asking about that character is answered with it.
+                text.push(SOFT_HYPHEN);
+                transformed = true;
+            }
             map.push((text.len(), at));
 
             let piece_start = text.len();
@@ -537,7 +675,9 @@ impl Shaper {
             // What this paragraph actually shapes as, which is the stored
             // text only while nothing in it is transformed. Setting text in
             // capitals means shaping a different string.
-            let (shaped_text, pieces, map) = shaping_text(story, styles, start..content_end);
+            let hyphenate = format.hyphenate.unwrap_or(false);
+            let (shaped_text, pieces, map) =
+                shaping_text(story, styles, start..content_end, hyphenate);
 
             let mut builder =
                 self.layout_ctx
@@ -637,7 +777,15 @@ impl Shaper {
             }
 
             let mut layout: parley::Layout<Brush> = builder.build(&shaped_text);
-            break_with_first_line_indent(&mut layout, measure, indent_first);
+            // A hyphenated paragraph keeps room for the hyphen on every line.
+            //
+            // parley gives a soft hyphen no width, so it packs a line as though
+            // no hyphen were needed, and one drawn afterwards would hang past
+            // the measure. Reserving on every line costs a few points on the
+            // lines that do not end up hyphenated — the ordinary "hyphen zone"
+            // compromise — and never overflows, which the alternative does.
+            let reserve = if hyphenate { HYPHEN_RESERVE } else { 0.0 };
+            break_with_first_line_indent(&mut layout, measure - reserve, indent_first);
 
             // Alignment is per layout, which is now per paragraph — so two
             // paragraphs can finally disagree about it.
@@ -664,6 +812,8 @@ impl Shaper {
                 x: indent_left,
                 y,
                 map,
+                shaped_text,
+                hyphenate,
             });
             y += height + f64::from(format.space_after.unwrap_or(0.0));
         }
@@ -767,6 +917,15 @@ impl Shaper {
                         colour,
                         glyphs,
                     });
+                }
+
+                // A line that broke at a soft hyphen has to show one. parley
+                // breaks there and draws nothing, because it has no notion of a
+                // soft hyphen at all — so the zero-width glyph at the end of
+                // such a line is swapped for the font's real hyphen, whose
+                // width was reserved when the line was broken.
+                if paragraph.hyphenate {
+                    draw_the_hyphen(&mut runs, &fonts, &paragraph.shaped_text, &line);
                 }
 
                 lines.push(ShapedLine { runs, baseline });
@@ -1769,5 +1928,149 @@ mod tests {
         let story = Story::new("the quick brown fox");
         let placed = shaper.layout_paragraphs(&story, &NoStyles::default(), 400.0);
         assert!(placed.iter().all(|p| p.map.is_empty()));
+    }
+
+    // --- hyphenation --------------------------------------------------------
+
+    fn hyphenated(text: &str) -> Story {
+        use crate::story::ParagraphFormat;
+
+        let mut story = Story::new(text);
+        story.apply_paragraph_format(
+            0..1,
+            &ParagraphFormat {
+                hyphenate: Some(true),
+                ..ParagraphFormat::default()
+            },
+        );
+        story
+    }
+
+    #[test]
+    fn hyphenation_finds_the_places_a_word_may_break() {
+        // `hypher`'s own answer for "hyphenation" is hy-phen-ation.
+        let breaks = syllable_breaks("hyphenation");
+        assert!(!breaks.is_empty(), "no break points at all");
+        assert!(
+            breaks.iter().all(|b| *b > 0 && *b < "hyphenation".len()),
+            "a break at the edge of the word is not a hyphenation: {breaks:?}"
+        );
+    }
+
+    #[test]
+    fn a_short_word_is_not_hyphenated() {
+        assert!(syllable_breaks("the").is_empty());
+        assert!(syllable_breaks("cat sat").is_empty());
+    }
+
+    #[test]
+    fn hyphenation_fits_more_on_a_line() {
+        // The whole point. A measure too narrow for a long word leaves it
+        // hanging; hyphenated, it breaks.
+        let mut shaper = Shaper::new();
+        let text = "extraordinary";
+
+        let plain = shaper.shape(&Story::new(text), &NoStyles::default(), 60.0);
+        let broken = shaper.shape(&hyphenated(text), &NoStyles::default(), 60.0);
+
+        assert_eq!(plain.lines.len(), 1, "nothing can break a lone long word");
+        assert!(
+            broken.lines.len() > 1,
+            "hyphenated, it should break: {} lines",
+            broken.lines.len()
+        );
+    }
+
+    #[test]
+    fn a_hyphenated_line_ends_with_a_visible_hyphen() {
+        // parley breaks at a soft hyphen and draws nothing, which would split
+        // a word with no hyphen at all. The glyph has to be put back.
+        let mut shaper = Shaper::new();
+        let broken = shaper.shape(&hyphenated("extraordinary"), &NoStyles::default(), 60.0);
+        assert!(broken.lines.len() > 1, "needs to have broken");
+
+        let last = broken.lines[0]
+            .glyphs()
+            .last()
+            .copied()
+            .expect("a glyph on the first line");
+        let hyphen = shaper.shape(&Story::new("-"), &NoStyles::default(), 400.0);
+        let real = hyphen
+            .runs()
+            .next()
+            .and_then(|r| r.glyphs.first())
+            .copied()
+            .expect("a hyphen");
+
+        assert_eq!(last.glyph_id, real.glyph_id, "the font's own hyphen");
+        assert!(last.advance > 0.0, "and it takes up room");
+    }
+
+    #[test]
+    fn a_soft_hyphen_that_is_not_at_a_break_stays_invisible() {
+        // Only the last glyph of a broken line becomes a hyphen. The rest of
+        // the break points a word carries must not show.
+        let mut shaper = Shaper::new();
+        let wide = shaper.shape(&hyphenated("extraordinary"), &NoStyles::default(), 400.0);
+        let plain = shaper.shape(&Story::new("extraordinary"), &NoStyles::default(), 400.0);
+
+        let width = |t: &ShapedText| -> f64 {
+            t.runs()
+                .flat_map(|r| r.glyphs.iter())
+                .map(|g| g.advance)
+                .sum()
+        };
+        assert_eq!(wide.lines.len(), 1, "it fits, so nothing breaks");
+        assert!(
+            (width(&wide) - width(&plain)).abs() < 0.01,
+            "an unbroken hyphenated word is exactly as wide as a plain one: \
+             {} against {}",
+            width(&wide),
+            width(&plain)
+        );
+    }
+
+    #[test]
+    fn hyphenation_never_makes_a_line_longer_than_it_was() {
+        // Not "never exceeds the measure": parley lets a word that cannot break
+        // overflow, hyphenated or not, and the plain text here overhangs by
+        // more than the hyphenated one does. What the reserve has to guarantee
+        // is that adding a hyphen never makes matters worse — a line packed
+        // without room for it would hang the hyphen into the margin.
+        const MEASURE: f64 = 80.0;
+        let text = "extraordinary circumstances notwithstanding";
+
+        let mut shaper = Shaper::new();
+        let broken = shaper.shape(&hyphenated(text), &NoStyles::default(), MEASURE);
+        let plain = shaper.shape(&Story::new(text), &NoStyles::default(), MEASURE);
+
+        let overhang = |t: &ShapedText| -> f64 {
+            t.lines
+                .iter()
+                .map(|l| l.glyphs().map(|g| g.x + g.advance).fold(0.0_f64, f64::max))
+                .fold(0.0_f64, f64::max)
+        };
+
+        assert!(
+            overhang(&broken) <= overhang(&plain) + 0.01,
+            "hyphenated reaches {}, plain only {}",
+            overhang(&broken),
+            overhang(&plain)
+        );
+        assert!(
+            broken.lines.len() > plain.lines.len(),
+            "and it broke into more lines, which is the point"
+        );
+    }
+
+    #[test]
+    fn a_paragraph_nobody_asked_to_hyphenate_is_untouched() {
+        let mut shaper = Shaper::new();
+        let story = Story::new("extraordinary");
+        let placed = shaper.layout_paragraphs(&story, &NoStyles::default(), 400.0);
+        assert!(
+            placed.iter().all(|p| !p.hyphenate && p.map.is_empty()),
+            "no break points inserted, and so no map"
+        );
     }
 }

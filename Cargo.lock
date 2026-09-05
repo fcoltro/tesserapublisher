@@ -1638,6 +1638,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hypher"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bef68590049bab63a464eee1a1158ac04c6f6613a546d8d90f78636b8b94f171"
+
+[[package]]
 name = "icu_collections"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3654,10 +3660,12 @@ dependencies = [
 name = "tessera_text"
 version = "0.1.0"
 dependencies = [
+ "hypher",
  "parley",
  "proptest",
  "serde",
  "serde_json",
+ "skrifa 0.44.0",
  "slotmap",
  "tessera_color",
  "unicode-segmentation",
@@ -3895,7 +3903,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -14,6 +14,8 @@ parley.workspace = true
 serde.workspace = true
 slotmap.workspace = true
 unicode-segmentation.workspace = true
+hypher = { version = "0.1.7", default-features = false, features = ["alloc", "english"] }
+skrifa = "0.44"
 
 [dev-dependencies]
 proptest.workspace = true
