@@ -462,21 +462,72 @@ The reason a layout tool is not a drawing tool.
 > change the style, and watch every one of them update. Type in a language
 > that needs an IME and see the composition preview on the canvas.
 
-- [ ] Font enumeration and family/style resolution across all three platforms.
-- [~] Character formatting: family, weight, style, size, leading and tracking
-  are in the model and reach the screen and the PDF — a story shapes run by
-  run. *Case and baseline shift are modelled but not yet shaped, and nothing
-  in the interface can set any of it: the typography inspector is phase 4.*
-- [ ] Paragraph formatting: alignment, justification, indents, space before
-  and after, hyphenation, drop caps.
-- [ ] Paragraph and character styles, with live cascade on edit.
-- [ ] Text selection by click-drag, double-click word, triple-click paragraph.
+> **Phases 1 to 4 built, 2026-09-05.** 608 headless tests and 6 GPU-backed
+> ones pass, clippy clean at `-D warnings`. **The acceptance sentence has not
+> been performed by hand.** Four bugs in three sessions of real use were found
+> by hand and missed by the suite, which is the whole argument for doing it.
+
+- [~] Font enumeration and family/style resolution. `Shaper::families()`
+  enumerates fontique, sorted and deduplicated, built on first ask. A family
+  the machine lacks is substituted by parley and **marked** in the inspector,
+  which is the visible half. *Exercised on Windows only; the enumeration is
+  fontique's and platform-independent, but "across all three platforms" is a
+  claim no test here has earned.*
+- [x] Character formatting: family, weight, style, size, leading and tracking
+  are in the model, reach the screen and the PDF, and are settable from the
+  inspector. A story shapes run by run. *Case and baseline shift stay modelled
+  but unshaped, and so have no controls.*
+- [~] Paragraph formatting. Alignment works and is settable. *Indents, space
+  before and after, hyphenation and drop caps are in the model and preserved by
+  the format, but have no controls and are not drawn* — parley lays out a whole
+  story as one layout, so a per-paragraph measure or a gap between paragraphs
+  cannot be expressed. The same constraint means a story whose paragraphs
+  disagree about alignment is left ragged-left rather than shown wrong in one of
+  them. **All of it needs one layout per paragraph, which also reaches the caret
+  and is its own piece of work.** Justification is available as an alignment;
+  H&J parameters are not modelled.
+- [x] Paragraph and character styles, with live cascade on edit. Define from
+  what the panel shows, attach to a range, edit the style and everything drawn
+  through it follows. The shape cache is keyed on **resolved** formatting so a
+  style edit is visible; keying on the runs would have made styles silently not
+  work.
+- [x] Text selection by click-drag, double-click word, triple-click paragraph.
 - [ ] IME composition rendered on canvas -> **moved to milestone 2.5.** It is
   a windowing concern rather than a text-model one, and the only item here
   that no headless test can reach; leaving it in would have made the whole
   milestone unverifiable by the suite.
-- [ ] Right-to-left and bidirectional text render correctly.
-- [ ] Typography inspector panel.
+- [ ] Right-to-left and bidirectional text render correctly. parley shapes
+  bidi text already; nothing here has been tested against it, and the caret
+  arithmetic assumes visual order follows logical order.
+- [x] Typography inspector panel. Family, size, leading, tracking, weight,
+  italic, alignment, and the two style pickers with a New button that defines a
+  style from what is shown. A field the selection disagrees about reads `Mixed`
+  rather than a number, because a zero there is a lie the reader cannot see
+  through.
+
+### What this milestone corrected on its way through
+
+Recorded because each was a wrong belief rather than a missing feature.
+
+- `Story::style` held the whole story's formatting and was what the shaper read,
+  so runs were built for two phases without being consulted. Removing it at
+  format version 7 is what made two live-path bugs *reachable*: the keystroke
+  path wrote `story.text` alone, leaving the runs describing a length the text
+  no longer had, and formatting applied while a caret was live was undone by the
+  next letter typed.
+- `ShapeKey` was built from `story.runs`, which do not change when a named style
+  does — so "change the style and watch both follow" would have failed silently.
+  Keyed on resolved formatting now.
+- `ParagraphStyle` had two places for character formatting and the cascade read
+  only one, so half of them did nothing.
+- A run could straddle a paragraph boundary, and `resolve_run` reads the
+  paragraph a run *starts* in — so styling one paragraph restyled its
+  neighbour. The trap in the fix was `merge_equal_neighbours`, which folded the
+  split runs straight back in the same call.
+- Three format-migration tests in phase 2 passed while testing nothing, because
+  `rewrite_version_for_test` round-trips through the current model. Every
+  migration test since is built from a hand-made archive and checked by
+  disabling the migration to confirm it goes red.
 
 ---
 
