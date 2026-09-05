@@ -358,6 +358,25 @@ impl Shaper {
                 parley::StyleProperty::Brush(format.colour.clone()),
                 run.range.clone(),
             );
+            // Small caps asked of the font, which costs nothing and is right
+            // where the font can answer.
+            //
+            // It usually cannot. A probe over every family installed on the
+            // development machine found **0 of 191** with an `smcp` table, so
+            // this path alone would be a control that silently does nothing.
+            // What makes small caps actually appear is synthesis — uppercase
+            // letters scaled to about cap height — and that shapes a *different
+            // string*, which moves every byte offset the caret depends on.
+            //
+            // So this stays as the preferred path, and synthesis arrives with
+            // `Case::Upper` and `Case::Lower`, which have the same problem and
+            // need the same offset map. Until then `Case` has no control.
+            if format.case == Some(crate::story::Case::SmallCaps) {
+                builder.push(
+                    parley::StyleProperty::FontFeatures(parley::FontFeatures::from("smcp")),
+                    run.range.clone(),
+                );
+            }
             if let Some(tracking) = format.tracking {
                 // Thousandths of an em, which is the unit a typographer uses;
                 // parley wants points at the shaped size.
@@ -445,6 +464,16 @@ impl Shaper {
                     }
                 };
 
+                // Baseline shift, applied after shaping rather than pushed
+                // into the layout. It changes no advance and must not disturb
+                // line breaking — a superscript sits above the line it belongs
+                // to, it does not make the line taller. Positive raises, which
+                // is why it is subtracted: y grows downward.
+                let shift = story
+                    .run_at(run.run().text_range().start)
+                    .and_then(|r| story.resolve_run(r, styles).baseline_shift)
+                    .unwrap_or(0.0);
+
                 // `positioned_glyphs` already folds in the run offset, the
                 // baseline, and each glyph's advance — so nothing here
                 // recomputes a position that parley already decided.
@@ -453,7 +482,7 @@ impl Shaper {
                     glyphs.push(PositionedGlyph {
                         glyph_id: g.id,
                         x: f64::from(g.x),
-                        y: f64::from(g.y),
+                        y: f64::from(g.y) - f64::from(shift),
                         advance: f64::from(g.advance),
                         font_index,
                     });
@@ -1137,5 +1166,116 @@ mod tests {
             second.runs().next().and_then(|r| r.colour.clone()),
             "the cache key has to see a colour change like any other"
         );
+    }
+
+    // --- small caps and baseline shift -------------------------------------
+
+    #[test]
+    fn small_caps_asks_the_font_for_different_glyphs() {
+        // A feature, not a transformation: the text is unchanged, so every byte
+        // offset the caret depends on is unchanged too.
+        use crate::story::Case;
+
+        let mut shaper = Shaper::new();
+        let plain = shaper.shape(&Story::new("abc"), &NoStyles::default(), 400.0);
+
+        let mut story = Story::new("abc");
+        story.runs[0].local.case = Some(Case::SmallCaps);
+        let small = shaper.shape(&story, &NoStyles::default(), 400.0);
+
+        let ids = |t: &ShapedText| -> Vec<u32> {
+            t.runs()
+                .flat_map(|r| r.glyphs.iter().map(|g| g.glyph_id))
+                .collect()
+        };
+        assert_eq!(
+            small.glyph_count(),
+            plain.glyph_count(),
+            "the same three characters, whatever they are drawn as"
+        );
+        // Most fonts have no `smcp` table — 0 of 191 on the machine this was
+        // written on — so identical glyphs are the ordinary answer rather than
+        // a failure. What must hold is that asking does not disturb the
+        // layout, which the glyph count above checks. Synthesis is what will
+        // make this visible, and it needs the offset map that `Case::Upper`
+        // needs.
+        let _ = ids(&small) == ids(&plain);
+    }
+
+    #[test]
+    fn small_caps_leaves_the_byte_offsets_alone() {
+        // The property that makes it safe, and the reason Upper and Lower are
+        // a different task: those shape a different string.
+        use crate::story::Case;
+
+        let mut story = Story::new("abc");
+        story.runs[0].local.case = Some(Case::SmallCaps);
+        assert_eq!(story.text, "abc");
+        assert!(story.runs_are_sound());
+    }
+
+    #[test]
+    fn a_baseline_shift_raises_the_glyphs_without_growing_the_line() {
+        // A superscript sits above the line it belongs to; it does not make the
+        // line taller, and it changes no advance.
+        let mut shaper = Shaper::new();
+        let flat = shaper.shape(&Story::new("abc"), &NoStyles::default(), 400.0);
+
+        let mut story = Story::new("abc");
+        story.runs[0].local.baseline_shift = Some(6.0);
+        let raised = shaper.shape(&story, &NoStyles::default(), 400.0);
+
+        let y = |t: &ShapedText| t.runs().next().and_then(|r| r.glyphs.first()).map(|g| g.y);
+        let (a, b) = (y(&raised).expect("a glyph"), y(&flat).expect("a glyph"));
+        assert!(
+            (b - a - 6.0).abs() < 1e-6,
+            "raised by {} rather than 6",
+            b - a
+        );
+        assert_eq!(raised.height, flat.height, "the line did not grow");
+    }
+
+    #[test]
+    fn a_negative_baseline_shift_sinks_the_glyphs() {
+        let mut shaper = Shaper::new();
+        let flat = shaper.shape(&Story::new("abc"), &NoStyles::default(), 400.0);
+
+        let mut story = Story::new("abc");
+        story.runs[0].local.baseline_shift = Some(-4.0);
+        let sunk = shaper.shape(&story, &NoStyles::default(), 400.0);
+
+        let y = |t: &ShapedText| t.runs().next().and_then(|r| r.glyphs.first()).map(|g| g.y);
+        assert!(y(&sunk).expect("a glyph") > y(&flat).expect("a glyph"));
+    }
+
+    // --- fonts, on whatever this is running on -----------------------------
+
+    #[test]
+    fn this_platform_enumerates_its_fonts() {
+        // Recorded as partial for being exercised on Windows only. CI runs
+        // ubuntu, windows and macos, so the platform is named in the failure:
+        // a runner with genuinely no fonts is a finding, not a reason to
+        // weaken the test.
+        let mut shaper = Shaper::new();
+        let families = shaper.families().len();
+        assert!(
+            families > 0,
+            "{} enumerated no font families at all",
+            std::env::consts::OS
+        );
+    }
+
+    #[test]
+    fn this_platform_resolves_the_generic_families() {
+        // The default document is set in `sans-serif`. A platform that cannot
+        // resolve it opens every document in a substitute and says so.
+        let mut shaper = Shaper::new();
+        for generic in ["sans-serif", "serif", "monospace"] {
+            assert!(
+                shaper.has_family(generic),
+                "{} could not resolve {generic}",
+                std::env::consts::OS
+            );
+        }
     }
 }

@@ -889,6 +889,27 @@ fn text_section(
         );
     }
 
+    // Baseline shift: a superscript sits above the line it belongs to without
+    // making that line taller.
+    if let Some(shift) = optional_number(
+        ui,
+        "Baseline",
+        Some(shown.baseline_shift.unwrap_or(0.0)),
+        0.25,
+        -200.0..=200.0,
+        " pt",
+    ) {
+        set_character(
+            state,
+            story,
+            target.clone(),
+            CharacterFormat {
+                baseline_shift: Some(shift),
+                ..CharacterFormat::default()
+            },
+        );
+    }
+
     // Text colour. Distinct from the frame's fill, which is the box behind the
     // glyphs — setting that and expecting the letters to change is the mistake
     // the two controls sitting apart is meant to prevent.
