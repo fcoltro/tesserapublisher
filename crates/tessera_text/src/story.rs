@@ -122,6 +122,14 @@ pub struct ParagraphFormat {
 }
 
 impl ParagraphFormat {
+    /// Whether this format says nothing at all.
+    ///
+    /// What decides whether a paragraph carries an override — InDesign's `+`
+    /// beside a style name.
+    pub fn is_empty(&self) -> bool {
+        *self == ParagraphFormat::default()
+    }
+
     pub fn over(&self, base: &ParagraphFormat) -> ParagraphFormat {
         ParagraphFormat {
             alignment: self.alignment.or(base.alignment),
@@ -140,6 +148,14 @@ impl ParagraphFormat {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CharacterStyle {
     pub name: String,
+    /// The style this one is based on, as InDesign has it.
+    ///
+    /// A child states only its differences, so editing the parent moves every
+    /// child except where the child disagrees. `#[serde(default)]` reads an
+    /// absent field as "based on nothing", which is why adding this needed no
+    /// format version: a document written before it loads unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub based_on: Option<CharacterStyleId>,
     pub format: CharacterFormat,
 }
 
@@ -147,6 +163,9 @@ pub struct CharacterStyle {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ParagraphStyle {
     pub name: String,
+    /// The style this one is based on. See [`CharacterStyle::based_on`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub based_on: Option<ParagraphStyleId>,
     /// Including the character formatting the paragraph imposes, which lives in
     /// [`ParagraphFormat::character`].
     ///
@@ -169,6 +188,68 @@ pub trait Styles {
     fn paragraph(&self, id: ParagraphStyleId) -> Option<&ParagraphFormat>;
     /// The floor of the cascade.
     fn document_default(&self) -> CharacterFormat;
+
+    /// The style `id` is based on, if any.
+    ///
+    /// Provided as "nothing" so that a `Styles` with no notion of inheritance —
+    /// [`NoStyles`], and every test helper — needs no changes.
+    fn character_parent(&self, _id: CharacterStyleId) -> Option<CharacterStyleId> {
+        None
+    }
+
+    fn paragraph_parent(&self, _id: ParagraphStyleId) -> Option<ParagraphStyleId> {
+        None
+    }
+
+    /// `id`'s formatting with its whole based-on chain folded in.
+    ///
+    /// Oldest ancestor first, so a child overrides its parent — which is what
+    /// makes "based on" mean anything.
+    ///
+    /// A cycle is broken rather than trusted away. `Styles` is a trait a
+    /// document implements and a document can be loaded from a file somebody
+    /// edited by hand, so a style based on its own descendant is reachable; and
+    /// this runs once per run per shape, where a loop would not fail but hang.
+    fn character_chain(&self, id: CharacterStyleId) -> CharacterFormat {
+        let mut chain = Vec::new();
+        let mut current = Some(id);
+        while let Some(next) = current {
+            if chain.contains(&next) {
+                break;
+            }
+            chain.push(next);
+            current = self.character_parent(next);
+        }
+
+        let mut format = CharacterFormat::default();
+        for id in chain.into_iter().rev() {
+            if let Some(own) = self.character(id) {
+                format = own.over(&format);
+            }
+        }
+        format
+    }
+
+    /// As above, for a paragraph style.
+    fn paragraph_chain(&self, id: ParagraphStyleId) -> ParagraphFormat {
+        let mut chain = Vec::new();
+        let mut current = Some(id);
+        while let Some(next) = current {
+            if chain.contains(&next) {
+                break;
+            }
+            chain.push(next);
+            current = self.paragraph_parent(next);
+        }
+
+        let mut format = ParagraphFormat::default();
+        for id in chain.into_iter().rev() {
+            if let Some(own) = self.paragraph(id) {
+                format = own.over(&format);
+            }
+        }
+        format
+    }
 }
 
 /// No named styles at all, and a plain default.
@@ -364,18 +445,14 @@ impl Story {
             .iter()
             .find(|p| p.range.contains(&run.range.start))
         {
-            if let Some(id) = para.style
-                && let Some(style) = styles.paragraph(id)
-            {
-                format = style.character.over(&format);
+            if let Some(id) = para.style {
+                format = styles.paragraph_chain(id).character.over(&format);
             }
             format = para.local.character.over(&format);
         }
 
-        if let Some(id) = run.style
-            && let Some(style) = styles.character(id)
-        {
-            format = style.over(&format);
+        if let Some(id) = run.style {
+            format = styles.character_chain(id).over(&format);
         }
 
         run.local.over(&format)
@@ -561,6 +638,189 @@ impl Story {
         self.merge_equal_neighbours();
     }
 
+    /// Whether any run in the range states formatting of its own.
+    ///
+    /// InDesign's `+` beside a style name. Local formatting counts as an
+    /// override whether or not the run has a named style: with no character
+    /// style, it still overrides what the paragraph style said.
+    pub fn has_character_overrides(&self, range: Range<usize>) -> bool {
+        self.spans_in(range).any(|run| !run.local.is_empty())
+    }
+
+    /// Whether any paragraph the range touches states formatting of its own.
+    pub fn has_paragraph_overrides(&self, range: Range<usize>) -> bool {
+        if self.text.is_empty() {
+            return false;
+        }
+        let bounds = self.paragraph_bounds(
+            range.start.min(self.text.len())
+                ..range.end.min(self.text.len()).max(range.start.min(self.text.len())),
+        );
+        self.paragraphs
+            .iter()
+            .filter(|p| p.range.start < bounds.end && bounds.start < p.range.end)
+            .any(|p| !p.local.is_empty())
+    }
+
+    /// Drop the local formatting in the range, keeping the named styles.
+    ///
+    /// InDesign's Clear Overrides. The text goes back to what its styles say it
+    /// should be, which is the point of having said so.
+    pub fn clear_character_overrides(&mut self, range: Range<usize>) {
+        let start = range.start.min(self.text.len());
+        let end = range.end.min(self.text.len());
+        if start >= end {
+            return;
+        }
+        split_span_at(&mut self.runs, start, |r| &mut r.range);
+        split_span_at(&mut self.runs, end, |r| &mut r.range);
+        for run in &mut self.runs {
+            if run.range.start >= start && run.range.end <= end {
+                run.local = CharacterFormat::default();
+            }
+        }
+        self.merge_equal_neighbours();
+    }
+
+    /// As above, for the paragraphs a range touches.
+    pub fn clear_paragraph_overrides(&mut self, range: Range<usize>) {
+        if self.text.is_empty() {
+            return;
+        }
+        let start = range.start.min(self.text.len());
+        let end = range.end.min(self.text.len()).max(start);
+        let bounds = self.paragraph_bounds(start..end);
+        split_span_at(&mut self.paragraphs, bounds.start, |p| &mut p.range);
+        split_span_at(&mut self.paragraphs, bounds.end, |p| &mut p.range);
+        split_span_at(&mut self.runs, bounds.start, |r| &mut r.range);
+        split_span_at(&mut self.runs, bounds.end, |r| &mut r.range);
+        for para in &mut self.paragraphs {
+            if para.range.start >= bounds.start && para.range.end <= bounds.end {
+                para.local = ParagraphFormat::default();
+            }
+        }
+        self.merge_equal_neighbours();
+    }
+
+    /// The runs the range covers, or the one a caret would join.
+    ///
+    /// The same rule three readers needed, written once: an empty range is a
+    /// caret and reads the run to its left, because that is the run
+    /// [`Story::insert_text`] will extend.
+    fn spans_in(&self, range: Range<usize>) -> impl Iterator<Item = &Run> + '_ {
+        let caret = range.start >= range.end;
+        let at = range.start;
+        let single = caret
+            .then(|| {
+                self.runs
+                    .iter()
+                    .rev()
+                    .find(|r| r.range.start < at)
+                    .or_else(|| self.runs.first())
+            })
+            .flatten();
+
+        single.into_iter().chain(
+            self.runs
+                .iter()
+                .filter(move |r| !caret && r.range.start < range.end && range.start < r.range.end),
+        )
+    }
+
+    /// The **local** formatting every run in the range agrees on.
+    ///
+    /// What the text says over and above its style, which is what Redefine
+    /// Style pushes into the definition. Distinct from
+    /// [`Story::common_format`], which resolves through the cascade and so
+    /// would push the whole inherited appearance into the style — flattening
+    /// the very inheritance the style exists to express.
+    pub fn common_format_local(&self, range: Range<usize>) -> CharacterFormat {
+        let mut runs = self.spans_in(range);
+        let Some(first) = runs.next() else {
+            return CharacterFormat::default();
+        };
+        let mut common = first.local.clone();
+        for run in runs {
+            blank_if_different(&mut common.family, run.local.family.clone());
+            blank_if_different(&mut common.size, run.local.size);
+            blank_if_different(&mut common.weight, run.local.weight);
+            blank_if_different(&mut common.italic, run.local.italic);
+            blank_if_different(&mut common.tracking, run.local.tracking);
+            blank_if_different(&mut common.case, run.local.case);
+            blank_if_different(&mut common.baseline_shift, run.local.baseline_shift);
+            blank_if_different(&mut common.line_height, run.local.line_height);
+            blank_if_different(&mut common.colour, run.local.colour.clone());
+        }
+        common
+    }
+
+    /// Detach a range from one character style, keeping how it looks.
+    ///
+    /// InDesign's Break Link to Style: the same fold as deleting the style, but
+    /// on a range rather than on every story. `format` is the style's
+    /// **resolved chain**, not its own format — a child style whose parent
+    /// supplied the family would otherwise lose it on detaching.
+    pub fn clear_character_style_link(
+        &mut self,
+        range: Range<usize>,
+        id: CharacterStyleId,
+        format: &CharacterFormat,
+    ) {
+        let start = range.start.min(self.text.len());
+        let end = range.end.min(self.text.len());
+        if start >= end {
+            return;
+        }
+        split_span_at(&mut self.runs, start, |r| &mut r.range);
+        split_span_at(&mut self.runs, end, |r| &mut r.range);
+        for run in &mut self.runs {
+            if run.range.start >= start && run.range.end <= end && run.style == Some(id) {
+                run.local = run.local.over(format);
+                run.style = None;
+            }
+        }
+        self.merge_equal_neighbours();
+    }
+
+    /// As above, for the paragraphs a range touches.
+    pub fn clear_paragraph_style_link(
+        &mut self,
+        range: Range<usize>,
+        id: ParagraphStyleId,
+        format: &ParagraphFormat,
+    ) {
+        if self.text.is_empty() {
+            return;
+        }
+        let start = range.start.min(self.text.len());
+        let end = range.end.min(self.text.len()).max(start);
+        let bounds = self.paragraph_bounds(start..end);
+        split_span_at(&mut self.paragraphs, bounds.start, |p| &mut p.range);
+        split_span_at(&mut self.paragraphs, bounds.end, |p| &mut p.range);
+        split_span_at(&mut self.runs, bounds.start, |r| &mut r.range);
+        split_span_at(&mut self.runs, bounds.end, |r| &mut r.range);
+
+        let mut detached: Vec<Range<usize>> = Vec::new();
+        for para in &mut self.paragraphs {
+            if para.range.start >= bounds.start
+                && para.range.end <= bounds.end
+                && para.style == Some(id)
+            {
+                para.local = para.local.over(format);
+                para.style = None;
+                detached.push(para.range.clone());
+            }
+        }
+        for range in detached {
+            for run in &mut self.runs {
+                if run.range.start >= range.start && run.range.end <= range.end {
+                    run.local = run.local.over(&format.character);
+                }
+            }
+        }
+        self.merge_equal_neighbours();
+    }
+
     /// Remove every reference to a character style, keeping the appearance.
     ///
     /// What deleting a style does. The style's format is merged **under** each
@@ -728,10 +988,8 @@ impl Story {
         styles: &dyn Styles,
     ) -> ParagraphFormat {
         let mut format = ParagraphFormat::default();
-        if let Some(id) = para.style
-            && let Some(style) = styles.paragraph(id)
-        {
-            format = style.over(&format);
+        if let Some(id) = para.style {
+            format = styles.paragraph_chain(id);
         }
         para.local.over(&format)
     }
@@ -1842,6 +2100,347 @@ mod run_tests {
             None,
             "and the second paragraph was never using it"
         );
+        assert!(story.runs_are_sound());
+    }
+
+
+    // --- overrides, InDesign's `+` ----------------------------------------
+
+    #[test]
+    fn text_that_states_nothing_of_its_own_has_no_overrides() {
+        let mut story = Story::new("abcd");
+        story.set_character_style(0..4, Some(CharacterStyleId::default()));
+        assert!(!story.has_character_overrides(0..4));
+    }
+
+    #[test]
+    fn local_formatting_is_an_override_even_with_no_named_style() {
+        // With no character style, local formatting still overrides what the
+        // paragraph style said — so InDesign shows the `+` either way.
+        let mut story = Story::new("abcd");
+        story.apply_character_format(0..2, &bold());
+        assert!(story.has_character_overrides(0..4));
+        assert!(story.has_character_overrides(0..2));
+        assert!(
+            !story.has_character_overrides(2..4),
+            "and the untouched half has none"
+        );
+    }
+
+    #[test]
+    fn clearing_overrides_leaves_the_style_attached() {
+        let mut story = Story::new("abcd");
+        let id = CharacterStyleId::default();
+        story.set_character_style(0..4, Some(id));
+        story.apply_character_format(0..4, &bold());
+        assert!(story.has_character_overrides(0..4));
+
+        story.clear_character_overrides(0..4);
+
+        assert!(!story.has_character_overrides(0..4));
+        assert_eq!(
+            story.runs[0].style,
+            Some(id),
+            "clearing overrides is not breaking the link"
+        );
+        assert!(story.runs_are_sound());
+    }
+
+    #[test]
+    fn clearing_overrides_touches_only_the_range() {
+        let mut story = Story::new("abcd");
+        story.apply_character_format(0..4, &bold());
+        story.clear_character_overrides(0..2);
+
+        assert!(!story.has_character_overrides(0..2));
+        assert!(story.has_character_overrides(2..4));
+        assert!(story.runs_are_sound());
+    }
+
+    #[test]
+    fn a_paragraph_override_is_reported_and_cleared() {
+        let mut story = Story::new("one\ntwo");
+        story.apply_paragraph_format(0..1, &centred());
+
+        assert!(story.has_paragraph_overrides(0..1));
+        assert!(!story.has_paragraph_overrides(5..6), "the other paragraph");
+
+        story.clear_paragraph_overrides(0..1);
+        assert!(!story.has_paragraph_overrides(0..1));
+        assert!(story.runs_are_sound());
+    }
+
+    // --- based on ---------------------------------------------------------
+
+    /// A `Styles` over real tables, so ids differ and `based_on` can be tested.
+    struct Table {
+        characters: slotmap::SlotMap<CharacterStyleId, CharacterStyle>,
+        paragraphs: slotmap::SlotMap<ParagraphStyleId, ParagraphStyle>,
+    }
+
+    impl Styles for Table {
+        fn character(&self, id: CharacterStyleId) -> Option<&CharacterFormat> {
+            self.characters.get(id).map(|s| &s.format)
+        }
+        fn paragraph(&self, id: ParagraphStyleId) -> Option<&ParagraphFormat> {
+            self.paragraphs.get(id).map(|s| &s.format)
+        }
+        fn document_default(&self) -> CharacterFormat {
+            NoStyles::default().default
+        }
+        fn character_parent(&self, id: CharacterStyleId) -> Option<CharacterStyleId> {
+            self.characters.get(id).and_then(|s| s.based_on)
+        }
+        fn paragraph_parent(&self, id: ParagraphStyleId) -> Option<ParagraphStyleId> {
+            self.paragraphs.get(id).and_then(|s| s.based_on)
+        }
+    }
+
+    fn table() -> Table {
+        Table {
+            characters: slotmap::SlotMap::with_key(),
+            paragraphs: slotmap::SlotMap::with_key(),
+        }
+    }
+
+    #[test]
+    fn a_child_style_inherits_what_it_does_not_state() {
+        let mut t = table();
+        let parent = t.characters.insert(CharacterStyle {
+            name: "Parent".to_string(),
+            based_on: None,
+            format: CharacterFormat {
+                family: Some("Georgia".to_string()),
+                size: Some(10.0),
+                ..CharacterFormat::default()
+            },
+        });
+        let child = t.characters.insert(CharacterStyle {
+            name: "Child".to_string(),
+            based_on: Some(parent),
+            format: CharacterFormat {
+                size: Some(24.0),
+                ..CharacterFormat::default()
+            },
+        });
+
+        let resolved = t.character_chain(child);
+        assert_eq!(resolved.size, Some(24.0), "the child's own wins");
+        assert_eq!(
+            resolved.family.as_deref(),
+            Some("Georgia"),
+            "and the parent supplies what the child left unsaid"
+        );
+    }
+
+    #[test]
+    fn editing_the_parent_moves_the_child() {
+        // The whole reason "based on" exists.
+        let mut t = table();
+        let parent = t.characters.insert(CharacterStyle {
+            name: "Parent".to_string(),
+            based_on: None,
+            format: CharacterFormat {
+                family: Some("Georgia".to_string()),
+                ..CharacterFormat::default()
+            },
+        });
+        let child = t.characters.insert(CharacterStyle {
+            name: "Child".to_string(),
+            based_on: Some(parent),
+            format: CharacterFormat::default(),
+        });
+
+        t.characters[parent].format.family = Some("Futura".to_string());
+        assert_eq!(
+            t.character_chain(child).family.as_deref(),
+            Some("Futura"),
+            "the child followed"
+        );
+    }
+
+    #[test]
+    fn a_three_deep_chain_resolves_oldest_first() {
+        let mut t = table();
+        let a = t.characters.insert(CharacterStyle {
+            name: "A".to_string(),
+            based_on: None,
+            format: CharacterFormat {
+                size: Some(10.0),
+                weight: Some(400),
+                ..CharacterFormat::default()
+            },
+        });
+        let b = t.characters.insert(CharacterStyle {
+            name: "B".to_string(),
+            based_on: Some(a),
+            format: CharacterFormat {
+                weight: Some(700),
+                ..CharacterFormat::default()
+            },
+        });
+        let c = t.characters.insert(CharacterStyle {
+            name: "C".to_string(),
+            based_on: Some(b),
+            format: CharacterFormat {
+                size: Some(30.0),
+                ..CharacterFormat::default()
+            },
+        });
+
+        let resolved = t.character_chain(c);
+        assert_eq!(resolved.size, Some(30.0), "C beat A");
+        assert_eq!(resolved.weight, Some(700), "and B still beat A");
+    }
+
+    #[test]
+    fn a_cycle_in_the_based_on_chain_terminates() {
+        // A document can be loaded from a file somebody edited by hand, and
+        // this runs once per run per shape — a loop would not fail, it would
+        // hang the application.
+        let mut t = table();
+        let a = t.characters.insert(CharacterStyle {
+            name: "A".to_string(),
+            based_on: None,
+            format: CharacterFormat {
+                size: Some(10.0),
+                ..CharacterFormat::default()
+            },
+        });
+        let b = t.characters.insert(CharacterStyle {
+            name: "B".to_string(),
+            based_on: Some(a),
+            format: CharacterFormat::default(),
+        });
+        t.characters[a].based_on = Some(b);
+
+        assert_eq!(
+            t.character_chain(b).size,
+            Some(10.0),
+            "the chain still resolves rather than looping"
+        );
+        assert_eq!(t.character_chain(a).size, Some(10.0));
+    }
+
+    #[test]
+    fn a_style_based_on_itself_terminates() {
+        let mut t = table();
+        let a = t.characters.insert(CharacterStyle {
+            name: "A".to_string(),
+            based_on: None,
+            format: CharacterFormat {
+                size: Some(10.0),
+                ..CharacterFormat::default()
+            },
+        });
+        t.characters[a].based_on = Some(a);
+        assert_eq!(t.character_chain(a).size, Some(10.0));
+    }
+
+    #[test]
+    fn a_paragraph_style_chain_carries_its_character_half() {
+        let mut t = table();
+        let parent = t.paragraphs.insert(ParagraphStyle {
+            name: "Parent".to_string(),
+            based_on: None,
+            format: ParagraphFormat {
+                alignment: Some(Alignment::Centre),
+                character: CharacterFormat {
+                    size: Some(10.0),
+                    ..CharacterFormat::default()
+                },
+                ..ParagraphFormat::default()
+            },
+        });
+        let child = t.paragraphs.insert(ParagraphStyle {
+            name: "Child".to_string(),
+            based_on: Some(parent),
+            format: ParagraphFormat::default(),
+        });
+
+        let resolved = t.paragraph_chain(child);
+        assert_eq!(resolved.alignment, Some(Alignment::Centre));
+        assert_eq!(resolved.character.size, Some(10.0));
+    }
+
+    #[test]
+    fn a_run_resolves_through_the_whole_style_chain() {
+        // The chain has to reach the text, not just the style table.
+        let mut t = table();
+        let parent = t.characters.insert(CharacterStyle {
+            name: "Parent".to_string(),
+            based_on: None,
+            format: CharacterFormat {
+                family: Some("Georgia".to_string()),
+                ..CharacterFormat::default()
+            },
+        });
+        let child = t.characters.insert(CharacterStyle {
+            name: "Child".to_string(),
+            based_on: Some(parent),
+            format: CharacterFormat {
+                size: Some(24.0),
+                ..CharacterFormat::default()
+            },
+        });
+
+        let mut story = Story::new("abcd");
+        story.set_character_style(0..4, Some(child));
+
+        let resolved = story.resolve_run(&story.runs[0], &t);
+        assert_eq!(resolved.size, Some(24.0));
+        assert_eq!(resolved.family.as_deref(), Some("Georgia"));
+    }
+
+
+    // --- redefine and break link ------------------------------------------
+
+    #[test]
+    fn the_local_overrides_are_read_apart_from_the_cascade() {
+        // Redefine Style pushes what the *text* says into the definition. If it
+        // read the resolved format instead, it would push the whole inherited
+        // appearance in and flatten the inheritance the style exists for.
+        let mut story = Story::new("abcd");
+        story.apply_character_format(0..4, &bold());
+
+        let local = story.common_format_local(0..4);
+        assert_eq!(local.weight, Some(700));
+        assert_eq!(local.size, None, "the inherited size is not an override");
+
+        let resolved = story.common_format(0..4, &NoStyles::default());
+        assert_eq!(resolved.size, Some(12.0), "which the resolved form does show");
+    }
+
+    #[test]
+    fn breaking_a_link_keeps_the_look_and_drops_the_style() {
+        let mut story = Story::new("abcd");
+        let id = CharacterStyleId::default();
+        story.set_character_style(0..4, Some(id));
+
+        let chain = CharacterFormat {
+            family: Some("Georgia".to_string()),
+            size: Some(9.0),
+            ..CharacterFormat::default()
+        };
+        story.clear_character_style_link(0..4, id, &chain);
+
+        assert_eq!(story.runs[0].style, None);
+        assert_eq!(story.runs[0].local.family.as_deref(), Some("Georgia"));
+        assert_eq!(story.runs[0].local.size, Some(9.0));
+        assert!(story.runs_are_sound());
+    }
+
+    #[test]
+    fn breaking_a_link_on_part_of_a_range_leaves_the_rest_styled() {
+        let mut story = Story::new("abcd");
+        let id = CharacterStyleId::default();
+        story.set_character_style(0..4, Some(id));
+
+        story.clear_character_style_link(0..2, id, &CharacterFormat::default());
+
+        assert_eq!(story.runs.len(), 2, "{:?}", story.runs);
+        assert_eq!(story.runs[0].style, None);
+        assert_eq!(story.runs[1].style, Some(id));
         assert!(story.runs_are_sound());
     }
 

@@ -1344,6 +1344,7 @@ fn style_rows(
             state,
             Command::DefineParagraphStyle(ParagraphStyle {
                 name: format!("Paragraph style {}", paragraphs.len() + 1),
+                based_on: None,
                 format,
             }),
         );
@@ -1448,6 +1449,7 @@ fn style_rows(
             state,
             Command::DefineCharacterStyle(CharacterStyle {
                 name: format!("Character style {}", characters.len() + 1),
+                based_on: None,
                 format,
             }),
         );

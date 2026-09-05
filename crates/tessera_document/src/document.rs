@@ -333,6 +333,55 @@ impl Document {
         self.paragraph_styles.insert(style)
     }
 
+    /// Whether basing `child` on `parent` would make a cycle.
+    ///
+    /// Resolution survives a cycle — it carries a visited set — but a style
+    /// based on its own descendant is still nonsense, and the honest place to
+    /// refuse it is where it would be created. The style picker asks this
+    /// before offering a candidate, so the answer is "not offered" rather than
+    /// "rejected".
+    pub fn character_based_on_would_cycle(
+        &self,
+        child: CharacterStyleId,
+        parent: CharacterStyleId,
+    ) -> bool {
+        let mut seen = Vec::new();
+        let mut current = Some(parent);
+        while let Some(id) = current {
+            if id == child {
+                return true;
+            }
+            if seen.contains(&id) {
+                // Already broken; adding to it changes nothing.
+                return true;
+            }
+            seen.push(id);
+            current = self.character_styles.get(id).and_then(|s| s.based_on);
+        }
+        false
+    }
+
+    /// As above, for paragraph styles.
+    pub fn paragraph_based_on_would_cycle(
+        &self,
+        child: ParagraphStyleId,
+        parent: ParagraphStyleId,
+    ) -> bool {
+        let mut seen = Vec::new();
+        let mut current = Some(parent);
+        while let Some(id) = current {
+            if id == child {
+                return true;
+            }
+            if seen.contains(&id) {
+                return true;
+            }
+            seen.push(id);
+            current = self.paragraph_styles.get(id).and_then(|s| s.based_on);
+        }
+        false
+    }
+
     /// Remove a named character style.
     ///
     /// The caller is responsible for the text that referenced it — see
@@ -899,6 +948,14 @@ impl Styles for Document {
 
     fn paragraph(&self, id: ParagraphStyleId) -> Option<&ParagraphFormat> {
         self.paragraph_styles.get(id).map(|s| &s.format)
+    }
+
+    fn character_parent(&self, id: CharacterStyleId) -> Option<CharacterStyleId> {
+        self.character_styles.get(id).and_then(|s| s.based_on)
+    }
+
+    fn paragraph_parent(&self, id: ParagraphStyleId) -> Option<ParagraphStyleId> {
+        self.paragraph_styles.get(id).and_then(|s| s.based_on)
     }
 
     fn document_default(&self) -> CharacterFormat {

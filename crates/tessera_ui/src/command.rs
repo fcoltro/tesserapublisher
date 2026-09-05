@@ -16,7 +16,7 @@ use tessera_document::nodes::{Frame, FrameKind};
 use tessera_geometry::{DocRect, Transform};
 use tessera_text::story::{
     CharacterFormat, CharacterStyle, CharacterStyleId, ParagraphFormat, ParagraphStyle,
-    ParagraphStyleId, Story,
+    ParagraphStyleId, Story, Styles,
 };
 
 use crate::app::{Clipboard, TesseraApp};
@@ -91,6 +91,61 @@ pub enum Command {
     EditParagraphStyle {
         id: ParagraphStyleId,
         style: ParagraphStyle,
+    },
+
+    /// Drop the local formatting in a range, keeping the named styles.
+    ///
+    /// InDesign's Clear Overrides. The counterpart of `RedefineStyle`: one
+    /// discards the difference between the text and its style, the other keeps
+    /// the difference and moves the style to it.
+    ClearCharacterOverrides {
+        story: StoryId,
+        range: std::ops::Range<usize>,
+    },
+    ClearParagraphOverrides {
+        story: StoryId,
+        range: std::ops::Range<usize>,
+    },
+
+    /// Make a style say what the text in `range` is currently saying, then drop
+    /// that text's overrides.
+    ///
+    /// InDesign's Redefine Style. Both halves are one command because either on
+    /// its own changes the appearance: redefining without clearing leaves the
+    /// overrides winning over the very definition they were just written into,
+    /// so the style would appear not to have taken.
+    RedefineCharacterStyle {
+        id: CharacterStyleId,
+        story: StoryId,
+        range: std::ops::Range<usize>,
+    },
+    RedefineParagraphStyle {
+        id: ParagraphStyleId,
+        story: StoryId,
+        range: std::ops::Range<usize>,
+    },
+
+    /// Detach a range from its named style, keeping how it looks.
+    ///
+    /// InDesign's Break Link to Style. The same fold as deleting the style, on
+    /// one range instead of every story.
+    BreakCharacterStyleLink {
+        story: StoryId,
+        range: std::ops::Range<usize>,
+    },
+    BreakParagraphStyleLink {
+        story: StoryId,
+        range: std::ops::Range<usize>,
+    },
+
+    /// Base one style on another, or on nothing.
+    SetCharacterStyleBasedOn {
+        id: CharacterStyleId,
+        based_on: Option<CharacterStyleId>,
+    },
+    SetParagraphStyleBasedOn {
+        id: ParagraphStyleId,
+        based_on: Option<ParagraphStyleId>,
     },
 
     /// Delete a named style, keeping every appearance it was producing.
@@ -448,6 +503,137 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         Command::EditParagraphStyle { id, style } => {
             if let Some(existing) = state.active_mut().document_mut().paragraph_style_mut(id) {
                 *existing = style;
+            }
+        }
+
+        Command::ClearCharacterOverrides { story, range } => {
+            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
+                s.clear_character_overrides(range.clone());
+            }
+            if let Some(buffer) = editing_buffer_for(state, story) {
+                buffer.clear_character_overrides(range);
+            }
+        }
+
+        Command::ClearParagraphOverrides { story, range } => {
+            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
+                s.clear_paragraph_overrides(range.clone());
+            }
+            if let Some(buffer) = editing_buffer_for(state, story) {
+                buffer.clear_paragraph_overrides(range);
+            }
+        }
+
+        Command::RedefineCharacterStyle { id, story, range } => {
+            // What the text says over and above its style, read before
+            // anything moves.
+            let Some(overrides) = state
+                .active()
+                .document()
+                .story(story)
+                .map(|s| s.common_format_local(range.clone()))
+            else {
+                return;
+            };
+            if let Some(style) = state.active_mut().document_mut().character_style_mut(id) {
+                style.format = overrides.over(&style.format);
+            }
+            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
+                s.clear_character_overrides(range.clone());
+            }
+            if let Some(buffer) = editing_buffer_for(state, story) {
+                buffer.clear_character_overrides(range);
+            }
+        }
+
+        Command::RedefineParagraphStyle { id, story, range } => {
+            let Some((paragraph, character)) =
+                state.active().document().story(story).map(|s| {
+                    (
+                        s.common_paragraph_format(range.clone()),
+                        s.common_format_local(range.clone()),
+                    )
+                })
+            else {
+                return;
+            };
+            if let Some(style) = state.active_mut().document_mut().paragraph_style_mut(id) {
+                let mut wanted = paragraph;
+                wanted.character = character.over(&wanted.character);
+                style.format = wanted.over(&style.format);
+            }
+            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
+                s.clear_paragraph_overrides(range.clone());
+                s.clear_character_overrides(range.clone());
+            }
+            if let Some(buffer) = editing_buffer_for(state, story) {
+                buffer.clear_paragraph_overrides(range.clone());
+                buffer.clear_character_overrides(range);
+            }
+        }
+
+        Command::BreakCharacterStyleLink { story, range } => {
+            // The style's resolved format has to be read before the link goes,
+            // and it is the *chain* rather than the one style: a child style
+            // whose parent supplied the family would otherwise lose it.
+            let Some((id, format)) = state.active().document().story(story).and_then(|s| {
+                let (id, _) = s.common_character_style(range.clone());
+                id.map(|id| (id, state.active().document().character_chain(id)))
+            }) else {
+                return;
+            };
+            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
+                s.clear_character_style_link(range.clone(), id, &format);
+            }
+            if let Some(buffer) = editing_buffer_for(state, story) {
+                buffer.clear_character_style_link(range, id, &format);
+            }
+        }
+
+        Command::BreakParagraphStyleLink { story, range } => {
+            let Some((id, format)) = state.active().document().story(story).and_then(|s| {
+                let (id, _) = s.common_paragraph_style(range.clone());
+                id.map(|id| (id, state.active().document().paragraph_chain(id)))
+            }) else {
+                return;
+            };
+            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
+                s.clear_paragraph_style_link(range.clone(), id, &format);
+            }
+            if let Some(buffer) = editing_buffer_for(state, story) {
+                buffer.clear_paragraph_style_link(range, id, &format);
+            }
+        }
+
+        Command::SetCharacterStyleBasedOn { id, based_on } => {
+            // A cycle is refused here as well as hidden from the picker: the
+            // command is public and undo replays it.
+            if let Some(parent) = based_on
+                && (parent == id
+                    || state
+                        .active()
+                        .document()
+                        .character_based_on_would_cycle(id, parent))
+            {
+                return;
+            }
+            if let Some(style) = state.active_mut().document_mut().character_style_mut(id) {
+                style.based_on = based_on;
+            }
+        }
+
+        Command::SetParagraphStyleBasedOn { id, based_on } => {
+            if let Some(parent) = based_on
+                && (parent == id
+                    || state
+                        .active()
+                        .document()
+                        .paragraph_based_on_would_cycle(id, parent))
+            {
+                return;
+            }
+            if let Some(style) = state.active_mut().document_mut().paragraph_style_mut(id) {
+                style.based_on = based_on;
             }
         }
 
@@ -2543,6 +2729,7 @@ mod tests {
             &mut state,
             Command::DefineParagraphStyle(ParagraphStyle {
                 name: "Body".to_string(),
+                based_on: None,
                 format: ParagraphFormat {
                     character: CharacterFormat {
                         size: Some(10.0),
@@ -2604,6 +2791,7 @@ mod tests {
                 id,
                 style: ParagraphStyle {
                     name: "Body".to_string(),
+                    based_on: None,
                     format: ParagraphFormat {
                         character: CharacterFormat {
                             size: Some(24.0),
@@ -2635,6 +2823,7 @@ mod tests {
             &mut state,
             Command::DefineCharacterStyle(CharacterStyle {
                 name: "Lead".to_string(),
+                based_on: None,
                 format: CharacterFormat::default(),
             }),
         );
@@ -2653,6 +2842,7 @@ mod tests {
                 id,
                 style: CharacterStyle {
                     name: "Lead".to_string(),
+                    based_on: None,
                     format: CharacterFormat {
                         size: Some(30.0),
                         ..CharacterFormat::default()
@@ -2685,6 +2875,7 @@ mod tests {
             &mut state,
             Command::DefineCharacterStyle(CharacterStyle {
                 name: "Lead".to_string(),
+                based_on: None,
                 format: CharacterFormat {
                     size: Some(9.0),
                     ..CharacterFormat::default()
@@ -2727,6 +2918,7 @@ mod tests {
             &mut state,
             Command::DefineCharacterStyle(CharacterStyle {
                 name: "Lead".to_string(),
+                based_on: None,
                 format: CharacterFormat::default(),
             }),
         );
@@ -2777,6 +2969,7 @@ mod tests {
             &mut state,
             Command::DefineCharacterStyle(CharacterStyle {
                 name: "Lead".to_string(),
+                based_on: None,
                 format: CharacterFormat {
                     size: Some(30.0),
                     ..CharacterFormat::default()
@@ -2844,6 +3037,7 @@ mod tests {
             &mut state,
             Command::DefineCharacterStyle(CharacterStyle {
                 name: "Lead".to_string(),
+                based_on: None,
                 format: CharacterFormat {
                     size: Some(30.0),
                     ..CharacterFormat::default()
@@ -2898,6 +3092,7 @@ mod tests {
             &mut state,
             Command::DefineCharacterStyle(CharacterStyle {
                 name: "Lead".to_string(),
+                based_on: None,
                 format: CharacterFormat {
                     size: Some(9.0),
                     weight: Some(700),
@@ -2942,6 +3137,7 @@ mod tests {
             &mut state,
             Command::DefineCharacterStyle(CharacterStyle {
                 name: "Lead".to_string(),
+                based_on: None,
                 format: CharacterFormat {
                     size: Some(30.0),
                     ..CharacterFormat::default()
@@ -2984,6 +3180,7 @@ mod tests {
             &mut state,
             Command::DefineParagraphStyle(ParagraphStyle {
                 name: "Body".to_string(),
+                based_on: None,
                 format: ParagraphFormat {
                     alignment: Some(Alignment::Centre),
                     ..ParagraphFormat::default()
@@ -3015,6 +3212,342 @@ mod tests {
             s.resolve_paragraph(&s.paragraphs[0], doc).alignment,
             Some(Alignment::Centre),
             "still centred, with no style to centre it"
+        );
+    }
+
+
+    // --- the InDesign style operations ------------------------------------
+
+    /// A text frame whose text is styled by a character style stating `size`.
+    fn a_styled_frame(
+        text: &str,
+        size: f32,
+    ) -> (TesseraApp, StoryId, CharacterStyleId) {
+        let (mut state, _, story) = a_text_frame(text);
+        apply(
+            &mut state,
+            Command::DefineCharacterStyle(CharacterStyle {
+                name: "Lead".to_string(),
+                based_on: None,
+                format: CharacterFormat {
+                    size: Some(size),
+                    ..CharacterFormat::default()
+                },
+            }),
+        );
+        let id = state
+            .active()
+            .document()
+            .character_styles
+            .keys()
+            .next()
+            .expect("style");
+        let end = text.len();
+        apply(
+            &mut state,
+            Command::SetCharacterStyleOf {
+                story,
+                range: 0..end,
+                style: Some(id),
+            },
+        );
+        (state, story, id)
+    }
+
+    #[test]
+    fn clearing_overrides_returns_the_text_to_its_style() {
+        let (mut state, story, id) = a_styled_frame("abcd", 9.0);
+        apply(
+            &mut state,
+            Command::SetCharacterFormat {
+                story,
+                range: 0..4,
+                format: CharacterFormat {
+                    size: Some(50.0),
+                    ..CharacterFormat::default()
+                },
+            },
+        );
+        assert!(
+            state
+                .active()
+                .document()
+                .story(story)
+                .expect("story")
+                .has_character_overrides(0..4)
+        );
+
+        apply(
+            &mut state,
+            Command::ClearCharacterOverrides {
+                story,
+                range: 0..4,
+            },
+        );
+
+        let doc = state.active().document();
+        let s = doc.story(story).expect("story");
+        assert!(!s.has_character_overrides(0..4));
+        assert_eq!(s.runs[0].style, Some(id), "the style is still attached");
+        assert_eq!(
+            s.resolve_run(&s.runs[0], doc).size,
+            Some(9.0),
+            "and the text is what the style says again"
+        );
+    }
+
+    #[test]
+    fn redefining_a_style_moves_the_definition_to_the_text() {
+        // The other half of Clear Overrides: keep the difference, and move the
+        // style to it.
+        let (mut state, story, id) = a_styled_frame("abcd", 9.0);
+        apply(
+            &mut state,
+            Command::SetCharacterFormat {
+                story,
+                range: 0..4,
+                format: CharacterFormat {
+                    size: Some(50.0),
+                    ..CharacterFormat::default()
+                },
+            },
+        );
+
+        apply(
+            &mut state,
+            Command::RedefineCharacterStyle {
+                id,
+                story,
+                range: 0..4,
+            },
+        );
+
+        let doc = state.active().document();
+        assert_eq!(
+            doc.character_styles[id].format.size,
+            Some(50.0),
+            "the style now says what the text said"
+        );
+        let s = doc.story(story).expect("story");
+        assert!(
+            !s.has_character_overrides(0..4),
+            "and the override is gone, since the style covers it"
+        );
+        assert_eq!(
+            s.resolve_run(&s.runs[0], doc).size,
+            Some(50.0),
+            "with the appearance unchanged, which is the whole requirement"
+        );
+    }
+
+    #[test]
+    fn redefining_reads_the_overrides_not_the_resolved_appearance() {
+        // Reading the resolved format would push the inherited family and
+        // leading into the style too, flattening the inheritance the style
+        // exists to express.
+        let (mut state, story, id) = a_styled_frame("abcd", 9.0);
+        apply(
+            &mut state,
+            Command::SetCharacterFormat {
+                story,
+                range: 0..4,
+                format: CharacterFormat {
+                    weight: Some(700),
+                    ..CharacterFormat::default()
+                },
+            },
+        );
+
+        apply(
+            &mut state,
+            Command::RedefineCharacterStyle {
+                id,
+                story,
+                range: 0..4,
+            },
+        );
+
+        let style = &state.active().document().character_styles[id];
+        assert_eq!(style.format.weight, Some(700), "the override moved in");
+        assert_eq!(style.format.size, Some(9.0), "the style kept its own size");
+        assert_eq!(
+            style.format.family, None,
+            "and did not swallow the inherited family"
+        );
+    }
+
+    #[test]
+    fn breaking_a_link_keeps_the_look_with_no_style_attached() {
+        let (mut state, story, _) = a_styled_frame("abcd", 9.0);
+
+        apply(
+            &mut state,
+            Command::BreakCharacterStyleLink {
+                story,
+                range: 0..4,
+            },
+        );
+
+        let doc = state.active().document();
+        assert_eq!(doc.character_styles.len(), 1, "the style itself survives");
+        let s = doc.story(story).expect("story");
+        assert_eq!(s.runs[0].style, None, "but this text no longer uses it");
+        assert_eq!(s.resolve_run(&s.runs[0], doc).size, Some(9.0));
+    }
+
+    #[test]
+    fn breaking_a_link_carries_what_the_parent_style_supplied() {
+        // The fold uses the resolved *chain*, not the style's own format. A
+        // child style whose parent gave it the family would otherwise lose the
+        // family on detaching, and nothing would say why.
+        let (mut state, story, parent) = a_styled_frame("abcd", 9.0);
+        apply(
+            &mut state,
+            Command::EditCharacterStyle {
+                id: parent,
+                style: CharacterStyle {
+                    name: "Parent".to_string(),
+                    based_on: None,
+                    format: CharacterFormat {
+                        family: Some("Georgia".to_string()),
+                        size: Some(9.0),
+                        ..CharacterFormat::default()
+                    },
+                },
+            },
+        );
+        apply(
+            &mut state,
+            Command::DefineCharacterStyle(CharacterStyle {
+                name: "Child".to_string(),
+                based_on: Some(parent),
+                format: CharacterFormat {
+                    size: Some(24.0),
+                    ..CharacterFormat::default()
+                },
+            }),
+        );
+        let child = state
+            .active()
+            .document()
+            .character_styles
+            .keys()
+            .find(|id| *id != parent)
+            .expect("the child");
+        apply(
+            &mut state,
+            Command::SetCharacterStyleOf {
+                story,
+                range: 0..4,
+                style: Some(child),
+            },
+        );
+
+        apply(
+            &mut state,
+            Command::BreakCharacterStyleLink {
+                story,
+                range: 0..4,
+            },
+        );
+
+        let s = state.active().document().story(story).expect("story");
+        assert_eq!(s.runs[0].local.size, Some(24.0), "the child's own size");
+        assert_eq!(
+            s.runs[0].local.family.as_deref(),
+            Some("Georgia"),
+            "and the family only its parent ever stated"
+        );
+    }
+
+    #[test]
+    fn basing_a_style_on_another_makes_the_text_follow_the_parent() {
+        let (mut state, story, parent) = a_styled_frame("abcd", 9.0);
+        apply(
+            &mut state,
+            Command::DefineCharacterStyle(CharacterStyle {
+                name: "Child".to_string(),
+                based_on: None,
+                format: CharacterFormat::default(),
+            }),
+        );
+        let child = state
+            .active()
+            .document()
+            .character_styles
+            .keys()
+            .find(|id| *id != parent)
+            .expect("the child");
+        apply(
+            &mut state,
+            Command::SetCharacterStyleOf {
+                story,
+                range: 0..4,
+                style: Some(child),
+            },
+        );
+
+        apply(
+            &mut state,
+            Command::SetCharacterStyleBasedOn {
+                id: child,
+                based_on: Some(parent),
+            },
+        );
+
+        let doc = state.active().document();
+        let s = doc.story(story).expect("story");
+        assert_eq!(
+            s.resolve_run(&s.runs[0], doc).size,
+            Some(9.0),
+            "the text took the parent's size through the child"
+        );
+    }
+
+    #[test]
+    fn a_style_cannot_be_based_on_itself_or_on_its_own_descendant() {
+        // Resolution survives a cycle, but creating one is still nonsense, and
+        // the command refuses it as well as the picker hiding it — the command
+        // is public and undo replays it.
+        let (mut state, _, parent) = a_styled_frame("abcd", 9.0);
+        apply(
+            &mut state,
+            Command::DefineCharacterStyle(CharacterStyle {
+                name: "Child".to_string(),
+                based_on: Some(parent),
+                format: CharacterFormat::default(),
+            }),
+        );
+        let child = state
+            .active()
+            .document()
+            .character_styles
+            .keys()
+            .find(|id| *id != parent)
+            .expect("the child");
+
+        apply(
+            &mut state,
+            Command::SetCharacterStyleBasedOn {
+                id: parent,
+                based_on: Some(child),
+            },
+        );
+        assert_eq!(
+            state.active().document().character_styles[parent].based_on, None,
+            "basing a parent on its own child is refused"
+        );
+
+        apply(
+            &mut state,
+            Command::SetCharacterStyleBasedOn {
+                id: parent,
+                based_on: Some(parent),
+            },
+        );
+        assert_eq!(
+            state.active().document().character_styles[parent].based_on, None,
+            "and so is basing one on itself"
         );
     }
 

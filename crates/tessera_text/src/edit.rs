@@ -155,6 +155,36 @@ impl EditBuffer {
         self.story.flatten_paragraph_style(id, format);
     }
 
+    /// Drop the local formatting in a range of the buffer's own story.
+    pub fn clear_character_overrides(&mut self, range: Range<usize>) {
+        self.story.clear_character_overrides(range);
+    }
+
+    /// As above, for the paragraphs a range touches.
+    pub fn clear_paragraph_overrides(&mut self, range: Range<usize>) {
+        self.story.clear_paragraph_overrides(range);
+    }
+
+    /// Detach a range of the buffer's own story from a character style.
+    pub fn clear_character_style_link(
+        &mut self,
+        range: Range<usize>,
+        id: crate::story::CharacterStyleId,
+        format: &crate::story::CharacterFormat,
+    ) {
+        self.story.clear_character_style_link(range, id, format);
+    }
+
+    /// As above, for the paragraphs a range touches.
+    pub fn clear_paragraph_style_link(
+        &mut self,
+        range: Range<usize>,
+        id: crate::story::ParagraphStyleId,
+        format: &crate::story::ParagraphFormat,
+    ) {
+        self.story.clear_paragraph_style_link(range, id, format);
+    }
+
     pub fn insert(&mut self, text: &str) {
         self.ime_preedit = None;
         self.delete_selection();
