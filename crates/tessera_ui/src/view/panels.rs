@@ -6,8 +6,8 @@ use tessera_document::ids::StoryId;
 use tessera_document::nodes::{Orientation, PagePreset};
 use tessera_geometry::{Anchor, Unit};
 use tessera_text::story::{
-    Alignment, CharacterFormat, CharacterStyle, CharacterStyleId, ParagraphFormat,
-    ParagraphStyle, ParagraphStyleId,
+    Alignment, CharacterFormat, CharacterStyle, CharacterStyleId, ParagraphFormat, ParagraphStyle,
+    ParagraphStyleId,
 };
 
 use crate::app::TesseraApp;
@@ -614,7 +614,12 @@ fn dashes_match(a: &[f64], b: &[f64]) -> bool {
 ///
 /// `tooltip` is not decoration: an icon says what it means only to someone who
 /// already knows, so every one of these carries its own name.
-pub(crate) fn icon_button(ui: &mut Ui, icon: crate::icons::Icon, tooltip: &str, active: bool) -> bool {
+pub(crate) fn icon_button(
+    ui: &mut Ui,
+    icon: crate::icons::Icon,
+    tooltip: &str,
+    active: bool,
+) -> bool {
     let size = Vec2::splat(Theme::TOOL_SIZE * 0.72);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
 
@@ -622,7 +627,11 @@ pub(crate) fn icon_button(ui: &mut Ui, icon: crate::icons::Icon, tooltip: &str, 
         ui.painter().rect_filled(
             rect,
             3.0,
-            if active { Theme::ACCENT } else { Theme::HOVER_BG },
+            if active {
+                Theme::ACCENT
+            } else {
+                Theme::HOVER_BG
+            },
         );
     }
     let tint = if active {
@@ -970,9 +979,17 @@ fn text_section(
         ui.colored_label(Theme::TEXT_MUTED, "Align");
         for (icon, name, alignment) in [
             (crate::icons::Icon::AlignLeft, "Left", Alignment::Left),
-            (crate::icons::Icon::AlignCentreH, "Centre", Alignment::Centre),
+            (
+                crate::icons::Icon::AlignCentreH,
+                "Centre",
+                Alignment::Centre,
+            ),
             (crate::icons::Icon::AlignRight, "Right", Alignment::Right),
-            (crate::icons::Icon::AlignJustify, "Justify", Alignment::Justify),
+            (
+                crate::icons::Icon::AlignJustify,
+                "Justify",
+                Alignment::Justify,
+            ),
         ] {
             if icon_button(ui, icon, name, paragraph.alignment == Some(alignment)) {
                 alignment_change = Some(alignment);
@@ -1024,7 +1041,10 @@ fn family_picker(
             .selected_text(label)
             .show_ui(ui, |ui| {
                 for family in state.shaper.families() {
-                    if ui.selectable_label(shown == Some(family.as_str()), family).clicked() {
+                    if ui
+                        .selectable_label(shown == Some(family.as_str()), family)
+                        .clicked()
+                    {
                         chosen = Some(family.clone());
                     }
                 }
@@ -1341,12 +1361,7 @@ pub fn status_bar(ui: &mut Ui, state: &mut TesseraApp) {
 /// A style is defined *from* what the panel is currently showing. That is the
 /// only route that needs no dialog, and it is how a designer actually works:
 /// set a paragraph until it looks right, then name it.
-fn style_rows(
-    ui: &mut Ui,
-    state: &mut TesseraApp,
-    story: StoryId,
-    target: std::ops::Range<usize>,
-) {
+fn style_rows(ui: &mut Ui, state: &mut TesseraApp, story: StoryId, target: std::ops::Range<usize>) {
     let Some(current) = state.active().document().story(story).cloned() else {
         return;
     };
@@ -1821,5 +1836,4 @@ mod tests {
             "the caret is elsewhere, so this frame formats whole"
         );
     }
-
 }

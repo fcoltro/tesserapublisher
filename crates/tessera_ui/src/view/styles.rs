@@ -115,64 +115,56 @@ fn paragraph_side(ui: &mut Ui, state: &mut TesseraApp) {
 
             ui.add_space(Theme::SPACING_SM);
             ui.horizontal(|ui| {
-            if crate::view::panels::icon_button(
-                ui,
-                crate::icons::Icon::Plus,
-                "New style, stating nothing",
-                false,
-            ) {
-                apply(
-                    state,
-                    Command::DefineParagraphStyle(ParagraphStyle {
-                        name: format!("Paragraph style {}", styles.len() + 1),
-                        based_on: None,
-                        // Nothing specified. A new style that pinned every
-                        // property would be a style you could only subtract
-                        // from, and subtracting is the thing no interface makes
-                        // obvious.
-                        format: ParagraphFormat::default(),
-                    }),
-                );
-                state.styles_window.paragraph = state
-                    .active()
-                    .document()
-                    .paragraph_styles
-                    .keys()
-                    .last();
-            }
-            if let Some(id) = selected {
                 if crate::view::panels::icon_button(
                     ui,
-                    crate::icons::Icon::Duplicate,
-                    "Duplicate this style",
+                    crate::icons::Icon::Plus,
+                    "New style, stating nothing",
                     false,
-                ) && let Some(existing) =
-                        state.active().document().paragraph_styles.get(id).cloned()
-                {
+                ) {
                     apply(
                         state,
                         Command::DefineParagraphStyle(ParagraphStyle {
-                            name: format!("{} copy", existing.name),
-                            ..existing
+                            name: format!("Paragraph style {}", styles.len() + 1),
+                            based_on: None,
+                            // Nothing specified. A new style that pinned every
+                            // property would be a style you could only subtract
+                            // from, and subtracting is the thing no interface makes
+                            // obvious.
+                            format: ParagraphFormat::default(),
                         }),
                     );
-                    state.styles_window.paragraph = state
-                        .active()
-                        .document()
-                        .paragraph_styles
-                        .keys()
-                        .last();
+                    state.styles_window.paragraph =
+                        state.active().document().paragraph_styles.keys().last();
                 }
-                if crate::view::panels::icon_button(
-                    ui,
-                    crate::icons::Icon::Trash,
-                    "Delete — the text keeps how it looks",
-                    false,
-                ) {
-                    apply(state, Command::DeleteParagraphStyle { id });
-                    state.styles_window.paragraph = None;
+                if let Some(id) = selected {
+                    if crate::view::panels::icon_button(
+                        ui,
+                        crate::icons::Icon::Duplicate,
+                        "Duplicate this style",
+                        false,
+                    ) && let Some(existing) =
+                        state.active().document().paragraph_styles.get(id).cloned()
+                    {
+                        apply(
+                            state,
+                            Command::DefineParagraphStyle(ParagraphStyle {
+                                name: format!("{} copy", existing.name),
+                                ..existing
+                            }),
+                        );
+                        state.styles_window.paragraph =
+                            state.active().document().paragraph_styles.keys().last();
+                    }
+                    if crate::view::panels::icon_button(
+                        ui,
+                        crate::icons::Icon::Trash,
+                        "Delete — the text keeps how it looks",
+                        false,
+                    ) {
+                        apply(state, Command::DeleteParagraphStyle { id });
+                        state.styles_window.paragraph = None;
+                    }
                 }
-            }
             });
         });
 
@@ -291,10 +283,7 @@ fn paragraph_fields(
     optional_flag(ui, "Hyphenate", &mut edited.format.hyphenate);
 
     if let Some(based_on) = chosen_parent {
-        apply(
-            state,
-            Command::SetParagraphStyleBasedOn { id, based_on },
-        );
+        apply(state, Command::SetParagraphStyleBasedOn { id, based_on });
     }
     if edited != existing {
         apply(state, Command::EditParagraphStyle { id, style: edited });
@@ -336,52 +325,52 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp) {
 
             ui.add_space(Theme::SPACING_SM);
             ui.horizontal(|ui| {
-            if crate::view::panels::icon_button(
-                ui,
-                crate::icons::Icon::Plus,
-                "New style, stating nothing",
-                false,
-            ) {
-                apply(
-                    state,
-                    Command::DefineCharacterStyle(CharacterStyle {
-                        name: format!("Character style {}", styles.len() + 1),
-                        based_on: None,
-                        format: CharacterFormat::default(),
-                    }),
-                );
-                state.styles_window.character =
-                    state.active().document().character_styles.keys().last();
-            }
-            if let Some(id) = selected {
                 if crate::view::panels::icon_button(
                     ui,
-                    crate::icons::Icon::Duplicate,
-                    "Duplicate this style",
+                    crate::icons::Icon::Plus,
+                    "New style, stating nothing",
                     false,
-                ) && let Some(existing) =
-                        state.active().document().character_styles.get(id).cloned()
-                {
+                ) {
                     apply(
                         state,
                         Command::DefineCharacterStyle(CharacterStyle {
-                            name: format!("{} copy", existing.name),
-                            ..existing
+                            name: format!("Character style {}", styles.len() + 1),
+                            based_on: None,
+                            format: CharacterFormat::default(),
                         }),
                     );
                     state.styles_window.character =
                         state.active().document().character_styles.keys().last();
                 }
-                if crate::view::panels::icon_button(
-                    ui,
-                    crate::icons::Icon::Trash,
-                    "Delete — the text keeps how it looks",
-                    false,
-                ) {
-                    apply(state, Command::DeleteCharacterStyle { id });
-                    state.styles_window.character = None;
+                if let Some(id) = selected {
+                    if crate::view::panels::icon_button(
+                        ui,
+                        crate::icons::Icon::Duplicate,
+                        "Duplicate this style",
+                        false,
+                    ) && let Some(existing) =
+                        state.active().document().character_styles.get(id).cloned()
+                    {
+                        apply(
+                            state,
+                            Command::DefineCharacterStyle(CharacterStyle {
+                                name: format!("{} copy", existing.name),
+                                ..existing
+                            }),
+                        );
+                        state.styles_window.character =
+                            state.active().document().character_styles.keys().last();
+                    }
+                    if crate::view::panels::icon_button(
+                        ui,
+                        crate::icons::Icon::Trash,
+                        "Delete — the text keeps how it looks",
+                        false,
+                    ) {
+                        apply(state, Command::DeleteCharacterStyle { id });
+                        state.styles_window.character = None;
+                    }
                 }
-            }
             });
         });
 
@@ -489,7 +478,15 @@ fn character_format_fields(ui: &mut Ui, state: &mut TesseraApp, format: &mut Cha
         };
     }
 
-    optional_number(ui, "Size", &mut format.size, 12.0, 0.25, 1.0..=1440.0, " pt");
+    optional_number(
+        ui,
+        "Size",
+        &mut format.size,
+        12.0,
+        0.25,
+        1.0..=1440.0,
+        " pt",
+    );
     optional_number(
         ui,
         "Leading",

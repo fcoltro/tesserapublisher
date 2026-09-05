@@ -465,7 +465,9 @@ mod paint_tests {
             }
             // Clipped away is the same as not drawn, as far as a reader is
             // concerned — which is the whole bug this test exists for.
-            let visible = clipped.clip_rect.intersects(text.galley.rect.translate(text.pos.to_vec2()));
+            let visible = clipped
+                .clip_rect
+                .intersects(text.galley.rect.translate(text.pos.to_vec2()));
             if !visible {
                 continue;
             }

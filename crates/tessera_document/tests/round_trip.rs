@@ -555,12 +555,7 @@ fn version_5_archive(doc: &Document, path: &std::path::Path) {
 }
 
 /// As above, with a chosen size and family in the version-5 `style`.
-fn version_5_archive_styled(
-    doc: &Document,
-    path: &std::path::Path,
-    size: f64,
-    family: &str,
-) {
+fn version_5_archive_styled(doc: &Document, path: &std::path::Path, size: f64, family: &str) {
     use std::io::Write;
 
     let style = serde_json::json!({
@@ -729,7 +724,10 @@ fn version_6_archive(doc: &Document, path: &std::path::Path, size: f64, family: 
     add_style(&mut value, &style);
     let body = serde_json::to_vec(&value).expect("body");
     let text = String::from_utf8_lossy(&body);
-    assert!(!doc.stories.is_empty(), "a fixture with no story proves nothing");
+    assert!(
+        !doc.stories.is_empty(),
+        "a fixture with no story proves nothing"
+    );
     assert!(
         text.contains("\"style\"") && text.contains("\"runs\""),
         "version 6 is the shape that has both; got {text}"
@@ -834,7 +832,10 @@ fn the_fold_survives_being_saved_again() {
         body.contains("Georgia") && body.contains("18.5"),
         "the folded formatting must be in the file, not just in memory; got {body}"
     );
-    assert!(!body.contains("\"style\":{\"family\""), "and the old field is gone");
+    assert!(
+        !body.contains("\"style\":{\"family\""),
+        "and the old field is gone"
+    );
 
     let _ = std::fs::remove_file(&old);
     let _ = std::fs::remove_file(&new);

@@ -269,9 +269,9 @@ impl Icon {
             ],
             // lucide: arrow-left-right
             // lucide: bold
-            Self::Bold => &[
-                "M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8",
-            ],
+            Self::Bold => {
+                &["M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8"]
+            }
             // lucide: italic — three <line> elements, written as paths
             Self::Italic => &["M19 4 10 4", "M14 20 5 20", "M15 4 9 20"],
             // lucide: align-justify

@@ -589,11 +589,7 @@ impl Story {
     /// floor a run sits on, so applying one must not silently discard the size
     /// somebody set by hand — InDesign shows those as the style "plus"
     /// overrides, and clearing them is a separate act.
-    pub fn set_character_style(
-        &mut self,
-        range: Range<usize>,
-        style: Option<CharacterStyleId>,
-    ) {
+    pub fn set_character_style(&mut self, range: Range<usize>, style: Option<CharacterStyleId>) {
         let start = range.start.min(self.text.len());
         let end = range.end.min(self.text.len());
         if start >= end {
@@ -612,11 +608,7 @@ impl Story {
     /// Attach a named paragraph style to every paragraph the range touches.
     ///
     /// Widened to whole paragraphs, the same way the formatting is.
-    pub fn set_paragraph_style(
-        &mut self,
-        range: Range<usize>,
-        style: Option<ParagraphStyleId>,
-    ) {
+    pub fn set_paragraph_style(&mut self, range: Range<usize>, style: Option<ParagraphStyleId>) {
         if self.text.is_empty() {
             return;
         }
@@ -654,7 +646,10 @@ impl Story {
         }
         let bounds = self.paragraph_bounds(
             range.start.min(self.text.len())
-                ..range.end.min(self.text.len()).max(range.start.min(self.text.len())),
+                ..range
+                    .end
+                    .min(self.text.len())
+                    .max(range.start.min(self.text.len())),
         );
         self.paragraphs
             .iter()
@@ -880,10 +875,7 @@ impl Story {
     ///
     /// `(None, true)` means every run is unstyled; `(_, false)` means they
     /// differ and the picker has nothing single to show.
-    pub fn common_character_style(
-        &self,
-        range: Range<usize>,
-    ) -> (Option<CharacterStyleId>, bool) {
+    pub fn common_character_style(&self, range: Range<usize>) -> (Option<CharacterStyleId>, bool) {
         let mut runs = if range.start >= range.end {
             self.runs
                 .iter()
@@ -908,10 +900,7 @@ impl Story {
     }
 
     /// As above, for the paragraphs a range touches.
-    pub fn common_paragraph_style(
-        &self,
-        range: Range<usize>,
-    ) -> (Option<ParagraphStyleId>, bool) {
+    pub fn common_paragraph_style(&self, range: Range<usize>) -> (Option<ParagraphStyleId>, bool) {
         if self.text.is_empty() {
             return (None, true);
         }
@@ -982,11 +971,7 @@ impl Story {
     /// The character half of a paragraph style is folded in by
     /// [`Story::resolve_run`] instead, because it has to sit *under* the run's
     /// own overrides and only the run knows those.
-    pub fn resolve_paragraph(
-        &self,
-        para: &ParagraphRun,
-        styles: &dyn Styles,
-    ) -> ParagraphFormat {
+    pub fn resolve_paragraph(&self, para: &ParagraphRun, styles: &dyn Styles) -> ParagraphFormat {
         let mut format = ParagraphFormat::default();
         if let Some(id) = para.style {
             format = styles.paragraph_chain(id);
@@ -999,10 +984,11 @@ impl Story {
     /// `None` when they disagree, which the shaper reads as "cannot honour
     /// this in one layout" — see the note there.
     pub fn common_alignment(&self, styles: &dyn Styles) -> Option<Alignment> {
-        let mut alignments = self
-            .paragraphs
-            .iter()
-            .map(|p| self.resolve_paragraph(p, styles).alignment.unwrap_or(Alignment::Left));
+        let mut alignments = self.paragraphs.iter().map(|p| {
+            self.resolve_paragraph(p, styles)
+                .alignment
+                .unwrap_or(Alignment::Left)
+        });
         let first = alignments.next()?;
         alignments.all(|a| a == first).then_some(first)
     }
@@ -1510,13 +1496,14 @@ mod run_tests {
         prop_oneof![
             (0usize..40, "[a-z]{0,4}").prop_map(|(at, t)| Edit::Insert(at, t)),
             (0usize..40, 0usize..40).prop_map(|(a, b)| Edit::Delete(a.min(b), a.max(b))),
-            (0usize..40, 0usize..40, 100u16..900)
-                .prop_map(|(a, b, w)| Edit::Format(a.min(b), a.max(b), w)),
-            (0usize..40, 0usize..40)
-                .prop_map(|(a, b)| Edit::FormatParagraph(a.min(b), a.max(b))),
+            (0usize..40, 0usize..40, 100u16..900).prop_map(|(a, b, w)| Edit::Format(
+                a.min(b),
+                a.max(b),
+                w
+            )),
+            (0usize..40, 0usize..40).prop_map(|(a, b)| Edit::FormatParagraph(a.min(b), a.max(b))),
         ]
     }
-
 
     // --- applying character formatting ---------------------------------
 
@@ -1701,7 +1688,6 @@ mod run_tests {
         assert!(story.runs_are_sound());
     }
 
-
     // --- what the inspector shows ---------------------------------------
 
     #[test]
@@ -1809,7 +1795,6 @@ mod run_tests {
         assert_eq!(story.common_paragraph_format(1..1).alignment, None);
     }
 
-
     // --- alignment across a story ---------------------------------------
 
     #[test]
@@ -1890,7 +1875,6 @@ mod run_tests {
             Some(Alignment::Centre)
         );
     }
-
 
     // --- attaching named styles -----------------------------------------
 
@@ -1976,7 +1960,6 @@ mod run_tests {
         assert_eq!(story.common_character_style(3..3), (None, true));
     }
 
-
     #[test]
     fn a_run_never_straddles_a_paragraph_boundary() {
         // `resolve_run` reads the paragraph a run *starts* in. A run spanning
@@ -2017,7 +2000,6 @@ mod run_tests {
             .collect();
         assert_eq!(resolved, vec![Some(Alignment::Right), None]);
     }
-
 
     // --- folding a style back into the text ------------------------------
 
@@ -2102,7 +2084,6 @@ mod run_tests {
         );
         assert!(story.runs_are_sound());
     }
-
 
     // --- overrides, InDesign's `+` ----------------------------------------
 
@@ -2392,7 +2373,6 @@ mod run_tests {
         assert_eq!(resolved.family.as_deref(), Some("Georgia"));
     }
 
-
     // --- redefine and break link ------------------------------------------
 
     #[test]
@@ -2408,7 +2388,11 @@ mod run_tests {
         assert_eq!(local.size, None, "the inherited size is not an override");
 
         let resolved = story.common_format(0..4, &NoStyles::default());
-        assert_eq!(resolved.size, Some(12.0), "which the resolved form does show");
+        assert_eq!(
+            resolved.size,
+            Some(12.0),
+            "which the resolved form does show"
+        );
     }
 
     #[test]

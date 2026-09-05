@@ -547,14 +547,12 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         }
 
         Command::RedefineParagraphStyle { id, story, range } => {
-            let Some((paragraph, character)) =
-                state.active().document().story(story).map(|s| {
-                    (
-                        s.common_paragraph_format(range.clone()),
-                        s.common_format_local(range.clone()),
-                    )
-                })
-            else {
+            let Some((paragraph, character)) = state.active().document().story(story).map(|s| {
+                (
+                    s.common_paragraph_format(range.clone()),
+                    s.common_format_local(range.clone()),
+                )
+            }) else {
                 return;
             };
             if let Some(style) = state.active_mut().document_mut().paragraph_style_mut(id) {
@@ -2586,7 +2584,6 @@ mod tests {
         );
     }
 
-
     /// Open a caret on `id`, the way clicking into a text frame does.
     fn start_editing(state: &mut TesseraApp, id: FrameId, story: StoryId) {
         let content = state
@@ -2595,8 +2592,7 @@ mod tests {
             .story(story)
             .cloned()
             .unwrap_or_default();
-        state.active_mut().editing =
-            Some((id, tessera_text::edit::EditBuffer::new(content)));
+        state.active_mut().editing = Some((id, tessera_text::edit::EditBuffer::new(content)));
     }
 
     #[test]
@@ -2684,8 +2680,9 @@ mod tests {
                 text: "ab".to_string(),
             },
         );
-        let FrameKind::Text { story: second_story } =
-            state.active().document().frame(second).expect("frame").kind
+        let FrameKind::Text {
+            story: second_story,
+        } = state.active().document().frame(second).expect("frame").kind
         else {
             panic!("a text frame shows a story");
         };
@@ -2711,7 +2708,6 @@ mod tests {
         );
         assert!(buffer.story().runs_are_sound());
     }
-
 
     // --- named styles ----------------------------------------------------
 
@@ -2946,17 +2942,10 @@ mod tests {
             "undoing the application must not delete the style"
         );
         assert_eq!(
-            state
-                .active()
-                .document()
-                .story(story)
-                .expect("story")
-                .runs[0]
-                .style,
+            state.active().document().story(story).expect("story").runs[0].style,
             None
         );
     }
-
 
     // --- deleting a style --------------------------------------------------
 
@@ -3215,14 +3204,10 @@ mod tests {
         );
     }
 
-
     // --- the InDesign style operations ------------------------------------
 
     /// A text frame whose text is styled by a character style stating `size`.
-    fn a_styled_frame(
-        text: &str,
-        size: f32,
-    ) -> (TesseraApp, StoryId, CharacterStyleId) {
+    fn a_styled_frame(text: &str, size: f32) -> (TesseraApp, StoryId, CharacterStyleId) {
         let (mut state, _, story) = a_text_frame(text);
         apply(
             &mut state,
@@ -3279,10 +3264,7 @@ mod tests {
 
         apply(
             &mut state,
-            Command::ClearCharacterOverrides {
-                story,
-                range: 0..4,
-            },
+            Command::ClearCharacterOverrides { story, range: 0..4 },
         );
 
         let doc = state.active().document();
@@ -3382,10 +3364,7 @@ mod tests {
 
         apply(
             &mut state,
-            Command::BreakCharacterStyleLink {
-                story,
-                range: 0..4,
-            },
+            Command::BreakCharacterStyleLink { story, range: 0..4 },
         );
 
         let doc = state.active().document();
@@ -3445,10 +3424,7 @@ mod tests {
 
         apply(
             &mut state,
-            Command::BreakCharacterStyleLink {
-                story,
-                range: 0..4,
-            },
+            Command::BreakCharacterStyleLink { story, range: 0..4 },
         );
 
         let s = state.active().document().story(story).expect("story");
@@ -3534,7 +3510,8 @@ mod tests {
             },
         );
         assert_eq!(
-            state.active().document().character_styles[parent].based_on, None,
+            state.active().document().character_styles[parent].based_on,
+            None,
             "basing a parent on its own child is refused"
         );
 
@@ -3546,9 +3523,9 @@ mod tests {
             },
         );
         assert_eq!(
-            state.active().document().character_styles[parent].based_on, None,
+            state.active().document().character_styles[parent].based_on,
+            None,
             "and so is basing one on itself"
         );
     }
-
 }

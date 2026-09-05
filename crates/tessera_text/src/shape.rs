@@ -580,7 +580,11 @@ mod tests {
     fn the_cache_does_not_grow_without_limit() {
         let mut shaper = Shaper::new();
         for i in 0..(CACHE_LIMIT + 50) {
-            shaper.shape(&Story::new(format!("line {i}")), &NoStyles::default(), 200.0);
+            shaper.shape(
+                &Story::new(format!("line {i}")),
+                &NoStyles::default(),
+                200.0,
+            );
         }
         assert!(
             shaper.cache.len() <= CACHE_LIMIT,
@@ -628,8 +632,16 @@ mod tests {
     #[test]
     fn a_narrow_frame_breaks_text_onto_more_than_one_line() {
         let mut shaper = Shaper::new();
-        let wide = shaper.shape(&Story::new("the quick brown fox jumps"), &NoStyles::default(), 1000.0);
-        let narrow = shaper.shape(&Story::new("the quick brown fox jumps"), &NoStyles::default(), 60.0);
+        let wide = shaper.shape(
+            &Story::new("the quick brown fox jumps"),
+            &NoStyles::default(),
+            1000.0,
+        );
+        let narrow = shaper.shape(
+            &Story::new("the quick brown fox jumps"),
+            &NoStyles::default(),
+            60.0,
+        );
         assert_eq!(wide.lines.len(), 1);
         assert!(narrow.lines.len() > 1, "a narrow frame must wrap");
     }
@@ -637,8 +649,16 @@ mod tests {
     #[test]
     fn shaped_height_grows_with_line_count() {
         let mut shaper = Shaper::new();
-        let wide = shaper.shape(&Story::new("the quick brown fox jumps"), &NoStyles::default(), 1000.0);
-        let narrow = shaper.shape(&Story::new("the quick brown fox jumps"), &NoStyles::default(), 60.0);
+        let wide = shaper.shape(
+            &Story::new("the quick brown fox jumps"),
+            &NoStyles::default(),
+            1000.0,
+        );
+        let narrow = shaper.shape(
+            &Story::new("the quick brown fox jumps"),
+            &NoStyles::default(),
+            60.0,
+        );
         assert!(narrow.height > wide.height);
     }
 
@@ -828,7 +848,10 @@ mod tests {
         let mut shaper = Shaper::new();
         let families: Vec<String> = shaper.families().iter().take(20).cloned().collect();
         for family in families {
-            assert!(shaper.has_family(&family), "{family} was listed but is absent");
+            assert!(
+                shaper.has_family(&family),
+                "{family} was listed but is absent"
+            );
         }
     }
 
@@ -877,9 +900,12 @@ mod tests {
         assert_eq!(story.runs.len(), 2, "different sizes, so two runs");
 
         let missing = shaper.missing_families(&story, &NoStyles::default());
-        assert_eq!(missing.len(), 1, "one warning, not one per run: {missing:?}");
+        assert_eq!(
+            missing.len(),
+            1,
+            "one warning, not one per run: {missing:?}"
+        );
     }
-
 
     // --- the cache has to see through the styles ------------------------
 
@@ -929,8 +955,7 @@ mod tests {
         let large = shaper.shape(&story, &styles, 400.0);
 
         assert_ne!(
-            small.height,
-            large.height,
+            small.height, large.height,
             "the same runs at a changed style must not come back from the cache"
         );
     }
@@ -1028,7 +1053,6 @@ mod tests {
         assert_eq!(x_of(&mixed), x_of(&plain));
     }
 
-
     // --- colour, run by run ------------------------------------------------
 
     #[test]
@@ -1114,5 +1138,4 @@ mod tests {
             "the cache key has to see a colour change like any other"
         );
     }
-
 }
