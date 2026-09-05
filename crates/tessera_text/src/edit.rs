@@ -95,6 +95,30 @@ impl EditBuffer {
     }
 
     /// Insert text, replacing any selection. Also commits an IME composition.
+    /// Merge character formatting into a range of the buffer's own story.
+    ///
+    /// The buffer owns a story the document also holds, and the two are kept
+    /// in step by writing the buffer's copy over the document's on every
+    /// keystroke. Formatting has to reach *both* or the next keystroke would
+    /// undo it — so it arrives here rather than through a `story_mut`, which
+    /// would also hand every caller a way round the run invariant.
+    pub fn apply_character_format(
+        &mut self,
+        range: Range<usize>,
+        format: &crate::story::CharacterFormat,
+    ) {
+        self.story.apply_character_format(range, format);
+    }
+
+    /// As above, for the paragraphs a range touches.
+    pub fn apply_paragraph_format(
+        &mut self,
+        range: Range<usize>,
+        format: &crate::story::ParagraphFormat,
+    ) {
+        self.story.apply_paragraph_format(range, format);
+    }
+
     pub fn insert(&mut self, text: &str) {
         self.ime_preedit = None;
         self.delete_selection();

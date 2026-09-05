@@ -253,6 +253,27 @@ fn retarget(state: &mut TesseraApp, id: FrameId, bounds: DocRect, placement: Tra
     }
 }
 
+/// The open edit buffer, if it is editing `story`.
+///
+/// While a caret is live the buffer's copy of the story is written over the
+/// document's on every keystroke, so formatting that reached only the document
+/// would be undone by the next letter typed. Both or neither.
+fn editing_buffer_for(
+    state: &mut TesseraApp,
+    story: StoryId,
+) -> Option<&mut tessera_text::edit::EditBuffer> {
+    let (id, _) = state.active().editing.as_ref()?;
+    let editing = *id;
+    let shows = matches!(
+        state.active().document().frame(editing).map(|f| &f.kind),
+        Some(FrameKind::Text { story: s }) if *s == story
+    );
+    if !shows {
+        return None;
+    }
+    state.active_mut().editing.as_mut().map(|(_, b)| b)
+}
+
 pub fn apply(state: &mut TesseraApp, command: Command) {
     if command.mutates() {
         state.active_mut().record_history();
@@ -335,7 +356,10 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             format,
         } => {
             if let Some(s) = state.active_mut().document_mut().story_mut(story) {
-                s.apply_character_format(range, &format);
+                s.apply_character_format(range.clone(), &format);
+            }
+            if let Some(buffer) = editing_buffer_for(state, story) {
+                buffer.apply_character_format(range, &format);
             }
         }
 
@@ -345,7 +369,10 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             format,
         } => {
             if let Some(s) = state.active_mut().document_mut().story_mut(story) {
-                s.apply_paragraph_format(range, &format);
+                s.apply_paragraph_format(range.clone(), &format);
+            }
+            if let Some(buffer) = editing_buffer_for(state, story) {
+                buffer.apply_paragraph_format(range, &format);
             }
         }
 
@@ -2222,6 +2249,132 @@ mod tests {
             story.runs,
             story.text
         );
+    }
+
+
+    /// Open a caret on `id`, the way clicking into a text frame does.
+    fn start_editing(state: &mut TesseraApp, id: FrameId, story: StoryId) {
+        let content = state
+            .active()
+            .document()
+            .story(story)
+            .cloned()
+            .unwrap_or_default();
+        state.active_mut().editing =
+            Some((id, tessera_text::edit::EditBuffer::new(content)));
+    }
+
+    #[test]
+    fn formatting_while_a_caret_is_live_reaches_the_buffer_too() {
+        // The buffer's copy of the story is written over the document's on
+        // every keystroke. Formatting that reached only the document would be
+        // undone by the next letter typed — which is the whole bug this
+        // guards, and it is invisible until someone types after using the
+        // inspector.
+        let (mut state, id, story) = a_text_frame("the quick brown fox");
+        start_editing(&mut state, id, story);
+
+        apply(
+            &mut state,
+            Command::SetCharacterFormat {
+                story,
+                range: 4..9,
+                format: CharacterFormat {
+                    weight: Some(700),
+                    ..CharacterFormat::default()
+                },
+            },
+        );
+
+        let (_, buffer) = state.active().editing.as_ref().expect("still editing");
+        assert_eq!(
+            buffer.story().runs.len(),
+            3,
+            "the buffer kept the story it had: {:?}",
+            buffer.story().runs
+        );
+        assert_eq!(buffer.story().runs[1].local.weight, Some(700));
+        assert!(buffer.story().runs_are_sound());
+    }
+
+    #[test]
+    fn typing_after_formatting_does_not_undo_the_formatting() {
+        // The failure the previous test's invariant exists to prevent, played
+        // out: format, then let the buffer write itself back the way the
+        // keystroke path does.
+        let (mut state, id, story) = a_text_frame("abcd");
+        start_editing(&mut state, id, story);
+        apply(
+            &mut state,
+            Command::SetCharacterFormat {
+                story,
+                range: 0..2,
+                format: CharacterFormat {
+                    weight: Some(700),
+                    ..CharacterFormat::default()
+                },
+            },
+        );
+
+        // What `editing_input` does on every keystroke.
+        let live = state
+            .active()
+            .editing
+            .as_ref()
+            .map(|(_, b)| b.story().clone())
+            .expect("editing");
+        if let Some(s) = state.active_mut().document_mut().story_mut(story) {
+            *s = live;
+        }
+
+        let story = state.active().document().story(story).expect("story");
+        assert_eq!(story.runs[0].local.weight, Some(700), "still bold");
+        assert!(story.runs_are_sound());
+    }
+
+    #[test]
+    fn formatting_a_story_no_open_caret_shows_leaves_the_buffer_alone() {
+        // Two text frames, a caret in the first, formatting applied to the
+        // second's story. Reaching into the wrong buffer would corrupt it,
+        // since its story has a different length.
+        let (mut state, first, first_story) = a_text_frame("the quick brown fox");
+        start_editing(&mut state, first, first_story);
+
+        apply(&mut state, Command::AddTextFrame(bounds()));
+        let second = state.active().selection.single().expect("selected");
+        apply(
+            &mut state,
+            Command::SetText {
+                id: second,
+                text: "ab".to_string(),
+            },
+        );
+        let FrameKind::Text { story: second_story } =
+            state.active().document().frame(second).expect("frame").kind
+        else {
+            panic!("a text frame shows a story");
+        };
+
+        apply(
+            &mut state,
+            Command::SetCharacterFormat {
+                story: second_story,
+                range: 0..2,
+                format: CharacterFormat {
+                    weight: Some(700),
+                    ..CharacterFormat::default()
+                },
+            },
+        );
+
+        let (_, buffer) = state.active().editing.as_ref().expect("still editing");
+        assert_eq!(buffer.story().text, "the quick brown fox");
+        assert_eq!(
+            buffer.story().runs.len(),
+            1,
+            "the other frame's formatting must not land here"
+        );
+        assert!(buffer.story().runs_are_sound());
     }
 
 }

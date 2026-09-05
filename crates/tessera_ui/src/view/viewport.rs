@@ -584,18 +584,22 @@ fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
     };
     let id = *id;
     let changed = text_edit::handle_events(ui, buffer);
-    let text = changed.then(|| buffer.story().text.clone());
+    // The whole story, not just its text. The buffer's copy carries the runs
+    // its own edits maintained; copying the string alone would leave the
+    // document's runs describing a length its text no longer has, on every
+    // keystroke.
+    let story = changed.then(|| buffer.story().clone());
     let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape));
 
-    if let Some(text) = text {
+    if let Some(story) = story {
         // undo-bracketed: live update without an entry per keystroke. The
         // whole editing session became one undo step when it began, in
         // `begin_editing`.
-        if let Some(tessera_document::nodes::FrameKind::Text { story }) =
+        if let Some(tessera_document::nodes::FrameKind::Text { story: target }) =
             state.active().document().frame(id).map(|f| f.kind.clone())
-            && let Some(s) = state.active_mut().document_mut().story_mut(story)
+            && let Some(s) = state.active_mut().document_mut().story_mut(target)
         {
-            s.text = text;
+            *s = story;
         }
         state.active_mut().dirty = true;
     }
