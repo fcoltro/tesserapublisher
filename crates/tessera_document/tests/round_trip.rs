@@ -537,7 +537,158 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_five() {
-    // Phase B's one bump. If this changes, a migration step is owed.
-    assert_eq!(format::FORMAT_VERSION, 5);
+fn the_format_version_is_six() {
+    // If this changes, a migration step is owed.
+    assert_eq!(format::FORMAT_VERSION, 6);
+}
+
+/// Build a version-5 archive by hand and open it.
+///
+/// **`rewrite_version_for_test` cannot be used here.** It loads with the
+/// current model and re-saves under an older stamp, so the JSON it produces
+/// already carries `runs` — and the migration, which fires only on a story
+/// that lacks them, skips it. Three tests written that way passed while
+/// testing nothing at all. The fixture has to genuinely lack the field, which
+/// is why `a_version_1_document_still_opens` builds one the same way.
+fn version_5_archive(doc: &Document, path: &std::path::Path) {
+    use std::io::Write;
+
+    fn strip_runs(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                map.remove("runs");
+                map.remove("paragraphs");
+                for v in map.values_mut() {
+                    strip_runs(v);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for v in items {
+                    strip_runs(v);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut value: serde_json::Value = serde_json::to_value(doc).expect("to value");
+    strip_runs(&mut value);
+    let body = serde_json::to_vec(&value).expect("body");
+    assert!(
+        !String::from_utf8_lossy(&body).contains("\"runs\""),
+        "the fixture must genuinely lack the field"
+    );
+
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut buffer);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("meta.json", options).expect("meta");
+        zip.write_all(br#"{"format_version":5,"app_version":"0.1.0","created":"","modified":""}"#)
+            .expect("meta body");
+        zip.start_file("document.json", options).expect("doc");
+        zip.write_all(&body).expect("doc body");
+        zip.finish().expect("finish");
+    }
+    std::fs::write(path, buffer.into_inner()).expect("write fixture");
+}
+
+#[test]
+fn a_version_five_story_arrives_with_runs_that_describe_it() {
+    // The first migration whose default was a lie. `runs` has serde(default)
+    // and the default is an empty list — which for a story with text in it
+    // satisfies no version of the run invariant. Without the rewrite, every
+    // document saved before milestone 2 would open unsound.
+    let path = temp_path("v5-story-runs.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = Document::new();
+    let id = doc.add_story(tessera_text::story::Story::new("Hello, Tessera."));
+    version_5_archive(&doc, &path);
+
+    let loaded = format::load(&path).expect("a version-5 document must still open");
+    let story = loaded.story(id).expect("the story survived");
+
+    assert_eq!(story.text, "Hello, Tessera.");
+    assert!(
+        story.runs_are_sound(),
+        "runs {:?} do not describe {:?}",
+        story.runs,
+        story.text
+    );
+    assert_eq!(story.runs.len(), 1, "one run covering the whole story");
+    assert_eq!(story.paragraphs.len(), 1);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_migrated_run_keeps_the_formatting_the_story_already_had() {
+    // The rewrite must not change how anything looks.
+    let path = temp_path("v5-story-format.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = Document::new();
+    let mut story = tessera_text::story::Story::new("text");
+    story.style.size = 18.5;
+    story.style.family = "Georgia".to_string();
+    let id = doc.add_story(story);
+    version_5_archive(&doc, &path);
+
+    let loaded = format::load(&path).expect("open");
+    let run = &loaded.story(id).expect("story").runs[0];
+    assert_eq!(run.local.size, Some(18.5));
+    assert_eq!(run.local.family.as_deref(), Some("Georgia"));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn an_empty_story_migrates_to_no_runs_rather_than_one_empty_run() {
+    let path = temp_path("v5-empty-story.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = Document::new();
+    let id = doc.add_story(tessera_text::story::Story::new(""));
+    version_5_archive(&doc, &path);
+
+    let loaded = format::load(&path).expect("open");
+    let story = loaded.story(id).expect("story");
+    assert!(story.runs.is_empty());
+    assert!(story.runs_are_sound());
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn runs_survive_a_round_trip() {
+    use tessera_text::story::{CharacterFormat, Run};
+
+    let path = temp_path("runs-round-trip.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut original = Document::new();
+    let mut story = tessera_text::story::Story::new("ab");
+    story.runs = vec![
+        Run {
+            range: 0..1,
+            style: None,
+            local: CharacterFormat {
+                weight: Some(700),
+                ..CharacterFormat::default()
+            },
+        },
+        Run::plain(1..2),
+    ];
+    let id = original.add_story(story);
+
+    format::save(&original, &path).expect("save");
+    let reopened = format::load(&path).expect("open");
+    let back = reopened.story(id).expect("story");
+
+    assert_eq!(back.runs.len(), 2, "the two runs came back");
+    assert_eq!(back.runs[0].local.weight, Some(700));
+    assert!(back.runs_are_sound());
+
+    let _ = std::fs::remove_file(&path);
 }
