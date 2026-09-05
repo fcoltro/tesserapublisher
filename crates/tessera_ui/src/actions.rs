@@ -20,6 +20,8 @@ pub enum Group {
     File,
     Edit,
     Object,
+    Arrange,
+    Transform,
     Align,
     View,
     Tool,
@@ -29,10 +31,12 @@ pub enum Group {
 }
 
 impl Group {
-    pub const ALL: [Group; 9] = [
+    pub const ALL: [Group; 11] = [
         Group::File,
         Group::Edit,
         Group::Object,
+        Group::Arrange,
+        Group::Transform,
         Group::Align,
         Group::View,
         Group::Tool,
@@ -40,6 +44,25 @@ impl Group {
         Group::Layout,
         Group::Window,
     ];
+
+    /// The submenu this group nests in, if any.
+    ///
+    /// A menu of thirty-one entries is a list nobody reads to the end of, and
+    /// Object was one: fourteen of its own and seventeen alignments. Four of
+    /// its groups now fold into named submenus, which is the same arrangement
+    /// InDesign uses and for the same reason.
+    ///
+    /// The command palette ignores this and shows everything flat, which is
+    /// what a palette is for — you type at it rather than hunt through it.
+    pub fn submenu(self) -> Option<&'static str> {
+        match self {
+            Group::Arrange => Some("Arrange"),
+            Group::Transform => Some("Transform"),
+            Group::Align => Some("Align and distribute"),
+            Group::Tool => Some("Tools"),
+            _ => None,
+        }
+    }
 
     /// The menu this group appears under.
     ///
@@ -49,7 +72,7 @@ impl Group {
         match self {
             Group::File => "File",
             Group::Edit => "Edit",
-            Group::Object | Group::Align => "Object",
+            Group::Object | Group::Arrange | Group::Transform | Group::Align => "Object",
             Group::View | Group::Tool => "View",
             Group::Type => "Type",
             Group::Layout => "Layout",
@@ -166,31 +189,31 @@ pub fn all() -> &'static [Action] {
         a(
             "Bring forward",
             Some("Ctrl+]"),
-            Group::Object,
+            Group::Arrange,
             Command(Z(ZMove::Forward)),
         ),
         a(
             "Bring to front",
             Some("Ctrl+Shift+]"),
-            Group::Object,
+            Group::Arrange,
             Command(Z(ZMove::ToFront)),
         ),
         a(
             "Send backward",
             Some("Ctrl+["),
-            Group::Object,
+            Group::Arrange,
             Command(Z(ZMove::Backward)),
         ),
         a(
             "Send to back",
             Some("Ctrl+Shift+["),
-            Group::Object,
+            Group::Arrange,
             Command(Z(ZMove::ToBack)),
         ),
         a(
             "Flip horizontal",
             None,
-            Group::Object,
+            Group::Transform,
             Command(Flip {
                 horizontal: true,
                 vertical: false,
@@ -199,7 +222,7 @@ pub fn all() -> &'static [Action] {
         a(
             "Flip vertical",
             None,
-            Group::Object,
+            Group::Transform,
             Command(Flip {
                 horizontal: false,
                 vertical: true,
@@ -208,13 +231,13 @@ pub fn all() -> &'static [Action] {
         a(
             "Rotate 90° clockwise",
             None,
-            Group::Object,
+            Group::Transform,
             Command(Rotate90 { clockwise: true }),
         ),
         a(
             "Rotate 90° anticlockwise",
             None,
-            Group::Object,
+            Group::Transform,
             Command(Rotate90 { clockwise: false }),
         ),
         a(
@@ -628,5 +651,75 @@ mod tests {
                 "{tool:?} is not reachable"
             );
         }
+    }
+
+    #[test]
+    fn no_menu_is_longer_than_a_dozen_lines() {
+        // Object was thirty-one before the submenus, which is a list nobody
+        // reads to the end of. A menu's *lines* are its inline actions plus one
+        // for each submenu, not the actions the submenus hold.
+        for menu in ["File", "Edit", "Layout", "Object", "Type", "View", "Window"] {
+            let groups: Vec<Group> = Group::ALL
+                .into_iter()
+                .filter(|g| g.menu() == menu)
+                .filter(|g| all().iter().any(|a| a.group == *g))
+                .collect();
+
+            let lines: usize = groups
+                .iter()
+                .map(|g| {
+                    if g.submenu().is_some() {
+                        1
+                    } else {
+                        all().iter().filter(|a| a.group == *g).count()
+                    }
+                })
+                .sum();
+
+            assert!(lines <= 12, "the {menu} menu shows {lines} lines");
+        }
+    }
+
+    #[test]
+    fn a_submenu_belongs_to_a_menu_that_exists() {
+        // A group whose actions have nowhere to appear is a command nobody can
+        // reach, which is the failure the one-list rule exists to prevent.
+        for group in Group::ALL {
+            if all().iter().any(|a| a.group == group) {
+                assert!(
+                    !group.menu().is_empty(),
+                    "{group:?} has actions and no menu"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_action_is_still_reachable_from_exactly_one_place() {
+        // Splitting Object into submenus moved actions between groups. Nothing
+        // may have been dropped or duplicated on the way.
+        let mut seen: Vec<&str> = all().iter().map(|a| a.name).collect();
+        let total = seen.len();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), total, "two actions share a name");
+
+        for action in all() {
+            assert!(
+                Group::ALL.contains(&action.group),
+                "{} is in a group the menu bar never walks",
+                action.name
+            );
+        }
+    }
+
+    #[test]
+    fn the_z_order_and_transform_actions_moved_into_their_submenus() {
+        let arranged = all().iter().filter(|a| a.group == Group::Arrange).count();
+        let transformed = all().iter().filter(|a| a.group == Group::Transform).count();
+        assert_eq!(arranged, 4, "forward, front, backward, back");
+        assert_eq!(transformed, 4, "two flips and two rotations");
+        assert_eq!(Group::Arrange.menu(), "Object");
+        assert_eq!(Group::Transform.menu(), "Object");
     }
 }

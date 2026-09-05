@@ -127,20 +127,38 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
             ui.menu_button(menu, |ui| {
                 let mut first = true;
                 for group in Group::ALL.into_iter().filter(|g| g.menu() == menu) {
-                    if !first {
-                        ui.separator();
+                    let entries: Vec<_> =
+                        actions::all().iter().filter(|a| a.group == group).collect();
+                    if entries.is_empty() {
+                        continue;
                     }
-                    first = false;
-                    for action in actions::all().iter().filter(|a| a.group == group) {
-                        let label = match action.shortcut {
-                            Some(s) => format!("{}	{}", action.name, s),
-                            None => action.name.to_string(),
-                        };
-                        if ui.button(label).clicked() {
-                            chosen = Some(action.run);
-                            ui.close();
+
+                    match group.submenu() {
+                        // A group long enough to have earned a name of its own
+                        // goes behind it. Object was thirty-one entries before
+                        // this — fourteen of its own and seventeen alignments —
+                        // which is a list nobody reads to the end of.
+                        Some(name) => {
+                            ui.menu_button(name, |ui| {
+                                for action in entries {
+                                    if entry(ui, action) {
+                                        chosen = Some(action.run);
+                                    }
+                                }
+                            });
+                        }
+                        None => {
+                            if !first {
+                                ui.separator();
+                            }
+                            for action in entries {
+                                if entry(ui, action) {
+                                    chosen = Some(action.run);
+                                }
+                            }
                         }
                     }
+                    first = false;
                 }
             });
         }
@@ -149,6 +167,19 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
     if let Some(run) = chosen {
         actions::run(state, run);
     }
+}
+
+/// One line of a menu: its name, its shortcut, and whether it was chosen.
+fn entry(ui: &mut Ui, action: &crate::actions::Action) -> bool {
+    let label = match action.shortcut {
+        Some(s) => format!("{}\t{}", action.name, s),
+        None => action.name.to_string(),
+    };
+    let clicked = ui.button(label).clicked();
+    if clicked {
+        ui.close();
+    }
+    clicked
 }
 
 fn accelerators(ui: &Ui, state: &mut TesseraApp) {

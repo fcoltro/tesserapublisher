@@ -86,6 +86,37 @@ pub fn contrast_ratio(a: Color32, b: Color32) -> f64 {
     (lighter + 0.05) / (darker + 0.05)
 }
 
+/// Whichever of the two cursor colours reads better against `behind`.
+///
+/// A caret painted in one fixed colour is invisible against half the things it
+/// can sit on: `TEXT_PRIMARY` is a light grey, which is exactly wrong on the
+/// white page it spends most of its time on. Contrast decides instead.
+pub fn readable_on(behind: Color32) -> Color32 {
+    if contrast_ratio(Theme::CURSOR_ON_LIGHT, behind)
+        >= contrast_ratio(Theme::CURSOR_ON_DARK, behind)
+    {
+        Theme::CURSOR_ON_LIGHT
+    } else {
+        Theme::CURSOR_ON_DARK
+    }
+}
+
+/// `over` composited onto `under`, which is how to find out what is really
+/// behind something drawn on a page.
+///
+/// A text frame's fill is transparent by default, so the colour behind a caret
+/// is usually the page rather than the frame — and "usually" is not something
+/// to draw with.
+pub fn composite(over: Color32, under: Color32) -> Color32 {
+    let a = f32::from(over.a()) / 255.0;
+    let mix = |o: u8, u: u8| (f32::from(o) * a + f32::from(u) * (1.0 - a)) as u8;
+    Color32::from_rgb(
+        mix(over.r(), under.r()),
+        mix(over.g(), under.g()),
+        mix(over.b(), under.b()),
+    )
+}
+
 pub struct Theme;
 
 impl Theme {
@@ -236,5 +267,44 @@ mod tests {
             ctx.global_style().visuals.override_text_color,
             Some(Theme::TEXT_PRIMARY)
         );
+    }
+
+    #[test]
+    fn a_caret_on_a_white_page_is_dark() {
+        // The bug this exists for: the caret was `TEXT_PRIMARY`, a light grey,
+        // on the white page it spends most of its time on.
+        assert_eq!(readable_on(Color32::WHITE), Theme::CURSOR_ON_LIGHT);
+    }
+
+    #[test]
+    fn a_caret_on_a_black_box_is_light() {
+        assert_eq!(readable_on(Color32::BLACK), Theme::CURSOR_ON_DARK);
+    }
+
+    #[test]
+    fn whichever_it_picks_is_legible() {
+        // Not merely different from the background — readable against it. 4.5
+        // is the WCAG AA threshold the palette is already held to.
+        for behind in [
+            Color32::WHITE,
+            Color32::BLACK,
+            Color32::from_rgb(0x80, 0x80, 0x80),
+            Theme::CANVAS_BG,
+            Theme::ACCENT,
+        ] {
+            let ratio = contrast_ratio(readable_on(behind), behind);
+            assert!(ratio >= 3.0, "{behind:?} got a ratio of only {ratio:.2}");
+        }
+    }
+
+    #[test]
+    fn a_transparent_fill_shows_what_is_under_it() {
+        let clear = Color32::from_rgba_unmultiplied(0, 0, 0, 0);
+        assert_eq!(composite(clear, Color32::WHITE), Color32::WHITE);
+    }
+
+    #[test]
+    fn an_opaque_fill_hides_what_is_under_it() {
+        assert_eq!(composite(Color32::BLACK, Color32::WHITE), Color32::BLACK);
     }
 }

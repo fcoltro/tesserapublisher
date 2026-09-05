@@ -1833,10 +1833,25 @@ fn draw_overlays(
         if let Some(c) = geometry.caret
             && ui.input(|i| i.time).rem_euclid(1.0) < 0.5
         {
+            // Against whatever is actually behind it: the frame's own fill
+            // over the page. A text frame's fill is clear by default, so the
+            // usual answer is the white page — and a caret in a black box has
+            // to be the other one, which is the case this exists for.
+            let [r, g, b, a] = frame.fill.to_rgb_f32();
+            let behind = crate::theme::composite(
+                egui::Color32::from_rgba_unmultiplied(
+                    (r * 255.0) as u8,
+                    (g * 255.0) as u8,
+                    (b * 255.0) as u8,
+                    (a * 255.0) as u8,
+                ),
+                egui::Color32::WHITE,
+            );
+
             let x = (c.x0 + c.x1) / 2.0;
             painter.line_segment(
                 [local(x, c.y0), local(x, c.y1)],
-                Stroke::new(CARET_PX, Theme::TEXT_PRIMARY),
+                Stroke::new(CARET_PX, crate::theme::readable_on(behind)),
             );
         }
         ui.ctx()
