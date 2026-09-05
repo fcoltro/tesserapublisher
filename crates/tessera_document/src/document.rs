@@ -25,7 +25,12 @@ pub enum ZMove {
 }
 
 /// US Letter in points — the default new-document size.
-/// The gap between one spread and the next on the pasteboard.
+/// The clear space between one spread's bleed and the next's.
+///
+/// A gap between the *pages* would not do: a page's bleed and slug stand
+/// outside its trim, and two spreads set 36 points apart with 10mm of bleed
+/// each would have their bleed boxes overlapping by twenty. What has to be
+/// separated is the outermost thing drawn, not the page.
 const SPREAD_GAP: f64 = 36.0;
 
 const DEFAULT_PAGE: DocRect = DocRect {
@@ -293,7 +298,10 @@ impl Document {
     /// because that is exactly what it was.
     pub fn set_setup(&mut self, setup: DocumentSetup) {
         self.setup = setup;
-        self.revision += 1;
+        // Bleed and slug decide how far apart the spreads have to sit, so
+        // changing them moves the pages. Without this, raising the bleed left
+        // every spread where it was and the boxes grew into one another.
+        self.reflow_spreads();
     }
 
     /// Resize every page. Per-page sizes are milestone 3.
@@ -305,7 +313,9 @@ impl Document {
                 page.bounds.height = height;
             }
         }
-        self.revision += 1;
+        // A taller page needs the spread below it to move down, and a wider
+        // one moves its own facing partner across.
+        self.reflow_spreads();
     }
 
     /// Put every spread where it belongs on the pasteboard.
@@ -343,9 +353,23 @@ impl Document {
                     };
                 }
             }
-            y += height + SPREAD_GAP;
+            // Past this spread's bleed and slug, and past the next one's, so
+            // neither overlaps the other. Both are measured from the trim, so
+            // the larger of the two is what stands out.
+            y += height + SPREAD_GAP + self.vertical_clearance() * 2.0;
         }
         self.revision += 1;
+    }
+
+    /// How far the furthest thing drawn stands above or below a page's trim.
+    ///
+    /// Bleed and slug are both measured from the trim rather than from each
+    /// other, so a slug narrower than the bleed does not read as a negative
+    /// one — which means the clearance is the larger of the two, not the sum.
+    fn vertical_clearance(&self) -> f64 {
+        let bleed = self.setup.bleed.top.max(self.setup.bleed.bottom);
+        let slug = self.setup.slug.top.max(self.setup.slug.bottom);
+        bleed.max(slug)
     }
 
     /// Append a page, and say which one it is.
@@ -2378,5 +2402,120 @@ mod tests {
         // file. Turning those into facing-page documents would rearrange
         // somebody's pages on open.
         assert!(!DocumentSetup::default().facing_pages);
+    }
+
+    // --- spreads clear one another ------------------------------------------
+
+    /// 10mm, which is what the inspector's bleed defaults to when set.
+    const TEN_MM: f64 = 28.346_456_692_913_385;
+
+    #[test]
+    fn a_spreads_bleed_does_not_reach_the_next_spread() {
+        // Reported from real use: with margins and bleed set, the first page's
+        // bleed box ran down into the spread below it. The gap between spreads
+        // was a flat 36 points and 10mm of bleed is 28 — 56 points of bleed in
+        // a 36 point gap.
+        let mut doc = Document::new();
+        doc.add_page();
+        doc.set_setup(DocumentSetup {
+            bleed: Insets::uniform(TEN_MM),
+            ..DocumentSetup::default()
+        });
+
+        let boxes: Vec<DocRect> = doc.page_ids().filter_map(|p| doc.bleed_rect(p)).collect();
+
+        for (i, a) in boxes.iter().enumerate() {
+            for b in boxes.iter().skip(i + 1) {
+                let apart = a.y + a.height <= b.y + 1e-9
+                    || b.y + b.height <= a.y + 1e-9
+                    || a.x + a.width <= b.x + 1e-9
+                    || b.x + b.width <= a.x + 1e-9;
+                assert!(apart, "two bleed boxes overlap: {a:?} and {b:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_slug_wider_than_the_bleed_is_what_clears() {
+        // Both are measured from the trim, so the clearance is the larger of
+        // the two rather than their sum.
+        let mut doc = Document::new();
+        doc.add_page();
+        doc.set_setup(DocumentSetup {
+            bleed: Insets::uniform(3.0),
+            slug: Insets::uniform(TEN_MM),
+            ..DocumentSetup::default()
+        });
+
+        let boxes: Vec<DocRect> = doc.page_ids().filter_map(|p| doc.slug_rect(p)).collect();
+        for (i, a) in boxes.iter().enumerate() {
+            for b in boxes.iter().skip(i + 1) {
+                let apart = a.y + a.height <= b.y + 1e-9
+                    || b.y + b.height <= a.y + 1e-9
+                    || a.x + a.width <= b.x + 1e-9
+                    || b.x + b.width <= a.x + 1e-9;
+                assert!(apart, "two slug boxes overlap: {a:?} and {b:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn raising_the_bleed_moves_the_spreads_apart() {
+        // The bug was as much about *when* as about how far: the setup could
+        // change without anything reflowing, so the boxes grew into each other
+        // where they stood.
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.add_page();
+        let second = doc.page_ids().nth(1).expect("a second page");
+        let before = doc.pages[second].bounds.y;
+
+        doc.set_setup(DocumentSetup {
+            bleed: Insets::uniform(TEN_MM),
+            ..DocumentSetup::default()
+        });
+
+        assert!(
+            doc.pages[second].bounds.y > before,
+            "the second spread moved down to make room: {} against {before}",
+            doc.pages[second].bounds.y
+        );
+    }
+
+    #[test]
+    fn a_taller_page_moves_the_spread_below_it() {
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.add_page();
+        let second = doc.page_ids().nth(1).expect("a second page");
+        let before = doc.pages[second].bounds.y;
+
+        doc.set_page_size(612.0, 1000.0);
+
+        assert!(
+            doc.pages[second].bounds.y > before,
+            "a taller first page pushes the second down"
+        );
+    }
+
+    #[test]
+    fn two_facing_pages_still_touch_with_a_bleed_set() {
+        // The clearance is between *spreads*. Inside one, the pages meet at
+        // the fold and their bleed overlapping there is what a fold is.
+        let mut doc = Document::new();
+        doc.add_page();
+        doc.add_page();
+        doc.set_setup(DocumentSetup {
+            bleed: Insets::uniform(TEN_MM),
+            ..DocumentSetup::default()
+        });
+
+        let pair = doc.pages_of(doc.spread_order[1]);
+        let a = doc.pages[pair[0]].bounds;
+        let b = doc.pages[pair[1]].bounds;
+        assert!(
+            (b.x - (a.x + a.width)).abs() < 1e-9,
+            "the fold has no gap: {a:?} then {b:?}"
+        );
     }
 }
