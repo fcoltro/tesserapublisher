@@ -594,7 +594,12 @@ unverified one.
 > many pages, and override one instance locally without breaking the others.
 > Organise objects onto named layers, then hide and lock a layer.
 
-- [ ] Pages panel: a visual grid of spreads, with drag-to-reorder.
+- [x] Pages panel: a visual grid of spreads, with drag-to-reorder. Each page is
+  a schematic thumbnail — its margins and the blocks its frames occupy — rather
+  than a rendered miniature, because a rendered one needs the GPU and the panel
+  must draw while the document is being edited. Dragging reorders spreads, and
+  the numbers follow: **the numbering is derived from `spread_order`, never
+  stored**, so a reorder cannot leave a page labelled wrongly.
 - [x] Add, delete and duplicate pages — **all undoable.** Snapshot undo made
   the inverse free; that it stays free is tested by putting a frame on a page,
   removing the page, and requiring the frame back. Removing the last page is
