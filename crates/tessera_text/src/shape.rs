@@ -35,6 +35,13 @@ pub struct PositionedGlyph {
     pub font_index: usize,
 }
 
+/// What a run is drawn in, as parley's brush.
+///
+/// `None` means the run states no colour of its own. parley requires
+/// `Clone + PartialEq + Default + Debug` and implements `Brush` for anything
+/// with them, so this needs no impl of its own.
+pub type Brush = Option<tessera_color::Color>;
+
 /// A stretch of one line drawn in one font at one size.
 ///
 /// Mirrors parley's own `GlyphRun`, which is what the shaper already walks —
@@ -47,6 +54,17 @@ pub struct ShapedRun {
     /// The size this run was shaped at, in points. Every glyph's advance is
     /// in points at *this* size.
     pub size: f32,
+    /// What this run is drawn in, when it says so.
+    ///
+    /// `None` means the run states no colour and the consumer's own falls
+    /// through — which keeps a story nobody has coloured identical to what it
+    /// was before runs could carry one.
+    ///
+    /// The colour rides on the run rather than on the layout because parley's
+    /// brush here is `()`: the renderer and the PDF writer express colour
+    /// differently, so it is applied when drawing rather than baked into the
+    /// glyphs. Both already walk run by run, for the size.
+    pub colour: Brush,
     pub glyphs: Vec<PositionedGlyph>,
 }
 
@@ -157,10 +175,15 @@ const CACHE_LIMIT: usize = 512;
 
 pub struct Shaper {
     font_ctx: parley::FontContext,
-    // The brush type is `()`: colour is applied by the consumer, not baked
-    // into the layout, because the renderer and the PDF writer express it
-    // differently.
-    layout_ctx: parley::LayoutContext<()>,
+    // The brush carries the colour. It was `()` while colour was applied by
+    // the consumer — the renderer and the PDF writer express it differently —
+    // but parley splits a glyph run wherever the brush changes, and nothing
+    // else does. Without it, "ab" red and "cd" black in one font at one size
+    // come back as a single run and the whole line takes the first colour.
+    //
+    // The brush is still not a peniko colour: it is Tessera's own, so nothing
+    // about how a colour is expressed leaks into the layout.
+    layout_ctx: parley::LayoutContext<Brush>,
     /// Stories already laid out at a given measure.
     ///
     /// Dragging a frame bumps the document's revision on every pointer move,
@@ -267,7 +290,7 @@ impl Shaper {
         story: &Story,
         styles: &dyn Styles,
         width: f64,
-    ) -> parley::Layout<()> {
+    ) -> parley::Layout<Brush> {
         let mut builder =
             self.layout_ctx
                 .ranged_builder(&mut self.font_ctx, &story.text, 1.0, true);
@@ -328,6 +351,13 @@ impl Shaper {
                     run.range.clone(),
                 );
             }
+            // Pushed even when the run states no colour, because a *change*
+            // is what splits a glyph run: leaving the default in place for one
+            // run and setting it for the next is exactly the boundary needed.
+            builder.push(
+                parley::StyleProperty::Brush(format.colour.clone()),
+                run.range.clone(),
+            );
             if let Some(tracking) = format.tracking {
                 // Thousandths of an em, which is the unit a typographer uses;
                 // parley wants points at the shaped size.
@@ -339,7 +369,7 @@ impl Shaper {
             }
         }
 
-        let mut layout: parley::Layout<()> = builder.build(&story.text);
+        let mut layout: parley::Layout<Brush> = builder.build(&story.text);
         layout.break_all_lines(Some(width as f32));
 
         // Alignment is applied to the whole layout, because that is the only
@@ -429,9 +459,17 @@ impl Shaper {
                     });
                 }
 
+                // Read back off the layout rather than looked up in the
+                // story. parley split this run at the brush boundary, so the
+                // brush it reports is the colour of exactly these glyphs —
+                // whereas the story run at the stretch's start would be the
+                // right answer only when the split happened to line up.
+                let colour = run.style().brush.clone();
+
                 runs.push(ShapedRun {
                     font_index,
                     size,
+                    colour,
                     glyphs,
                 });
             }
@@ -988,6 +1026,93 @@ mod tests {
                 .map(|g| g.x)
         };
         assert_eq!(x_of(&mixed), x_of(&plain));
+    }
+
+
+    // --- colour, run by run ------------------------------------------------
+
+    #[test]
+    fn a_story_nobody_has_coloured_comes_back_in_the_document_default() {
+        // Not `None`: the cascade's floor states a colour, so every run
+        // resolves to one. `None` survives only for a `Styles` whose default
+        // says nothing, and the consumer's fallback exists for that case.
+        use tessera_color::Color;
+
+        let mut shaper = Shaper::new();
+        let shaped = shaper.shape(&Story::new("hello"), &NoStyles::default(), 400.0);
+        assert!(shaped.runs().count() > 0);
+        assert!(shaped.runs().all(|r| r.colour == Some(Color::BLACK)));
+    }
+
+    #[test]
+    fn two_differently_coloured_words_shape_into_differently_coloured_runs() {
+        use crate::story::CharacterFormat;
+        use tessera_color::Color;
+
+        let red = Color::Rgb {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        };
+
+        let mut story = Story::new("ab cd");
+        story.apply_character_format(
+            0..2,
+            &CharacterFormat {
+                colour: Some(red.clone()),
+                ..CharacterFormat::default()
+            },
+        );
+
+        let mut shaper = Shaper::new();
+        let shaped = shaper.shape(&story, &NoStyles::default(), 400.0);
+
+        let colours: Vec<Option<Color>> = shaped.runs().map(|r| r.colour.clone()).collect();
+        assert!(
+            colours.contains(&Some(red)),
+            "the coloured word did not reach a shaped run: {colours:?}"
+        );
+        assert!(
+            colours.contains(&Some(Color::BLACK)),
+            "and the rest of the line stayed the document default: {colours:?}"
+        );
+        assert_eq!(
+            colours.len(),
+            2,
+            "parley splits a glyph run at a brush change, and only there"
+        );
+    }
+
+    #[test]
+    fn changing_only_the_colour_reshapes_rather_than_returning_the_cache() {
+        use crate::story::CharacterFormat;
+        use tessera_color::Color;
+
+        let mut shaper = Shaper::new();
+        let plain = Story::new("hello");
+        let first = shaper.shape(&plain, &NoStyles::default(), 400.0);
+
+        let mut coloured = Story::new("hello");
+        coloured.apply_character_format(
+            0..5,
+            &CharacterFormat {
+                colour: Some(Color::Rgb {
+                    r: 1.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 1.0,
+                }),
+                ..CharacterFormat::default()
+            },
+        );
+        let second = shaper.shape(&coloured, &NoStyles::default(), 400.0);
+
+        assert_ne!(
+            first.runs().next().and_then(|r| r.colour.clone()),
+            second.runs().next().and_then(|r| r.colour.clone()),
+            "the cache key has to see a colour change like any other"
+        );
     }
 
 }

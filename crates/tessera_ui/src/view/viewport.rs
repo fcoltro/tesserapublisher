@@ -358,7 +358,21 @@ fn canvas_press(ui: &Ui, response: &egui::Response, rect: Rect) -> Option<egui::
     if !ui.input(|i| i.pointer.primary_pressed()) {
         return None;
     }
-    on_canvas(press_pos(ui, response), rect)
+    let pos = on_canvas(press_pos(ui, response), rect)?;
+    floating_free(ui, pos).then_some(pos)
+}
+
+/// Whether nothing floats above `pos`.
+///
+/// The canvas and the panels are all in egui's background layer; a `Window`, a
+/// menu and a tooltip are not. Without this, a press inside the styles window
+/// counts as a press on the canvas underneath it — the same class of mistake as
+/// reading the *global* pointer instead of the local one, which is what let a
+/// click in the inspector end an on-canvas text edit.
+pub(crate) fn floating_free(ui: &Ui, pos: egui::Pos2) -> bool {
+    ui.ctx()
+        .layer_id_at(pos)
+        .is_none_or(|layer| layer.order == egui::Order::Background)
 }
 
 /// The rule [`canvas_press`] applies, on its own so it can be tested.

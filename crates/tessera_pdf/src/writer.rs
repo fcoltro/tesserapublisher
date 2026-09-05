@@ -476,11 +476,11 @@ fn draw_text(
     color: &Color,
     fonts: &[EmbeddedFont],
 ) -> Result<(), PdfError> {
-    let [r, g, b, _] = color.to_rgb_f32();
-
-    // One text object per run, because the size lives there. Grouping by font
-    // alone would set the font once and draw every size at it.
+    // One text object per run, because the size lives there — and now the
+    // colour too. Grouping by font alone would set the font once and draw
+    // every size at it.
     for run in shaped.runs() {
+        let [r, g, b, _] = run.colour.as_ref().unwrap_or(color).to_rgb_f32();
         let index = run.font_index;
         // Match by subset content: `collect_fonts` walked the same items in
         // the same order, so position `index` here maps to the same font.

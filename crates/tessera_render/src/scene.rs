@@ -283,6 +283,9 @@ fn draw_text(
         if run.glyphs.is_empty() {
             continue;
         }
+        // The run's own colour when it states one; otherwise the frame's,
+        // which is what every story that nobody has coloured still uses.
+        let colour = run.colour.as_ref().unwrap_or(color);
 
         let glyphs: Vec<Glyph> = run
             .glyphs
@@ -298,7 +301,7 @@ fn draw_text(
             .draw_glyphs(font)
             .font_size(run.size)
             .transform(transform)
-            .brush(to_peniko(color))
+            .brush(to_peniko(colour))
             .draw(Fill::NonZero, glyphs.into_iter());
     }
 }

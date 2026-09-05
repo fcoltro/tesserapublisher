@@ -736,21 +736,17 @@ fn text_section(
     id: tessera_document::ids::FrameId,
     frame: &tessera_document::nodes::Frame,
 ) {
+    // `id` identifies which frame's caret decides the target range; the story
+    // is what everything here actually edits.
     let tessera_document::nodes::FrameKind::Text { story } = &frame.kind else {
         return;
     };
     let story = *story;
 
-    let mut text = state
-        .active()
-        .document()
-        .story(story)
-        .map(|s| s.text.clone())
-        .unwrap_or_default();
-    if ui.text_edit_multiline(&mut text).changed() {
-        apply(state, Command::SetText { id, text });
-    }
-
+    // No text box here. The text is on the canvas, where it is set; a copy of
+    // it in the inspector grows with the story until it drives every control
+    // below it off the panel, and a person editing a page is looking at the
+    // page.
     let target = format_target(state, id, story);
     let (shown, paragraph) = {
         let doc = state.active().document();
@@ -838,6 +834,32 @@ fn text_section(
             },
         );
     }
+
+    // Text colour. Distinct from the frame's fill, which is the box behind the
+    // glyphs — setting that and expecting the letters to change is the mistake
+    // the two controls sitting apart is meant to prevent.
+    let shown_colour = shown.colour.clone().unwrap_or(Color::BLACK);
+    let [r, g, b, a] = shown_colour.to_rgb_f32();
+    let mut rgba = [r, g, b, a];
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::TEXT_MUTED, "Colour");
+        if fill_picker(ui, &mut rgba) {
+            set_character(
+                state,
+                story,
+                target.clone(),
+                CharacterFormat {
+                    colour: Some(Color::Rgb {
+                        r: rgba[0],
+                        g: rgba[1],
+                        b: rgba[2],
+                        a: rgba[3],
+                    }),
+                    ..CharacterFormat::default()
+                },
+            );
+        }
+    });
 
     ui.horizontal(|ui| {
         ui.colored_label(Theme::TEXT_MUTED, "Weight");

@@ -168,6 +168,9 @@ pub fn drag_out(ui: &Ui, state: &mut TesseraApp, canvas: Rect, across: Rect, dow
     if state.guide_drag.is_none()
         && down_now
         && let Some(pos) = pointer
+        // Dragging a window across a ruler must not leave guides behind it.
+        // The window is a floating layer; the rulers are not.
+        && crate::view::viewport::floating_free(ui, pos)
     {
         if across.contains(pos) {
             state.guide_drag = Some((Axis::Horizontal, doc_at(pos).y));
@@ -397,5 +400,126 @@ mod tests {
     fn a_zoom_of_zero_does_not_divide_by_it() {
         // The viewport can report this for a frame before it has sized itself.
         assert!(tick_spacing(Unit::Millimetres, 0.0).is_finite());
+    }
+}
+
+#[cfg(test)]
+mod paint_tests {
+    use super::*;
+    use crate::app::TesseraApp;
+
+    /// Lay the rulers out the way `view::show` does and run one frame.
+    ///
+    /// egui can be driven headlessly, which makes painting testable: the frame
+    /// comes back as shapes, so "the vertical ruler shows no numbers" is a
+    /// thing a test can say rather than only a thing a person can notice.
+    fn one_frame() -> (Vec<egui::epaint::ClippedShape>, Rect, Rect) {
+        let state = TesseraApp::headless();
+        let ctx = egui::Context::default();
+        let screen = Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 800.0));
+
+        let mut across = Rect::NOTHING;
+        let mut down = Rect::NOTHING;
+
+        let input = egui::RawInput {
+            screen_rect: Some(screen),
+            ..Default::default()
+        };
+        // `run_ui` hands back a root `Ui`, which is how eframe 0.35 drives
+        // this application — so the arrangement under test is the real one.
+        let output = ctx.run_ui(input, |ui| {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE)
+                .show(ui, |ui| {
+                    across = egui::Panel::top("ruler-across")
+                        .exact_size(THICKNESS)
+                        .resizable(false)
+                        .frame(egui::Frame::NONE)
+                        .show(ui, |_ui| {})
+                        .response
+                        .rect;
+                    down = egui::Panel::left("ruler-down")
+                        .exact_size(THICKNESS)
+                        .resizable(false)
+                        .frame(egui::Frame::NONE)
+                        .show(ui, |_ui| {})
+                        .response
+                        .rect;
+                    let canvas = ui.available_rect_before_wrap();
+                    paint(ui, &state, canvas, across, down);
+                });
+        });
+
+        (output.shapes, across, down)
+    }
+
+    /// Every text shape drawn inside `strip`, with its position.
+    fn labels_in(shapes: &[egui::epaint::ClippedShape], strip: Rect) -> Vec<(egui::Pos2, String)> {
+        let mut found = Vec::new();
+        for clipped in shapes {
+            let egui::Shape::Text(text) = &clipped.shape else {
+                continue;
+            };
+            if !strip.contains(text.pos) {
+                continue;
+            }
+            // Clipped away is the same as not drawn, as far as a reader is
+            // concerned — which is the whole bug this test exists for.
+            let visible = clipped.clip_rect.intersects(text.galley.rect.translate(text.pos.to_vec2()));
+            if !visible {
+                continue;
+            }
+            found.push((text.pos, text.galley.text().to_string()));
+        }
+        found
+    }
+
+    #[test]
+    fn both_rulers_are_given_a_real_strip() {
+        let (_, across, down) = one_frame();
+        assert!(across.width() > 100.0, "the top ruler got {across:?}");
+        assert!(
+            (down.width() - THICKNESS).abs() < 1.0,
+            "the left ruler got {down:?}"
+        );
+        assert!(down.height() > 100.0, "the left ruler got {down:?}");
+    }
+
+    #[test]
+    fn the_horizontal_ruler_is_numbered() {
+        let (shapes, across, _) = one_frame();
+        let labels = labels_in(&shapes, across);
+        assert!(!labels.is_empty(), "the top ruler drew no numbers");
+    }
+
+    #[test]
+    fn the_vertical_ruler_is_numbered() {
+        // Reported from real use: the left ruler showed ticks and no numbers.
+        let (shapes, _, down) = one_frame();
+        let labels = labels_in(&shapes, down);
+        assert!(!labels.is_empty(), "the left ruler drew no numbers");
+    }
+
+    #[test]
+    fn a_vertical_label_fits_the_strip_it_is_drawn_in() {
+        // A number wider than the ruler is a number nobody can read. The strip
+        // is 20 points and a four-digit label is not far off that, so the fit
+        // is checked rather than assumed.
+        let (shapes, _, down) = one_frame();
+        for clipped in &shapes {
+            let egui::Shape::Text(text) = &clipped.shape else {
+                continue;
+            };
+            if !down.contains(text.pos) {
+                continue;
+            }
+            let width = text.galley.rect.width();
+            assert!(
+                width <= down.width(),
+                "the label {:?} is {width} wide in a {} strip",
+                text.galley.text(),
+                down.width()
+            );
+        }
     }
 }

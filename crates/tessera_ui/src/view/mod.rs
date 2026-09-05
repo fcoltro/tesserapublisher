@@ -58,11 +58,17 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
             let mut down = egui::Rect::NOTHING;
 
             if state.screen_mode.shows_chrome() {
-                Panel::top("ruler-across")
+                // `response.rect` rather than the inner `ui.max_rect()`. A
+                // panel's content rect has the frame's margins taken off it,
+                // which on a 20-point strip leaves four — and the ruler paints
+                // into a painter clipped to what it is given, so the left
+                // ruler's numbers were being clipped away entirely. The strip
+                // is what the ruler measures and what it must paint into.
+                let across_panel = Panel::top("ruler-across")
                     .exact_size(rulers::THICKNESS)
                     .resizable(false)
+                    .frame(egui::Frame::NONE)
                     .show(ui, |ui| {
-                        across = ui.max_rect();
                         // The corner where the rulers meet is the unit
                         // selector, as it has been in every layout tool.
                         // The corner carries both: the zero point, then the
@@ -72,12 +78,14 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
                             rulers::unit_selector(ui, state);
                         });
                     });
-                Panel::left("ruler-down")
+                across = across_panel.response.rect;
+
+                let down_panel = Panel::left("ruler-down")
                     .exact_size(rulers::THICKNESS)
                     .resizable(false)
-                    .show(ui, |ui| {
-                        down = ui.max_rect();
-                    });
+                    .frame(egui::Frame::NONE)
+                    .show(ui, |_ui| {});
+                down = down_panel.response.rect;
             }
 
             let canvas = ui.available_rect_before_wrap();
