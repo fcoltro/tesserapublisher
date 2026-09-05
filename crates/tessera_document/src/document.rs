@@ -25,6 +25,9 @@ pub enum ZMove {
 }
 
 /// US Letter in points — the default new-document size.
+/// The gap between one spread and the next on the pasteboard.
+const SPREAD_GAP: f64 = 36.0;
+
 const DEFAULT_PAGE: DocRect = DocRect {
     x: 0.0,
     y: 0.0,
@@ -290,6 +293,231 @@ impl Document {
             }
         }
         self.revision += 1;
+    }
+
+    /// Put every spread where it belongs on the pasteboard.
+    ///
+    /// `Page.bounds` is in document space and everything downstream reads it —
+    /// the rulers, align-to-page, guides, the PDF's `TrimBox`. So the bounds
+    /// stay the truth and this recomputes them after anything structural.
+    /// Deriving them at resolve time instead would mean every consumer
+    /// learning the rule.
+    ///
+    /// A spread's pages run left to right; spreads stack downward. InDesign
+    /// runs spreads across instead, but a wheel scrolls down and the
+    /// pasteboard is the thing being navigated.
+    pub fn reflow_spreads(&mut self) {
+        // Every page is the size of the first, which is what `set_page_size`
+        // already assumes: per-page sizes are a later milestone.
+        let (width, height) = self
+            .page_ids()
+            .next()
+            .and_then(|id| self.pages.get(id))
+            .map_or((DEFAULT_PAGE.width, DEFAULT_PAGE.height), |p| {
+                (p.bounds.width, p.bounds.height)
+            });
+
+        let mut y = 0.0;
+        for spread in self.spread_order.clone() {
+            let pages = self.pages_of(spread);
+            for (column, page) in pages.iter().enumerate() {
+                if let Some(page) = self.pages.get_mut(*page) {
+                    page.bounds = DocRect {
+                        x: column as f64 * width,
+                        y,
+                        width,
+                        height,
+                    };
+                }
+            }
+            y += height + SPREAD_GAP;
+        }
+        self.revision += 1;
+    }
+
+    /// Append a page, and say which one it is.
+    ///
+    /// With facing pages on it joins the last spread when that spread holds
+    /// one page and is not the first, and otherwise starts a new one.
+    ///
+    /// "Not the first" is a rule about cover pages, and there is no getting
+    /// away from one: page 1 is a right-hand page, so it stands alone and the
+    /// spreads after it pair up — 1, 2-3, 4-5. Joining the last spread without
+    /// that exception gives 1-2, 3-4, which reads as though the book opened on
+    /// its own cover.
+    pub fn add_page(&mut self) -> PageId {
+        let layer = self.layers.insert(Layer {
+            name: "Layer 1".to_string(),
+            visible: true,
+            locked: false,
+            frames: Vec::new(),
+        });
+        let page = self.pages.insert(Page {
+            // Placed by the reflow below; a page is never left where this put
+            // it.
+            bounds: DEFAULT_PAGE,
+            layers: vec![layer],
+        });
+
+        let joins_the_last = self.setup.facing_pages
+            && self.spread_order.len() > 1
+            && self
+                .spread_order
+                .last()
+                .is_some_and(|s| self.pages_of(*s).len() < 2);
+
+        if joins_the_last
+            && let Some(last) = self.spread_order.last().copied()
+            && let Some(spread) = self.spreads.get_mut(last)
+        {
+            spread.pages.push(page);
+        } else {
+            let spread = self.spreads.insert(Spread {
+                pages: vec![page],
+                guides: Vec::new(),
+            });
+            self.spread_order.push(spread);
+        }
+
+        self.reflow_spreads();
+        page
+    }
+
+    /// Remove a page, its layers and everything on them.
+    ///
+    /// Returns whether it removed one. **The last page is refused**: a document
+    /// with no pages has nothing to show and no way back except undo, and
+    /// InDesign refuses it too.
+    pub fn remove_page(&mut self, id: PageId) -> bool {
+        if self.page_ids().count() <= 1 || !self.pages.contains_key(id) {
+            return false;
+        }
+
+        let layers = self
+            .pages
+            .get(id)
+            .map(|p| p.layers.clone())
+            .unwrap_or_default();
+        for layer in layers {
+            let frames = self
+                .layers
+                .get(layer)
+                .map(|l| l.frames.clone())
+                .unwrap_or_default();
+            for frame in frames {
+                self.remove_frame(frame);
+            }
+            self.layers.remove(layer);
+        }
+        self.pages.remove(id);
+
+        // And the spread, if that was the last page on it. A spread with no
+        // pages would still take up room in the flow.
+        for spread in self.spread_order.clone() {
+            if let Some(s) = self.spreads.get_mut(spread) {
+                s.pages.retain(|p| *p != id);
+            }
+        }
+        self.spread_order.retain(|s| {
+            self.spreads
+                .get(*s)
+                .is_some_and(|spread| !spread.pages.is_empty())
+        });
+
+        self.reflow_spreads();
+        true
+    }
+
+    /// Copy a page, everything on it, and the text it says.
+    ///
+    /// A **deep** copy: a text frame's story is copied too. Sharing it would
+    /// make editing one page edit another, which is the same trap
+    /// `Command::DuplicateSelection` already avoids for frames — and the one a
+    /// reader is least likely to suspect, because the two pages look right
+    /// until somebody types.
+    ///
+    /// The copy is inserted directly after the original's spread.
+    pub fn duplicate_page(&mut self, id: PageId) -> Option<PageId> {
+        let source = self.pages.get(id)?.clone();
+
+        let mut layers = Vec::new();
+        for layer in &source.layers {
+            let Some(original) = self.layers.get(*layer).cloned() else {
+                continue;
+            };
+            let mut frames = Vec::new();
+            for frame in &original.frames {
+                if let Some(copy) = self.copy_frame_deeply(*frame) {
+                    frames.push(copy);
+                }
+            }
+            layers.push(self.layers.insert(Layer {
+                name: original.name.clone(),
+                visible: original.visible,
+                locked: original.locked,
+                frames,
+            }));
+        }
+
+        let page = self.pages.insert(Page {
+            bounds: source.bounds,
+            layers,
+        });
+        let spread = self.spreads.insert(Spread {
+            pages: vec![page],
+            guides: self
+                .spread_of(id)
+                .and_then(|s| self.spreads.get(s))
+                .map(|s| s.guides.clone())
+                .unwrap_or_default(),
+        });
+
+        let at = self
+            .spread_of(id)
+            .and_then(|s| self.spread_order.iter().position(|o| *o == s))
+            .map_or(self.spread_order.len(), |i| i + 1);
+        self.spread_order.insert(at, spread);
+
+        self.reflow_spreads();
+        Some(page)
+    }
+
+    /// One frame and its children, with their own stories.
+    fn copy_frame_deeply(&mut self, id: FrameId) -> Option<FrameId> {
+        let mut frame = self.frames.get(id)?.clone();
+
+        match &mut frame.kind {
+            FrameKind::Text { story } => {
+                // Its own copy of the words, so the two pages can diverge.
+                if let Some(text) = self.stories.get(*story).cloned() {
+                    *story = self.stories.insert(text);
+                }
+            }
+            FrameKind::Group(children) => {
+                let originals = children.clone();
+                children.clear();
+                for child in originals {
+                    if let Some(copy) = self.copy_frame_deeply(child) {
+                        children.push(copy);
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        Some(self.frames.insert(frame))
+    }
+
+    /// Move a spread to another place in the reading order.
+    ///
+    /// Positions are into `spread_order`, which is what page numbers count.
+    pub fn move_spread(&mut self, from: usize, to: usize) {
+        if from >= self.spread_order.len() || to >= self.spread_order.len() || from == to {
+            return;
+        }
+        let spread = self.spread_order.remove(from);
+        self.spread_order.insert(to, spread);
+        self.reflow_spreads();
     }
 
     pub fn add_frame(&mut self, layer: LayerId, frame: Frame) -> FrameId {
@@ -1858,5 +2086,243 @@ mod tests {
         expected.sort_by_key(|k| format!("{k:?}"));
         assert_eq!(found, expected);
         assert_eq!(doc.paint_order(), vec![a, b, c], "leaves only, in order");
+    }
+
+    // --- more than one page -------------------------------------------------
+
+    #[test]
+    fn a_new_document_has_one_page_and_adding_gives_it_a_second() {
+        let mut doc = Document::new();
+        assert_eq!(doc.page_ids().count(), 1);
+        doc.add_page();
+        assert_eq!(doc.page_ids().count(), 2);
+    }
+
+    #[test]
+    fn a_second_page_does_not_sit_on_top_of_the_first() {
+        // Bounds are document space and everything downstream reads them: the
+        // rulers, align-to-page, the PDF's TrimBox. Two pages in one place
+        // would be wrong everywhere at once.
+        let mut doc = Document::new();
+        let first = doc.page_ids().next().expect("a page");
+        let second = doc.add_page();
+
+        let a = doc.pages[first].bounds;
+        let b = doc.pages[second].bounds;
+        assert!(
+            b.y >= a.y + a.height || b.x >= a.x + a.width,
+            "the second page overlaps the first: {a:?} then {b:?}"
+        );
+    }
+
+    #[test]
+    fn facing_pages_reads_one_then_two_and_three() {
+        // InDesign's pattern, and the test that corrected the decision behind
+        // it. Page 1 is a right-hand page, so it stands alone; pages 2 and 3
+        // face each other. Joining the last spread unconditionally would give
+        // 1-2, 3-4, which reads as though the book opened on its own cover.
+        let mut doc = Document::new();
+        doc.setup.facing_pages = true;
+        let first = doc.page_ids().next().expect("a page");
+        let second = doc.add_page();
+        let third = doc.add_page();
+
+        assert_eq!(doc.spread_order.len(), 2, "two spreads for three pages");
+        assert_eq!(
+            doc.pages_of(doc.spread_order[0]),
+            vec![first],
+            "page one stands alone"
+        );
+        assert_eq!(
+            doc.pages_of(doc.spread_order[1]),
+            vec![second, third],
+            "and pages two and three face each other"
+        );
+    }
+
+    #[test]
+    fn two_facing_pages_sit_beside_each_other() {
+        let mut doc = Document::new();
+        doc.setup.facing_pages = true;
+        let second = doc.add_page();
+        let third = doc.add_page();
+
+        let a = doc.pages[second].bounds;
+        let b = doc.pages[third].bounds;
+        assert!((a.y - b.y).abs() < 1e-9, "level with each other");
+        assert!(
+            (b.x - (a.x + a.width)).abs() < 1e-9,
+            "and touching: {a:?} then {b:?}"
+        );
+    }
+
+    #[test]
+    fn a_fourth_page_starts_the_next_spread() {
+        let mut doc = Document::new();
+        doc.setup.facing_pages = true;
+        doc.add_page();
+        doc.add_page();
+        let fourth = doc.add_page();
+
+        assert_eq!(doc.spread_order.len(), 3);
+        assert_eq!(doc.pages_of(doc.spread_order[2]), vec![fourth]);
+    }
+
+    #[test]
+    fn without_facing_pages_every_page_is_its_own_spread() {
+        let mut doc = Document::new();
+        doc.add_page();
+        doc.add_page();
+        assert_eq!(doc.spread_order.len(), 3);
+    }
+
+    #[test]
+    fn the_last_page_cannot_be_removed() {
+        let mut doc = Document::new();
+        let only = doc.page_ids().next().expect("a page");
+
+        assert!(!doc.remove_page(only), "refused");
+        assert_eq!(doc.page_ids().count(), 1);
+    }
+
+    #[test]
+    fn removing_a_page_takes_its_frames_and_layers_with_it() {
+        let mut doc = Document::new();
+        let page = doc.add_page();
+        let layer = doc.pages[page].layers[0];
+        let frame = doc.add_frame(layer, rect_frame());
+
+        assert!(doc.remove_page(page));
+        assert!(doc.frame(frame).is_none(), "the frame went with the page");
+        assert!(doc.layers.get(layer).is_none(), "and so did its layer");
+        assert_eq!(doc.page_ids().count(), 1);
+    }
+
+    #[test]
+    fn removing_a_page_closes_the_gap_it_left() {
+        let mut doc = Document::new();
+        doc.add_page();
+        let third = doc.add_page();
+        let second = doc.page_ids().nth(1).expect("a second page");
+
+        doc.remove_page(second);
+
+        let first = doc.page_ids().next().expect("a page");
+        let a = doc.pages[first].bounds;
+        let b = doc.pages[third].bounds;
+        assert!(
+            (b.y - (a.y + a.height + SPREAD_GAP)).abs() < 1e-9,
+            "the page after the hole moved up: {a:?} then {b:?}"
+        );
+    }
+
+    // --- duplicating and reordering -----------------------------------------
+
+    #[test]
+    fn a_duplicated_page_has_its_own_frames() {
+        let mut doc = Document::new();
+        let page = doc.add_page();
+        let layer = doc.pages[page].layers[0];
+        let frame = doc.add_frame(layer, rect_frame());
+
+        let copy = doc.duplicate_page(page).expect("a copy");
+        let copied_layer = doc.pages[copy].layers[0];
+        let copied = doc.layers[copied_layer].frames[0];
+
+        assert_ne!(copied, frame, "a copy, not the same frame");
+        assert!(doc.frame(frame).is_some(), "and the original survives");
+    }
+
+    #[test]
+    fn editing_a_copied_pages_text_leaves_the_original_alone() {
+        // The trap a shallow copy sets: both pages look right until somebody
+        // types, and then they change together.
+        let mut doc = Document::new();
+        let page = doc.add_page();
+        let layer = doc.pages[page].layers[0];
+        let story = doc.add_story(Story::new("original"));
+        let mut frame = rect_frame();
+        frame.kind = FrameKind::Text { story };
+        doc.add_frame(layer, frame);
+
+        let copy = doc.duplicate_page(page).expect("a copy");
+        let copied_layer = doc.pages[copy].layers[0];
+        let copied_frame = doc.layers[copied_layer].frames[0];
+        let FrameKind::Text { story: copied } = doc.frame(copied_frame).expect("frame").kind else {
+            panic!("a text frame shows a story");
+        };
+
+        assert_ne!(copied, story, "its own story");
+        doc.story_mut(copied).expect("story").set_text("changed");
+        assert_eq!(
+            doc.story(story).expect("story").text,
+            "original",
+            "the original page still says what it said"
+        );
+    }
+
+    #[test]
+    fn a_duplicate_lands_directly_after_its_original() {
+        let mut doc = Document::new();
+        let first = doc.page_ids().next().expect("a page");
+        doc.add_page();
+
+        let copy = doc.duplicate_page(first).expect("a copy");
+        assert_eq!(
+            doc.page_ids().nth(1),
+            Some(copy),
+            "the copy is the second page, not the last"
+        );
+    }
+
+    #[test]
+    fn moving_a_spread_changes_the_order_and_the_geometry_follows() {
+        let mut doc = Document::new();
+        doc.add_page();
+        let third = doc.add_page();
+
+        let before = doc.pages[third].bounds.y;
+        doc.move_spread(2, 0);
+
+        assert_eq!(doc.page_ids().next(), Some(third), "it reads first now");
+        assert!(
+            doc.pages[third].bounds.y < before,
+            "and it moved up the pasteboard: {} against {before}",
+            doc.pages[third].bounds.y
+        );
+    }
+
+    #[test]
+    fn moving_a_spread_nowhere_does_nothing() {
+        let mut doc = Document::new();
+        doc.add_page();
+        let order = doc.spread_order.clone();
+
+        doc.move_spread(0, 0);
+        doc.move_spread(9, 0);
+        doc.move_spread(0, 9);
+
+        assert_eq!(doc.spread_order, order);
+    }
+
+    #[test]
+    fn every_structural_change_bumps_the_revision() {
+        // The resolve cache keys on it. A page that does not appear until
+        // something else moves is the margins bug, again.
+        let mut doc = Document::new();
+        let mut last = doc.revision();
+        let moved = |doc: &Document, last: &mut u64, what: &str| {
+            assert!(doc.revision() > *last, "{what} did not bump the revision");
+            *last = doc.revision();
+        };
+
+        let page = doc.add_page();
+        moved(&doc, &mut last, "add_page");
+        doc.duplicate_page(page);
+        moved(&doc, &mut last, "duplicate_page");
+        doc.move_spread(1, 0);
+        moved(&doc, &mut last, "move_spread");
+        doc.remove_page(page);
+        moved(&doc, &mut last, "remove_page");
     }
 }
