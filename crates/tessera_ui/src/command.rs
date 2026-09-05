@@ -11,10 +11,10 @@
 
 use tessera_color::Color;
 use tessera_document::document::{Document, ZMove};
-use tessera_document::ids::FrameId;
+use tessera_document::ids::{FrameId, StoryId};
 use tessera_document::nodes::{Frame, FrameKind};
 use tessera_geometry::{DocRect, Transform};
-use tessera_text::story::Story;
+use tessera_text::story::{CharacterFormat, ParagraphFormat, Story};
 
 use crate::app::{Clipboard, TesseraApp};
 
@@ -41,6 +41,32 @@ pub enum Command {
     SetText {
         id: FrameId,
         text: String,
+    },
+
+    /// Merge character formatting into a range of a story.
+    ///
+    /// Addressed by `StoryId` rather than `FrameId`: a story is shown by its
+    /// frames and milestone 4 threads one through several, so formatting a
+    /// word is an edit to the story and not to any one frame that displays it.
+    ///
+    /// The format is a set of overrides, so a `None` field means "leave this
+    /// property alone". That is what lets the inspector change one control
+    /// without flattening the rest, and it is why the whole struct travels at
+    /// once — one undo entry for one visit to the inspector.
+    SetCharacterFormat {
+        story: StoryId,
+        range: std::ops::Range<usize>,
+        format: CharacterFormat,
+    },
+
+    /// Merge paragraph formatting into the paragraphs a range touches.
+    ///
+    /// The range is widened to whole paragraphs by the story, so a caret with
+    /// no selection formats the paragraph it sits in.
+    SetParagraphFormat {
+        story: StoryId,
+        range: std::ops::Range<usize>,
+        format: ParagraphFormat,
     },
 
     /// Move every selected frame by the same offset.
@@ -296,7 +322,30 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 state.active().document().frame(id).map(|f| f.kind.clone())
                 && let Some(s) = state.active_mut().document_mut().story_mut(story)
             {
-                s.text = text;
+                // Not `s.text = text`. Assigning the string leaves `runs`
+                // describing a length the text no longer has, which is
+                // corruption rather than a glitch and shows up far from here.
+                s.set_text(text);
+            }
+        }
+
+        Command::SetCharacterFormat {
+            story,
+            range,
+            format,
+        } => {
+            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
+                s.apply_character_format(range, &format);
+            }
+        }
+
+        Command::SetParagraphFormat {
+            story,
+            range,
+            format,
+        } => {
+            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
+                s.apply_paragraph_format(range, &format);
             }
         }
 
@@ -2034,4 +2083,145 @@ mod tests {
             wanted
         );
     }
+
+    // --- text formatting -----------------------------------------------
+
+    /// A text frame with `text` in it, and the story it shows.
+    fn a_text_frame(text: &str) -> (TesseraApp, FrameId, StoryId) {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddTextFrame(bounds()));
+        let id = state.active().selection.single().expect("selected");
+        apply(
+            &mut state,
+            Command::SetText {
+                id,
+                text: text.to_string(),
+            },
+        );
+        let FrameKind::Text { story } = state.active().document().frame(id).expect("frame").kind
+        else {
+            panic!("a text frame shows a story");
+        };
+        (state, id, story)
+    }
+
+    #[test]
+    fn making_a_word_bold_leaves_the_rest_alone() {
+        let (mut state, _, story) = a_text_frame("the quick brown fox");
+        apply(
+            &mut state,
+            Command::SetCharacterFormat {
+                story,
+                range: 4..9,
+                format: CharacterFormat {
+                    weight: Some(700),
+                    ..CharacterFormat::default()
+                },
+            },
+        );
+
+        let story = state.active().document().story(story).expect("story");
+        assert!(story.runs_are_sound());
+        assert_eq!(story.runs.len(), 3);
+        assert_eq!(story.runs[1].local.weight, Some(700));
+        assert_eq!(story.runs[0].local.weight, None);
+    }
+
+    #[test]
+    fn making_a_word_bold_is_one_undo_entry() {
+        // One visit to the inspector, one Ctrl+Z. The whole format struct
+        // travels at once for exactly this reason.
+        let (mut state, _, story) = a_text_frame("the quick brown fox");
+        apply(
+            &mut state,
+            Command::SetCharacterFormat {
+                story,
+                range: 4..9,
+                format: CharacterFormat {
+                    weight: Some(700),
+                    italic: Some(true),
+                    size: Some(18.0),
+                    ..CharacterFormat::default()
+                },
+            },
+        );
+        apply(&mut state, Command::Undo);
+
+        let story = state.active().document().story(story).expect("story");
+        assert_eq!(story.runs.len(), 1, "one undo took all three properties");
+        assert_eq!(story.runs[0].local.weight, None);
+    }
+
+    #[test]
+    fn formatting_redraws_because_it_bumps_the_revision() {
+        // The resolve cache is keyed on the revision. A format that does not
+        // bump it is a format that appears only when something else moves —
+        // the bug page setup had.
+        let (mut state, _, story) = a_text_frame("abc");
+        let before = state.active().document().revision();
+        apply(
+            &mut state,
+            Command::SetCharacterFormat {
+                story,
+                range: 0..3,
+                format: CharacterFormat {
+                    weight: Some(700),
+                    ..CharacterFormat::default()
+                },
+            },
+        );
+        assert!(
+            state.active().document().revision() > before,
+            "the revision must move or nothing redraws"
+        );
+    }
+
+    #[test]
+    fn centring_a_paragraph_takes_the_whole_paragraph() {
+        let (mut state, _, story) = a_text_frame("first\nsecond\nthird");
+        apply(
+            &mut state,
+            Command::SetParagraphFormat {
+                story,
+                range: 7..9,
+                format: ParagraphFormat {
+                    alignment: Some(tessera_text::story::Alignment::Centre),
+                    ..ParagraphFormat::default()
+                },
+            },
+        );
+
+        let story = state.active().document().story(story).expect("story");
+        assert_eq!(story.paragraphs.len(), 3);
+        assert_eq!(story.paragraphs[1].range, 6..13);
+        assert_eq!(
+            story.paragraphs[1].local.alignment,
+            Some(tessera_text::story::Alignment::Centre)
+        );
+    }
+
+    #[test]
+    fn setting_the_text_leaves_the_runs_sound() {
+        // The command used to assign `story.text` directly, leaving the runs
+        // describing the old length. Nothing caught it because the shaper read
+        // the story's single style rather than its runs.
+        let (mut state, id, story) = a_text_frame("the quick brown fox");
+        apply(
+            &mut state,
+            Command::SetText {
+                id,
+                text: "hi".to_string(),
+            },
+        );
+
+        let story = state.active().document().story(story).expect("story");
+        assert_eq!(story.text, "hi");
+        assert!(
+            story.runs_are_sound(),
+            "runs {:?} do not describe {:?}",
+            story.runs,
+            story.text
+        );
+    }
+
 }

@@ -449,6 +449,98 @@ impl Story {
         self.merge_equal_neighbours();
     }
 
+    /// Replace the whole text, keeping the formatting the story opened with.
+    ///
+    /// Writing `text` directly leaves `runs` describing a length the text no
+    /// longer has, which [`Story::runs_are_sound`] calls corruption rather
+    /// than a glitch. The first run's and first paragraph's formatting is
+    /// kept, because a caller replacing the content has said nothing about
+    /// the formatting.
+    pub fn set_text(&mut self, text: impl Into<String>) {
+        let run = self.runs.first().cloned();
+        let paragraph = self.paragraphs.first().cloned();
+        *self = Story::new(text);
+        if let (Some(keep), Some(first)) = (run, self.runs.first_mut()) {
+            first.style = keep.style;
+            first.local = keep.local;
+        }
+        if let (Some(keep), Some(first)) = (paragraph, self.paragraphs.first_mut()) {
+            first.style = keep.style;
+            first.local = keep.local;
+        }
+    }
+
+    /// Merge `format` into every run the range covers.
+    ///
+    /// The new format **wins**: setting bold over text that is 9pt italic
+    /// leaves it 9pt italic bold. A `None` field means "do not touch this
+    /// property", which is what lets the inspector change one control without
+    /// flattening the rest — and is why applying an empty format is a no-op
+    /// rather than a reset.
+    ///
+    /// Runs are split at both edges of the range, so a format applied to the
+    /// middle of one run turns it into three. Identical neighbours are folded
+    /// afterwards, or the list grows without bound over a session of small
+    /// edits.
+    pub fn apply_character_format(&mut self, range: Range<usize>, format: &CharacterFormat) {
+        let start = range.start.min(self.text.len());
+        let end = range.end.min(self.text.len());
+        if start >= end || format.is_empty() {
+            return;
+        }
+
+        split_span_at(&mut self.runs, start, |r| &mut r.range);
+        split_span_at(&mut self.runs, end, |r| &mut r.range);
+
+        for run in &mut self.runs {
+            if run.range.start >= start && run.range.end <= end {
+                run.local = format.over(&run.local);
+            }
+        }
+
+        self.merge_equal_neighbours();
+    }
+
+    /// Merge `format` into every paragraph the range touches.
+    ///
+    /// The range is first widened to whole paragraphs. `paragraphs` is a list
+    /// of formatting spans and nothing stops one from covering half a
+    /// paragraph, but centring half a paragraph is not a thing a typesetter
+    /// can mean — so a selection that touches a paragraph formats all of it,
+    /// which is also what a caret with no selection does.
+    pub fn apply_paragraph_format(&mut self, range: Range<usize>, format: &ParagraphFormat) {
+        if self.text.is_empty() || format == &ParagraphFormat::default() {
+            return;
+        }
+        let start = range.start.min(self.text.len());
+        let end = range.end.min(self.text.len()).max(start);
+        let bounds = self.paragraph_bounds(start..end);
+
+        split_span_at(&mut self.paragraphs, bounds.start, |p| &mut p.range);
+        split_span_at(&mut self.paragraphs, bounds.end, |p| &mut p.range);
+
+        for para in &mut self.paragraphs {
+            if para.range.start >= bounds.start && para.range.end <= bounds.end {
+                para.local = format.over(&para.local);
+            }
+        }
+
+        self.merge_equal_neighbours();
+    }
+
+    /// The whole paragraphs `range` touches: back to just after the previous
+    /// newline, forward to just past the next one.
+    ///
+    /// The trailing newline is included because it belongs to the paragraph it
+    /// ends, which is where its own formatting lives.
+    pub fn paragraph_bounds(&self, range: Range<usize>) -> Range<usize> {
+        let start = self.text[..range.start].rfind('\n').map_or(0, |i| i + 1);
+        let end = self.text[range.end..]
+            .find('\n')
+            .map_or(self.text.len(), |i| range.end + i + 1);
+        start..end
+    }
+
     /// Fold together adjacent runs that would draw the same.
     pub fn merge_equal_neighbours(&mut self) {
         let mut merged: Vec<Run> = Vec::with_capacity(self.runs.len());
@@ -473,6 +565,32 @@ impl Story {
         }
         self.paragraphs = folded;
     }
+}
+
+/// Split whichever span strictly contains `offset` in two, so that `offset`
+/// becomes a boundary.
+///
+/// "Strictly" is what makes this idempotent: a span that already starts or
+/// ends at `offset` is left alone, so splitting twice costs nothing and the
+/// gap-free invariant is never disturbed.
+fn split_span_at<T: Clone>(
+    spans: &mut Vec<T>,
+    offset: usize,
+    range_of: impl Fn(&mut T) -> &mut Range<usize>,
+) {
+    let found = spans.iter_mut().position(|span| {
+        let r = range_of(span);
+        r.start < offset && offset < r.end
+    });
+    let Some(index) = found else {
+        return;
+    };
+    let mut tail = spans[index].clone();
+    let head = range_of(&mut spans[index]);
+    let end = head.end;
+    head.end = offset;
+    *range_of(&mut tail) = offset..end;
+    spans.insert(index + 1, tail);
 }
 
 /// Extend whichever span holds `at` by `n`, and shift the rest along.
@@ -820,13 +938,203 @@ mod run_tests {
     enum Edit {
         Insert(usize, String),
         Delete(usize, usize),
+        Format(usize, usize, u16),
+        FormatParagraph(usize, usize),
     }
 
     fn an_edit() -> impl Strategy<Value = Edit> {
         prop_oneof![
             (0usize..40, "[a-z]{0,4}").prop_map(|(at, t)| Edit::Insert(at, t)),
             (0usize..40, 0usize..40).prop_map(|(a, b)| Edit::Delete(a.min(b), a.max(b))),
+            (0usize..40, 0usize..40, 100u16..900)
+                .prop_map(|(a, b, w)| Edit::Format(a.min(b), a.max(b), w)),
+            (0usize..40, 0usize..40)
+                .prop_map(|(a, b)| Edit::FormatParagraph(a.min(b), a.max(b))),
         ]
+    }
+
+
+    // --- applying character formatting ---------------------------------
+
+    #[test]
+    fn formatting_the_middle_of_a_run_splits_it_into_three() {
+        let mut story = Story::new("the quick brown fox");
+        story.apply_character_format(4..9, &bold());
+
+        assert!(story.runs_are_sound());
+        assert_eq!(story.runs.len(), 3);
+        assert_eq!(story.runs[0].range, 0..4);
+        assert_eq!(story.runs[1].range, 4..9);
+        assert_eq!(story.runs[2].range, 9..19);
+        assert_eq!(story.runs[1].local.weight, Some(700));
+        assert_eq!(story.runs[0].local.weight, None);
+        assert_eq!(story.runs[2].local.weight, None);
+    }
+
+    #[test]
+    fn formatting_the_whole_story_leaves_one_run() {
+        let mut story = Story::new("the quick brown fox");
+        story.apply_character_format(0..19, &bold());
+
+        assert_eq!(story.runs.len(), 1, "nothing to split, nothing to fold");
+        assert_eq!(story.runs[0].local.weight, Some(700));
+        assert!(story.runs_are_sound());
+    }
+
+    #[test]
+    fn formatting_wins_over_the_run_and_leaves_the_rest_alone() {
+        // The inspector changes one control at a time. Setting bold must not
+        // discard a size the run was already given.
+        let mut story = Story::new("ab");
+        story.runs[0].local.size = Some(9.0);
+        story.runs[0].local.italic = Some(true);
+        story.apply_character_format(0..2, &bold());
+
+        let local = &story.runs[0].local;
+        assert_eq!(local.weight, Some(700), "the new format wins");
+        assert_eq!(local.size, Some(9.0), "and says nothing about size");
+        assert_eq!(local.italic, Some(true));
+    }
+
+    #[test]
+    fn applying_the_same_format_twice_changes_nothing_the_second_time() {
+        let mut story = Story::new("the quick brown fox");
+        story.apply_character_format(4..9, &bold());
+        let once = story.runs.clone();
+        story.apply_character_format(4..9, &bold());
+
+        assert_eq!(story.runs, once, "the split is idempotent");
+    }
+
+    #[test]
+    fn formatting_two_halves_the_same_way_folds_them_back_into_one() {
+        let mut story = Story::new("abcd");
+        story.apply_character_format(0..2, &bold());
+        story.apply_character_format(2..4, &bold());
+
+        assert_eq!(
+            story.runs.len(),
+            1,
+            "identical neighbours must not accumulate: {:?}",
+            story.runs
+        );
+        assert!(story.runs_are_sound());
+    }
+
+    #[test]
+    fn an_empty_format_is_a_no_op_rather_than_a_reset() {
+        let mut story = Story::new("abcd");
+        story.apply_character_format(0..4, &bold());
+        story.apply_character_format(1..3, &CharacterFormat::default());
+
+        assert_eq!(story.runs.len(), 1);
+        assert_eq!(story.runs[0].local.weight, Some(700));
+    }
+
+    #[test]
+    fn an_empty_range_formats_nothing() {
+        let mut story = Story::new("abcd");
+        story.apply_character_format(2..2, &bold());
+        assert_eq!(story.runs[0].local.weight, None);
+        assert_eq!(story.runs.len(), 1);
+    }
+
+    // --- applying paragraph formatting ---------------------------------
+
+    fn centred() -> ParagraphFormat {
+        ParagraphFormat {
+            alignment: Some(Alignment::Centre),
+            ..ParagraphFormat::default()
+        }
+    }
+
+    #[test]
+    fn a_paragraph_format_widens_to_the_whole_paragraph() {
+        // Centring half a paragraph is not a thing a typesetter can mean, so a
+        // selection inside one formats all of it.
+        let mut story = Story::new("first\nsecond\nthird");
+        story.apply_paragraph_format(7..9, &centred());
+
+        assert!(story.runs_are_sound());
+        assert_eq!(story.paragraphs.len(), 3);
+        assert_eq!(story.paragraphs[0].range, 0..6);
+        assert_eq!(story.paragraphs[1].range, 6..13);
+        assert_eq!(story.paragraphs[2].range, 13..18);
+        assert_eq!(story.paragraphs[1].local.alignment, Some(Alignment::Centre));
+        assert_eq!(story.paragraphs[0].local.alignment, None);
+        assert_eq!(story.paragraphs[2].local.alignment, None);
+    }
+
+    #[test]
+    fn a_caret_with_no_selection_formats_the_paragraph_it_sits_in() {
+        let mut story = Story::new("first\nsecond");
+        story.apply_paragraph_format(
+            8..8,
+            &ParagraphFormat {
+                alignment: Some(Alignment::Right),
+                ..ParagraphFormat::default()
+            },
+        );
+
+        assert_eq!(story.paragraphs.len(), 2);
+        assert_eq!(story.paragraphs[1].local.alignment, Some(Alignment::Right));
+        assert_eq!(story.paragraphs[0].local.alignment, None);
+    }
+
+    #[test]
+    fn a_selection_spanning_two_paragraphs_formats_both_whole() {
+        let mut story = Story::new("one\ntwo\nthree");
+        story.apply_paragraph_format(2..5, &centred());
+
+        assert_eq!(story.paragraphs.len(), 2, "{:?}", story.paragraphs);
+        assert_eq!(story.paragraphs[0].range, 0..8);
+        assert_eq!(story.paragraphs[0].local.alignment, Some(Alignment::Centre));
+        assert_eq!(story.paragraphs[1].range, 8..13);
+        assert!(story.runs_are_sound());
+    }
+
+    #[test]
+    fn character_formatting_leaves_the_paragraphs_alone() {
+        // Two independent span lists over one string. Splitting runs must not
+        // split paragraphs, or a bold word would take its own alignment.
+        let mut story = Story::new("first\nsecond");
+        story.apply_character_format(6..8, &bold());
+
+        assert_eq!(story.runs.len(), 3);
+        assert_eq!(story.paragraphs.len(), 1, "{:?}", story.paragraphs);
+    }
+
+    // --- replacing the text --------------------------------------------
+
+    #[test]
+    fn replacing_the_text_keeps_the_runs_sound() {
+        // `Command::SetText` used to assign `story.text` directly, which left
+        // the runs describing a length the text no longer had.
+        let mut story = Story::new("the quick brown fox");
+        story.apply_character_format(0..19, &bold());
+        story.set_text("short");
+
+        assert_eq!(story.text, "short");
+        assert!(
+            story.runs_are_sound(),
+            "runs {:?} do not describe {:?}",
+            story.runs,
+            story.text
+        );
+        assert_eq!(
+            story.runs[0].local.weight,
+            Some(700),
+            "replacing content says nothing about formatting"
+        );
+    }
+
+    #[test]
+    fn replacing_the_text_with_nothing_leaves_no_runs() {
+        let mut story = Story::new("abc");
+        story.set_text("");
+        assert!(story.runs.is_empty());
+        assert!(story.paragraphs.is_empty());
+        assert!(story.runs_are_sound());
     }
 
     proptest! {
@@ -858,6 +1166,27 @@ mod run_tests {
                         if story.text.is_char_boundary(a) && story.text.is_char_boundary(b) {
                             story.delete_range(a..b);
                         }
+                    }
+                    Edit::Format(a, b, weight) => {
+                        // Splitting runs is the operation most likely to leave
+                        // a gap, so it is generated alongside the edits rather
+                        // than tested on its own.
+                        story.apply_character_format(
+                            a.min(story.text.len())..b.min(story.text.len()),
+                            &CharacterFormat {
+                                weight: Some(weight),
+                                ..CharacterFormat::default()
+                            },
+                        );
+                    }
+                    Edit::FormatParagraph(a, b) => {
+                        story.apply_paragraph_format(
+                            a.min(story.text.len())..b.min(story.text.len()),
+                            &ParagraphFormat {
+                                alignment: Some(Alignment::Centre),
+                                ..ParagraphFormat::default()
+                            },
+                        );
                     }
                 }
                 prop_assert!(
