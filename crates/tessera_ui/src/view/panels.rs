@@ -2,8 +2,10 @@
 
 use egui::{Sense, Ui, Vec2};
 use tessera_color::Color;
+use tessera_document::ids::StoryId;
 use tessera_document::nodes::{Orientation, PagePreset};
 use tessera_geometry::{Anchor, Unit};
+use tessera_text::story::{Alignment, CharacterFormat, ParagraphFormat};
 
 use crate::app::TesseraApp;
 use crate::command::{Command, apply};
@@ -610,6 +612,121 @@ fn segmented<T: PartialEq + Copy>(ui: &mut Ui, label: &str, value: &mut T, optio
     });
 }
 
+/// What the typography controls act on: the text selection if there is one,
+/// otherwise the whole story.
+///
+/// InDesign's rule, and the reason the section is useful before a caret
+/// exists — select the frame and the controls format all of its text. A caret
+/// with no selection is not the whole story: it is a caret, and character
+/// formatting there would have nothing to act on, so the range stays empty and
+/// the controls read the run typing will join.
+fn format_target(
+    state: &TesseraApp,
+    id: tessera_document::ids::FrameId,
+    story: StoryId,
+) -> std::ops::Range<usize> {
+    let whole = 0..state
+        .active()
+        .document()
+        .story(story)
+        .map_or(0, |s| s.text.len());
+    match &state.active().editing {
+        Some((editing, buffer)) if *editing == id => {
+            buffer.selection_range().unwrap_or_else(|| {
+                let at = buffer.cursor().position;
+                at..at
+            })
+        }
+        _ => whole,
+    }
+}
+
+/// A character property the user just changed, as a format stating only it.
+///
+/// Only the changed field, never the whole shown struct. Sending everything
+/// would stamp the shown values onto every run in the range and flatten the
+/// variation the panel was showing as blank — an inspector that destroys what
+/// it displays.
+fn set_character(
+    state: &mut TesseraApp,
+    story: StoryId,
+    range: std::ops::Range<usize>,
+    format: CharacterFormat,
+) {
+    apply(
+        state,
+        Command::SetCharacterFormat {
+            story,
+            range,
+            format,
+        },
+    );
+}
+
+fn set_paragraph(
+    state: &mut TesseraApp,
+    story: StoryId,
+    range: std::ops::Range<usize>,
+    format: ParagraphFormat,
+) {
+    apply(
+        state,
+        Command::SetParagraphFormat {
+            story,
+            range,
+            format,
+        },
+    );
+}
+
+/// A number field for a property that may have no single value to show.
+///
+/// `None` draws as a blank field with a hint, which is what the panel says
+/// when the runs disagree. Typing into it sets every run in the range.
+fn optional_number(
+    ui: &mut Ui,
+    label: &str,
+    shown: Option<f32>,
+    speed: f64,
+    range: std::ops::RangeInclusive<f64>,
+    suffix: &str,
+) -> Option<f32> {
+    let mut changed = None;
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::TEXT_MUTED, label);
+        match shown {
+            Some(value) => {
+                let mut edited = f64::from(value);
+                let suffix = suffix.to_string();
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut edited)
+                            .speed(speed)
+                            .range(range)
+                            .custom_formatter(move |v, _| format!("{v:.2}{suffix}")),
+                    )
+                    .changed()
+                {
+                    changed = Some(edited as f32);
+                }
+            }
+            None => {
+                // Mixed. A zero here would be a lie the user cannot see
+                // through, so the field shows its absence and offers the way
+                // to resolve it.
+                if ui
+                    .button("Mixed")
+                    .on_hover_text("The selection has more than one value. Click to unify.")
+                    .clicked()
+                {
+                    changed = Some(*range.start() as f32);
+                }
+            }
+        }
+    });
+    changed
+}
+
 fn text_section(
     ui: &mut Ui,
     state: &mut TesseraApp,
@@ -619,15 +736,261 @@ fn text_section(
     let tessera_document::nodes::FrameKind::Text { story } = &frame.kind else {
         return;
     };
+    let story = *story;
+
     let mut text = state
         .active()
         .document()
-        .story(*story)
+        .story(story)
         .map(|s| s.text.clone())
         .unwrap_or_default();
     if ui.text_edit_multiline(&mut text).changed() {
         apply(state, Command::SetText { id, text });
     }
+
+    let target = format_target(state, id, story);
+    let (shown, paragraph) = {
+        let doc = state.active().document();
+        let Some(s) = doc.story(story) else {
+            return;
+        };
+        (
+            s.common_format(target.clone(), doc),
+            s.common_paragraph_format(target.clone()),
+        )
+    };
+
+    // Which faces this document names that this machine has not got. parley
+    // substitutes silently, which is right for drawing and wrong for the
+    // person holding the file.
+    let missing = {
+        let key = state.active;
+        let TesseraApp {
+            documents, shaper, ..
+        } = state;
+        let open = &documents[key];
+        match open.document().story(story) {
+            Some(s) => shaper.missing_families(s, open.document()),
+            None => Vec::new(),
+        }
+    };
+
+    if let Some(family) = family_picker(ui, state, shown.family.as_deref(), &missing) {
+        set_character(
+            state,
+            story,
+            target.clone(),
+            CharacterFormat {
+                family: Some(family),
+                ..CharacterFormat::default()
+            },
+        );
+    }
+
+    if let Some(size) = optional_number(ui, "Size", shown.size, 0.25, 1.0..=1440.0, " pt") {
+        set_character(
+            state,
+            story,
+            target.clone(),
+            CharacterFormat {
+                size: Some(size),
+                ..CharacterFormat::default()
+            },
+        );
+    }
+
+    // Leading as a multiple of the size rather than in points. A multiple
+    // survives a size change, which is what a designer setting 1.2 means and
+    // what points would silently break.
+    if let Some(line_height) =
+        optional_number(ui, "Leading", shown.line_height, 0.01, 0.5..=4.0, "×")
+    {
+        set_character(
+            state,
+            story,
+            target.clone(),
+            CharacterFormat {
+                line_height: Some(line_height),
+                ..CharacterFormat::default()
+            },
+        );
+    }
+
+    // Tracking in thousandths of an em, the unit every type specimen uses.
+    if let Some(tracking) = optional_number(
+        ui,
+        "Tracking",
+        Some(shown.tracking.unwrap_or(0.0)),
+        1.0,
+        -200.0..=800.0,
+        "/1000 em",
+    ) {
+        set_character(
+            state,
+            story,
+            target.clone(),
+            CharacterFormat {
+                tracking: Some(tracking),
+                ..CharacterFormat::default()
+            },
+        );
+    }
+
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::TEXT_MUTED, "Weight");
+        for (label, weight) in [
+            ("Light", 300u16),
+            ("Regular", 400),
+            ("Medium", 500),
+            ("Bold", 700),
+        ] {
+            if ui
+                .selectable_label(shown.weight == Some(weight), label)
+                .clicked()
+            {
+                set_character(
+                    state,
+                    story,
+                    target.clone(),
+                    CharacterFormat {
+                        weight: Some(weight),
+                        ..CharacterFormat::default()
+                    },
+                );
+            }
+        }
+    });
+
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::TEXT_MUTED, "Style");
+        if ui
+            .selectable_label(shown.italic == Some(true), "Italic")
+            .clicked()
+        {
+            set_character(
+                state,
+                story,
+                target.clone(),
+                CharacterFormat {
+                    // A toggle: clicking an active Italic turns it off, which
+                    // needs `Some(false)` rather than `None` — `None` means
+                    // inherit and would leave it italic.
+                    italic: Some(shown.italic != Some(true)),
+                    ..CharacterFormat::default()
+                },
+            );
+        }
+    });
+
+    // --- the paragraph half
+
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::TEXT_MUTED, "Align");
+        for (label, alignment) in [
+            ("Left", Alignment::Left),
+            ("Centre", Alignment::Centre),
+            ("Right", Alignment::Right),
+            ("Justify", Alignment::Justify),
+        ] {
+            if ui
+                .selectable_label(paragraph.alignment == Some(alignment), label)
+                .clicked()
+            {
+                set_paragraph(
+                    state,
+                    story,
+                    target.clone(),
+                    ParagraphFormat {
+                        alignment: Some(alignment),
+                        ..ParagraphFormat::default()
+                    },
+                );
+            }
+        }
+    });
+
+    /// Which field of a `ParagraphFormat` a row writes.
+    type Set = fn(&mut ParagraphFormat, f32);
+
+    for (label, read, set) in [
+        (
+            "Indent left",
+            paragraph.indent_left,
+            (|f: &mut ParagraphFormat, v| f.indent_left = Some(v)) as Set,
+        ),
+        (
+            "Indent right",
+            paragraph.indent_right,
+            (|f: &mut ParagraphFormat, v| f.indent_right = Some(v)) as Set,
+        ),
+        (
+            "First line",
+            paragraph.indent_first,
+            (|f: &mut ParagraphFormat, v| f.indent_first = Some(v)) as Set,
+        ),
+        (
+            "Space before",
+            paragraph.space_before,
+            (|f: &mut ParagraphFormat, v| f.space_before = Some(v)) as Set,
+        ),
+        (
+            "Space after",
+            paragraph.space_after,
+            (|f: &mut ParagraphFormat, v| f.space_after = Some(v)) as Set,
+        ),
+    ] {
+        // Shown as 0 rather than blank: an indent nobody has set is not
+        // ambiguous, it is zero.
+        let Some(value) = optional_number(
+            ui,
+            label,
+            Some(read.unwrap_or(0.0)),
+            0.25,
+            -720.0..=720.0,
+            " pt",
+        ) else {
+            continue;
+        };
+        let mut format = ParagraphFormat::default();
+        set(&mut format, value);
+        set_paragraph(state, story, target.clone(), format);
+    }
+}
+
+/// The font menu, with the faces this machine lacks marked.
+///
+/// The list is built inside the closure, so it is only enumerated when the menu
+/// is actually open — the scan costs tens of milliseconds and a closed menu
+/// should not pay it every frame.
+fn family_picker(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    shown: Option<&str>,
+    missing: &[String],
+) -> Option<String> {
+    let mut chosen = None;
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::TEXT_MUTED, "Family");
+        let label = shown.unwrap_or("Mixed");
+        egui::ComboBox::from_id_salt("family")
+            .selected_text(label)
+            .show_ui(ui, |ui| {
+                for family in state.shaper.families() {
+                    if ui.selectable_label(shown == Some(family.as_str()), family).clicked() {
+                        chosen = Some(family.clone());
+                    }
+                }
+            });
+    });
+
+    for family in missing {
+        ui.colored_label(
+            Theme::ERROR,
+            format!("{family} is not installed — a substitute is shown"),
+        );
+    }
+
+    chosen
 }
 
 fn frame_section(ui: &mut Ui, frame: &tessera_document::nodes::Frame) {
@@ -1044,4 +1407,93 @@ mod tests {
             assert!(!section.title().is_empty(), "{section:?} has no title");
         }
     }
+
+    // --- what the typography controls act on ----------------------------
+
+    /// A text frame holding `text`, with nothing being edited.
+    fn a_text_frame(text: &str) -> (TesseraApp, tessera_document::ids::FrameId, StoryId) {
+        let mut state = TesseraApp::headless();
+        apply(
+            &mut state,
+            Command::AddTextFrame(DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 200.0,
+                height: 100.0,
+            }),
+        );
+        let id = state.active().selection.single().expect("selected");
+        apply(
+            &mut state,
+            Command::SetText {
+                id,
+                text: text.to_string(),
+            },
+        );
+        let FrameKind::Text { story } = state.active().document().frame(id).expect("frame").kind
+        else {
+            panic!("a text frame shows a story");
+        };
+        (state, id, story)
+    }
+
+    #[test]
+    fn with_no_caret_the_controls_act_on_the_whole_story() {
+        // InDesign's rule, and what makes the section useful before a caret
+        // exists: select the frame, set the family, all of the text follows.
+        let (state, id, story) = a_text_frame("the quick brown fox");
+        assert_eq!(format_target(&state, id, story), 0..19);
+    }
+
+    #[test]
+    fn with_a_selection_the_controls_act_on_the_selection() {
+        let (mut state, id, story) = a_text_frame("the quick brown fox");
+        let mut buffer = tessera_text::edit::EditBuffer::new(
+            state.active().document().story(story).cloned().unwrap(),
+        );
+        buffer.select(4..9);
+        state.active_mut().editing = Some((id, buffer));
+
+        assert_eq!(format_target(&state, id, story), 4..9);
+    }
+
+    #[test]
+    fn a_caret_with_no_selection_is_not_the_whole_story() {
+        // A caret is a caret. Treating it as "everything" would mean clicking
+        // into a frame and nudging the size box restyled text the user never
+        // selected.
+        let (mut state, id, story) = a_text_frame("the quick brown fox");
+        let mut buffer = tessera_text::edit::EditBuffer::new(
+            state.active().document().story(story).cloned().unwrap(),
+        );
+        buffer.set_cursor(7);
+        state.active_mut().editing = Some((id, buffer));
+
+        assert_eq!(format_target(&state, id, story), 7..7);
+    }
+
+    #[test]
+    fn a_caret_in_another_frame_does_not_narrow_this_ones_target() {
+        let (mut state, first, first_story) = a_text_frame("the quick brown fox");
+        apply(
+            &mut state,
+            Command::AddTextFrame(DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 200.0,
+                height: 100.0,
+            }),
+        );
+        let second = state.active().selection.single().expect("selected");
+        let mut buffer = tessera_text::edit::EditBuffer::new(Default::default());
+        buffer.select(0..0);
+        state.active_mut().editing = Some((second, buffer));
+
+        assert_eq!(
+            format_target(&state, first, first_story),
+            0..19,
+            "the caret is elsewhere, so this frame formats whole"
+        );
+    }
+
 }

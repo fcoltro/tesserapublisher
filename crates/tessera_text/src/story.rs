@@ -541,6 +541,87 @@ impl Story {
         start..end
     }
 
+    /// The resolved formatting every run in `range` agrees on.
+    ///
+    /// What the inspector shows. A field the runs disagree about comes back
+    /// `None` — the same shape a field nobody has set takes, because in both
+    /// cases there is no one value to show and blank is the honest answer.
+    ///
+    /// The values are **resolved** through the cascade rather than read off
+    /// `local`, so a size box shows 12 for text nobody has sized rather than
+    /// nothing at all.
+    pub fn common_format(&self, range: Range<usize>, styles: &dyn Styles) -> CharacterFormat {
+        if range.start >= range.end {
+            // A caret, not a selection: show what typing there will produce.
+            // `insert_text` joins to the run on the left, so that is the run
+            // to read.
+            let run = self
+                .runs
+                .iter()
+                .rev()
+                .find(|r| r.range.start < range.start)
+                .or_else(|| self.runs.first());
+            return match run {
+                Some(run) => self.resolve_run(run, styles),
+                None => styles.document_default(),
+            };
+        }
+
+        let mut overlapping = self
+            .runs
+            .iter()
+            .filter(|r| r.range.start < range.end && range.start < r.range.end);
+        let Some(first) = overlapping.next() else {
+            return styles.document_default();
+        };
+        let mut common = self.resolve_run(first, styles);
+        for run in overlapping {
+            let other = self.resolve_run(run, styles);
+            blank_if_different(&mut common.family, other.family);
+            blank_if_different(&mut common.size, other.size);
+            blank_if_different(&mut common.weight, other.weight);
+            blank_if_different(&mut common.italic, other.italic);
+            blank_if_different(&mut common.tracking, other.tracking);
+            blank_if_different(&mut common.case, other.case);
+            blank_if_different(&mut common.baseline_shift, other.baseline_shift);
+            blank_if_different(&mut common.line_height, other.line_height);
+            blank_if_different(&mut common.colour, other.colour);
+        }
+        common
+    }
+
+    /// The paragraph formatting every paragraph the range touches agrees on.
+    ///
+    /// The range is widened the same way [`Story::apply_paragraph_format`]
+    /// widens it, so what the panel shows is what the controls will change.
+    pub fn common_paragraph_format(&self, range: Range<usize>) -> ParagraphFormat {
+        if self.text.is_empty() {
+            return ParagraphFormat::default();
+        }
+        let start = range.start.min(self.text.len());
+        let end = range.end.min(self.text.len()).max(start);
+        let bounds = self.paragraph_bounds(start..end);
+
+        let mut touched = self
+            .paragraphs
+            .iter()
+            .filter(|p| p.range.start < bounds.end && bounds.start < p.range.end);
+        let Some(first) = touched.next() else {
+            return ParagraphFormat::default();
+        };
+        let mut common = first.local.clone();
+        for para in touched {
+            blank_if_different(&mut common.alignment, para.local.alignment);
+            blank_if_different(&mut common.indent_left, para.local.indent_left);
+            blank_if_different(&mut common.indent_right, para.local.indent_right);
+            blank_if_different(&mut common.indent_first, para.local.indent_first);
+            blank_if_different(&mut common.space_before, para.local.space_before);
+            blank_if_different(&mut common.space_after, para.local.space_after);
+            blank_if_different(&mut common.hyphenate, para.local.hyphenate);
+        }
+        common
+    }
+
     /// Fold together adjacent runs that would draw the same.
     pub fn merge_equal_neighbours(&mut self) {
         let mut merged: Vec<Run> = Vec::with_capacity(self.runs.len());
@@ -564,6 +645,13 @@ impl Story {
             }
         }
         self.paragraphs = folded;
+    }
+}
+
+/// Blank a shown value the spans disagree about.
+fn blank_if_different<T: PartialEq>(shown: &mut Option<T>, other: Option<T>) {
+    if *shown != other {
+        *shown = None;
     }
 }
 
@@ -1135,6 +1223,114 @@ mod run_tests {
         assert!(story.runs.is_empty());
         assert!(story.paragraphs.is_empty());
         assert!(story.runs_are_sound());
+    }
+
+
+    // --- what the inspector shows ---------------------------------------
+
+    #[test]
+    fn one_run_shows_its_resolved_formatting() {
+        // Resolved, not local: a size box must read 12 for text nobody has
+        // sized, rather than blank.
+        let story = Story::new("abcd");
+        let shown = story.common_format(0..4, &NoStyles::default());
+        assert_eq!(shown.size, Some(12.0));
+        assert_eq!(shown.family.as_deref(), Some("sans-serif"));
+    }
+
+    #[test]
+    fn runs_that_disagree_show_nothing_for_that_field() {
+        let mut story = Story::new("abcd");
+        story.apply_character_format(
+            0..2,
+            &CharacterFormat {
+                size: Some(9.0),
+                ..CharacterFormat::default()
+            },
+        );
+        let shown = story.common_format(0..4, &NoStyles::default());
+
+        assert_eq!(shown.size, None, "9 and 12 have no common value");
+        assert_eq!(
+            shown.family.as_deref(),
+            Some("sans-serif"),
+            "but the family they agree on still shows"
+        );
+    }
+
+    #[test]
+    fn a_selection_inside_one_run_shows_that_runs_formatting() {
+        let mut story = Story::new("the quick brown fox");
+        story.apply_character_format(4..9, &bold());
+        let shown = story.common_format(5..8, &NoStyles::default());
+        assert_eq!(shown.weight, Some(700));
+    }
+
+    #[test]
+    fn a_caret_shows_what_typing_there_will_produce() {
+        // `insert_text` joins to the run on the left, so a caret just after a
+        // bold word must show bold — otherwise the panel would say one thing
+        // and the next keystroke do another.
+        let mut story = Story::new("abcd");
+        story.apply_character_format(0..2, &bold());
+
+        assert_eq!(
+            story.common_format(2..2, &NoStyles::default()).weight,
+            Some(700),
+            "just after the bold run"
+        );
+        assert_eq!(
+            story.common_format(3..3, &NoStyles::default()).weight,
+            None,
+            "inside the plain run"
+        );
+    }
+
+    #[test]
+    fn a_caret_at_the_start_shows_the_first_run() {
+        let mut story = Story::new("abcd");
+        story.apply_character_format(0..2, &bold());
+        assert_eq!(
+            story.common_format(0..0, &NoStyles::default()).weight,
+            Some(700)
+        );
+    }
+
+    #[test]
+    fn an_empty_story_shows_the_document_default() {
+        let story = Story::new("");
+        let shown = story.common_format(0..0, &NoStyles::default());
+        assert_eq!(shown.size, Some(12.0), "an empty frame still has a size");
+    }
+
+    #[test]
+    fn paragraphs_that_disagree_show_nothing_for_that_field() {
+        let mut story = Story::new("one\ntwo");
+        story.apply_paragraph_format(0..1, &centred());
+
+        assert_eq!(
+            story.common_paragraph_format(0..7).alignment,
+            None,
+            "centred and unset have no common value"
+        );
+        assert_eq!(
+            story.common_paragraph_format(0..1).alignment,
+            Some(Alignment::Centre),
+            "and one paragraph on its own shows its own"
+        );
+    }
+
+    #[test]
+    fn what_the_panel_shows_is_what_the_controls_will_change() {
+        // Both sides widen the range the same way, so a caret in the second
+        // paragraph reads and writes the second paragraph.
+        let mut story = Story::new("one\ntwo\nthree");
+        story.apply_paragraph_format(5..5, &centred());
+        assert_eq!(
+            story.common_paragraph_format(5..5).alignment,
+            Some(Alignment::Centre)
+        );
+        assert_eq!(story.common_paragraph_format(1..1).alignment, None);
     }
 
     proptest! {
