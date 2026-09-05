@@ -148,7 +148,7 @@ fn a_text_frame_embeds_a_subsetted_font() {
 fn text_is_positioned_by_the_same_glyphs_the_renderer_drew() {
     let mut shaper = Shaper::new();
     let shaped = shaper.shape(&Story::new("Hi"), 400.0);
-    let first_x = shaped.lines[0].glyphs[0].x;
+    let first_x = shaped.lines[0].glyphs().next().expect("a glyph").x;
 
     let bytes = tessera_pdf::export(&one(
         ResolvedKind::Text {
@@ -298,4 +298,88 @@ fn a_bleed_grows_the_media_box_without_moving_the_content() {
 
     let text = String::from_utf8_lossy(&b).into_owned();
     assert!(text.contains("/MediaBox"), "and the media box is present");
+}
+
+// --- runs carry their own size ----------------------------------------
+
+#[test]
+fn a_document_with_two_text_sizes_sets_the_font_more_than_once() {
+    // One text object per run, because the size lives there. Setting the font
+    // once and drawing every size at it is the failure this guards.
+    use tessera_text::story::{CharacterFormat, Run};
+
+    let sized = |size: f32, range: std::ops::Range<usize>| Run {
+        range,
+        style: None,
+        local: CharacterFormat {
+            size: Some(size),
+            ..CharacterFormat::default()
+        },
+    };
+
+    let mut story = Story::new("bigsmall");
+    story.runs = vec![sized(24.0, 0..3), sized(9.0, 3..8)];
+
+    let mut shaper = Shaper::new();
+    let shaped = shaper.shape(&story, 400.0);
+    assert!(shaped.runs().count() >= 2, "the fixture needs two runs");
+
+    let bytes = tessera_pdf::export(&one(
+        ResolvedKind::Text {
+            shaped,
+            color: Color::BLACK,
+        },
+        rect(10.0, 10.0, 300.0, 80.0),
+    ))
+    .expect("export");
+
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(
+        text.matches("Tf").count() >= 2,
+        "the content stream should select a font once per run"
+    );
+}
+
+#[test]
+fn a_glyph_width_is_normalised_against_its_own_run() {
+    // Dividing an advance by the wrong size gives a PDF whose text sits
+    // correctly and whose widths are wrong — which a viewer will not complain
+    // about and a printer will. Exporting the same text at one size and at
+    // two must not produce the same /W array.
+    use tessera_text::story::{CharacterFormat, Run};
+
+    let sized = |size: f32, range: std::ops::Range<usize>| Run {
+        range,
+        style: None,
+        local: CharacterFormat {
+            size: Some(size),
+            ..CharacterFormat::default()
+        },
+    };
+
+    let mut shaper = Shaper::new();
+
+    let mut uniform = Story::new("AB");
+    uniform.runs = vec![sized(12.0, 0..2)];
+    let mut mixed = Story::new("AB");
+    mixed.runs = vec![sized(12.0, 0..1), sized(36.0, 1..2)];
+
+    let export = |story: &Story, shaper: &mut Shaper| {
+        let shaped = shaper.shape(story, 400.0);
+        tessera_pdf::export(&one(
+            ResolvedKind::Text {
+                shaped,
+                color: Color::BLACK,
+            },
+            rect(10.0, 10.0, 300.0, 80.0),
+        ))
+        .expect("export")
+    };
+
+    let a = export(&uniform, &mut shaper);
+    let b = export(&mixed, &mut shaper);
+    assert_ne!(
+        a, b,
+        "the same glyphs at different sizes produced an identical PDF"
+    );
 }

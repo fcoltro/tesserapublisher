@@ -161,17 +161,20 @@ fn collect_fonts(
                 }
             };
             for glyph in shaped
-                .lines
-                .iter()
-                .flat_map(|l| l.glyphs.iter())
-                .filter(|g| g.font_index == index)
+                .runs()
+                .filter(|r| r.font_index == index)
+                .flat_map(|r| r.glyphs.iter().map(move |g| (r.size, g)))
             {
+                let (size, glyph) = glyph;
                 let id = u16::try_from(glyph.glyph_id)
                     .map_err(|_| PdfError::GlyphIdTooLarge(glyph.glyph_id))?;
                 used[slot].1.push(id);
-                // Advance is carried from the shaper, in points at the shaped
-                // size, so scaling to PDF units needs only the font size.
-                let width = glyph.advance / f64::from(shaped.font_size) * PDF_UNITS_PER_EM;
+                // Advance is carried from the shaper in points at the size
+                // **its own run** was shaped at. Dividing by any other size
+                // gives a PDF whose text sits correctly and whose widths are
+                // wrong — which a viewer will not complain about and a
+                // printer will.
+                let width = glyph.advance / f64::from(size) * PDF_UNITS_PER_EM;
                 used[slot].2.insert(id, width);
             }
         }
@@ -475,25 +478,25 @@ fn draw_text(
 ) -> Result<(), PdfError> {
     let [r, g, b, _] = color.to_rgb_f32();
 
-    for (index, font_data) in shaped.fonts.iter().enumerate() {
+    // One text object per run, because the size lives there. Grouping by font
+    // alone would set the font once and draw every size at it.
+    for run in shaped.runs() {
+        let index = run.font_index;
         // Match by subset content: `collect_fonts` walked the same items in
         // the same order, so position `index` here maps to the same font.
         let Some(embedded) = fonts.get(font_for(shaped, index, fonts)) else {
             continue;
         };
-        let _ = font_data;
+        if run.glyphs.is_empty() {
+            continue;
+        }
 
         content.save_state();
         content.set_fill_rgb(r, g, b);
         content.begin_text();
-        content.set_font(Name(embedded.resource.as_bytes()), shaped.font_size);
+        content.set_font(Name(embedded.resource.as_bytes()), run.size);
 
-        for glyph in shaped
-            .lines
-            .iter()
-            .flat_map(|l| l.glyphs.iter())
-            .filter(|glyph| glyph.font_index == index)
-        {
+        for glyph in run.glyphs.iter() {
             let old = u16::try_from(glyph.glyph_id)
                 .map_err(|_| PdfError::GlyphIdTooLarge(glyph.glyph_id))?;
             let Some(cid) = embedded.remap.get(&old) else {

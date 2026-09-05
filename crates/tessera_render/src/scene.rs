@@ -267,16 +267,26 @@ fn draw_text(
     shaped: &tessera_text::shape::ShapedText,
     color: &Color,
 ) {
-    // One draw call per font. `FontData` is the very handle the shaper used —
-    // the same `linebender_resource_handle` type peniko re-exports — so no
-    // conversion happens and the renderer cannot pick different bytes than
-    // the PDF writer will.
-    for (index, font) in shaped.fonts.iter().enumerate() {
-        let glyphs: Vec<Glyph> = shaped
-            .lines
+    // One draw call per run, because the size lives on the run. This was one
+    // call per font while a story had a single size; grouping by font alone
+    // would now draw a heading and its body text at whichever size happened
+    // to be asked for first.
+    //
+    // `FontData` is the very handle the shaper used — the same
+    // `linebender_resource_handle` type peniko re-exports — so no conversion
+    // happens and the renderer cannot pick different bytes than the PDF
+    // writer will.
+    for run in shaped.runs() {
+        let Some(font) = shaped.fonts.get(run.font_index) else {
+            continue;
+        };
+        if run.glyphs.is_empty() {
+            continue;
+        }
+
+        let glyphs: Vec<Glyph> = run
+            .glyphs
             .iter()
-            .flat_map(|line| line.glyphs.iter())
-            .filter(|g| g.font_index == index)
             .map(|g| Glyph {
                 id: g.glyph_id,
                 x: (bounds.x + g.x) as f32,
@@ -284,13 +294,9 @@ fn draw_text(
             })
             .collect();
 
-        if glyphs.is_empty() {
-            continue;
-        }
-
         scene
             .draw_glyphs(font)
-            .font_size(shaped.font_size)
+            .font_size(run.size)
             .transform(transform)
             .brush(to_peniko(color))
             .draw(Fill::NonZero, glyphs.into_iter());
@@ -299,6 +305,56 @@ fn draw_text(
 
 #[cfg(test)]
 mod tests {
+    /// A story shaped at two sizes must reach the scene as two draw calls.
+    ///
+    /// Grouping by font alone — which is what this did while a story had one
+    /// size — would draw a heading and its body at whichever size came first.
+    #[test]
+    fn each_run_is_drawn_at_its_own_size() {
+        use tessera_text::story::{CharacterFormat, Run, Story};
+
+        let sized = |size: f32, range: std::ops::Range<usize>| Run {
+            range,
+            style: None,
+            local: CharacterFormat {
+                size: Some(size),
+                ..CharacterFormat::default()
+            },
+        };
+
+        let mut one_size = Story::new("bigsmall");
+        one_size.runs = vec![sized(12.0, 0..8)];
+
+        let mut two_sizes = Story::new("bigsmall");
+        two_sizes.runs = vec![sized(24.0, 0..3), sized(9.0, 3..8)];
+
+        let mut shaper = tessera_text::shape::Shaper::new();
+        let uniform = shaper.shape(&one_size, 1000.0);
+        let mixed = shaper.shape(&two_sizes, 1000.0);
+
+        assert!(
+            mixed.runs().count() > uniform.runs().count(),
+            "two sizes should shape to more runs than one"
+        );
+
+        let build = |shaped: tessera_text::shape::ShapedText| {
+            build_scene(
+                &one_item(
+                    ResolvedKind::Text {
+                        shaped,
+                        color: Color::BLACK,
+                    },
+                    page(),
+                ),
+                ViewTransform::default(),
+            )
+        };
+
+        // Both draw glyphs; the mixed one draws them in more than one call.
+        assert!(!build(mixed).encoding().resources.glyph_runs.is_empty());
+        assert!(!build(uniform).encoding().resources.glyph_runs.is_empty());
+    }
+
     #[test]
     fn a_clip_really_reaches_the_encoding() {
         // Preview must show the trim as it will print, not merely hide the

@@ -25,7 +25,7 @@ pub struct PositionedGlyph {
     pub x: f64,
     /// Baseline-relative y, already including the line's baseline offset.
     pub y: f64,
-    /// Advance width, in points at [`ShapedText::font_size`].
+    /// Advance width, in points at [`ShapedRun::size`].
     ///
     /// Carried from the shaper rather than recomputed, because the PDF
     /// writer needs it for the `/W` array and must not disagree with what
@@ -35,10 +35,40 @@ pub struct PositionedGlyph {
     pub font_index: usize,
 }
 
+/// A stretch of one line drawn in one font at one size.
+///
+/// Mirrors parley's own `GlyphRun`, which is what the shaper already walks —
+/// so building this is less work than flattening it, and the size is recorded
+/// once per run rather than once per glyph.
+#[derive(Debug, Clone)]
+pub struct ShapedRun {
+    /// Index into [`ShapedText::fonts`].
+    pub font_index: usize,
+    /// The size this run was shaped at, in points. Every glyph's advance is
+    /// in points at *this* size.
+    pub size: f32,
+    pub glyphs: Vec<PositionedGlyph>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ShapedLine {
-    pub glyphs: Vec<PositionedGlyph>,
+    pub runs: Vec<ShapedRun>,
     pub baseline: f64,
+}
+
+impl ShapedLine {
+    /// Every glyph on the line, in run order.
+    ///
+    /// For the callers that want them all and do not care which run each came
+    /// from. Anything that draws must go run by run, because the size lives
+    /// there.
+    pub fn glyphs(&self) -> impl Iterator<Item = &PositionedGlyph> + '_ {
+        self.runs.iter().flat_map(|r| r.glyphs.iter())
+    }
+
+    pub fn glyph_count(&self) -> usize {
+        self.runs.iter().map(|r| r.glyphs.len()).sum()
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -46,14 +76,18 @@ pub struct ShapedText {
     pub lines: Vec<ShapedLine>,
     /// Total laid-out height, in points.
     pub height: f64,
-    /// Fonts referenced by [`PositionedGlyph::font_index`].
+    /// Fonts referenced by [`ShapedRun::font_index`].
     pub fonts: Vec<FontData>,
-    pub font_size: f32,
 }
 
 impl ShapedText {
     pub fn glyph_count(&self) -> usize {
-        self.lines.iter().map(|l| l.glyphs.len()).sum()
+        self.lines.iter().map(ShapedLine::glyph_count).sum()
+    }
+
+    /// Every run, across every line.
+    pub fn runs(&self) -> impl Iterator<Item = &ShapedRun> + '_ {
+        self.lines.iter().flat_map(|l| l.runs.iter())
     }
 }
 
@@ -72,6 +106,15 @@ struct ShapeKey {
     size: u32,
     line_height: u32,
     width: u64,
+    /// The runs, as their serialised shape.
+    ///
+    /// **Not optional.** Two stories with the same text and different runs
+    /// shape differently, and a key that ignored them would hand the second
+    /// the first's layout — a wrong answer rather than a slow one. The debug
+    /// form is used because `CharacterFormat` holds floats, which are not
+    /// `Hash`, and the same reasoning as the bit-keyed floats above applies:
+    /// two formats that differ at all must key differently.
+    runs: String,
 }
 
 impl ShapeKey {
@@ -82,6 +125,7 @@ impl ShapeKey {
             size: story.style.size.to_bits(),
             line_height: story.style.line_height.to_bits(),
             width: width.to_bits(),
+            runs: format!("{:?}", story.runs),
         }
     }
 }
@@ -148,6 +192,56 @@ impl Shaper {
             parley::LineHeight::FontSizeRelative(story.style.line_height),
         ));
 
+        // One span per run, over the run's own range. `push_default` above is
+        // the floor; anything a run states is pushed over the top of it.
+        for run in &story.runs {
+            let format = story.resolved_format(run);
+            if let Some(family) = &format.family {
+                builder.push(
+                    parley::StyleProperty::FontFamily(parley::FontFamily::Source(
+                        std::borrow::Cow::Owned(family.clone()),
+                    )),
+                    run.range.clone(),
+                );
+            }
+            if let Some(size) = format.size {
+                builder.push(parley::StyleProperty::FontSize(size), run.range.clone());
+            }
+            if let Some(line_height) = format.line_height {
+                builder.push(
+                    parley::StyleProperty::LineHeight(parley::LineHeight::FontSizeRelative(
+                        line_height,
+                    )),
+                    run.range.clone(),
+                );
+            }
+            if let Some(weight) = format.weight {
+                builder.push(
+                    parley::StyleProperty::FontWeight(parley::FontWeight::new(f32::from(weight))),
+                    run.range.clone(),
+                );
+            }
+            if let Some(italic) = format.italic {
+                builder.push(
+                    parley::StyleProperty::FontStyle(if italic {
+                        parley::FontStyle::Italic
+                    } else {
+                        parley::FontStyle::Normal
+                    }),
+                    run.range.clone(),
+                );
+            }
+            if let Some(tracking) = format.tracking {
+                // Thousandths of an em, which is the unit a typographer uses;
+                // parley wants points at the shaped size.
+                let size = format.size.unwrap_or(story.style.size);
+                builder.push(
+                    parley::StyleProperty::LetterSpacing(tracking / 1000.0 * size),
+                    run.range.clone(),
+                );
+            }
+        }
+
         let mut layout: parley::Layout<()> = builder.build(&story.text);
         layout.break_all_lines(Some(width as f32));
         layout
@@ -161,10 +255,7 @@ impl Shaper {
     /// asked for only while a caret is live and is not worth holding on to.
     pub fn shape(&mut self, story: &Story, width: f64) -> ShapedText {
         if story.text.is_empty() {
-            return ShapedText {
-                font_size: story.style.size,
-                ..Default::default()
-            };
+            return ShapedText::default();
         }
 
         let key = ShapeKey::new(story, width);
@@ -189,7 +280,7 @@ impl Shaper {
         let mut lines = Vec::new();
 
         for line in layout.lines() {
-            let mut glyphs = Vec::new();
+            let mut runs = Vec::new();
             let baseline = f64::from(line.metrics().baseline);
 
             for item in line.items() {
@@ -197,6 +288,7 @@ impl Shaper {
                     continue;
                 };
 
+                let size = run.run().font_size();
                 let font = run.run().font();
                 let font_index = match fonts.iter().position(|f| f == font) {
                     Some(i) => i,
@@ -209,6 +301,7 @@ impl Shaper {
                 // `positioned_glyphs` already folds in the run offset, the
                 // baseline, and each glyph's advance — so nothing here
                 // recomputes a position that parley already decided.
+                let mut glyphs = Vec::new();
                 for g in run.positioned_glyphs() {
                     glyphs.push(PositionedGlyph {
                         glyph_id: g.id,
@@ -218,16 +311,21 @@ impl Shaper {
                         font_index,
                     });
                 }
+
+                runs.push(ShapedRun {
+                    font_index,
+                    size,
+                    glyphs,
+                });
             }
 
-            lines.push(ShapedLine { glyphs, baseline });
+            lines.push(ShapedLine { runs, baseline });
         }
 
         ShapedText {
             height: f64::from(layout.height()),
             lines,
             fonts,
-            font_size: story.style.size,
         }
     }
 }
@@ -309,7 +407,7 @@ mod tests {
         let glyphs = |t: &ShapedText| -> Vec<(u32, f64, f64)> {
             t.lines
                 .iter()
-                .flat_map(|l| l.glyphs.iter())
+                .flat_map(ShapedLine::glyphs)
                 .map(|g| (g.glyph_id, g.x, g.y))
                 .collect()
         };
@@ -359,7 +457,7 @@ mod tests {
     fn glyphs_advance_left_to_right() {
         let mut shaper = Shaper::new();
         let shaped = shaper.shape(&Story::new("AB"), 500.0);
-        let glyphs = &shaped.lines[0].glyphs;
+        let glyphs: Vec<_> = shaped.lines[0].glyphs().collect();
         assert!(
             glyphs[1].x > glyphs[0].x,
             "the second glyph must sit right of the first"
@@ -399,7 +497,7 @@ mod tests {
         let mut shaper = Shaper::new();
         let shaped = shaper.shape(&Story::new("Hello world"), 500.0);
         for line in &shaped.lines {
-            for g in &line.glyphs {
+            for g in line.glyphs() {
                 assert!(
                     g.font_index < shaped.fonts.len(),
                     "font_index {} out of range",
@@ -414,7 +512,7 @@ mod tests {
         let mut shaper = Shaper::new();
         let shaped = shaper.shape(&Story::new("Hello"), 500.0);
         for line in &shaped.lines {
-            for g in &line.glyphs {
+            for g in line.glyphs() {
                 assert!(g.advance > 0.0, "a visible glyph must advance the pen");
             }
         }
@@ -425,6 +523,79 @@ mod tests {
         let mut story = Story::new("Hello");
         story.style.size = 42.0;
         let mut shaper = Shaper::new();
-        assert_eq!(shaper.shape(&story, 500.0).font_size, 42.0);
+        let shaped = shaper.shape(&story, 500.0);
+        assert!(
+            shaped.runs().all(|r| (r.size - 42.0).abs() < 1e-3),
+            "every run should carry the size it was shaped at"
+        );
+    }
+
+    #[test]
+    fn a_story_with_two_sizes_shapes_to_runs_of_both() {
+        // The point of the whole phase: one story, more than one size.
+        use crate::story::{CharacterFormat, Run};
+
+        let mut story = Story::new("bigsmall");
+        story.runs = vec![
+            Run {
+                range: 0..3,
+                style: None,
+                local: CharacterFormat {
+                    size: Some(24.0),
+                    ..CharacterFormat::default()
+                },
+            },
+            Run {
+                range: 3..8,
+                style: None,
+                local: CharacterFormat {
+                    size: Some(9.0),
+                    ..CharacterFormat::default()
+                },
+            },
+        ];
+
+        let mut shaper = Shaper::new();
+        let shaped = shaper.shape(&story, 1000.0);
+
+        let sizes: Vec<f32> = shaped.runs().map(|r| r.size).collect();
+        assert!(
+            sizes.iter().any(|s| (s - 24.0).abs() < 1e-3),
+            "the large run is missing from {sizes:?}"
+        );
+        assert!(
+            sizes.iter().any(|s| (s - 9.0).abs() < 1e-3),
+            "the small run is missing from {sizes:?}"
+        );
+    }
+
+    #[test]
+    fn two_stories_with_different_runs_do_not_collide_in_the_cache() {
+        // The key was built from the story's single style. Two stories with
+        // the same text and different runs would have shared an entry, and
+        // the second would have been handed the first's layout — a wrong
+        // answer rather than a slow one.
+        use crate::story::{CharacterFormat, Run};
+
+        let plain = Story::new("abcd");
+        let mut sized = Story::new("abcd");
+        sized.runs = vec![Run {
+            range: 0..4,
+            style: None,
+            local: CharacterFormat {
+                size: Some(36.0),
+                ..CharacterFormat::default()
+            },
+        }];
+
+        let mut shaper = Shaper::new();
+        let a = shaper.shape(&plain, 1000.0);
+        let b = shaper.shape(&sized, 1000.0);
+
+        let size_of = |t: &ShapedText| t.runs().next().map(|r| r.size).unwrap_or_default();
+        assert!(
+            (size_of(&a) - size_of(&b)).abs() > 1.0,
+            "the cache handed back the same layout for different runs"
+        );
     }
 }

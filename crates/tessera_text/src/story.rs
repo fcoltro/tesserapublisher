@@ -283,6 +283,30 @@ impl Story {
         sound(&runs, n) && sound(&paras, n)
     }
 
+    /// The story's own formatting, as a `CharacterFormat`.
+    ///
+    /// The floor of the cascade until phase 4 gives the document a real
+    /// default. Every field is stated, so anything resolved over it is
+    /// complete.
+    pub fn default_format(&self) -> CharacterFormat {
+        CharacterFormat {
+            family: Some(self.style.family.clone()),
+            size: Some(self.style.size),
+            line_height: Some(self.style.line_height),
+            colour: Some(self.style.color.clone()),
+            ..CharacterFormat::default()
+        }
+    }
+
+    /// What a run actually draws as.
+    ///
+    /// `run.style` — the named style — is deliberately not consulted: the
+    /// tables live on the document, which this crate cannot see, and nothing
+    /// can set one until phase 4. Local overrides are all a bold word needs.
+    pub fn resolved_format(&self, run: &Run) -> CharacterFormat {
+        run.local.over(&self.default_format())
+    }
+
     /// The run covering `offset`, if any.
     pub fn run_at(&self, offset: usize) -> Option<&Run> {
         self.runs.iter().find(|r| r.range.contains(&offset))

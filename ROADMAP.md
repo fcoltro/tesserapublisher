@@ -463,8 +463,10 @@ The reason a layout tool is not a drawing tool.
 > that needs an IME and see the composition preview on the canvas.
 
 - [ ] Font enumeration and family/style resolution across all three platforms.
-- [ ] Character formatting: family, weight, style, size, leading, tracking,
-  kerning, case, baseline shift.
+- [~] Character formatting: family, weight, style, size, leading and tracking
+  are in the model and reach the screen and the PDF — a story shapes run by
+  run. *Case and baseline shift are modelled but not yet shaped, and nothing
+  in the interface can set any of it: the typography inspector is phase 4.*
 - [ ] Paragraph formatting: alignment, justification, indents, space before
   and after, hyphenation, drop caps.
 - [ ] Paragraph and character styles, with live cascade on edit.
