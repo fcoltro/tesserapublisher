@@ -641,12 +641,18 @@ impl Shaper {
 
             // Alignment is per layout, which is now per paragraph — so two
             // paragraphs can finally disagree about it.
+            // An unset alignment is `Start`, not `Left`. `Start` follows the
+            // text's own direction, so Hebrew and Arabic begin at the right
+            // edge where their readers expect them — forcing `Left` laid them
+            // out as though they read the other way. A paragraph someone has
+            // explicitly set to Left stays Left, in any script.
             layout.align(
-                match format.alignment.unwrap_or(crate::story::Alignment::Left) {
-                    crate::story::Alignment::Left => parley::Alignment::Left,
-                    crate::story::Alignment::Centre => parley::Alignment::Center,
-                    crate::story::Alignment::Right => parley::Alignment::Right,
-                    crate::story::Alignment::Justify => parley::Alignment::Justify,
+                match format.alignment {
+                    None => parley::Alignment::Start,
+                    Some(crate::story::Alignment::Left) => parley::Alignment::Left,
+                    Some(crate::story::Alignment::Centre) => parley::Alignment::Center,
+                    Some(crate::story::Alignment::Right) => parley::Alignment::Right,
+                    Some(crate::story::Alignment::Justify) => parley::Alignment::Justify,
                 },
                 parley::AlignmentOptions::default(),
             );

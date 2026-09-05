@@ -597,4 +597,178 @@ mod tests {
             "the word as stored, not as drawn: {word:?}"
         );
     }
+
+    // --- right-to-left and bidirectional text ------------------------------
+    //
+    // parley shapes bidi text already. What has never been exercised is the
+    // caret, whose arithmetic was written assuming visual order follows
+    // logical order — which is exactly what bidi text does not do.
+
+    /// Hebrew, which reads right to left.
+    const HEBREW: &str = "שלום עולם";
+
+    /// Arabic with an English word inside it: two directions in one line.
+    const MIXED: &str = "مرحبا world سلام";
+
+    #[test]
+    fn every_offset_in_right_to_left_text_survives_a_round_trip() {
+        let story = Story::new(HEBREW);
+        let mut shaper = Shaper::new();
+        let styles = NoStyles::default();
+
+        for position in 0..=story.text.len() {
+            if !story.text.is_char_boundary(position) {
+                continue;
+            }
+            let geometry = shaper.caret_geometry(&story, &styles, WIDTH, cursor(position), 1.5);
+            let caret = geometry.caret.expect("a caret for every offset");
+            let back = shaper.offset_at(
+                &story,
+                &styles,
+                WIDTH,
+                caret.x0 + caret.width() / 2.0,
+                (caret.y0 + caret.y1) / 2.0,
+            );
+            assert!(
+                story.text.is_char_boundary(back),
+                "offset {position} read back as {back}, not a character boundary"
+            );
+            assert_eq!(back, position, "offset {position} reads back as {back}");
+        }
+    }
+
+    #[test]
+    fn a_click_in_mixed_text_lands_where_the_caret_was_drawn() {
+        // Not the same test as the one above, and the difference is the point.
+        //
+        // Where two directions meet, one place on screen is **two** logical
+        // offsets: the end of the Latin word and the start of the Arabic that
+        // follows are the same x, and a click there cannot tell them apart. So
+        // asking for the original offset back is asking for something a bidi
+        // caret cannot promise.
+        //
+        // What it can promise is that the answer is not somewhere else: the
+        // caret drawn for whatever came back sits at the position that was
+        // clicked. That fails loudly for a genuine mislanding and passes for
+        // the ambiguity, which is the distinction worth testing.
+        let story = Story::new(MIXED);
+        let mut shaper = Shaper::new();
+        let styles = NoStyles::default();
+
+        for position in 0..=story.text.len() {
+            if !story.text.is_char_boundary(position) {
+                continue;
+            }
+            let caret = shaper
+                .caret_geometry(&story, &styles, WIDTH, cursor(position), 1.5)
+                .caret
+                .expect("a caret for every offset");
+            let x = caret.x0 + caret.width() / 2.0;
+            let y = (caret.y0 + caret.y1) / 2.0;
+
+            let back = shaper.offset_at(&story, &styles, WIDTH, x, y);
+            assert!(
+                story.text.is_char_boundary(back),
+                "offset {position} read back as {back}, which cuts a character in half"
+            );
+
+            let again = shaper
+                .caret_geometry(&story, &styles, WIDTH, cursor(back), 1.5)
+                .caret
+                .expect("a caret for the offset that came back");
+            assert!(
+                (again.x0 - caret.x0).abs() < 1.0,
+                "clicking the caret for {position} at {x} gave {back}, whose caret is at \
+                 {} rather than {}",
+                again.x0,
+                caret.x0
+            );
+        }
+    }
+
+    #[test]
+    fn right_to_left_text_starts_at_the_right() {
+        // The first character of Hebrew sits at the right edge of the measure,
+        // not the left. If this fails the text is being laid out as though it
+        // read the other way.
+        let story = Story::new(HEBREW);
+        let mut shaper = Shaper::new();
+        let shaped = shaper.shape(&story, &NoStyles::default(), WIDTH);
+
+        let first = shaped
+            .runs()
+            .next()
+            .and_then(|r| r.glyphs.first())
+            .map(|g| g.x)
+            .expect("a glyph");
+        let latin = shaper.shape(&Story::new("shalom olam"), &NoStyles::default(), WIDTH);
+        let latin_first = latin
+            .runs()
+            .next()
+            .and_then(|r| r.glyphs.first())
+            .map(|g| g.x)
+            .expect("a glyph");
+
+        assert!(
+            first > latin_first,
+            "right-to-left text began at {first}, left-to-right at {latin_first}"
+        );
+    }
+
+    #[test]
+    fn a_selection_in_mixed_text_covers_something() {
+        // A bidi selection can need several rectangles for one logical range,
+        // because the range is not contiguous on screen. What must not happen
+        // is no rectangle at all.
+        let story = Story::new(MIXED);
+        let mut shaper = Shaper::new();
+
+        let geometry = shaper.caret_geometry(
+            &story,
+            &NoStyles::default(),
+            WIDTH,
+            TextCursor {
+                anchor: 0,
+                position: story.text.len(),
+            },
+            1.5,
+        );
+        assert!(
+            !geometry.selection.is_empty(),
+            "selecting all of it highlighted nothing"
+        );
+        assert!(
+            geometry.selection.iter().all(|r| r.width() > 0.0),
+            "a rectangle with no width: {:?}",
+            geometry.selection
+        );
+    }
+
+    #[test]
+    fn a_word_in_mixed_text_is_a_range_of_the_stored_string() {
+        let story = Story::new(MIXED);
+        let mut shaper = Shaper::new();
+        let styles = NoStyles::default();
+
+        let caret = shaper
+            .caret_geometry(&story, &styles, WIDTH, cursor(1), 1.5)
+            .caret
+            .expect("a caret");
+        let word = shaper.word_at(
+            &story,
+            &styles,
+            WIDTH,
+            caret.x0,
+            (caret.y0 + caret.y1) / 2.0,
+        );
+
+        assert!(
+            word.start <= word.end && word.end <= story.text.len(),
+            "a word outside the text: {word:?}"
+        );
+        assert!(
+            story.text.is_char_boundary(word.start) && story.text.is_char_boundary(word.end),
+            "a word cutting a character in half: {word:?}"
+        );
+    }
 }
