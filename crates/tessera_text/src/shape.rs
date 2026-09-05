@@ -351,28 +351,35 @@ fn paragraphs_of(text: &str) -> Vec<(usize, &str)> {
     out
 }
 
-/// Break `layout` to `measure`, indenting the first line by `first`.
+/// Break `layout` to `measure`, making room at the start of some lines.
 ///
-/// parley's simple path takes one measure for every line, so a first-line
-/// indent needs the line-by-line breaker: each line is given its own x offset
-/// and its own maximum advance, and only the first gets the indent. The
-/// assertion inside `break_next` allows a per-line advance to differ from the
-/// layout's only while the layout's is infinite, which is exactly the case
-/// here — `break_lines` is entered without a maximum.
-fn break_with_first_line_indent(layout: &mut parley::Layout<Brush>, measure: f64, first: f64) {
-    if first == 0.0 {
+/// `first` indents the first line only — a paragraph indent. `cap` indents the
+/// first `cap_lines` lines by the same amount, which is how text flows round a
+/// drop cap. A paragraph that is indented *and* has a drop cap gets both, and
+/// they add.
+///
+/// parley's simple path takes one measure for every line, so anything per-line
+/// needs the line-by-line breaker: each line is given its own x offset and its
+/// own maximum advance. The assertion inside `break_next` allows a per-line
+/// advance to differ from the layout's only while the layout's is infinite,
+/// which `break_lines` does not start as — so it is said rather than assumed.
+fn break_lines_with_room(
+    layout: &mut parley::Layout<Brush>,
+    measure: f64,
+    first: f64,
+    cap: f64,
+    cap_lines: usize,
+) {
+    if first == 0.0 && cap == 0.0 {
         layout.break_all_lines(Some(measure as f32));
         return;
     }
 
     let mut breaker = layout.break_lines();
-    // parley asserts that a per-line advance may differ from the layout's only
-    // while the layout's is infinite. `break_lines` does not start that way, so
-    // it is said explicitly rather than assumed.
     breaker.state_mut().set_layout_max_advance(f32::INFINITY);
-    let mut is_first = true;
+    let mut line = 0usize;
     loop {
-        let indent = if is_first { first } else { 0.0 };
+        let indent = if line == 0 { first } else { 0.0 } + if line < cap_lines { cap } else { 0.0 };
         breaker.state_mut().set_line_x(indent as f32);
         breaker
             .state_mut()
@@ -380,9 +387,20 @@ fn break_with_first_line_indent(layout: &mut parley::Layout<Brush>, measure: f64
         if breaker.break_next().is_none() {
             break;
         }
-        is_first = false;
+        line += 1;
     }
 }
+
+/// How many points a drop cap of `lines` lines should be set at.
+///
+/// A cap's *cap height* is what has to span the lines, not its point size, and
+/// cap height is around seven tenths of the size in a text face.
+fn drop_cap_size(lines: u8, base_size: f32, line_height: f32) -> f32 {
+    (f32::from(lines) * base_size * line_height) / 0.7
+}
+
+/// The space between a drop cap and the text beside it.
+const DROP_CAP_GAP: f64 = 2.0;
 
 /// A stretch of one line drawn in one font at one size.
 ///
@@ -672,12 +690,78 @@ impl Shaper {
 
             y += f64::from(format.space_before.unwrap_or(0.0));
 
-            // What this paragraph actually shapes as, which is the stored
-            // text only while nothing in it is transformed. Setting text in
-            // capitals means shaping a different string.
+            // A drop cap is laid out as its own thing, placed at the
+            // paragraph's origin, with the body flowing round it. It gets its
+            // own `Placed` — which is the whole reason that type exists as it
+            // does: a stretch of text, laid out, with somewhere to sit.
+            //
+            // The characters it takes are removed from the body, so nothing is
+            // drawn twice; the byte ranges of the two entries meet exactly, so
+            // the caret still covers the paragraph once.
+            let cap_lines = usize::from(format.drop_cap_lines.unwrap_or(0));
+            let cap_chars = usize::from(format.drop_cap_characters.unwrap_or(1)).max(1);
+            let cap_end = if cap_lines > 0 {
+                text.char_indices()
+                    .nth(cap_chars)
+                    .map_or(content_end, |(at, _)| start + at)
+            } else {
+                start
+            };
+
+            let mut cap_width = 0.0;
+            if cap_end > start {
+                let size = drop_cap_size(
+                    format.drop_cap_lines.unwrap_or(0),
+                    floor.size.unwrap_or(12.0),
+                    floor.line_height.unwrap_or(1.2),
+                );
+                let (cap_text, cap_pieces, cap_map) =
+                    shaping_text(story, styles, start..cap_end, false);
+
+                let mut builder =
+                    self.layout_ctx
+                        .ranged_builder(&mut self.font_ctx, &cap_text, 1.0, true);
+                if let Some(family) = &floor.family {
+                    builder.push_default(parley::StyleProperty::FontFamily(
+                        parley::FontFamily::Source(std::borrow::Cow::Owned(family.clone())),
+                    ));
+                }
+                // The cap's own size wins over everything the run says, because
+                // its size is what makes it a drop cap.
+                builder.push_default(parley::StyleProperty::FontSize(size));
+                // The font's own line height, not a pinned one. A cap set at
+                // 60pt has an ascent taller than 60pt of line box, and pinning
+                // it drew the caret above the top of the frame.
+                for piece in &cap_pieces {
+                    if let Some(colour) = &piece.format.colour {
+                        builder.push(
+                            parley::StyleProperty::Brush(Some(colour.clone())),
+                            piece.shaped.clone(),
+                        );
+                    }
+                }
+
+                let mut cap_layout: parley::Layout<Brush> = builder.build(&cap_text);
+                cap_layout.break_all_lines(None);
+                cap_width = f64::from(cap_layout.width()) + DROP_CAP_GAP;
+
+                placed.push(Placed {
+                    range: start..cap_end,
+                    layout: cap_layout,
+                    x: indent_left,
+                    y,
+                    map: cap_map,
+                    shaped_text: cap_text,
+                    hyphenate: false,
+                });
+            }
+
+            // What the body actually shapes as, which is the stored text only
+            // while nothing in it is transformed. Setting text in capitals
+            // means shaping a different string.
             let hyphenate = format.hyphenate.unwrap_or(false);
             let (shaped_text, pieces, map) =
-                shaping_text(story, styles, start..content_end, hyphenate);
+                shaping_text(story, styles, cap_end.max(start)..content_end, hyphenate);
 
             let mut builder =
                 self.layout_ctx
@@ -785,7 +869,13 @@ impl Shaper {
             // lines that do not end up hyphenated — the ordinary "hyphen zone"
             // compromise — and never overflows, which the alternative does.
             let reserve = if hyphenate { HYPHEN_RESERVE } else { 0.0 };
-            break_with_first_line_indent(&mut layout, measure - reserve, indent_first);
+            break_lines_with_room(
+                &mut layout,
+                measure - reserve,
+                indent_first,
+                cap_width,
+                cap_lines,
+            );
 
             // Alignment is per layout, which is now per paragraph — so two
             // paragraphs can finally disagree about it.
@@ -807,7 +897,7 @@ impl Shaper {
 
             let height = f64::from(layout.height());
             placed.push(Placed {
-                range: start..end,
+                range: cap_end.max(start)..end,
                 layout,
                 x: indent_left,
                 y,
@@ -2183,5 +2273,116 @@ mod tests {
             "if these ever agree, tracking has become a usable manual kern and \
              this test should be replaced by one: {tracked} against {naive}"
         );
+    }
+
+    // --- drop caps ----------------------------------------------------------
+
+    fn with_drop_cap(text: &str, lines: u8, chars: Option<u8>) -> Story {
+        use crate::story::ParagraphFormat;
+
+        let mut story = Story::new(text);
+        story.apply_paragraph_format(
+            0..1,
+            &ParagraphFormat {
+                drop_cap_lines: Some(lines),
+                drop_cap_characters: chars,
+                ..ParagraphFormat::default()
+            },
+        );
+        story
+    }
+
+    const SENTENCE: &str = "Once upon a time there was a very long sentence indeed";
+
+    #[test]
+    fn a_drop_cap_is_set_much_larger_than_the_text() {
+        let mut shaper = Shaper::new();
+        let shaped = shaper.shape(
+            &with_drop_cap(SENTENCE, 3, None),
+            &NoStyles::default(),
+            200.0,
+        );
+
+        let sizes: Vec<f32> = shaped.runs().map(|r| r.size).collect();
+        let largest = sizes.iter().copied().fold(0.0_f32, f32::max);
+        assert!(
+            largest > 40.0,
+            "a three-line cap over 12pt text should be around 60pt: {sizes:?}"
+        );
+        assert!(
+            sizes.iter().any(|s| (*s - 12.0).abs() < 0.01),
+            "and the body is still 12pt: {sizes:?}"
+        );
+    }
+
+    #[test]
+    fn the_text_beside_a_drop_cap_starts_past_it() {
+        let mut shaper = Shaper::new();
+        let with = shaper.shape(
+            &with_drop_cap(SENTENCE, 3, None),
+            &NoStyles::default(),
+            200.0,
+        );
+        let without = shaper.shape(&Story::new(SENTENCE), &NoStyles::default(), 200.0);
+
+        // The first *body* glyph, which is the one after the cap's own run.
+        let body_x = |t: &ShapedText| -> f64 {
+            t.runs()
+                .filter(|r| (r.size - 12.0).abs() < 0.01)
+                .flat_map(|r| r.glyphs.iter())
+                .map(|g| g.x)
+                .fold(f64::MAX, f64::min)
+        };
+        assert!(
+            body_x(&with) > body_x(&without) + 10.0,
+            "the body should be pushed right of the cap: {} against {}",
+            body_x(&with),
+            body_x(&without)
+        );
+    }
+
+    #[test]
+    fn a_drop_cap_takes_the_characters_it_is_asked_for() {
+        let mut shaper = Shaper::new();
+        let three = shaper.shape(
+            &with_drop_cap(SENTENCE, 2, Some(3)),
+            &NoStyles::default(),
+            200.0,
+        );
+
+        let big: usize = three
+            .runs()
+            .filter(|r| r.size > 20.0)
+            .map(|r| r.glyphs.len())
+            .sum();
+        assert_eq!(big, 3, "three characters were asked for");
+    }
+
+    #[test]
+    fn no_drop_cap_lays_out_exactly_as_before() {
+        // The ordinary path must be untouched: a paragraph nobody has given a
+        // drop cap is one `Placed`, not two.
+        let mut shaper = Shaper::new();
+        let story = Story::new(SENTENCE);
+        let placed = shaper.layout_paragraphs(&story, &NoStyles::default(), 200.0);
+        assert_eq!(placed.len(), 1, "one paragraph, one layout");
+    }
+
+    #[test]
+    fn a_drop_cap_and_the_body_cover_the_paragraph_exactly_once() {
+        // Two layouts for one paragraph, so their ranges have to meet: a gap
+        // would leave offsets nothing can draw a caret for, and an overlap
+        // would draw some text twice.
+        let mut shaper = Shaper::new();
+        let story = with_drop_cap(SENTENCE, 3, Some(2));
+        let placed = shaper.layout_paragraphs(&story, &NoStyles::default(), 200.0);
+
+        assert_eq!(placed.len(), 2, "the cap and the body");
+        assert_eq!(placed[0].range.start, 0);
+        assert_eq!(
+            placed[0].range.end, placed[1].range.start,
+            "they meet with no gap and no overlap"
+        );
+        assert_eq!(placed[1].range.end, story.text.len());
     }
 }

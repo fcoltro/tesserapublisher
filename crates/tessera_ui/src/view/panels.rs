@@ -1079,6 +1079,47 @@ fn text_section(
         );
     }
 
+    // Drop cap. Zero lines is no drop cap, which is why the row reads as a
+    // count rather than as a switch with a count beside it.
+    if let Some(lines) = optional_number(
+        ui,
+        "Drop cap lines",
+        Some(f32::from(paragraph.drop_cap_lines.unwrap_or(0))),
+        1.0,
+        0.0..=10.0,
+        "",
+    ) {
+        set_paragraph(
+            state,
+            story,
+            target.clone(),
+            ParagraphFormat {
+                drop_cap_lines: Some(lines.round().clamp(0.0, 10.0) as u8),
+                ..ParagraphFormat::default()
+            },
+        );
+    }
+    if paragraph.drop_cap_lines.unwrap_or(0) > 0
+        && let Some(chars) = optional_number(
+            ui,
+            "Drop cap letters",
+            Some(f32::from(paragraph.drop_cap_characters.unwrap_or(1))),
+            1.0,
+            1.0..=10.0,
+            "",
+        )
+    {
+        set_paragraph(
+            state,
+            story,
+            target.clone(),
+            ParagraphFormat {
+                drop_cap_characters: Some(chars.round().clamp(1.0, 10.0) as u8),
+                ..ParagraphFormat::default()
+            },
+        );
+    }
+
     // Hyphenation. English only for now: `hypher` holds its patterns per
     // language and a story has no language to pick one with.
     let hyphenating = paragraph.hyphenate == Some(true);

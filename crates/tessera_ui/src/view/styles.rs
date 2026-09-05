@@ -279,6 +279,13 @@ fn paragraph_fields(
     // English only: `hypher` holds patterns per language and a story has no
     // language to choose between them yet.
     optional_flag(ui, "Hyphenate", &mut edited.format.hyphenate);
+    optional_count(ui, "Drop cap lines", &mut edited.format.drop_cap_lines, 3);
+    optional_count(
+        ui,
+        "Drop cap letters",
+        &mut edited.format.drop_cap_characters,
+        1,
+    );
 
     if let Some(based_on) = chosen_parent {
         apply(state, Command::SetParagraphStyleBasedOn { id, based_on });
@@ -621,6 +628,35 @@ fn optional_choice<T: PartialEq + Copy>(
                 {
                     *value = Some(*candidate);
                 }
+            }
+        });
+    });
+}
+
+/// A small whole number a style may specify or leave alone.
+fn optional_count(ui: &mut Ui, label: &str, value: &mut Option<u8>, default: u8) {
+    ui.horizontal(|ui| {
+        let mut on = value.is_some();
+        if ui
+            .checkbox(&mut on, "")
+            .on_hover_text(INHERIT_HINT)
+            .changed()
+        {
+            *value = if on { Some(default) } else { None };
+        }
+        ui.colored_label(Theme::TEXT_MUTED, label);
+        ui.add_enabled_ui(value.is_some(), |ui| match value {
+            Some(v) => {
+                let mut edited = i32::from(*v);
+                if ui
+                    .add(egui::DragValue::new(&mut edited).speed(1.0).range(0..=10))
+                    .changed()
+                {
+                    *v = edited.clamp(0, 10) as u8;
+                }
+            }
+            None => {
+                ui.label("—");
             }
         });
     });

@@ -148,13 +148,14 @@ impl Shaper {
         y: f64,
     ) -> usize {
         let placed = self.layout_paragraphs(story, styles, width);
-        let Some(at) = paragraph_under(&placed, y) else {
+        let Some(at) = paragraph_under(&placed, x, y) else {
             return 0;
         };
         let here = &placed[at];
-        here.range.start
-            + parley::Cursor::from_point(&here.layout, (x - here.x) as f32, (y - here.y) as f32)
-                .index()
+        here.to_stored(
+            parley::Cursor::from_point(&here.layout, (x - here.x) as f32, (y - here.y) as f32)
+                .index(),
+        )
     }
 
     /// The byte range of the word under frame-local `(x, y)`.
@@ -169,7 +170,7 @@ impl Shaper {
         y: f64,
     ) -> std::ops::Range<usize> {
         let placed = self.layout_paragraphs(story, styles, width);
-        let Some(at) = paragraph_under(&placed, y) else {
+        let Some(at) = paragraph_under(&placed, x, y) else {
             return 0..0;
         };
         let here = &placed[at];
@@ -215,10 +216,26 @@ fn paragraph_holding(placed: &[crate::shape::Placed], offset: usize) -> Option<u
 /// nowhere. The gap *between* two paragraphs belongs to the one above it,
 /// which is what makes clicking in paragraph spacing land at the end of the
 /// paragraph that asked for the space.
-fn paragraph_under(placed: &[crate::shape::Placed], y: f64) -> Option<usize> {
+fn paragraph_under(placed: &[crate::shape::Placed], x: f64, y: f64) -> Option<usize> {
     if placed.is_empty() {
         return None;
     }
+
+    // A drop cap and the body beside it start at the same y and do not overlap
+    // horizontally, so y alone cannot tell them apart. Anything whose own box
+    // contains the point wins outright; that is what makes clicking on a drop
+    // cap put the caret in the drop cap.
+    if let Some(i) = placed.iter().position(|p| {
+        let bottom = p.y + f64::from(p.layout.height());
+        let right = p.x + f64::from(p.layout.width());
+        (p.y..bottom).contains(&y) && (p.x..right).contains(&x)
+    }) {
+        return Some(i);
+    }
+
+    // Otherwise the last one that starts at or above the point. Above the first
+    // is the first and below the last is the last, so a click on the padding
+    // above a frame's text puts the caret at the start rather than nowhere.
     let mut chosen = 0;
     for (i, paragraph) in placed.iter().enumerate() {
         if y >= paragraph.y {
@@ -770,5 +787,113 @@ mod tests {
             story.text.is_char_boundary(word.start) && story.text.is_char_boundary(word.end),
             "a word cutting a character in half: {word:?}"
         );
+    }
+
+    #[test]
+    fn a_round_trip_survives_capitals_that_change_the_byte_length() {
+        // `straße` was not enough. `ß` uppercases to `SS`, and both are two
+        // bytes — so shaped and stored offsets coincided by accident and the
+        // map was never exercised. `offset_at` was returning
+        // `range.start + shaped_index` and the test could not tell.
+        //
+        // The ligature `ﬁ` is three bytes and uppercases to `FI`, which is two.
+        // Every offset after it differs between the two strings, so a caret
+        // that skips the map lands somewhere else.
+        use crate::story::Case;
+
+        let mut story = Story::new("\u{FB01}nd the \u{FB02}ame");
+        story.runs[0].local.case = Some(Case::Upper);
+
+        // The premise, stated so the test cannot quietly stop testing anything.
+        let shaped: String = story.text.to_uppercase();
+        assert_ne!(
+            shaped.len(),
+            story.text.len(),
+            "this text has to change length when capitalised, or it proves nothing"
+        );
+
+        let mut shaper = Shaper::new();
+        let styles = NoStyles::default();
+
+        for position in 0..=story.text.len() {
+            if !story.text.is_char_boundary(position) {
+                continue;
+            }
+            let caret = shaper
+                .caret_geometry(&story, &styles, WIDTH, cursor(position), 1.5)
+                .caret
+                .expect("a caret for every offset");
+            let back = shaper.offset_at(
+                &story,
+                &styles,
+                WIDTH,
+                caret.x0 + caret.width() / 2.0,
+                (caret.y0 + caret.y1) / 2.0,
+            );
+            assert!(
+                story.text.is_char_boundary(back),
+                "offset {position} read back as {back}, which cuts a character in half"
+            );
+            assert_eq!(back, position, "offset {position} reads back as {back}");
+        }
+    }
+
+    // --- drop caps ----------------------------------------------------------
+
+    fn with_drop_cap(text: &str, lines: u8) -> Story {
+        use crate::story::ParagraphFormat;
+
+        let mut story = Story::new(text);
+        story.apply_paragraph_format(
+            0..1,
+            &ParagraphFormat {
+                drop_cap_lines: Some(lines),
+                ..ParagraphFormat::default()
+            },
+        );
+        story
+    }
+
+    #[test]
+    fn a_caret_in_a_drop_cap_is_in_the_drop_cap() {
+        // The cap and the body beside it start at the same y, so the paragraph
+        // a click lands in cannot be decided by y alone.
+        let story = with_drop_cap("Once upon a time there was a very long sentence", 3);
+        let mut shaper = Shaper::new();
+        let styles = NoStyles::default();
+
+        let cap = shaper
+            .caret_geometry(&story, &styles, WIDTH, cursor(0), 1.5)
+            .caret
+            .expect("a caret at the start");
+        let back = shaper.offset_at(
+            &story,
+            &styles,
+            WIDTH,
+            cap.x0 + 1.0,
+            (cap.y0 + cap.y1) / 2.0,
+        );
+        assert_eq!(back, 0, "clicking the drop cap belongs to the drop cap");
+    }
+
+    #[test]
+    fn every_offset_survives_a_round_trip_past_a_drop_cap() {
+        let story = with_drop_cap("Once upon a time there was a very long sentence", 3);
+        let mut shaper = Shaper::new();
+        let styles = NoStyles::default();
+
+        for position in 0..=story.text.len() {
+            if !story.text.is_char_boundary(position) {
+                continue;
+            }
+            let caret = shaper
+                .caret_geometry(&story, &styles, WIDTH, cursor(position), 1.5)
+                .caret
+                .expect("a caret for every offset");
+            assert!(
+                caret.x0 >= 0.0 && caret.y0 >= 0.0,
+                "offset {position} drew off the frame at {caret:?}"
+            );
+        }
     }
 }

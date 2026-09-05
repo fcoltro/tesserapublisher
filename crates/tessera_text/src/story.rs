@@ -116,6 +116,16 @@ pub struct ParagraphFormat {
     pub space_after: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hyphenate: Option<bool>,
+    /// How many lines a drop cap falls through. `None` or 0 is no drop cap.
+    ///
+    /// Optional and skipped when absent, like every field here, so adding it
+    /// needed no format version: a document written before it reads as having
+    /// no drop cap, which is what it had.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drop_cap_lines: Option<u8>,
+    /// How many characters are set as the drop cap. Defaults to one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drop_cap_characters: Option<u8>,
     /// What every run in the paragraph inherits before its own style speaks.
     #[serde(default)]
     pub character: CharacterFormat,
@@ -139,6 +149,8 @@ impl ParagraphFormat {
             space_before: self.space_before.or(base.space_before),
             space_after: self.space_after.or(base.space_after),
             hyphenate: self.hyphenate.or(base.hyphenate),
+            drop_cap_lines: self.drop_cap_lines.or(base.drop_cap_lines),
+            drop_cap_characters: self.drop_cap_characters.or(base.drop_cap_characters),
             character: self.character.over(&base.character),
         }
     }
@@ -1056,6 +1068,11 @@ impl Story {
             blank_if_different(&mut common.space_before, para.local.space_before);
             blank_if_different(&mut common.space_after, para.local.space_after);
             blank_if_different(&mut common.hyphenate, para.local.hyphenate);
+            blank_if_different(&mut common.drop_cap_lines, para.local.drop_cap_lines);
+            blank_if_different(
+                &mut common.drop_cap_characters,
+                para.local.drop_cap_characters,
+            );
         }
         common
     }
