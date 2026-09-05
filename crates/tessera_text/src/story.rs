@@ -541,6 +541,38 @@ impl Story {
         start..end
     }
 
+    /// A paragraph's formatting, resolved through its named style.
+    ///
+    /// The character half of a paragraph style is folded in by
+    /// [`Story::resolve_run`] instead, because it has to sit *under* the run's
+    /// own overrides and only the run knows those.
+    pub fn resolve_paragraph(
+        &self,
+        para: &ParagraphRun,
+        styles: &dyn Styles,
+    ) -> ParagraphFormat {
+        let mut format = ParagraphFormat::default();
+        if let Some(id) = para.style
+            && let Some(style) = styles.paragraph(id)
+        {
+            format = style.over(&format);
+        }
+        para.local.over(&format)
+    }
+
+    /// The alignment the whole story is set in, if its paragraphs agree.
+    ///
+    /// `None` when they disagree, which the shaper reads as "cannot honour
+    /// this in one layout" — see the note there.
+    pub fn common_alignment(&self, styles: &dyn Styles) -> Option<Alignment> {
+        let mut alignments = self
+            .paragraphs
+            .iter()
+            .map(|p| self.resolve_paragraph(p, styles).alignment.unwrap_or(Alignment::Left));
+        let first = alignments.next()?;
+        alignments.all(|a| a == first).then_some(first)
+    }
+
     /// The resolved formatting every run in `range` agrees on.
     ///
     /// What the inspector shows. A field the runs disagree about comes back
@@ -1331,6 +1363,88 @@ mod run_tests {
             Some(Alignment::Centre)
         );
         assert_eq!(story.common_paragraph_format(1..1).alignment, None);
+    }
+
+
+    // --- alignment across a story ---------------------------------------
+
+    #[test]
+    fn a_story_set_one_way_reports_that_alignment() {
+        let mut story = Story::new("one\ntwo");
+        story.apply_paragraph_format(0..7, &centred());
+        assert_eq!(
+            story.common_alignment(&NoStyles::default()),
+            Some(Alignment::Centre)
+        );
+    }
+
+    #[test]
+    fn a_story_with_two_alignments_reports_none() {
+        let mut story = Story::new("one\ntwo");
+        story.apply_paragraph_format(0..1, &centred());
+        assert_eq!(
+            story.common_alignment(&NoStyles::default()),
+            None,
+            "one layout cannot be two alignments at once"
+        );
+    }
+
+    #[test]
+    fn a_story_nobody_has_aligned_reads_as_left() {
+        let story = Story::new("one\ntwo");
+        assert_eq!(
+            story.common_alignment(&NoStyles::default()),
+            Some(Alignment::Left),
+            "unset is left, and unset everywhere still agrees"
+        );
+    }
+
+    #[test]
+    fn an_empty_story_has_no_alignment_to_report() {
+        assert_eq!(Story::new("").common_alignment(&NoStyles::default()), None);
+    }
+
+    /// A `Styles` whose one paragraph style is right-aligned.
+    fn right_aligned_style() -> OneOfEach {
+        OneOfEach {
+            character: CharacterFormat::default(),
+            paragraph: ParagraphFormat {
+                alignment: Some(Alignment::Right),
+                ..ParagraphFormat::default()
+            },
+            default: NoStyles::default().default,
+        }
+    }
+
+    #[test]
+    fn a_paragraph_resolves_through_its_named_style() {
+        // The whole point of a style: change it and every paragraph using it
+        // follows.
+        let styles = right_aligned_style();
+        let mut story = Story::new("one");
+        story.paragraphs[0].style = Some(ParagraphStyleId::default());
+
+        assert_eq!(
+            story
+                .resolve_paragraph(&story.paragraphs[0], &styles)
+                .alignment,
+            Some(Alignment::Right)
+        );
+    }
+
+    #[test]
+    fn a_paragraphs_own_alignment_beats_its_style() {
+        let styles = right_aligned_style();
+        let mut story = Story::new("one");
+        story.paragraphs[0].style = Some(ParagraphStyleId::default());
+        story.paragraphs[0].local.alignment = Some(Alignment::Centre);
+
+        assert_eq!(
+            story
+                .resolve_paragraph(&story.paragraphs[0], &styles)
+                .alignment,
+            Some(Alignment::Centre)
+        );
     }
 
     proptest! {

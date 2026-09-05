@@ -102,12 +102,6 @@ impl ShapedText {
 #[derive(PartialEq, Eq, Hash)]
 struct ShapeKey {
     text: String,
-    /// The cascade's floor, as the debug form of the document default.
-    ///
-    /// Without it two documents whose only difference is their default text
-    /// would share an entry, and the second would be handed the first's
-    /// layout.
-    default: String,
     width: u64,
     /// The runs, as their serialised shape.
     ///
@@ -121,12 +115,35 @@ struct ShapeKey {
 }
 
 impl ShapeKey {
+    /// Keyed on the **resolved** formatting, not on what the runs state.
+    ///
+    /// Two stories shape the same when their text, their resolved runs and
+    /// their measure match — and only then. Keying on `story.runs` instead
+    /// would miss every change that happens further up the cascade: editing a
+    /// named style, or changing the document default, leaves every run
+    /// byte-identical while changing what all of them draw as. The whole point
+    /// of a style is that changing it changes the text using it, and a cache
+    /// that cannot see that is a cache that makes styles not work.
     fn new(story: &Story, styles: &dyn Styles, width: f64) -> Self {
+        use std::fmt::Write as _;
+
+        let mut runs = String::new();
+        for run in &story.runs {
+            let _ = write!(runs, "{:?}{:?}", run.range, story.resolve_run(run, styles));
+        }
+        for para in &story.paragraphs {
+            let _ = write!(
+                runs,
+                "{:?}{:?}",
+                para.range,
+                story.resolve_paragraph(para, styles)
+            );
+        }
+
         Self {
             text: story.text.clone(),
-            default: format!("{:?}", styles.document_default()),
             width: width.to_bits(),
-            runs: format!("{:?}{:?}", story.runs, story.paragraphs),
+            runs,
         }
     }
 }
@@ -324,6 +341,26 @@ impl Shaper {
 
         let mut layout: parley::Layout<()> = builder.build(&story.text);
         layout.break_all_lines(Some(width as f32));
+
+        // Alignment is applied to the whole layout, because that is the only
+        // shape parley offers: `Layout::align` takes one alignment for one
+        // layout. A story whose paragraphs disagree therefore cannot be
+        // honoured here, and is left ragged-left rather than shown wrong in
+        // some paragraph — `common_alignment` returns `None` for exactly that
+        // case. Per-paragraph alignment needs one layout per paragraph, which
+        // also reaches the caret and is its own piece of work.
+        if let Some(alignment) = story.common_alignment(styles) {
+            layout.align(
+                match alignment {
+                    crate::story::Alignment::Left => parley::Alignment::Left,
+                    crate::story::Alignment::Centre => parley::Alignment::Center,
+                    crate::story::Alignment::Right => parley::Alignment::Right,
+                    crate::story::Alignment::Justify => parley::Alignment::Justify,
+                },
+                parley::AlignmentOptions::default(),
+            );
+        }
+
         layout
     }
 
@@ -803,6 +840,154 @@ mod tests {
 
         let missing = shaper.missing_families(&story, &NoStyles::default());
         assert_eq!(missing.len(), 1, "one warning, not one per run: {missing:?}");
+    }
+
+
+    // --- the cache has to see through the styles ------------------------
+
+    /// A `Styles` whose one character style can be changed between calls.
+    struct EditableStyle {
+        character: crate::story::CharacterFormat,
+    }
+
+    impl crate::story::Styles for EditableStyle {
+        fn character(
+            &self,
+            _: crate::story::CharacterStyleId,
+        ) -> Option<&crate::story::CharacterFormat> {
+            Some(&self.character)
+        }
+        fn paragraph(
+            &self,
+            _: crate::story::ParagraphStyleId,
+        ) -> Option<&crate::story::ParagraphFormat> {
+            None
+        }
+        fn document_default(&self) -> crate::story::CharacterFormat {
+            NoStyles::default().default
+        }
+    }
+
+    #[test]
+    fn editing_a_style_reshapes_the_text_using_it() {
+        // The whole point of a style. Keying the cache on `story.runs` would
+        // miss this: the runs are byte-identical before and after, and only
+        // what they resolve to has changed.
+        use crate::story::{CharacterFormat, CharacterStyleId};
+
+        let mut shaper = Shaper::new();
+        let mut story = Story::new("word");
+        story.runs[0].style = Some(CharacterStyleId::default());
+
+        let mut styles = EditableStyle {
+            character: CharacterFormat {
+                size: Some(12.0),
+                ..CharacterFormat::default()
+            },
+        };
+        let small = shaper.shape(&story, &styles, 400.0);
+
+        styles.character.size = Some(48.0);
+        let large = shaper.shape(&story, &styles, 400.0);
+
+        assert_ne!(
+            small.height,
+            large.height,
+            "the same runs at a changed style must not come back from the cache"
+        );
+    }
+
+    #[test]
+    fn changing_the_document_default_reshapes_a_story_that_states_nothing() {
+        let mut shaper = Shaper::new();
+        let story = Story::new("word");
+
+        let mut styles = NoStyles::default();
+        let small = shaper.shape(&story, &styles, 400.0);
+        styles.default.size = Some(48.0);
+        let large = shaper.shape(&story, &styles, 400.0);
+
+        assert_ne!(small.height, large.height);
+    }
+
+    #[test]
+    fn shaping_the_same_story_twice_still_hits_the_cache() {
+        // The key got stricter; it must not have got useless.
+        let mut shaper = Shaper::new();
+        let story = Story::new("word");
+        let styles = NoStyles::default();
+
+        shaper.shape(&story, &styles, 400.0);
+        let (hits_before, _) = shaper.cache_counts();
+        shaper.shape(&story, &styles, 400.0);
+        let (hits_after, _) = shaper.cache_counts();
+
+        assert_eq!(hits_after, hits_before + 1, "the second ask must be free");
+    }
+
+    // --- alignment -------------------------------------------------------
+
+    #[test]
+    fn centring_moves_the_glyphs_right() {
+        use crate::story::{Alignment, ParagraphFormat};
+
+        let mut shaper = Shaper::new();
+        let story = Story::new("hi");
+        let ragged = shaper.shape(&story, &NoStyles::default(), 400.0);
+
+        let mut centred = Story::new("hi");
+        centred.apply_paragraph_format(
+            0..2,
+            &ParagraphFormat {
+                alignment: Some(Alignment::Centre),
+                ..ParagraphFormat::default()
+            },
+        );
+        let centred = shaper.shape(&centred, &NoStyles::default(), 400.0);
+
+        let x_of = |t: &ShapedText| {
+            t.lines
+                .first()
+                .and_then(|l| l.runs.first())
+                .and_then(|r| r.glyphs.first())
+                .map(|g| g.x)
+        };
+        let (left, middle) = (x_of(&ragged), x_of(&centred));
+        assert!(
+            matches!((left, middle), (Some(l), Some(m)) if m > l + 100.0),
+            "centred text in a 400pt measure must start well right of ragged: \
+             {left:?} then {middle:?}"
+        );
+    }
+
+    #[test]
+    fn a_story_with_two_alignments_is_left_rather_than_wrong() {
+        // parley aligns a whole layout at once, so two alignments cannot both
+        // be honoured. Left is the answer that is wrong for nobody in
+        // particular, rather than right for one paragraph and wrong for the
+        // other.
+        use crate::story::{Alignment, ParagraphFormat};
+
+        let mut shaper = Shaper::new();
+        let mut story = Story::new("one\ntwo");
+        story.apply_paragraph_format(
+            0..1,
+            &ParagraphFormat {
+                alignment: Some(Alignment::Right),
+                ..ParagraphFormat::default()
+            },
+        );
+        let mixed = shaper.shape(&story, &NoStyles::default(), 400.0);
+        let plain = shaper.shape(&Story::new("one\ntwo"), &NoStyles::default(), 400.0);
+
+        let x_of = |t: &ShapedText| {
+            t.lines
+                .first()
+                .and_then(|l| l.runs.first())
+                .and_then(|r| r.glyphs.first())
+                .map(|g| g.x)
+        };
+        assert_eq!(x_of(&mixed), x_of(&plain));
     }
 
 }
