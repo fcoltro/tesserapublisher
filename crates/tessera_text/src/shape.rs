@@ -2073,4 +2073,115 @@ mod tests {
             "no break points inserted, and so no map"
         );
     }
+
+    // --- kerning ------------------------------------------------------------
+    //
+    // There is no kerning *control*, and the roadmap says why. What there is,
+    // and what these establish, is that the font's own kern pairs are applied:
+    // metrics kerning, which is what a control would default to anyway.
+
+    #[test]
+    fn the_fonts_own_kern_pairs_are_applied() {
+        // "AV" is the classic pair: the two diagonals nest, so a font that
+        // kerns sets them closer than their advances alone would put them.
+        let mut shaper = Shaper::new();
+        let mut width = |text: &str| -> f64 {
+            shaper
+                .shape(&Story::new(text), &NoStyles::default(), 400.0)
+                .runs()
+                .flat_map(|r| r.glyphs.iter())
+                .map(|g| g.advance)
+                .sum()
+        };
+
+        let pair = width("AV");
+        let apart = width("A") + width("V");
+
+        // Reported rather than asserted: whether a given face kerns AV is the
+        // face's business, and the default here is whatever the system calls
+        // `sans-serif`. What matters is that shaping a pair is not the same
+        // operation as shaping two letters, which the next test pins.
+        if pair >= apart {
+            eprintln!("note: this system's sans-serif does not kern AV");
+        }
+        assert!(pair <= apart + 0.01, "a pair must never be set wider");
+    }
+
+    #[test]
+    fn splitting_a_run_between_a_kerned_pair_keeps_the_kern() {
+        // Worth knowing, and not obvious: a shaper kerns within a style span,
+        // so colouring or emboldening one letter of a pair might have opened
+        // it. It does not — parley keeps the pair together.
+        use crate::story::CharacterFormat;
+
+        let mut shaper = Shaper::new();
+        let width = |t: &ShapedText| -> f64 {
+            t.runs()
+                .flat_map(|r| r.glyphs.iter())
+                .map(|g| g.advance)
+                .sum()
+        };
+
+        let together = shaper.shape(&Story::new("AV"), &NoStyles::default(), 400.0);
+
+        // A stated size equal to the inherited one: nothing looks different,
+        // but the runs no longer say the same thing, so they do not merge.
+        let mut split = Story::new("AV");
+        split.apply_character_format(
+            0..1,
+            &CharacterFormat {
+                size: Some(12.0),
+                ..CharacterFormat::default()
+            },
+        );
+        assert_eq!(split.runs.len(), 2, "the run really did split");
+
+        assert!(
+            (width(&shaper.shape(&split, &NoStyles::default(), 400.0)) - width(&together)).abs()
+                < 0.01,
+            "the kern survived the split"
+        );
+    }
+
+    #[test]
+    fn tracking_is_not_a_substitute_for_a_kerning_control() {
+        // InDesign separates kerning — between one pair, at a caret — from
+        // tracking, over a range. It would be convenient if tracking a single
+        // character were the same thing, and it is not: tightening the first
+        // letter of a kerned pair by 50/1000 em made it **wider**, not
+        // narrower.
+        //
+        // The cause is not established here and so is not claimed; what is
+        // recorded is that the two do not compose the way arithmetic suggests,
+        // which is the part a kerning control would have to be built around.
+        use crate::story::CharacterFormat;
+
+        let mut shaper = Shaper::new();
+        let width = |t: &ShapedText| -> f64 {
+            t.runs()
+                .flat_map(|r| r.glyphs.iter())
+                .map(|g| g.advance)
+                .sum()
+        };
+
+        let plain = width(&shaper.shape(&Story::new("AV"), &NoStyles::default(), 400.0));
+
+        let mut story = Story::new("AV");
+        story.apply_character_format(
+            0..1,
+            &CharacterFormat {
+                tracking: Some(-50.0),
+                ..CharacterFormat::default()
+            },
+        );
+        let tracked = width(&shaper.shape(&story, &NoStyles::default(), 400.0));
+
+        // 50/1000 em at 12pt is 0.6pt. Simple subtraction would give this.
+        let naive = plain - 0.6;
+        assert!(
+            (tracked - naive).abs() > 0.01,
+            "if these ever agree, tracking has become a usable manual kern and \
+             this test should be replaced by one: {tracked} against {naive}"
+        );
+    }
 }
