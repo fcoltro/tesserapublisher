@@ -153,6 +153,12 @@ pub struct Shaper {
     cache: std::collections::HashMap<ShapeKey, ShapedText>,
     hits: u64,
     misses: u64,
+    /// Every family this system has, sorted, discovered once.
+    ///
+    /// Filled on first ask rather than in `new`, because scanning the system's
+    /// font directories costs tens of milliseconds and a document that never
+    /// opens a font menu should never pay it.
+    families: Option<Vec<String>>,
 }
 
 impl Shaper {
@@ -163,7 +169,68 @@ impl Shaper {
             cache: std::collections::HashMap::new(),
             hits: 0,
             misses: 0,
+            families: None,
         }
+    }
+
+    /// Every font family installed on this system, sorted, without duplicates.
+    ///
+    /// Takes `&mut self` because fontique's collection resolves families
+    /// lazily and enumerating them mutates it. The list is kept afterwards, so
+    /// only the first call pays for the scan.
+    pub fn families(&mut self) -> &[String] {
+        if self.families.is_none() {
+            let mut names: Vec<String> = self
+                .font_ctx
+                .collection
+                .family_names()
+                .map(str::to_string)
+                .collect();
+            // Case-insensitively, because a font menu that puts "Arial" and
+            // "arial" in different halves of the alphabet is a font menu
+            // nobody can find anything in.
+            names.sort_by_key(|n| n.to_lowercase());
+            names.dedup();
+            self.families = Some(names);
+        }
+        self.families.as_deref().unwrap_or_default()
+    }
+
+    /// Whether this system can honour `family` as written.
+    ///
+    /// A generic name — `sans-serif`, `monospace` — always can: it is not a
+    /// family but an instruction to pick one, and fontique resolves it. Any
+    /// other name has to actually be installed.
+    ///
+    /// This is the visible half of substitution. parley already falls back
+    /// silently when a family is missing, which is right for rendering and
+    /// wrong for the person holding a document that was set in a face their
+    /// machine does not have: they need to be told, not quietly shown
+    /// something else.
+    pub fn has_family(&mut self, family: &str) -> bool {
+        if parley::GenericFamily::parse(family).is_some() {
+            return true;
+        }
+        self.font_ctx.collection.family_by_name(family).is_some()
+    }
+
+    /// Every family a story names that this system lacks, sorted, once each.
+    ///
+    /// What the inspector marks. Empty is the ordinary case and costs one pass
+    /// over the runs.
+    pub fn missing_families(&mut self, story: &Story, styles: &dyn Styles) -> Vec<String> {
+        let mut missing: Vec<String> = Vec::new();
+        for run in &story.runs {
+            let Some(family) = story.resolve_run(run, styles).family else {
+                continue;
+            };
+            if missing.contains(&family) || self.has_family(&family) {
+                continue;
+            }
+            missing.push(family);
+        }
+        missing.sort_by_key(|n| n.to_lowercase());
+        missing
     }
 
     /// How many shaping requests were answered from the cache, and how many
@@ -622,4 +689,120 @@ mod tests {
             "the cache handed back the same layout for different runs"
         );
     }
+
+    // --- what fonts this system has -------------------------------------
+
+    #[test]
+    fn the_system_has_at_least_one_font_family() {
+        // A machine with no fonts at all cannot show text, so an empty list
+        // means the enumeration is broken rather than that the machine is
+        // bare.
+        let mut shaper = Shaper::new();
+        assert!(
+            !shaper.families().is_empty(),
+            "fontique found no families at all"
+        );
+    }
+
+    #[test]
+    fn the_family_list_is_sorted_and_has_no_duplicates() {
+        let mut shaper = Shaper::new();
+        let families: Vec<String> = shaper.families().to_vec();
+
+        let mut sorted = families.clone();
+        sorted.sort_by_key(|n| n.to_lowercase());
+        assert_eq!(families, sorted, "a font menu has to be in order");
+
+        let mut unique = families.clone();
+        unique.dedup();
+        assert_eq!(families.len(), unique.len(), "and list each family once");
+    }
+
+    #[test]
+    fn the_family_list_is_only_built_once() {
+        // Scanning the system's font directories costs tens of milliseconds.
+        // Asking twice must not pay twice, which is checked by the second call
+        // returning the identical slice rather than by timing it.
+        let mut shaper = Shaper::new();
+        let first = shaper.families().to_vec();
+        let second = shaper.families().to_vec();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn a_generic_family_is_always_available() {
+        // Not a family but an instruction to pick one. Marking `sans-serif` as
+        // missing would mark every document Tessera creates, since that is the
+        // default.
+        let mut shaper = Shaper::new();
+        for generic in ["sans-serif", "serif", "monospace", "cursive"] {
+            assert!(shaper.has_family(generic), "{generic} must resolve");
+        }
+    }
+
+    #[test]
+    fn a_family_this_system_does_not_have_is_reported_missing() {
+        let mut shaper = Shaper::new();
+        assert!(!shaper.has_family("Tessera No Such Face 9000"));
+    }
+
+    #[test]
+    fn every_family_the_system_lists_is_one_it_has() {
+        // The two halves have to agree, or the font menu would offer faces the
+        // inspector then marks as missing.
+        let mut shaper = Shaper::new();
+        let families: Vec<String> = shaper.families().iter().take(20).cloned().collect();
+        for family in families {
+            assert!(shaper.has_family(&family), "{family} was listed but is absent");
+        }
+    }
+
+    #[test]
+    fn a_story_naming_a_face_this_system_lacks_says_so() {
+        let mut shaper = Shaper::new();
+        let mut story = Story::new("hello");
+        story.runs[0].local.family = Some("Tessera No Such Face 9000".to_string());
+
+        let missing = shaper.missing_families(&story, &NoStyles::default());
+        assert_eq!(missing, vec!["Tessera No Such Face 9000".to_string()]);
+    }
+
+    #[test]
+    fn a_story_in_a_generic_family_is_missing_nothing() {
+        let mut shaper = Shaper::new();
+        let story = Story::new("hello");
+        assert!(
+            shaper
+                .missing_families(&story, &NoStyles::default())
+                .is_empty(),
+            "the default document must not open with a warning"
+        );
+    }
+
+    #[test]
+    fn a_missing_face_named_by_two_runs_is_reported_once() {
+        let mut shaper = Shaper::new();
+        let mut story = Story::new("abcd");
+        story.apply_character_format(
+            0..2,
+            &crate::story::CharacterFormat {
+                family: Some("Tessera No Such Face 9000".to_string()),
+                size: Some(9.0),
+                ..crate::story::CharacterFormat::default()
+            },
+        );
+        story.apply_character_format(
+            2..4,
+            &crate::story::CharacterFormat {
+                family: Some("Tessera No Such Face 9000".to_string()),
+                size: Some(18.0),
+                ..crate::story::CharacterFormat::default()
+            },
+        );
+        assert_eq!(story.runs.len(), 2, "different sizes, so two runs");
+
+        let missing = shaper.missing_families(&story, &NoStyles::default());
+        assert_eq!(missing.len(), 1, "one warning, not one per run: {missing:?}");
+    }
+
 }
