@@ -462,48 +462,64 @@ The reason a layout tool is not a drawing tool.
 > change the style, and watch every one of them update. Type in a language
 > that needs an IME and see the composition preview on the canvas.
 
-> **Phases 1 to 4 built, 2026-09-05.** 608 headless tests and 6 GPU-backed
-> ones pass, clippy clean at `-D warnings`. **The acceptance sentence has not
-> been performed by hand.** Four bugs in three sessions of real use were found
-> by hand and missed by the suite, which is the whole argument for doing it.
+> **Complete, 2026-09-05**, but for the two items named below. 697 headless
+> tests and 6 GPU-backed ones pass; clippy clean at `-D warnings`; formatted.
+> **The acceptance sentence has not been performed by hand.**
 
-- [~] Font enumeration and family/style resolution. `Shaper::families()`
-  enumerates fontique, sorted and deduplicated, built on first ask. A family
-  the machine lacks is substituted by parley and **marked** in the inspector,
-  which is the visible half. *Exercised on Windows only; the enumeration is
-  fontique's and platform-independent, but "across all three platforms" is a
-  claim no test here has earned.*
-- [x] Character formatting: family, weight, style, size, leading and tracking
-  are in the model, reach the screen and the PDF, and are settable from the
-  inspector. A story shapes run by run. *Case and baseline shift stay modelled
-  but unshaped, and so have no controls.*
-- [~] Paragraph formatting. Alignment works and is settable. *Indents, space
-  before and after, hyphenation and drop caps are in the model and preserved by
-  the format, but have no controls and are not drawn* — parley lays out a whole
-  story as one layout, so a per-paragraph measure or a gap between paragraphs
-  cannot be expressed. The same constraint means a story whose paragraphs
-  disagree about alignment is left ragged-left rather than shown wrong in one of
-  them. **All of it needs one layout per paragraph, which also reaches the caret
-  and is its own piece of work.** Justification is available as an alignment;
-  H&J parameters are not modelled.
-- [x] Paragraph and character styles, with live cascade on edit. Define from
-  what the panel shows, attach to a range, edit the style and everything drawn
-  through it follows. The shape cache is keyed on **resolved** formatting so a
-  style edit is visible; keying on the runs would have made styles silently not
-  work.
+- [x] Font enumeration and family/style resolution across all three platforms.
+  `Shaper::families()` enumerates fontique, sorted and deduplicated, built on
+  first ask. Two tests name `std::env::consts::OS` in their failure, so CI
+  answers for ubuntu, windows and macos rather than one machine speaking for
+  all three. A family the machine lacks is substituted by parley and **marked**
+  in the inspector.
+- [x] Character formatting: family, weight, style, size, leading, tracking,
+  colour, case and baseline shift, all settable and all drawn. A story shapes
+  run by run.
+  - Small caps is **synthesised** — letters that were lowercase set as capitals
+    at 0.7 of the size — because a probe found 0 of 191 installed families with
+    an `smcp` table. The feature is still asked for, and is the better answer
+    where a font has it.
+  - Case is a display transform: the story keeps what was typed, so turning All
+    Caps off gives back the original capitals.
+- [x] Paragraph formatting: alignment, justification, indents, space before and
+  after, hyphenation, drop caps. Every one of them drawn.
+  - Each paragraph is laid out as its own parley layout, which is what made all
+    of it possible: parley measures and aligns a whole layout at once.
+  - Hyphenation is **English only**. `hypher` holds patterns per language
+    behind features and a story has no language to choose between them; a
+    `language` on `CharacterFormat` is what unlocks the rest.
+- [x] Paragraph and character styles, with live cascade on edit. Based On, the
+  `+` override indicator, Clear Overrides, Redefine Style, Break Link, and a
+  delete that folds the style into the text so nothing changes appearance.
 - [x] Text selection by click-drag, double-click word, triple-click paragraph.
 - [ ] IME composition rendered on canvas -> **moved to milestone 2.5.** It is
   a windowing concern rather than a text-model one, and the only item here
   that no headless test can reach; leaving it in would have made the whole
   milestone unverifiable by the suite.
-- [ ] Right-to-left and bidirectional text render correctly. parley shapes
-  bidi text already; nothing here has been tested against it, and the caret
-  arithmetic assumes visual order follows logical order.
-- [x] Typography inspector panel. Family, size, leading, tracking, weight,
-  italic, alignment, and the two style pickers with a New button that defines a
-  style from what is shown. A field the selection disagrees about reads `Mixed`
-  rather than a number, because a zero there is a lie the reader cannot see
-  through.
+- [x] Right-to-left and bidirectional text render correctly. Two bugs found by
+  writing the tests: an unset alignment was passed to parley as `Left`, so
+  Hebrew and Arabic began at the wrong edge, and it is now `Start`. Pure
+  right-to-left text round-trips every offset through the screen; mixed text
+  cannot promise that — where two directions meet, one place on screen is two
+  logical offsets — so it promises the weaker true thing instead.
+- [x] Typography inspector panel.
+
+### Asked for by the acceptance sentence, and not built
+
+Both are recorded rather than half-built, because a control that sets a value
+nothing honours is worse than one that is absent.
+
+- **Kerning has no control.** The font's own pairs *are* applied — metrics
+  kerning, which is what a control would default to — and a test pins that a
+  pair is never set wider than its letters apart. What is missing is a
+  caret-shaped control for a manual kern, and optical kerning, which means
+  computing kerns from outlines and is an algorithm rather than a setting.
+  Tracking on one character is not a substitute: tightening the first letter of
+  a kerned pair made it *wider*, and there is a test saying so.
+- **H&J parameters are not expressible.** parley justifies by adjusting cluster
+  advances and exposes no minimum, optimum or maximum for word or letter
+  spacing, and no glyph scaling. Justification works as an alignment;
+  controlling *how* it justifies means writing justification.
 
 ### What this milestone corrected on its way through
 
@@ -528,6 +544,18 @@ Recorded because each was a wrong belief rather than a missing feature.
   `rewrite_version_for_test` round-trips through the current model. Every
   migration test since is built from a hand-made archive and checked by
   disabling the migration to confirm it goes red.
+- Three later edits failed to match their target and said nothing: the shape
+  cache's hyphen reserve was never applied, and `offset_at` never went through
+  the offset map. Clippy's dead-code lint caught the first. The second was
+  caught by strengthening a test — `straße` uppercases to `STRASSE` and both
+  are the same number of bytes, so shaped and stored offsets coincided by
+  accident and the round trip could not see the bug. `ﬁ` is three bytes and
+  uppercases to two, and it fails on the old code.
+- Two tests asserted things that were not true and had to be corrected rather
+  than the code: a hyphenated line "stays inside its measure" (parley overflows
+  a word it cannot break, hyphenated or not), and every offset in mixed-
+  direction text round-trips through the screen (at a direction boundary, it
+  cannot).
 
 ---
 
