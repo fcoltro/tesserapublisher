@@ -86,7 +86,20 @@ impl Document {
             character_styles: SlotMap::with_key(),
             paragraph_styles: SlotMap::with_key(),
             text_default: TextStyle::default(),
-            setup: DocumentSetup::default(),
+            setup: DocumentSetup {
+                // A **new** document faces its pages, as InDesign's New
+                // Document dialog does — a layout tool is for books and
+                // magazines before it is for handbills.
+                //
+                // Set here rather than in `DocumentSetup::default()`, and the
+                // difference matters: that default is also what a file written
+                // before this field existed loads as, and turning those into
+                // facing-page documents would be inventing a decision their
+                // author never made. `Default` means "absent"; this means "what
+                // a new document chooses".
+                facing_pages: true,
+                ..DocumentSetup::default()
+            },
             revision: 0,
         };
 
@@ -2171,6 +2184,8 @@ mod tests {
     #[test]
     fn without_facing_pages_every_page_is_its_own_spread() {
         let mut doc = Document::new();
+        // A new document faces its pages, so this one has to say otherwise.
+        doc.setup.facing_pages = false;
         doc.add_page();
         doc.add_page();
         assert_eq!(doc.spread_order.len(), 3);
@@ -2201,6 +2216,9 @@ mod tests {
     #[test]
     fn removing_a_page_closes_the_gap_it_left() {
         let mut doc = Document::new();
+        // One page per spread, so removing one really does leave a gap in the
+        // vertical flow rather than a hole beside a survivor.
+        doc.setup.facing_pages = false;
         doc.add_page();
         let third = doc.add_page();
         let second = doc.page_ids().nth(1).expect("a second page");
@@ -2278,6 +2296,8 @@ mod tests {
     #[test]
     fn moving_a_spread_changes_the_order_and_the_geometry_follows() {
         let mut doc = Document::new();
+        // One page per spread, so the indices being moved are the pages.
+        doc.setup.facing_pages = false;
         doc.add_page();
         let third = doc.add_page();
 
@@ -2295,6 +2315,7 @@ mod tests {
     #[test]
     fn moving_a_spread_nowhere_does_nothing() {
         let mut doc = Document::new();
+        doc.setup.facing_pages = false;
         doc.add_page();
         let order = doc.spread_order.clone();
 
@@ -2324,5 +2345,38 @@ mod tests {
         moved(&doc, &mut last, "move_spread");
         doc.remove_page(page);
         moved(&doc, &mut last, "remove_page");
+    }
+
+    #[test]
+    fn a_new_document_faces_its_pages() {
+        // InDesign's own default, and what a layout tool is mostly for.
+        assert!(Document::new().setup.facing_pages);
+    }
+
+    #[test]
+    fn three_pages_in_a_new_document_read_one_then_two_and_three() {
+        // Reported from real use: three pages stacked one under another
+        // instead of a lone first page and a facing pair. They were each in
+        // their own spread, because facing pages defaulted off.
+        let mut doc = Document::new();
+        doc.add_page();
+        doc.add_page();
+
+        assert_eq!(doc.spread_order.len(), 2, "a single page, then a pair");
+        assert_eq!(doc.pages_of(doc.spread_order[1]).len(), 2);
+
+        let pair = doc.pages_of(doc.spread_order[1]);
+        let a = doc.pages[pair[0]].bounds;
+        let b = doc.pages[pair[1]].bounds;
+        assert!((a.y - b.y).abs() < 1e-9, "level with each other");
+        assert!((b.x - (a.x + a.width)).abs() < 1e-9, "and touching");
+    }
+
+    #[test]
+    fn a_document_written_before_facing_pages_existed_does_not_gain_them() {
+        // `DocumentSetup::default()` is what `serde(default)` hands an older
+        // file. Turning those into facing-page documents would rearrange
+        // somebody's pages on open.
+        assert!(!DocumentSetup::default().facing_pages);
     }
 }

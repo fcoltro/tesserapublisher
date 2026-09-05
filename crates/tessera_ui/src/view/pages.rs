@@ -280,6 +280,9 @@ mod tests {
         // What a page number *is*: where the page falls in the reading order,
         // not something stored on it.
         let mut state = TesseraApp::headless();
+        // One page per spread, so a spread and a page number line up and the
+        // reorder is easy to read.
+        state.active_mut().document_mut().setup.facing_pages = false;
         apply(&mut state, Command::AddPage);
         apply(&mut state, Command::AddPage);
 

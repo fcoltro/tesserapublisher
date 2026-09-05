@@ -479,11 +479,48 @@ fn page_setup_and_guides_survive_a_round_trip() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// Build a version-4 archive by hand: a document with **no `setup` block at
+/// all**, which is what one written before phase B looked like.
+///
+/// `rewrite_version_for_test` cannot be used. It loads with the current model
+/// and re-saves under an older stamp, so the JSON it produces still carries
+/// every field the current model has — the version number says 4 and nothing
+/// else does. The test below passed for a year that way, and only failed when
+/// `Document::new` began choosing something `DocumentSetup::default()` does
+/// not.
+fn version_4_archive(doc: &Document, path: &std::path::Path) {
+    use std::io::Write;
+
+    let mut value: serde_json::Value = serde_json::to_value(doc).expect("to value");
+    if let Some(map) = value.as_object_mut() {
+        map.remove("setup");
+    }
+    let body = serde_json::to_vec(&value).expect("body");
+    assert!(
+        !String::from_utf8_lossy(&body).contains("\"setup\""),
+        "the fixture must genuinely lack the field it is testing the absence of"
+    );
+
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut buffer);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("meta.json", options).expect("meta");
+        zip.write_all(br#"{"format_version":4,"app_version":"0.1.0","created":"","modified":""}"#)
+            .expect("meta body");
+        zip.start_file("document.json", options).expect("doc");
+        zip.write_all(&body).expect("doc body");
+        zip.finish().expect("finish");
+    }
+    std::fs::write(path, buffer.into_inner()).expect("write fixture");
+}
+
 #[test]
 fn a_version_four_document_still_opens_and_gains_no_setup_it_never_had() {
-    // Everything phase B added carries serde(default), so a version-4
-    // document needs no rewriting. "Needs no rewriting" is a claim; this is
-    // the test that lets it fail.
+    // Everything phase B added carries serde(default), so a version-4 document
+    // needs no rewriting. "Needs no rewriting" is a claim; this is the test
+    // that lets it fail — and it can only fail if the fixture really has no
+    // setup, which is why it is built by hand.
     let path = temp_path("v4-migration.tessera");
     let _ = std::fs::remove_file(&path);
 
@@ -505,15 +542,18 @@ fn a_version_four_document_still_opens_and_gains_no_setup_it_never_had() {
         },
     );
 
-    format::save(&original, &path).expect("save");
-    format::rewrite_version_for_test(&path, 4).expect("stamp it as version 4");
+    version_4_archive(&original, &path);
 
     let reopened = format::load(&path).expect("a version-4 document still opens");
     assert_eq!(reopened.frames.len(), 1, "its frames survived");
     assert_eq!(
         reopened.setup,
         DocumentSetup::default(),
-        "and it gained no margins it never had"
+        "and it gained no setup it never had"
+    );
+    assert!(
+        !reopened.setup.facing_pages,
+        "least of all facing pages, which would rearrange its spreads on open"
     );
 
     let _ = std::fs::remove_file(&path);
