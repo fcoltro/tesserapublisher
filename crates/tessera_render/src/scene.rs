@@ -329,8 +329,8 @@ mod tests {
         two_sizes.runs = vec![sized(24.0, 0..3), sized(9.0, 3..8)];
 
         let mut shaper = tessera_text::shape::Shaper::new();
-        let uniform = shaper.shape(&one_size, 1000.0);
-        let mixed = shaper.shape(&two_sizes, 1000.0);
+        let uniform = shaper.shape(&one_size, &NoStyles::default(), 1000.0);
+        let mixed = shaper.shape(&two_sizes, &NoStyles::default(), 1000.0);
 
         assert!(
             mixed.runs().count() > uniform.runs().count(),
@@ -430,7 +430,7 @@ mod tests {
     use tessera_geometry::Transform;
     use tessera_layout::resolve::ResolvedItem;
     use tessera_text::shape::Shaper;
-    use tessera_text::story::Story;
+    use tessera_text::story::{NoStyles, Story};
 
     fn page() -> DocRect {
         DocRect {
@@ -581,7 +581,7 @@ mod tests {
     #[test]
     fn text_puts_exactly_its_glyphs_into_the_encoding() {
         let mut shaper = Shaper::new();
-        let shaped = shaper.shape(&Story::new("Hi"), 200.0);
+        let shaped = shaper.shape(&Story::new("Hi"), &NoStyles::default(), 200.0);
         let expected = shaped.glyph_count();
         assert!(expected > 0, "the fixture must actually shape");
 
@@ -616,7 +616,7 @@ mod tests {
     #[test]
     fn text_with_no_glyphs_encodes_no_run_at_all() {
         let mut shaper = Shaper::new();
-        let shaped = shaper.shape(&Story::new(""), 200.0);
+        let shaped = shaper.shape(&Story::new(""), &NoStyles::default(), 200.0);
 
         let scene = build_scene(
             &one_item(

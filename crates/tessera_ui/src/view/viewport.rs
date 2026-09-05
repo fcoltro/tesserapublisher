@@ -235,6 +235,7 @@ fn caret_geometry(state: &mut TesseraApp) -> Option<(FrameId, tessera_text::Care
     let frame = open.document().frame(*id)?;
     let geometry = shaper.caret_geometry(
         buffer.story(),
+        open.document(),
         frame.bounds.width,
         buffer.cursor(),
         CARET_PX,
@@ -256,6 +257,7 @@ fn text_offset_at(state: &mut TesseraApp, rect: Rect, pos: egui::Pos2) -> Option
     let local = frame.to_local(at);
     Some(shaper.offset_at(
         buffer.story(),
+        open.document(),
         frame.bounds.width,
         local.x - frame.bounds.x,
         local.y - frame.bounds.y,
@@ -279,6 +281,7 @@ fn text_word_at(
     let local = frame.to_local(at);
     Some(shaper.word_at(
         buffer.story(),
+        open.document(),
         frame.bounds.width,
         local.x - frame.bounds.x,
         local.y - frame.bounds.y,

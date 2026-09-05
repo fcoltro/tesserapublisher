@@ -5,7 +5,7 @@
 //! what was on screen — neither one re-shapes, and neither one recomputes a
 //! position (decision D3).
 
-use crate::story::Story;
+use crate::story::{Story, Styles};
 
 /// A font, as an `Arc`-backed shared handle.
 ///
@@ -102,9 +102,12 @@ impl ShapedText {
 #[derive(PartialEq, Eq, Hash)]
 struct ShapeKey {
     text: String,
-    family: String,
-    size: u32,
-    line_height: u32,
+    /// The cascade's floor, as the debug form of the document default.
+    ///
+    /// Without it two documents whose only difference is their default text
+    /// would share an entry, and the second would be handed the first's
+    /// layout.
+    default: String,
     width: u64,
     /// The runs, as their serialised shape.
     ///
@@ -118,14 +121,12 @@ struct ShapeKey {
 }
 
 impl ShapeKey {
-    fn new(story: &Story, width: f64) -> Self {
+    fn new(story: &Story, styles: &dyn Styles, width: f64) -> Self {
         Self {
             text: story.text.clone(),
-            family: story.style.family.clone(),
-            size: story.style.size.to_bits(),
-            line_height: story.style.line_height.to_bits(),
+            default: format!("{:?}", styles.document_default()),
             width: width.to_bits(),
-            runs: format!("{:?}", story.runs),
+            runs: format!("{:?}{:?}", story.runs, story.paragraphs),
         }
     }
 }
@@ -177,25 +178,37 @@ impl Shaper {
     /// glyphs for the renderer and the PDF writer; [`crate::caret`] asks it
     /// where the cursor goes. Two callers, one layout — which is what stops a
     /// caret from drifting away from the glyphs it sits between.
-    pub(crate) fn layout(&mut self, story: &Story, width: f64) -> parley::Layout<()> {
+    pub(crate) fn layout(
+        &mut self,
+        story: &Story,
+        styles: &dyn Styles,
+        width: f64,
+    ) -> parley::Layout<()> {
         let mut builder =
             self.layout_ctx
                 .ranged_builder(&mut self.font_ctx, &story.text, 1.0, true);
-        // `FontFamily::Source` takes the family name as written, and resolves
-        // generic names ("sans-serif") the way CSS does. It is what parley's
-        // own default uses.
-        builder.push_default(parley::StyleProperty::FontFamily(
-            parley::FontFamily::Source(std::borrow::Cow::Borrowed(story.style.family.as_str())),
-        ));
-        builder.push_default(parley::StyleProperty::FontSize(story.style.size));
-        builder.push_default(parley::StyleProperty::LineHeight(
-            parley::LineHeight::FontSizeRelative(story.style.line_height),
-        ));
+        // The cascade's floor. `FontFamily::Source` takes the family name as
+        // written and resolves generic names ("sans-serif") the way CSS does,
+        // which is what parley's own default uses.
+        let floor = styles.document_default();
+        if let Some(family) = &floor.family {
+            builder.push_default(parley::StyleProperty::FontFamily(
+                parley::FontFamily::Source(std::borrow::Cow::Owned(family.clone())),
+            ));
+        }
+        if let Some(size) = floor.size {
+            builder.push_default(parley::StyleProperty::FontSize(size));
+        }
+        if let Some(line_height) = floor.line_height {
+            builder.push_default(parley::StyleProperty::LineHeight(
+                parley::LineHeight::FontSizeRelative(line_height),
+            ));
+        }
 
         // One span per run, over the run's own range. `push_default` above is
         // the floor; anything a run states is pushed over the top of it.
         for run in &story.runs {
-            let format = story.resolved_format(run);
+            let format = story.resolve_run(run, styles);
             if let Some(family) = &format.family {
                 builder.push(
                     parley::StyleProperty::FontFamily(parley::FontFamily::Source(
@@ -234,7 +247,7 @@ impl Shaper {
             if let Some(tracking) = format.tracking {
                 // Thousandths of an em, which is the unit a typographer uses;
                 // parley wants points at the shaped size.
-                let size = format.size.unwrap_or(story.style.size);
+                let size = format.size.or(floor.size).unwrap_or(12.0);
                 builder.push(
                     parley::StyleProperty::LetterSpacing(tracking / 1000.0 * size),
                     run.range.clone(),
@@ -253,19 +266,19 @@ impl Shaper {
     /// laid out before. [`Shaper::layout`] is deliberately *not* cached: it
     /// hands back parley's own layout for the caret to interrogate, which is
     /// asked for only while a caret is live and is not worth holding on to.
-    pub fn shape(&mut self, story: &Story, width: f64) -> ShapedText {
+    pub fn shape(&mut self, story: &Story, styles: &dyn Styles, width: f64) -> ShapedText {
         if story.text.is_empty() {
             return ShapedText::default();
         }
 
-        let key = ShapeKey::new(story, width);
+        let key = ShapeKey::new(story, styles, width);
         if let Some(shaped) = self.cache.get(&key) {
             self.hits += 1;
             return shaped.clone();
         }
         self.misses += 1;
 
-        let shaped = self.shape_uncached(story, width);
+        let shaped = self.shape_uncached(story, styles, width);
         if self.cache.len() >= CACHE_LIMIT {
             self.cache.clear();
         }
@@ -273,8 +286,8 @@ impl Shaper {
         shaped
     }
 
-    fn shape_uncached(&mut self, story: &Story, width: f64) -> ShapedText {
-        let layout = self.layout(story, width);
+    fn shape_uncached(&mut self, story: &Story, styles: &dyn Styles, width: f64) -> ShapedText {
+        let layout = self.layout(story, styles, width);
 
         let mut fonts: Vec<FontData> = Vec::new();
         let mut lines = Vec::new();
@@ -339,7 +352,7 @@ impl Default for Shaper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::story::Story;
+    use crate::story::{NoStyles, Story};
 
     #[test]
     fn shaping_the_same_story_twice_only_lays_it_out_once() {
@@ -349,8 +362,8 @@ mod tests {
         let mut shaper = Shaper::new();
         let story = Story::new("Hello world");
 
-        let first = shaper.shape(&story, 200.0);
-        let second = shaper.shape(&story, 200.0);
+        let first = shaper.shape(&story, &NoStyles::default(), 200.0);
+        let second = shaper.shape(&story, &NoStyles::default(), 200.0);
 
         assert_eq!(shaper.cache_counts(), (1, 1), "one miss, then one hit");
         assert_eq!(first.glyph_count(), second.glyph_count());
@@ -363,16 +376,16 @@ mod tests {
         // the key or a resized frame would keep its old line breaks.
         let mut shaper = Shaper::new();
         let story = Story::new("Hello world");
-        shaper.shape(&story, 200.0);
-        shaper.shape(&story, 30.0);
+        shaper.shape(&story, &NoStyles::default(), 200.0);
+        shaper.shape(&story, &NoStyles::default(), 30.0);
         assert_eq!(shaper.cache_counts(), (0, 2), "neither may hit the other");
     }
 
     #[test]
     fn changing_the_text_is_a_different_layout() {
         let mut shaper = Shaper::new();
-        shaper.shape(&Story::new("one"), 200.0);
-        shaper.shape(&Story::new("two"), 200.0);
+        shaper.shape(&Story::new("one"), &NoStyles::default(), 200.0);
+        shaper.shape(&Story::new("two"), &NoStyles::default(), 200.0);
         assert_eq!(shaper.cache_counts(), (0, 2));
     }
 
@@ -381,14 +394,20 @@ mod tests {
         // Every field of TextStyle that moves a glyph must be in the key.
         let mut shaper = Shaper::new();
         let mut story = Story::new("Hello");
-        shaper.shape(&story, 200.0);
+        shaper.shape(&story, &NoStyles::default(), 200.0);
 
-        story.style.size = 24.0;
-        shaper.shape(&story, 200.0);
-        story.style.line_height = 2.0;
-        shaper.shape(&story, 200.0);
-        story.style.family = "serif".to_string();
-        shaper.shape(&story, 200.0);
+        // Formatting now lives on the runs, so that is what has to vary for
+        // the key to change.
+        use crate::story::CharacterFormat;
+        story.runs[0].local = CharacterFormat {
+            size: Some(24.0),
+            ..CharacterFormat::default()
+        };
+        shaper.shape(&story, &NoStyles::default(), 200.0);
+        story.runs[0].local.line_height = Some(2.0);
+        shaper.shape(&story, &NoStyles::default(), 200.0);
+        story.runs[0].local.family = Some("serif".to_string());
+        shaper.shape(&story, &NoStyles::default(), 200.0);
 
         assert_eq!(shaper.cache_counts(), (0, 4), "each change is its own");
     }
@@ -400,9 +419,9 @@ mod tests {
         let mut shaper = Shaper::new();
         let story = Story::new("Hello world, this wraps");
 
-        let fresh = shaper.shape_uncached(&story, 80.0);
-        let cached_once = shaper.shape(&story, 80.0);
-        let cached_twice = shaper.shape(&story, 80.0);
+        let fresh = shaper.shape_uncached(&story, &NoStyles::default(), 80.0);
+        let cached_once = shaper.shape(&story, &NoStyles::default(), 80.0);
+        let cached_twice = shaper.shape(&story, &NoStyles::default(), 80.0);
 
         let glyphs = |t: &ShapedText| -> Vec<(u32, f64, f64)> {
             t.lines
@@ -419,7 +438,7 @@ mod tests {
     fn the_cache_does_not_grow_without_limit() {
         let mut shaper = Shaper::new();
         for i in 0..(CACHE_LIMIT + 50) {
-            shaper.shape(&Story::new(format!("line {i}")), 200.0);
+            shaper.shape(&Story::new(format!("line {i}")), &NoStyles::default(), 200.0);
         }
         assert!(
             shaper.cache.len() <= CACHE_LIMIT,
@@ -431,7 +450,7 @@ mod tests {
     #[test]
     fn empty_text_is_not_cached_and_costs_nothing() {
         let mut shaper = Shaper::new();
-        shaper.shape(&Story::new(""), 200.0);
+        shaper.shape(&Story::new(""), &NoStyles::default(), 200.0);
         assert_eq!(
             shaper.cache_counts(),
             (0, 0),
@@ -442,21 +461,21 @@ mod tests {
     #[test]
     fn shaping_empty_text_yields_no_glyphs() {
         let mut shaper = Shaper::new();
-        let shaped = shaper.shape(&Story::new(""), 200.0);
+        let shaped = shaper.shape(&Story::new(""), &NoStyles::default(), 200.0);
         assert_eq!(shaped.glyph_count(), 0);
     }
 
     #[test]
     fn shaping_produces_one_glyph_per_character_for_simple_latin() {
         let mut shaper = Shaper::new();
-        let shaped = shaper.shape(&Story::new("Hello"), 500.0);
+        let shaped = shaper.shape(&Story::new("Hello"), &NoStyles::default(), 500.0);
         assert_eq!(shaped.glyph_count(), 5);
     }
 
     #[test]
     fn glyphs_advance_left_to_right() {
         let mut shaper = Shaper::new();
-        let shaped = shaper.shape(&Story::new("AB"), 500.0);
+        let shaped = shaper.shape(&Story::new("AB"), &NoStyles::default(), 500.0);
         let glyphs: Vec<_> = shaped.lines[0].glyphs().collect();
         assert!(
             glyphs[1].x > glyphs[0].x,
@@ -467,8 +486,8 @@ mod tests {
     #[test]
     fn a_narrow_frame_breaks_text_onto_more_than_one_line() {
         let mut shaper = Shaper::new();
-        let wide = shaper.shape(&Story::new("the quick brown fox jumps"), 1000.0);
-        let narrow = shaper.shape(&Story::new("the quick brown fox jumps"), 60.0);
+        let wide = shaper.shape(&Story::new("the quick brown fox jumps"), &NoStyles::default(), 1000.0);
+        let narrow = shaper.shape(&Story::new("the quick brown fox jumps"), &NoStyles::default(), 60.0);
         assert_eq!(wide.lines.len(), 1);
         assert!(narrow.lines.len() > 1, "a narrow frame must wrap");
     }
@@ -476,15 +495,15 @@ mod tests {
     #[test]
     fn shaped_height_grows_with_line_count() {
         let mut shaper = Shaper::new();
-        let wide = shaper.shape(&Story::new("the quick brown fox jumps"), 1000.0);
-        let narrow = shaper.shape(&Story::new("the quick brown fox jumps"), 60.0);
+        let wide = shaper.shape(&Story::new("the quick brown fox jumps"), &NoStyles::default(), 1000.0);
+        let narrow = shaper.shape(&Story::new("the quick brown fox jumps"), &NoStyles::default(), 60.0);
         assert!(narrow.height > wide.height);
     }
 
     #[test]
     fn shaping_reports_the_font_it_used() {
         let mut shaper = Shaper::new();
-        let shaped = shaper.shape(&Story::new("Hello"), 500.0);
+        let shaped = shaper.shape(&Story::new("Hello"), &NoStyles::default(), 500.0);
         assert!(!shaped.fonts.is_empty(), "a font blob must be reported");
         assert!(
             !shaped.fonts[0].data.is_empty(),
@@ -495,7 +514,7 @@ mod tests {
     #[test]
     fn every_glyph_points_at_a_font_that_exists() {
         let mut shaper = Shaper::new();
-        let shaped = shaper.shape(&Story::new("Hello world"), 500.0);
+        let shaped = shaper.shape(&Story::new("Hello world"), &NoStyles::default(), 500.0);
         for line in &shaped.lines {
             for g in line.glyphs() {
                 assert!(
@@ -510,7 +529,7 @@ mod tests {
     #[test]
     fn glyphs_carry_their_advance_for_the_pdf_width_array() {
         let mut shaper = Shaper::new();
-        let shaped = shaper.shape(&Story::new("Hello"), 500.0);
+        let shaped = shaper.shape(&Story::new("Hello"), &NoStyles::default(), 500.0);
         for line in &shaped.lines {
             for g in line.glyphs() {
                 assert!(g.advance > 0.0, "a visible glyph must advance the pen");
@@ -520,10 +539,15 @@ mod tests {
 
     #[test]
     fn the_font_size_is_carried_through_for_the_renderer_and_the_pdf() {
+        use crate::story::CharacterFormat;
+
         let mut story = Story::new("Hello");
-        story.style.size = 42.0;
+        story.runs[0].local = CharacterFormat {
+            size: Some(42.0),
+            ..CharacterFormat::default()
+        };
         let mut shaper = Shaper::new();
-        let shaped = shaper.shape(&story, 500.0);
+        let shaped = shaper.shape(&story, &NoStyles::default(), 500.0);
         assert!(
             shaped.runs().all(|r| (r.size - 42.0).abs() < 1e-3),
             "every run should carry the size it was shaped at"
@@ -556,7 +580,7 @@ mod tests {
         ];
 
         let mut shaper = Shaper::new();
-        let shaped = shaper.shape(&story, 1000.0);
+        let shaped = shaper.shape(&story, &NoStyles::default(), 1000.0);
 
         let sizes: Vec<f32> = shaped.runs().map(|r| r.size).collect();
         assert!(
@@ -589,8 +613,8 @@ mod tests {
         }];
 
         let mut shaper = Shaper::new();
-        let a = shaper.shape(&plain, 1000.0);
-        let b = shaper.shape(&sized, 1000.0);
+        let a = shaper.shape(&plain, &NoStyles::default(), 1000.0);
+        let b = shaper.shape(&sized, &NoStyles::default(), 1000.0);
 
         let size_of = |t: &ShapedText| t.runs().next().map(|r| r.size).unwrap_or_default();
         assert!(

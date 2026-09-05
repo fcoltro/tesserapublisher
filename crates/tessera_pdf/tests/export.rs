@@ -10,7 +10,7 @@ use tessera_document::ids::FrameId;
 use tessera_geometry::{DocRect, Transform};
 use tessera_layout::resolve::{ResolvedDocument, ResolvedItem, ResolvedKind};
 use tessera_text::shape::Shaper;
-use tessera_text::story::Story;
+use tessera_text::story::{NoStyles, Story};
 
 fn page() -> DocRect {
     DocRect {
@@ -114,7 +114,7 @@ fn a_rectangle_is_flipped_into_pdf_coordinates() {
 #[test]
 fn a_text_frame_embeds_a_subsetted_font() {
     let mut shaper = Shaper::new();
-    let shaped = shaper.shape(&Story::new("Hello"), 400.0);
+    let shaped = shaper.shape(&Story::new("Hello"), &NoStyles::default(), 400.0);
     assert!(shaped.glyph_count() > 0, "the fixture must actually shape");
     let full_font_size = shaped.fonts[0].data.len();
 
@@ -147,7 +147,7 @@ fn a_text_frame_embeds_a_subsetted_font() {
 #[test]
 fn text_is_positioned_by_the_same_glyphs_the_renderer_drew() {
     let mut shaper = Shaper::new();
-    let shaped = shaper.shape(&Story::new("Hi"), 400.0);
+    let shaped = shaper.shape(&Story::new("Hi"), &NoStyles::default(), 400.0);
     let first_x = shaped.lines[0].glyphs().next().expect("a glyph").x;
 
     let bytes = tessera_pdf::export(&one(
@@ -173,7 +173,7 @@ fn text_is_positioned_by_the_same_glyphs_the_renderer_drew() {
 #[test]
 fn an_empty_text_frame_exports_without_a_font() {
     let mut shaper = Shaper::new();
-    let shaped = shaper.shape(&Story::new(""), 400.0);
+    let shaped = shaper.shape(&Story::new(""), &NoStyles::default(), 400.0);
 
     let bytes = tessera_pdf::export(&one(
         ResolvedKind::Text {
@@ -194,7 +194,7 @@ fn an_empty_text_frame_exports_without_a_font() {
 #[test]
 fn several_items_all_reach_the_content_stream() {
     let mut shaper = Shaper::new();
-    let shaped = shaper.shape(&Story::new("Hi"), 400.0);
+    let shaped = shaper.shape(&Story::new("Hi"), &NoStyles::default(), 400.0);
 
     let doc = ResolvedDocument {
         pages: vec![resolved_page()],
@@ -321,7 +321,7 @@ fn a_document_with_two_text_sizes_sets_the_font_more_than_once() {
     story.runs = vec![sized(24.0, 0..3), sized(9.0, 3..8)];
 
     let mut shaper = Shaper::new();
-    let shaped = shaper.shape(&story, 400.0);
+    let shaped = shaper.shape(&story, &NoStyles::default(), 400.0);
     assert!(shaped.runs().count() >= 2, "the fixture needs two runs");
 
     let bytes = tessera_pdf::export(&one(
@@ -365,7 +365,7 @@ fn a_glyph_width_is_normalised_against_its_own_run() {
     mixed.runs = vec![sized(12.0, 0..1), sized(36.0, 1..2)];
 
     let export = |story: &Story, shaper: &mut Shaper| {
-        let shaped = shaper.shape(story, 400.0);
+        let shaped = shaper.shape(story, &NoStyles::default(), 400.0);
         tessera_pdf::export(&one(
             ResolvedKind::Text {
                 shaped,

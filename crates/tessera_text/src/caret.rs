@@ -12,7 +12,7 @@
 
 use crate::edit::TextCursor;
 use crate::shape::Shaper;
-use crate::story::Story;
+use crate::story::{Story, Styles};
 
 /// A rectangle in frame-local points.
 ///
@@ -66,11 +66,12 @@ impl Shaper {
     pub fn caret_geometry(
         &mut self,
         story: &Story,
+        styles: &dyn Styles,
         width: f64,
         cursor: TextCursor,
         caret_width: f32,
     ) -> CaretGeometry {
-        let layout = self.layout(story, width);
+        let layout = self.layout(story, styles, width);
 
         let caret = parley::Cursor::from_byte_index(
             &layout,
@@ -103,16 +104,30 @@ impl Shaper {
     ///
     /// Clamped into the text by parley, so a click past the last line lands at
     /// the end rather than out of bounds.
-    pub fn offset_at(&mut self, story: &Story, width: f64, x: f64, y: f64) -> usize {
-        let layout = self.layout(story, width);
+    pub fn offset_at(
+        &mut self,
+        story: &Story,
+        styles: &dyn Styles,
+        width: f64,
+        x: f64,
+        y: f64,
+    ) -> usize {
+        let layout = self.layout(story, styles, width);
         parley::Cursor::from_point(&layout, x as f32, y as f32).index()
     }
 
     /// The byte range of the word under frame-local `(x, y)`.
     ///
     /// What a double-click selects.
-    pub fn word_at(&mut self, story: &Story, width: f64, x: f64, y: f64) -> std::ops::Range<usize> {
-        let layout = self.layout(story, width);
+    pub fn word_at(
+        &mut self,
+        story: &Story,
+        styles: &dyn Styles,
+        width: f64,
+        x: f64,
+        y: f64,
+    ) -> std::ops::Range<usize> {
+        let layout = self.layout(story, styles, width);
         parley::Selection::word_from_point(&layout, x as f32, y as f32).text_range()
     }
 }
@@ -120,6 +135,7 @@ impl Shaper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::story::NoStyles;
 
     const WIDTH: f64 = 400.0;
 
@@ -132,7 +148,7 @@ mod tests {
 
     fn caret_of(shaper: &mut Shaper, story: &Story, position: usize) -> TextRect {
         shaper
-            .caret_geometry(story, WIDTH, cursor(position), 1.5)
+            .caret_geometry(story, &NoStyles::default(), WIDTH, cursor(position), 1.5)
             .caret
             .expect("a caret")
     }
@@ -160,7 +176,8 @@ mod tests {
         let story = Story::new("one");
         let caret = caret_of(&mut shaper, &story, 0);
 
-        let line_height = f64::from(story.style.size * story.style.line_height);
+        // The default floor: 12pt at 1.2, as `NoStyles` states it.
+        let line_height = 12.0 * 1.2;
         assert!(
             caret.height() > 0.0 && caret.height() < line_height * 2.0,
             "caret was {} tall, a line is about {line_height}",
@@ -187,10 +204,10 @@ mod tests {
         // What makes placing a cursor by clicking possible at all.
         let mut shaper = Shaper::new();
         let story = Story::new("Hello world");
-        let y = f64::from(story.style.size) / 2.0;
+        let y = 12.0 / 2.0;
 
-        let left = shaper.offset_at(&story, WIDTH, 0.0, y);
-        let right = shaper.offset_at(&story, WIDTH, 1000.0, y);
+        let left = shaper.offset_at(&story, &NoStyles::default(), WIDTH, 0.0, y);
+        let right = shaper.offset_at(&story, &NoStyles::default(), WIDTH, 1000.0, y);
         assert_eq!(left, 0, "a click at the far left is the start");
         assert_eq!(right, story.text.len(), "and past the end is the end");
     }
@@ -205,7 +222,7 @@ mod tests {
             let caret = caret_of(&mut shaper, &story, offset);
             let mid_y = (caret.y0 + caret.y1) / 2.0;
             // Just right of the caret, which is the character it precedes.
-            let back = shaper.offset_at(&story, WIDTH, caret.x0 + 0.1, mid_y);
+            let back = shaper.offset_at(&story, &NoStyles::default(), WIDTH, caret.x0 + 0.1, mid_y);
             assert_eq!(back, offset, "round trip failed at {offset}");
         }
     }
@@ -215,11 +232,12 @@ mod tests {
         let mut shaper = Shaper::new();
         let story = Story::new("Hello world");
 
-        let none = shaper.caret_geometry(&story, WIDTH, cursor(4), 1.5);
+        let none = shaper.caret_geometry(&story, &NoStyles::default(), WIDTH, cursor(4), 1.5);
         assert!(none.selection.is_empty());
 
         let some = shaper.caret_geometry(
             &story,
+            &NoStyles::default(),
             WIDTH,
             TextCursor {
                 anchor: 0,
@@ -237,6 +255,7 @@ mod tests {
         let story = Story::new("first\nsecond");
         let both = shaper.caret_geometry(
             &story,
+            &NoStyles::default(),
             WIDTH,
             TextCursor {
                 anchor: 0,
@@ -268,9 +287,9 @@ mod tests {
     fn a_double_click_selects_the_word_it_landed_in() {
         let mut shaper = Shaper::new();
         let story = Story::new("Hello world");
-        let y = f64::from(story.style.size) / 2.0;
+        let y = 12.0 / 2.0;
         let caret = caret_of(&mut shaper, &story, 8);
-        let word = shaper.word_at(&story, WIDTH, caret.x0, y);
+        let word = shaper.word_at(&story, &NoStyles::default(), WIDTH, caret.x0, y);
         assert_eq!(&story.text[word], "world");
     }
 }

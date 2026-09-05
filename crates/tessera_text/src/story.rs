@@ -136,6 +136,70 @@ impl ParagraphFormat {
     }
 }
 
+/// A named character style.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CharacterStyle {
+    pub name: String,
+    pub format: CharacterFormat,
+}
+
+/// A named paragraph style.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ParagraphStyle {
+    pub name: String,
+    pub format: ParagraphFormat,
+    /// Character formatting the paragraph imposes before any run speaks.
+    pub character: CharacterFormat,
+}
+
+/// Where the named styles live.
+///
+/// A trait rather than a type, because the tables belong to the document and
+/// this crate has no dependency on the document tree — that isolation is what
+/// lets cursor movement, selection and shaping be tested headless. The
+/// document implements this; [`NoStyles`] serves the tests and the caret,
+/// which have a story and no document.
+pub trait Styles {
+    fn character(&self, id: CharacterStyleId) -> Option<&CharacterFormat>;
+    fn paragraph(&self, id: ParagraphStyleId) -> Option<&ParagraphFormat>;
+    /// The floor of the cascade.
+    fn document_default(&self) -> CharacterFormat;
+}
+
+/// No named styles at all, and a plain default.
+///
+/// What the caret and most tests want: a story resolves to its own local
+/// formatting over a sensible floor.
+pub struct NoStyles {
+    pub default: CharacterFormat,
+}
+
+impl Default for NoStyles {
+    fn default() -> Self {
+        Self {
+            default: CharacterFormat {
+                family: Some("sans-serif".to_string()),
+                size: Some(12.0),
+                line_height: Some(1.2),
+                colour: Some(Color::BLACK),
+                ..CharacterFormat::default()
+            },
+        }
+    }
+}
+
+impl Styles for NoStyles {
+    fn character(&self, _: CharacterStyleId) -> Option<&CharacterFormat> {
+        None
+    }
+    fn paragraph(&self, _: ParagraphStyleId) -> Option<&ParagraphFormat> {
+        None
+    }
+    fn document_default(&self) -> CharacterFormat {
+        self.default.clone()
+    }
+}
+
 /// One span of character formatting over a story's text.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Run {
@@ -172,11 +236,11 @@ pub struct ParagraphRun {
     pub local: ParagraphFormat,
 }
 
-/// Character formatting.
+/// The formatting a document falls back to.
 ///
-/// Milestone 0 applies one style to a whole story. Milestone 2 splits this
-/// into runs, which is an additive change: a story gains a `runs` vector and
-/// this becomes the default for spans that do not override it.
+/// Milestone 0 kept one of these per story. Milestone 2 moved formatting into
+/// runs and this became the document's own floor — every field stated, so
+/// anything resolved over it is complete.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextStyle {
     pub family: String,
@@ -206,14 +270,6 @@ impl Default for TextStyle {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Story {
     pub text: String,
-    /// The whole story's formatting, as milestone 0 had it.
-    ///
-    /// Still what the shaper reads. Phase 2 of milestone 2 turns it into the
-    /// first run and retires it; until then it is the one source of truth and
-    /// `runs` is built but not yet consulted, so the two cannot disagree
-    /// about anything on screen.
-    pub style: TextStyle,
-
     /// Character formatting, span by span.
     ///
     /// Sorted, non-overlapping, and covering exactly `[0, text.len())`. See
@@ -248,7 +304,6 @@ impl Story {
         };
         Self {
             text,
-            style: TextStyle::default(),
             runs,
             paragraphs,
         }
@@ -283,28 +338,42 @@ impl Story {
         sound(&runs, n) && sound(&paras, n)
     }
 
-    /// The story's own formatting, as a `CharacterFormat`.
+    /// What a run actually draws as, through the whole cascade.
     ///
-    /// The floor of the cascade until phase 4 gives the document a real
-    /// default. Every field is stated, so anything resolved over it is
-    /// complete.
-    pub fn default_format(&self) -> CharacterFormat {
-        CharacterFormat {
-            family: Some(self.style.family.clone()),
-            size: Some(self.style.size),
-            line_height: Some(self.style.line_height),
-            colour: Some(self.style.color.clone()),
-            ..CharacterFormat::default()
-        }
-    }
+    /// The order is fixed here and nowhere else:
+    ///
+    /// ```text
+    /// document default -> paragraph style -> paragraph local
+    ///                  -> character style -> run local
+    /// ```
+    ///
+    /// A run or paragraph naming a style that no longer exists falls through
+    /// to the next level rather than failing. A deleted style should leave
+    /// text looking plainer, never leave it unopenable.
+    pub fn resolve_run(&self, run: &Run, styles: &dyn Styles) -> CharacterFormat {
+        let mut format = styles.document_default();
 
-    /// What a run actually draws as.
-    ///
-    /// `run.style` — the named style — is deliberately not consulted: the
-    /// tables live on the document, which this crate cannot see, and nothing
-    /// can set one until phase 4. Local overrides are all a bold word needs.
-    pub fn resolved_format(&self, run: &Run) -> CharacterFormat {
-        run.local.over(&self.default_format())
+        // The paragraph this run begins in, if any.
+        if let Some(para) = self
+            .paragraphs
+            .iter()
+            .find(|p| p.range.contains(&run.range.start))
+        {
+            if let Some(id) = para.style
+                && let Some(style) = styles.paragraph(id)
+            {
+                format = style.character.over(&format);
+            }
+            format = para.local.character.over(&format);
+        }
+
+        if let Some(id) = run.style
+            && let Some(style) = styles.character(id)
+        {
+            format = style.over(&format);
+        }
+
+        run.local.over(&format)
     }
 
     /// The run covering `offset`, if any.
@@ -471,6 +540,95 @@ mod run_tests {
     }
 
     // --- the cascade ---------------------------------------------------
+
+    /// A `Styles` with exactly one character style and one paragraph style.
+    struct OneOfEach {
+        character: CharacterFormat,
+        paragraph: ParagraphFormat,
+        default: CharacterFormat,
+    }
+
+    impl Styles for OneOfEach {
+        fn character(&self, _: CharacterStyleId) -> Option<&CharacterFormat> {
+            Some(&self.character)
+        }
+        fn paragraph(&self, _: ParagraphStyleId) -> Option<&ParagraphFormat> {
+            Some(&self.paragraph)
+        }
+        fn document_default(&self) -> CharacterFormat {
+            self.default.clone()
+        }
+    }
+
+    fn sized(size: f32) -> CharacterFormat {
+        CharacterFormat {
+            size: Some(size),
+            ..CharacterFormat::default()
+        }
+    }
+
+    #[test]
+    fn each_level_of_the_cascade_overrides_the_one_before_it() {
+        let mut story = Story::new("word");
+        let key = CharacterStyleId::default();
+        let para_key = ParagraphStyleId::default();
+
+        story.paragraphs[0].style = Some(para_key);
+        story.paragraphs[0].local.character = sized(30.0);
+        story.runs[0].style = Some(key);
+        story.runs[0].local = sized(50.0);
+
+        let styles = OneOfEach {
+            character: sized(40.0),
+            paragraph: ParagraphFormat {
+                character: sized(20.0),
+                ..ParagraphFormat::default()
+            },
+            default: sized(10.0),
+        };
+
+        // Every level states a size, so the last one standing must win.
+        assert_eq!(story.resolve_run(&story.runs[0], &styles).size, Some(50.0));
+
+        // Take the run's own away and the character style shows through.
+        story.runs[0].local = CharacterFormat::default();
+        assert_eq!(story.resolve_run(&story.runs[0], &styles).size, Some(40.0));
+
+        // And so on down.
+        story.runs[0].style = None;
+        assert_eq!(story.resolve_run(&story.runs[0], &styles).size, Some(30.0));
+
+        story.paragraphs[0].local.character = CharacterFormat::default();
+        assert_eq!(story.resolve_run(&story.runs[0], &styles).size, Some(20.0));
+
+        story.paragraphs[0].style = None;
+        assert_eq!(story.resolve_run(&story.runs[0], &styles).size, Some(10.0));
+    }
+
+    #[test]
+    fn a_run_naming_a_style_that_is_gone_falls_through_rather_than_failing() {
+        // A deleted style should leave text looking plainer, never leave a
+        // document unopenable.
+        let mut story = Story::new("word");
+        story.runs[0].style = Some(CharacterStyleId::default());
+        story.runs[0].local = sized(18.0);
+
+        let resolved = story.resolve_run(&story.runs[0], &NoStyles::default());
+        assert_eq!(resolved.size, Some(18.0));
+    }
+
+    #[test]
+    fn no_styles_resolves_local_over_the_default() {
+        let mut story = Story::new("word");
+        story.runs[0].local = CharacterFormat {
+            weight: Some(700),
+            ..CharacterFormat::default()
+        };
+
+        let resolved = story.resolve_run(&story.runs[0], &NoStyles::default());
+        assert_eq!(resolved.weight, Some(700), "the run's own is kept");
+        assert_eq!(resolved.size, Some(12.0), "and the rest is inherited");
+    }
 
     #[test]
     fn an_empty_format_inherits_everything() {

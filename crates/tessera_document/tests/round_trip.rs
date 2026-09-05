@@ -537,9 +537,9 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_six() {
+fn the_format_version_is_seven() {
     // If this changes, a migration step is owed.
-    assert_eq!(format::FORMAT_VERSION, 6);
+    assert_eq!(format::FORMAT_VERSION, 7);
 }
 
 /// Build a version-5 archive by hand and open it.
@@ -551,20 +551,47 @@ fn the_format_version_is_six() {
 /// testing nothing at all. The fixture has to genuinely lack the field, which
 /// is why `a_version_1_document_still_opens` builds one the same way.
 fn version_5_archive(doc: &Document, path: &std::path::Path) {
+    version_5_archive_styled(doc, path, 12.0, "sans-serif");
+}
+
+/// As above, with a chosen size and family in the version-5 `style`.
+fn version_5_archive_styled(
+    doc: &Document,
+    path: &std::path::Path,
+    size: f64,
+    family: &str,
+) {
     use std::io::Write;
 
-    fn strip_runs(value: &mut serde_json::Value) {
+    let style = serde_json::json!({
+        "family": family,
+        "size": size,
+        "line_height": 1.2,
+        "color": { "Rgb": { "r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0 } },
+    });
+
+    /// Make every story look as it did at version 5: no runs, and the single
+    /// `style` the model has since dropped.
+    ///
+    /// Putting `style` back matters as much as taking `runs` away. The
+    /// current `Story` has no such field, so a fixture built by serialising
+    /// one would lack it — and the migration, which recognises a story by
+    /// `text` and `style` together, would skip every one.
+    fn make_version_5(value: &mut serde_json::Value, style: &serde_json::Value) {
         match value {
             serde_json::Value::Object(map) => {
-                map.remove("runs");
-                map.remove("paragraphs");
+                if map.contains_key("text") && map.contains_key("runs") {
+                    map.remove("runs");
+                    map.remove("paragraphs");
+                    map.insert("style".to_string(), style.clone());
+                }
                 for v in map.values_mut() {
-                    strip_runs(v);
+                    make_version_5(v, style);
                 }
             }
             serde_json::Value::Array(items) => {
                 for v in items {
-                    strip_runs(v);
+                    make_version_5(v, style);
                 }
             }
             _ => {}
@@ -572,11 +599,16 @@ fn version_5_archive(doc: &Document, path: &std::path::Path) {
     }
 
     let mut value: serde_json::Value = serde_json::to_value(doc).expect("to value");
-    strip_runs(&mut value);
+    make_version_5(&mut value, &style);
     let body = serde_json::to_vec(&value).expect("body");
+    let text = String::from_utf8_lossy(&body);
     assert!(
-        !String::from_utf8_lossy(&body).contains("\"runs\""),
+        !text.contains("\"runs\""),
         "the fixture must genuinely lack the field"
+    );
+    assert!(
+        !doc.stories.is_empty() && text.contains("\"style\""),
+        "and must genuinely carry the one it had"
     );
 
     let mut buffer = std::io::Cursor::new(Vec::new());
@@ -629,11 +661,8 @@ fn a_migrated_run_keeps_the_formatting_the_story_already_had() {
     let _ = std::fs::remove_file(&path);
 
     let mut doc = Document::new();
-    let mut story = tessera_text::story::Story::new("text");
-    story.style.size = 18.5;
-    story.style.family = "Georgia".to_string();
-    let id = doc.add_story(story);
-    version_5_archive(&doc, &path);
+    let id = doc.add_story(tessera_text::story::Story::new("text"));
+    version_5_archive_styled(&doc, &path, 18.5, "Georgia");
 
     let loaded = format::load(&path).expect("open");
     let run = &loaded.story(id).expect("story").runs[0];
@@ -658,6 +687,157 @@ fn an_empty_story_migrates_to_no_runs_rather_than_one_empty_run() {
     assert!(story.runs_are_sound());
 
     let _ = std::fs::remove_file(&path);
+}
+
+/// Build a version-6 archive by hand: stories that have **both** `runs` and
+/// the single `style` the model carried until version 7.
+///
+/// Version 6 is the one shape the current model cannot produce — it has runs
+/// but no `style` — so the field has to be put back by hand. `runs` is left
+/// exactly as the current model writes it, which is what makes the fixture a
+/// genuine version 6 rather than a version 5 with extra keys.
+fn version_6_archive(doc: &Document, path: &std::path::Path, size: f64, family: &str) {
+    use std::io::Write;
+
+    let style = serde_json::json!({
+        "family": family,
+        "size": size,
+        "line_height": 1.2,
+        "color": { "Rgb": { "r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0 } },
+    });
+
+    fn add_style(value: &mut serde_json::Value, style: &serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                if map.contains_key("text") && map.contains_key("runs") {
+                    map.insert("style".to_string(), style.clone());
+                }
+                for v in map.values_mut() {
+                    add_style(v, style);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for v in items {
+                    add_style(v, style);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut value: serde_json::Value = serde_json::to_value(doc).expect("to value");
+    add_style(&mut value, &style);
+    let body = serde_json::to_vec(&value).expect("body");
+    let text = String::from_utf8_lossy(&body);
+    assert!(!doc.stories.is_empty(), "a fixture with no story proves nothing");
+    assert!(
+        text.contains("\"style\"") && text.contains("\"runs\""),
+        "version 6 is the shape that has both; got {text}"
+    );
+
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut buffer);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("meta.json", options).expect("meta");
+        zip.write_all(br#"{"format_version":6,"app_version":"0.1.0","created":"","modified":""}"#)
+            .expect("meta body");
+        zip.start_file("document.json", options).expect("doc");
+        zip.write_all(&body).expect("doc body");
+        zip.finish().expect("finish");
+    }
+    std::fs::write(path, buffer.into_inner()).expect("write fixture");
+}
+
+#[test]
+fn a_version_six_story_folds_its_style_into_its_runs() {
+    // Removing a field is only safe if nothing about the document changes. The
+    // style said 18.5pt Georgia and the run said nothing, so after the fold
+    // the run has to say 18.5pt Georgia — otherwise every document written
+    // before version 7 reopens in the wrong face at the wrong size.
+    let path = temp_path("v6-fold-style.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = Document::new();
+    let id = doc.add_story(tessera_text::story::Story::new("text"));
+    version_6_archive(&doc, &path, 18.5, "Georgia");
+
+    let loaded = format::load(&path).expect("a version-6 document must still open");
+    let story = loaded.story(id).expect("story");
+    assert!(story.runs_are_sound());
+    let run = &story.runs[0];
+    assert_eq!(run.local.size, Some(18.5));
+    assert_eq!(run.local.family.as_deref(), Some("Georgia"));
+    assert_eq!(run.local.line_height, Some(1.2));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_run_that_already_stated_a_size_keeps_it_through_the_fold() {
+    // The fold is `run.local` **over** the story style, not the other way
+    // round. A run that had been given 9pt in the editor must stay 9pt, and
+    // still pick up the family it never stated.
+    let path = temp_path("v6-run-wins.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = Document::new();
+    let mut story = tessera_text::story::Story::new("text");
+    story.runs[0].local.size = Some(9.0);
+    let id = doc.add_story(story);
+    version_6_archive(&doc, &path, 18.5, "Georgia");
+
+    let loaded = format::load(&path).expect("open");
+    let run = &loaded.story(id).expect("story").runs[0];
+    assert_eq!(run.local.size, Some(9.0), "the run's own size wins");
+    assert_eq!(
+        run.local.family.as_deref(),
+        Some("Georgia"),
+        "and the style still fills what the run left unsaid"
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn the_fold_survives_being_saved_again() {
+    // A migration that patches only the in-memory document would look right
+    // once and be lost on the next save. What proves the fold landed in the
+    // model is the *re-saved* file: the run must carry 18.5pt Georgia itself,
+    // with no story style anywhere to supply it.
+    //
+    // Asserting only that `style` is absent would prove nothing — serde drops
+    // unknown keys on load, so that holds whether the migration runs or not.
+    let old = temp_path("v6-then-saved.tessera");
+    let new = temp_path("v7-after-save.tessera");
+    let _ = std::fs::remove_file(&old);
+    let _ = std::fs::remove_file(&new);
+
+    let mut doc = Document::new();
+    doc.add_story(tessera_text::story::Story::new("text"));
+    version_6_archive(&doc, &old, 18.5, "Georgia");
+
+    let loaded = format::load(&old).expect("open");
+    format::save(&loaded, &new).expect("save");
+
+    let file = std::fs::File::open(&new).expect("open archive");
+    let mut zip = zip::ZipArchive::new(file).expect("archive");
+    let mut body = String::new();
+    {
+        use std::io::Read;
+        zip.by_name("document.json")
+            .expect("document")
+            .read_to_string(&mut body)
+            .expect("read");
+    }
+    assert!(
+        body.contains("Georgia") && body.contains("18.5"),
+        "the folded formatting must be in the file, not just in memory; got {body}"
+    );
+    assert!(!body.contains("\"style\":{\"family\""), "and the old field is gone");
+
+    let _ = std::fs::remove_file(&old);
+    let _ = std::fs::remove_file(&new);
 }
 
 #[test]

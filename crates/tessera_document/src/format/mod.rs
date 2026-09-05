@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 6;
+pub const FORMAT_VERSION: u32 = 7;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -142,6 +142,71 @@ fn migrate(value: &mut serde_json::Value, from: u32) {
     // where the default is a lie.
     if from < 6 {
         stories_gain_runs(value);
+    }
+
+    // 6 -> 7: the document gained named style tables and a text default, and
+    // a story lost the single `style` it had carried since milestone 0.
+    //
+    // The style folds into every run — `run.local` **over** it, so a run that
+    // already states a size keeps its own — and then the field goes. Nothing
+    // about how a document looks changes, which is the whole bar for a
+    // migration that removes something.
+    if from < 7 {
+        stories_fold_style_into_runs(value);
+    }
+}
+
+/// Fold each story's one style into its runs, then drop it.
+fn stories_fold_style_into_runs(value: &mut serde_json::Value) {
+    use serde_json::{Map, Value};
+
+    match value {
+        Value::Object(map) => {
+            if map.contains_key("text") && map.contains_key("style") {
+                let mut base = Map::new();
+                if let Some(style) = map.get("style").and_then(Value::as_object) {
+                    for (from, to) in [
+                        ("family", "family"),
+                        ("size", "size"),
+                        ("line_height", "line_height"),
+                        ("color", "colour"),
+                    ] {
+                        if let Some(v) = style.get(from) {
+                            base.insert(to.to_string(), v.clone());
+                        }
+                    }
+                }
+
+                if let Some(runs) = map.get_mut("runs").and_then(Value::as_array_mut) {
+                    for run in runs {
+                        let Some(run) = run.as_object_mut() else {
+                            continue;
+                        };
+                        let local = run
+                            .entry("local")
+                            .or_insert_with(|| Value::Object(Map::new()));
+                        if let Some(local) = local.as_object_mut() {
+                            // The run's own wins; the style fills the gaps.
+                            for (k, v) in &base {
+                                local.entry(k.clone()).or_insert_with(|| v.clone());
+                            }
+                        }
+                    }
+                }
+
+                map.remove("style");
+            }
+
+            for child in map.values_mut() {
+                stories_fold_style_into_runs(child);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                stories_fold_style_into_runs(item);
+            }
+        }
+        _ => {}
     }
 }
 

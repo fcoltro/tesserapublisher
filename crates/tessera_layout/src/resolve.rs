@@ -126,9 +126,23 @@ pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
                 let Some(story) = doc.story(*story) else {
                     continue;
                 };
+                // The document is what resolves named styles, so it is what
+                // the shaper is handed.
+                //
+                // Colour is still one per frame rather than one per run: the
+                // shaper's brush is `()` and the consumer paints, so a run's
+                // own colour has nowhere to travel yet. Taken from the first
+                // run's resolved format, which is right for every story that
+                // has one colour and wrong for none that exist today.
+                let colour = story
+                    .runs
+                    .first()
+                    .map(|run| story.resolve_run(run, doc))
+                    .and_then(|f| f.colour)
+                    .unwrap_or(tessera_color::Color::BLACK);
                 ResolvedKind::Text {
-                    shaped: shaper.shape(story, frame.bounds.width),
-                    color: story.style.color.clone(),
+                    shaped: shaper.shape(story, doc, frame.bounds.width),
+                    color: colour,
                 }
             }
         };

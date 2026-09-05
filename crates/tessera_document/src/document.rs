@@ -6,7 +6,10 @@ use tessera_geometry::{DocPoint, DocRect, Transform};
 
 use crate::ids::{FrameId, LayerId, PageId, SpreadId, StoryId};
 use crate::nodes::{DocumentSetup, Frame, FrameKind, Guide, Layer, Page, PageSide, Spread};
-use tessera_text::story::Story;
+use tessera_text::story::{
+    CharacterFormat, CharacterStyle, CharacterStyleId, ParagraphFormat, ParagraphStyle,
+    ParagraphStyleId, Story, Styles, TextStyle,
+};
 
 /// Stories are addressed by id and live at the document level, so a threaded
 /// story flows through many frames while existing exactly once.
@@ -42,6 +45,16 @@ pub struct Document {
     /// Spread paint and navigation order.
     pub spread_order: Vec<SpreadId>,
 
+    /// Named character styles.
+    #[serde(default)]
+    pub character_styles: SlotMap<CharacterStyleId, CharacterStyle>,
+    /// Named paragraph styles.
+    #[serde(default)]
+    pub paragraph_styles: SlotMap<ParagraphStyleId, ParagraphStyle>,
+    /// The floor of the text cascade.
+    #[serde(default)]
+    pub text_default: TextStyle,
+
     /// Margins, bleed, slug, and whether pages face each other.
     ///
     /// `serde(default)` so a document written before page setup existed loads
@@ -67,6 +80,9 @@ impl Document {
             spreads: SlotMap::with_key(),
             stories: StoryMap::with_key(),
             spread_order: Vec::new(),
+            character_styles: SlotMap::with_key(),
+            paragraph_styles: SlotMap::with_key(),
+            text_default: TextStyle::default(),
             setup: DocumentSetup::default(),
             revision: 0,
         };
@@ -480,7 +496,9 @@ impl Document {
         }
 
         for story in self.stories.values() {
-            bytes += story.text.len() + story.style.family.len() + size_of::<Story>();
+            bytes += story.text.len()
+                + story.runs.len() * size_of::<tessera_text::story::Run>()
+                + size_of::<Story>();
         }
 
         for layer in self.layers.values() {
@@ -818,6 +836,32 @@ fn grown(bounds: DocRect, by: f64) -> DocRect {
 impl Default for Document {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The document is where the named styles live, so it is what resolves them.
+///
+/// The trait is declared in `tessera_text`, which has no idea what a document
+/// is — that isolation is what keeps shaping and caret movement testable
+/// headless. This is the one place the two meet.
+impl Styles for Document {
+    fn character(&self, id: CharacterStyleId) -> Option<&CharacterFormat> {
+        self.character_styles.get(id).map(|s| &s.format)
+    }
+
+    fn paragraph(&self, id: ParagraphStyleId) -> Option<&ParagraphFormat> {
+        self.paragraph_styles.get(id).map(|s| &s.format)
+    }
+
+    fn document_default(&self) -> CharacterFormat {
+        let d = &self.text_default;
+        CharacterFormat {
+            family: Some(d.family.clone()),
+            size: Some(d.size),
+            line_height: Some(d.line_height),
+            colour: Some(d.color.clone()),
+            ..CharacterFormat::default()
+        }
     }
 }
 

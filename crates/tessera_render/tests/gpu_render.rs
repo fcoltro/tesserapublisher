@@ -24,6 +24,7 @@ use tessera_geometry::{DocPoint, DocRect, Transform, ViewTransform};
 use tessera_layout::resolve::{ResolvedDocument, ResolvedItem, ResolvedKind};
 use tessera_render::headless::HeadlessRenderer;
 use tessera_render::scene::build_scene;
+use tessera_text::story::NoStyles;
 
 const W: u32 = 100;
 const H: u32 = 100;
@@ -176,8 +177,10 @@ fn the_camera_transform_moves_what_is_rendered() {
 fn text_puts_dark_pixels_on_the_page() {
     let mut shaper = tessera_text::shape::Shaper::new();
     let mut story = tessera_text::story::Story::new("HHHH");
-    story.style.size = 48.0;
-    let shaped = shaper.shape(&story, 400.0);
+    // Formatting lives on the runs now, and a story starts with exactly one
+    // covering its whole text.
+    story.runs[0].local.size = Some(48.0);
+    let shaped = shaper.shape(&story, &NoStyles::default(), 400.0);
     assert!(shaped.glyph_count() > 0, "the fixture must actually shape");
 
     let mut renderer = HeadlessRenderer::new(W, H).expect("adapter");
