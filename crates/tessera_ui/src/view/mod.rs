@@ -6,6 +6,7 @@
 //! `Ui`, so the whole window is one tree.
 
 pub mod canvas_toolbar;
+pub mod pages;
 pub mod palette;
 pub mod panels;
 pub mod rulers;
@@ -32,6 +33,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // Above everything, so it can be reached from anywhere.
     palette::show(ui, state);
     styles::show(ui, state);
+    pages::show(ui, state);
 
     Panel::bottom("status")
         .exact_size(24.0)
@@ -110,7 +112,7 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
 
     // Menu order, not group order: Align sits inside Object and Tool inside
     // View, so the bar has six menus rather than eight groups.
-    const MENUS: [&str; 6] = ["File", "Edit", "Layout", "Object", "Type", "View"];
+    const MENUS: [&str; 7] = ["File", "Edit", "Layout", "Object", "Type", "View", "Window"];
 
     let mut chosen = None;
     egui::MenuBar::new().ui(ui, |ui| {
@@ -182,6 +184,9 @@ fn accelerators(ui: &Ui, state: &mut TesseraApp) {
     // text key, but the guard is the rule rather than the exception.
     if !state.active().editing.is_some() && pressed(egui::Modifiers::NONE, egui::Key::F11) {
         crate::actions::run(state, crate::actions::Run::ToggleStyles);
+    }
+    if !state.active().editing.is_some() && pressed(egui::Modifiers::NONE, egui::Key::F12) {
+        crate::actions::run(state, crate::actions::Run::TogglePages);
     }
 
     // Everything below is about objects, and while a caret is live the same

@@ -25,10 +25,11 @@ pub enum Group {
     Tool,
     Type,
     Layout,
+    Window,
 }
 
 impl Group {
-    pub const ALL: [Group; 8] = [
+    pub const ALL: [Group; 9] = [
         Group::File,
         Group::Edit,
         Group::Object,
@@ -37,6 +38,7 @@ impl Group {
         Group::Tool,
         Group::Type,
         Group::Layout,
+        Group::Window,
     ];
 
     /// The menu this group appears under.
@@ -51,6 +53,7 @@ impl Group {
             Group::View | Group::Tool => "View",
             Group::Type => "Type",
             Group::Layout => "Layout",
+            Group::Window => "Window",
         }
     }
 }
@@ -59,6 +62,7 @@ impl Group {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Run {
     ToggleStyles,
+    TogglePages,
     NewDocument,
     Open,
     Save,
@@ -369,6 +373,8 @@ pub fn all() -> &'static [Action] {
             Command(DuplicatePage),
         ),
         a("Delete page", None, Group::Layout, Command(RemovePage)),
+        // The last menu milestone 1.5 named as absent for having no commands.
+        a("Pages", Some("F12"), Group::Window, TogglePages),
         //
         a(
             "Selection tool",
@@ -430,6 +436,10 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         Run::ExportPdf => crate::file_ops::export_pdf(state),
         Run::ToggleStyles => {
             let window = &mut state.styles_window;
+            window.open = !window.open;
+        }
+        Run::TogglePages => {
+            let window = &mut state.pages_window;
             window.open = !window.open;
         }
         Run::PickTool(tool) => state.active_tool = tool,

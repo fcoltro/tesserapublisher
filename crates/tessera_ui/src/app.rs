@@ -109,6 +109,14 @@ pub enum StyleKind {
     Character,
 }
 
+/// The pages panel's own state.
+///
+/// Defaults to closed, so it cannot appear unasked.
+#[derive(Debug, Clone, Default)]
+pub struct PagesWindow {
+    pub open: bool,
+}
+
 /// The styles window's own state.
 ///
 /// Defaults to closed, so the window cannot appear unasked.
@@ -135,6 +143,12 @@ pub struct TesseraApp {
     pub shaper: Shaper,
 
     pub active_tool: Tool,
+
+    /// The pages panel: open or not.
+    ///
+    /// View state, like the styles window. Which panels are open is not part
+    /// of the document.
+    pub pages_window: PagesWindow,
 
     /// The styles window: open or not, and which style is being edited.
     ///
@@ -219,6 +233,7 @@ impl TesseraApp {
             shaper: Shaper::new(),
             active_tool: Tool::Select,
             styles_window: StylesWindow::default(),
+            pages_window: PagesWindow::default(),
             screen_mode: ScreenMode::default(),
             anchor: tessera_geometry::Anchor::default(),
             constrain_proportions: false,
