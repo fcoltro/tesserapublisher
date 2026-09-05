@@ -42,6 +42,68 @@ pub struct PositionedGlyph {
 /// with them, so this needs no impl of its own.
 pub type Brush = Option<tessera_color::Color>;
 
+/// One paragraph's layout, and where it sits in the frame.
+pub(crate) struct Placed {
+    /// The byte range of the story this paragraph covers, newline included.
+    pub range: std::ops::Range<usize>,
+    pub layout: parley::Layout<Brush>,
+    /// Frame-local offset of this layout's own origin.
+    pub x: f64,
+    pub y: f64,
+}
+
+/// The story's text split into paragraphs, each with its start offset.
+///
+/// The newline stays with the paragraph it ends, which is what makes the byte
+/// ranges cover the text exactly once. A trailing newline yields a final empty
+/// paragraph, because a story ending in a newline really does have an empty
+/// last line and a caret can sit on it.
+fn paragraphs_of(text: &str) -> Vec<(usize, &str)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for piece in text.split_inclusive('\n') {
+        out.push((start, piece));
+        start += piece.len();
+    }
+    if out.is_empty() || text.ends_with('\n') {
+        out.push((text.len(), ""));
+    }
+    out
+}
+
+/// Break `layout` to `measure`, indenting the first line by `first`.
+///
+/// parley's simple path takes one measure for every line, so a first-line
+/// indent needs the line-by-line breaker: each line is given its own x offset
+/// and its own maximum advance, and only the first gets the indent. The
+/// assertion inside `break_next` allows a per-line advance to differ from the
+/// layout's only while the layout's is infinite, which is exactly the case
+/// here — `break_lines` is entered without a maximum.
+fn break_with_first_line_indent(layout: &mut parley::Layout<Brush>, measure: f64, first: f64) {
+    if first == 0.0 {
+        layout.break_all_lines(Some(measure as f32));
+        return;
+    }
+
+    let mut breaker = layout.break_lines();
+    // parley asserts that a per-line advance may differ from the layout's only
+    // while the layout's is infinite. `break_lines` does not start that way, so
+    // it is said explicitly rather than assumed.
+    breaker.state_mut().set_layout_max_advance(f32::INFINITY);
+    let mut is_first = true;
+    loop {
+        let indent = if is_first { first } else { 0.0 };
+        breaker.state_mut().set_line_x(indent as f32);
+        breaker
+            .state_mut()
+            .set_line_max_advance((measure - indent).max(1.0) as f32);
+        if breaker.break_next().is_none() {
+            break;
+        }
+        is_first = false;
+    }
+}
+
 /// A stretch of one line drawn in one font at one size.
 ///
 /// Mirrors parley's own `GlyphRun`, which is what the shaper already walks —
@@ -279,128 +341,167 @@ impl Shaper {
         (self.hits, self.misses)
     }
 
-    /// Lay `story` out into `width` points of available measure.
+    /// One parley layout per paragraph, and where each sits in the frame.
     ///
-    /// The one place a layout is built. [`Shaper::shape`] turns it into
-    /// glyphs for the renderer and the PDF writer; [`crate::caret`] asks it
-    /// where the cursor goes. Two callers, one layout — which is what stops a
-    /// caret from drifting away from the glyphs it sits between.
-    pub(crate) fn layout(
+    /// The story used to be laid out as a single parley layout, which is why
+    /// indents, the space between paragraphs and per-paragraph alignment could
+    /// not be expressed: parley measures and aligns a whole layout at once, so
+    /// one layout can hold exactly one of each. A paragraph is the unit those
+    /// properties belong to, so a paragraph is the unit that gets a layout.
+    ///
+    /// Paragraphs are the runs of text between newlines, not the entries in
+    /// `story.paragraphs` — those are formatting *spans*, and one of them can
+    /// cover several paragraphs that all happen to be formatted alike. Two
+    /// paragraphs sharing a span still need their own layouts, or the space
+    /// between them has nowhere to go.
+    ///
+    /// The one place both shaping and the caret go through, so the caret can
+    /// never disagree with the glyphs about which paragraph an offset is in.
+    pub(crate) fn layout_paragraphs(
         &mut self,
         story: &Story,
         styles: &dyn Styles,
         width: f64,
-    ) -> parley::Layout<Brush> {
-        let mut builder =
-            self.layout_ctx
-                .ranged_builder(&mut self.font_ctx, &story.text, 1.0, true);
-        // The cascade's floor. `FontFamily::Source` takes the family name as
-        // written and resolves generic names ("sans-serif") the way CSS does,
-        // which is what parley's own default uses.
+    ) -> Vec<Placed> {
         let floor = styles.document_default();
-        if let Some(family) = &floor.family {
-            builder.push_default(parley::StyleProperty::FontFamily(
-                parley::FontFamily::Source(std::borrow::Cow::Owned(family.clone())),
-            ));
-        }
-        if let Some(size) = floor.size {
-            builder.push_default(parley::StyleProperty::FontSize(size));
-        }
-        if let Some(line_height) = floor.line_height {
-            builder.push_default(parley::StyleProperty::LineHeight(
-                parley::LineHeight::FontSizeRelative(line_height),
-            ));
-        }
+        let mut placed = Vec::new();
+        let mut y = 0.0;
 
-        // One span per run, over the run's own range. `push_default` above is
-        // the floor; anything a run states is pushed over the top of it.
-        for run in &story.runs {
-            let format = story.resolve_run(run, styles);
-            if let Some(family) = &format.family {
-                builder.push(
-                    parley::StyleProperty::FontFamily(parley::FontFamily::Source(
-                        std::borrow::Cow::Owned(family.clone()),
-                    )),
-                    run.range.clone(),
-                );
-            }
-            if let Some(size) = format.size {
-                builder.push(parley::StyleProperty::FontSize(size), run.range.clone());
-            }
-            if let Some(line_height) = format.line_height {
-                builder.push(
-                    parley::StyleProperty::LineHeight(parley::LineHeight::FontSizeRelative(
-                        line_height,
-                    )),
-                    run.range.clone(),
-                );
-            }
-            if let Some(weight) = format.weight {
-                builder.push(
-                    parley::StyleProperty::FontWeight(parley::FontWeight::new(f32::from(weight))),
-                    run.range.clone(),
-                );
-            }
-            if let Some(italic) = format.italic {
-                builder.push(
-                    parley::StyleProperty::FontStyle(if italic {
-                        parley::FontStyle::Italic
-                    } else {
-                        parley::FontStyle::Normal
-                    }),
-                    run.range.clone(),
-                );
-            }
-            // Pushed even when the run states no colour, because a *change*
-            // is what splits a glyph run: leaving the default in place for one
-            // run and setting it for the next is exactly the boundary needed.
-            builder.push(
-                parley::StyleProperty::Brush(format.colour.clone()),
-                run.range.clone(),
-            );
-            // Small caps asked of the font, which costs nothing and is right
-            // where the font can answer.
-            //
-            // It usually cannot. A probe over every family installed on the
-            // development machine found **0 of 191** with an `smcp` table, so
-            // this path alone would be a control that silently does nothing.
-            // What makes small caps actually appear is synthesis — uppercase
-            // letters scaled to about cap height — and that shapes a *different
-            // string*, which moves every byte offset the caret depends on.
-            //
-            // So this stays as the preferred path, and synthesis arrives with
-            // `Case::Upper` and `Case::Lower`, which have the same problem and
-            // need the same offset map. Until then `Case` has no control.
-            if format.case == Some(crate::story::Case::SmallCaps) {
-                builder.push(
-                    parley::StyleProperty::FontFeatures(parley::FontFeatures::from("smcp")),
-                    run.range.clone(),
-                );
-            }
-            if let Some(tracking) = format.tracking {
-                // Thousandths of an em, which is the unit a typographer uses;
-                // parley wants points at the shaped size.
-                let size = format.size.or(floor.size).unwrap_or(12.0);
-                builder.push(
-                    parley::StyleProperty::LetterSpacing(tracking / 1000.0 * size),
-                    run.range.clone(),
-                );
-            }
-        }
+        for (start, text) in paragraphs_of(&story.text) {
+            let end = start + text.len();
+            // The newline ends the paragraph, it is not part of it. Handing it
+            // to parley makes the layout emit a second, empty line — so the
+            // *range* keeps the newline, because byte offsets must cover the
+            // text exactly once and a caret can sit after it, while the text
+            // that is shaped does not.
+            let text = text.strip_suffix('\n').unwrap_or(text);
+            let content_end = start + text.len();
+            let format = story
+                .paragraphs
+                .iter()
+                .find(|p| p.range.contains(&start))
+                .map(|p| story.resolve_paragraph(p, styles))
+                .unwrap_or_default();
 
-        let mut layout: parley::Layout<Brush> = builder.build(&story.text);
-        layout.break_all_lines(Some(width as f32));
+            let indent_left = f64::from(format.indent_left.unwrap_or(0.0));
+            let indent_right = f64::from(format.indent_right.unwrap_or(0.0));
+            let indent_first = f64::from(format.indent_first.unwrap_or(0.0));
+            // A measure has to stay positive: indents wider than the frame
+            // would otherwise ask parley to break lines into nothing.
+            let measure = (width - indent_left - indent_right).max(1.0);
 
-        // Alignment is applied to the whole layout, because that is the only
-        // shape parley offers: `Layout::align` takes one alignment for one
-        // layout. A story whose paragraphs disagree therefore cannot be
-        // honoured here, and is left ragged-left rather than shown wrong in
-        // some paragraph — `common_alignment` returns `None` for exactly that
-        // case. Per-paragraph alignment needs one layout per paragraph, which
-        // also reaches the caret and is its own piece of work.
-        if let Some(alignment) = story.common_alignment(styles) {
+            y += f64::from(format.space_before.unwrap_or(0.0));
+
+            let mut builder = self
+                .layout_ctx
+                .ranged_builder(&mut self.font_ctx, text, 1.0, true);
+
+            // The cascade's floor. `FontFamily::Source` takes the family name
+            // as written and resolves generic names ("sans-serif") the way CSS
+            // does, which is what parley's own default uses.
+            if let Some(family) = &floor.family {
+                builder.push_default(parley::StyleProperty::FontFamily(
+                    parley::FontFamily::Source(std::borrow::Cow::Owned(family.clone())),
+                ));
+            }
+            if let Some(size) = floor.size {
+                builder.push_default(parley::StyleProperty::FontSize(size));
+            }
+            if let Some(line_height) = floor.line_height {
+                builder.push_default(parley::StyleProperty::LineHeight(
+                    parley::LineHeight::FontSizeRelative(line_height),
+                ));
+            }
+
+            // One span per run, over the part of the run this paragraph holds.
+            // A run never straddles a paragraph *span* boundary, but a span can
+            // hold several paragraphs, so a run can still cross a newline —
+            // hence the clip rather than a straight copy.
+            for run in &story.runs {
+                let from = run.range.start.max(start);
+                let to = run.range.end.min(content_end);
+                if from >= to {
+                    continue;
+                }
+                let local = (from - start)..(to - start);
+                let format = story.resolve_run(run, styles);
+
+                if let Some(family) = &format.family {
+                    builder.push(
+                        parley::StyleProperty::FontFamily(parley::FontFamily::Source(
+                            std::borrow::Cow::Owned(family.clone()),
+                        )),
+                        local.clone(),
+                    );
+                }
+                if let Some(size) = format.size {
+                    builder.push(parley::StyleProperty::FontSize(size), local.clone());
+                }
+                if let Some(line_height) = format.line_height {
+                    builder.push(
+                        parley::StyleProperty::LineHeight(parley::LineHeight::FontSizeRelative(
+                            line_height,
+                        )),
+                        local.clone(),
+                    );
+                }
+                if let Some(weight) = format.weight {
+                    builder.push(
+                        parley::StyleProperty::FontWeight(parley::FontWeight::new(f32::from(
+                            weight,
+                        ))),
+                        local.clone(),
+                    );
+                }
+                if let Some(italic) = format.italic {
+                    builder.push(
+                        parley::StyleProperty::FontStyle(if italic {
+                            parley::FontStyle::Italic
+                        } else {
+                            parley::FontStyle::Normal
+                        }),
+                        local.clone(),
+                    );
+                }
+                // Small caps asked of the font, which costs nothing and is
+                // right where the font can answer. It usually cannot: a probe
+                // over every family installed on the development machine found
+                // 0 of 191 with an `smcp` table. What makes small caps appear
+                // is synthesis, which shapes a different string and so moves
+                // every byte offset the caret depends on — the same problem
+                // `Case::Upper` has, and the same task.
+                if format.case == Some(crate::story::Case::SmallCaps) {
+                    builder.push(
+                        parley::StyleProperty::FontFeatures(parley::FontFeatures::from("smcp")),
+                        local.clone(),
+                    );
+                }
+                if let Some(tracking) = format.tracking {
+                    // Thousandths of an em, which is the unit a typographer
+                    // uses; parley wants points at the shaped size.
+                    let size = format.size.or(floor.size).unwrap_or(12.0);
+                    builder.push(
+                        parley::StyleProperty::LetterSpacing(tracking / 1000.0 * size),
+                        local.clone(),
+                    );
+                }
+                // Pushed even when the run states no colour, because a *change*
+                // is what splits a glyph run: leaving the default in place for
+                // one run and setting it for the next is exactly the boundary
+                // needed.
+                builder.push(
+                    parley::StyleProperty::Brush(format.colour.clone()),
+                    local.clone(),
+                );
+            }
+
+            let mut layout: parley::Layout<Brush> = builder.build(text);
+            break_with_first_line_indent(&mut layout, measure, indent_first);
+
+            // Alignment is per layout, which is now per paragraph — so two
+            // paragraphs can finally disagree about it.
             layout.align(
-                match alignment {
+                match format.alignment.unwrap_or(crate::story::Alignment::Left) {
                     crate::story::Alignment::Left => parley::Alignment::Left,
                     crate::story::Alignment::Centre => parley::Alignment::Center,
                     crate::story::Alignment::Right => parley::Alignment::Right,
@@ -408,9 +509,18 @@ impl Shaper {
                 },
                 parley::AlignmentOptions::default(),
             );
+
+            let height = f64::from(layout.height());
+            placed.push(Placed {
+                range: start..end,
+                layout,
+                x: indent_left,
+                y,
+            });
+            y += height + f64::from(format.space_after.unwrap_or(0.0));
         }
 
-        layout
+        placed
     }
 
     /// Shape `story` into `width` points of available measure.
@@ -440,75 +550,86 @@ impl Shaper {
     }
 
     fn shape_uncached(&mut self, story: &Story, styles: &dyn Styles, width: f64) -> ShapedText {
-        let layout = self.layout(story, styles, width);
+        let placed = self.layout_paragraphs(story, styles, width);
 
         let mut fonts: Vec<FontData> = Vec::new();
         let mut lines = Vec::new();
+        let mut height: f64 = 0.0;
 
-        for line in layout.lines() {
-            let mut runs = Vec::new();
-            let baseline = f64::from(line.metrics().baseline);
+        for paragraph in &placed {
+            for line in paragraph.layout.lines() {
+                let mut runs = Vec::new();
+                // The paragraph's own origin is folded into every position
+                // here, so everything downstream — the renderer, the PDF
+                // writer, the caret's callers — keeps working in frame-local
+                // points and never has to know paragraphs exist.
+                let baseline = f64::from(line.metrics().baseline) + paragraph.y;
 
-            for item in line.items() {
-                let parley::PositionedLayoutItem::GlyphRun(run) = item else {
-                    continue;
-                };
+                for item in line.items() {
+                    let parley::PositionedLayoutItem::GlyphRun(run) = item else {
+                        continue;
+                    };
 
-                let size = run.run().font_size();
-                let font = run.run().font();
-                let font_index = match fonts.iter().position(|f| f == font) {
-                    Some(i) => i,
-                    None => {
-                        fonts.push(font.clone());
-                        fonts.len() - 1
+                    let size = run.run().font_size();
+                    let font = run.run().font();
+                    let font_index = match fonts.iter().position(|f| f == font) {
+                        Some(i) => i,
+                        None => {
+                            fonts.push(font.clone());
+                            fonts.len() - 1
+                        }
+                    };
+
+                    // Baseline shift, applied after shaping rather than pushed
+                    // into the layout. It changes no advance and must not
+                    // disturb line breaking — a superscript sits above the line
+                    // it belongs to, it does not make the line taller. Positive
+                    // raises, which is why it is subtracted: y grows downward.
+                    let global = paragraph.range.start + run.run().text_range().start;
+                    let shift = story
+                        .run_at(global)
+                        .and_then(|r| story.resolve_run(r, styles).baseline_shift)
+                        .unwrap_or(0.0);
+
+                    // `positioned_glyphs` already folds in the run offset, the
+                    // baseline, and each glyph's advance — so nothing here
+                    // recomputes a position that parley already decided.
+                    let mut glyphs = Vec::new();
+                    for g in run.positioned_glyphs() {
+                        glyphs.push(PositionedGlyph {
+                            glyph_id: g.id,
+                            x: f64::from(g.x) + paragraph.x,
+                            y: f64::from(g.y) + paragraph.y - f64::from(shift),
+                            advance: f64::from(g.advance),
+                            font_index,
+                        });
                     }
-                };
 
-                // Baseline shift, applied after shaping rather than pushed
-                // into the layout. It changes no advance and must not disturb
-                // line breaking — a superscript sits above the line it belongs
-                // to, it does not make the line taller. Positive raises, which
-                // is why it is subtracted: y grows downward.
-                let shift = story
-                    .run_at(run.run().text_range().start)
-                    .and_then(|r| story.resolve_run(r, styles).baseline_shift)
-                    .unwrap_or(0.0);
+                    // Read back off the layout rather than looked up in the
+                    // story. parley split this run at the brush boundary, so
+                    // the brush it reports is the colour of exactly these
+                    // glyphs — whereas the story run at the stretch's start
+                    // would be the right answer only when the split happened to
+                    // line up.
+                    let colour = run.style().brush.clone();
 
-                // `positioned_glyphs` already folds in the run offset, the
-                // baseline, and each glyph's advance — so nothing here
-                // recomputes a position that parley already decided.
-                let mut glyphs = Vec::new();
-                for g in run.positioned_glyphs() {
-                    glyphs.push(PositionedGlyph {
-                        glyph_id: g.id,
-                        x: f64::from(g.x),
-                        y: f64::from(g.y) - f64::from(shift),
-                        advance: f64::from(g.advance),
+                    runs.push(ShapedRun {
                         font_index,
+                        size,
+                        colour,
+                        glyphs,
                     });
                 }
 
-                // Read back off the layout rather than looked up in the
-                // story. parley split this run at the brush boundary, so the
-                // brush it reports is the colour of exactly these glyphs —
-                // whereas the story run at the stretch's start would be the
-                // right answer only when the split happened to line up.
-                let colour = run.style().brush.clone();
-
-                runs.push(ShapedRun {
-                    font_index,
-                    size,
-                    colour,
-                    glyphs,
-                });
+                lines.push(ShapedLine { runs, baseline });
             }
 
-            lines.push(ShapedLine { runs, baseline });
+            height = height.max(paragraph.y + f64::from(paragraph.layout.height()));
         }
 
         ShapedText {
-            height: f64::from(layout.height()),
             lines,
+            height,
             fonts,
         }
     }
@@ -1053,11 +1174,12 @@ mod tests {
     }
 
     #[test]
-    fn a_story_with_two_alignments_is_left_rather_than_wrong() {
-        // parley aligns a whole layout at once, so two alignments cannot both
-        // be honoured. Left is the answer that is wrong for nobody in
-        // particular, rather than right for one paragraph and wrong for the
-        // other.
+    fn two_paragraphs_can_be_aligned_differently() {
+        // This used to assert the opposite: parley aligns a whole layout at
+        // once, so a story whose paragraphs disagreed was left ragged-left
+        // rather than shown wrong in one of them. Each paragraph now has its
+        // own layout, so each can have its own alignment — which is the whole
+        // point of the change.
         use crate::story::{Alignment, ParagraphFormat};
 
         let mut shaper = Shaper::new();
@@ -1070,16 +1192,126 @@ mod tests {
             },
         );
         let mixed = shaper.shape(&story, &NoStyles::default(), 400.0);
-        let plain = shaper.shape(&Story::new("one\ntwo"), &NoStyles::default(), 400.0);
 
-        let x_of = |t: &ShapedText| {
+        let line_x = |t: &ShapedText, n: usize| {
             t.lines
-                .first()
+                .get(n)
                 .and_then(|l| l.runs.first())
                 .and_then(|r| r.glyphs.first())
                 .map(|g| g.x)
         };
-        assert_eq!(x_of(&mixed), x_of(&plain));
+        let first = line_x(&mixed, 0).expect("a first line");
+        let second = line_x(&mixed, 1).expect("a second line");
+
+        assert!(
+            first > 300.0,
+            "the right-aligned paragraph should start near the right edge, not at {first}"
+        );
+        assert!(
+            second < 1.0,
+            "and the one nobody aligned should still start at the left, not at {second}"
+        );
+    }
+
+    #[test]
+    fn an_indent_narrows_only_its_own_paragraph() {
+        use crate::story::ParagraphFormat;
+
+        let mut shaper = Shaper::new();
+        let mut story = Story::new("one\ntwo");
+        story.apply_paragraph_format(
+            0..1,
+            &ParagraphFormat {
+                indent_left: Some(40.0),
+                ..ParagraphFormat::default()
+            },
+        );
+        let shaped = shaper.shape(&story, &NoStyles::default(), 400.0);
+
+        let line_x = |t: &ShapedText, n: usize| {
+            t.lines
+                .get(n)
+                .and_then(|l| l.runs.first())
+                .and_then(|r| r.glyphs.first())
+                .map(|g| g.x)
+        };
+        assert!(
+            (line_x(&shaped, 0).expect("first") - 40.0).abs() < 1.0,
+            "the indented paragraph starts 40pt in"
+        );
+        assert!(
+            line_x(&shaped, 1).expect("second") < 1.0,
+            "and its neighbour does not"
+        );
+    }
+
+    #[test]
+    fn space_before_pushes_down_what_follows_it() {
+        use crate::story::ParagraphFormat;
+
+        let mut shaper = Shaper::new();
+        let plain = shaper.shape(&Story::new("one\ntwo"), &NoStyles::default(), 400.0);
+
+        let mut story = Story::new("one\ntwo");
+        story.apply_paragraph_format(
+            5..6,
+            &ParagraphFormat {
+                space_before: Some(30.0),
+                ..ParagraphFormat::default()
+            },
+        );
+        let spaced = shaper.shape(&story, &NoStyles::default(), 400.0);
+
+        assert!(
+            (spaced.lines[0].baseline - plain.lines[0].baseline).abs() < 1e-6,
+            "the first paragraph did not move"
+        );
+        assert!(
+            (spaced.lines[1].baseline - plain.lines[1].baseline - 30.0).abs() < 1.0,
+            "the second moved down by the space it asked for"
+        );
+        assert!(
+            spaced.height > plain.height,
+            "and the story got taller by it"
+        );
+    }
+
+    #[test]
+    fn a_first_line_indent_moves_only_the_first_line() {
+        use crate::story::ParagraphFormat;
+
+        let mut shaper = Shaper::new();
+        // Long enough to wrap, so there is a second line to compare against.
+        let text = "the quick brown fox jumps over the lazy dog and keeps on going";
+        let mut story = Story::new(text);
+        story.apply_paragraph_format(
+            0..1,
+            &ParagraphFormat {
+                indent_first: Some(36.0),
+                ..ParagraphFormat::default()
+            },
+        );
+        let shaped = shaper.shape(&story, &NoStyles::default(), 200.0);
+
+        let line_x = |t: &ShapedText, n: usize| {
+            t.lines
+                .get(n)
+                .and_then(|l| l.runs.first())
+                .and_then(|r| r.glyphs.first())
+                .map(|g| g.x)
+        };
+        assert!(
+            shaped.lines.len() > 1,
+            "the text has to wrap for this to mean anything"
+        );
+        assert!(
+            (line_x(&shaped, 0).expect("first") - 36.0).abs() < 1.0,
+            "the first line is indented"
+        );
+        assert!(
+            line_x(&shaped, 1).expect("second") < 1.0,
+            "and the second is not"
+        );
     }
 
     // --- colour, run by run ------------------------------------------------

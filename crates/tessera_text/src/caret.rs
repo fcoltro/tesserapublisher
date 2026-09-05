@@ -62,7 +62,8 @@ impl Shaper {
     ///
     /// The text is laid out again rather than cached. That happens once per
     /// frame and only while a caret is live, and it is what guarantees the
-    /// caret agrees with the glyphs: one layout, asked twice.
+    /// caret agrees with the glyphs: the same `layout_paragraphs` the shaper
+    /// uses, asked a different question.
     pub fn caret_geometry(
         &mut self,
         story: &Story,
@@ -71,39 +72,70 @@ impl Shaper {
         cursor: TextCursor,
         caret_width: f32,
     ) -> CaretGeometry {
-        let layout = self.layout(story, styles, width);
+        let placed = self.layout_paragraphs(story, styles, width);
+        let position = cursor.position.min(story.text.len());
 
+        let Some(at) = paragraph_holding(&placed, position) else {
+            return CaretGeometry::default();
+        };
+        let here = &placed[at];
         let caret = parley::Cursor::from_byte_index(
-            &layout,
-            cursor.position.min(story.text.len()),
+            &here.layout,
+            position - here.range.start,
             parley::Affinity::Downstream,
         );
 
+        // A selection can reach across paragraphs, and each paragraph is now a
+        // separate layout that knows nothing of its neighbours. So the range is
+        // asked of every paragraph it touches, clamped to that paragraph, and
+        // the rectangles are gathered — which is also why the rectangles come
+        // back in reading order rather than needing a sort.
         let selection = if cursor.position == cursor.anchor {
             Vec::new()
         } else {
-            let anchor = parley::Cursor::from_byte_index(
-                &layout,
-                cursor.anchor.min(story.text.len()),
-                parley::Affinity::Downstream,
-            );
-            parley::Selection::new(anchor, caret)
-                .geometry(&layout)
-                .into_iter()
-                .map(|(rect, _line)| rect.into())
-                .collect()
+            let anchor = cursor.anchor.min(story.text.len());
+            let (from, to) = (position.min(anchor), position.max(anchor));
+            let mut rects = Vec::new();
+            for paragraph in &placed {
+                let start = from.max(paragraph.range.start);
+                let end = to.min(paragraph.range.end);
+                if start >= end {
+                    continue;
+                }
+                let a = parley::Cursor::from_byte_index(
+                    &paragraph.layout,
+                    start - paragraph.range.start,
+                    parley::Affinity::Downstream,
+                );
+                let b = parley::Cursor::from_byte_index(
+                    &paragraph.layout,
+                    end - paragraph.range.start,
+                    parley::Affinity::Downstream,
+                );
+                rects.extend(
+                    parley::Selection::new(a, b)
+                        .geometry(&paragraph.layout)
+                        .into_iter()
+                        .map(|(rect, _line)| translate(rect.into(), paragraph.x, paragraph.y)),
+                );
+            }
+            rects
         };
 
         CaretGeometry {
-            caret: Some(caret.geometry(&layout, caret_width).into()),
+            caret: Some(translate(
+                caret.geometry(&here.layout, caret_width).into(),
+                here.x,
+                here.y,
+            )),
             selection,
         }
     }
 
     /// The byte offset a click at frame-local `(x, y)` lands on.
     ///
-    /// Clamped into the text by parley, so a click past the last line lands at
-    /// the end rather than out of bounds.
+    /// Clamped into the text, so a click past the last line lands at the end
+    /// rather than out of bounds.
     pub fn offset_at(
         &mut self,
         story: &Story,
@@ -112,8 +144,14 @@ impl Shaper {
         x: f64,
         y: f64,
     ) -> usize {
-        let layout = self.layout(story, styles, width);
-        parley::Cursor::from_point(&layout, x as f32, y as f32).index()
+        let placed = self.layout_paragraphs(story, styles, width);
+        let Some(at) = paragraph_under(&placed, y) else {
+            return 0;
+        };
+        let here = &placed[at];
+        here.range.start
+            + parley::Cursor::from_point(&here.layout, (x - here.x) as f32, (y - here.y) as f32)
+                .index()
     }
 
     /// The byte range of the word under frame-local `(x, y)`.
@@ -127,9 +165,64 @@ impl Shaper {
         x: f64,
         y: f64,
     ) -> std::ops::Range<usize> {
-        let layout = self.layout(story, styles, width);
-        parley::Selection::word_from_point(&layout, x as f32, y as f32).text_range()
+        let placed = self.layout_paragraphs(story, styles, width);
+        let Some(at) = paragraph_under(&placed, y) else {
+            return 0..0;
+        };
+        let here = &placed[at];
+        let local = parley::Selection::word_from_point(
+            &here.layout,
+            (x - here.x) as f32,
+            (y - here.y) as f32,
+        )
+        .text_range();
+        (here.range.start + local.start)..(here.range.start + local.end)
     }
+}
+
+/// Move a rectangle into frame-local points from a paragraph's own.
+fn translate(rect: TextRect, x: f64, y: f64) -> TextRect {
+    TextRect {
+        x0: rect.x0 + x,
+        y0: rect.y0 + y,
+        x1: rect.x1 + x,
+        y1: rect.y1 + y,
+    }
+}
+
+/// The paragraph a byte offset belongs to.
+///
+/// The last paragraph wins a tie at its own end, which is where a caret at the
+/// very end of the story sits — otherwise the caret would fall off the text it
+/// is standing at the end of.
+fn paragraph_holding(placed: &[crate::shape::Placed], offset: usize) -> Option<usize> {
+    if placed.is_empty() {
+        return None;
+    }
+    placed
+        .iter()
+        .position(|p| p.range.contains(&offset))
+        .or(Some(placed.len() - 1))
+}
+
+/// The paragraph a frame-local `y` falls in.
+///
+/// Above the first is the first and below the last is the last, so a click on
+/// the padding above a frame's text puts the caret at the start rather than
+/// nowhere. The gap *between* two paragraphs belongs to the one above it,
+/// which is what makes clicking in paragraph spacing land at the end of the
+/// paragraph that asked for the space.
+fn paragraph_under(placed: &[crate::shape::Placed], y: f64) -> Option<usize> {
+    if placed.is_empty() {
+        return None;
+    }
+    let mut chosen = 0;
+    for (i, paragraph) in placed.iter().enumerate() {
+        if y >= paragraph.y {
+            chosen = i;
+        }
+    }
+    Some(chosen)
 }
 
 #[cfg(test)]
@@ -291,5 +384,148 @@ mod tests {
         let caret = caret_of(&mut shaper, &story, 8);
         let word = shaper.word_at(&story, &NoStyles::default(), WIDTH, caret.x0, y);
         assert_eq!(&story.text[word], "world");
+    }
+
+    // --- across paragraphs -------------------------------------------------
+
+    /// A story of three paragraphs, the middle one indented and spaced.
+    fn three_paragraphs() -> Story {
+        use crate::story::ParagraphFormat;
+
+        let mut story = Story::new("first para\nsecond para\nthird para");
+        story.apply_paragraph_format(
+            11..12,
+            &ParagraphFormat {
+                indent_left: Some(24.0),
+                space_before: Some(18.0),
+                ..ParagraphFormat::default()
+            },
+        );
+        story
+    }
+
+    #[test]
+    fn every_offset_survives_a_round_trip_through_the_screen() {
+        // The risk the per-paragraph change introduced, stated as a test: if
+        // the paragraph lookup is wrong the caret lands in the wrong paragraph
+        // and every edit after it corrupts text the user was not pointing at.
+        // Nothing about that failure would be visible until it had happened.
+        let story = three_paragraphs();
+        let mut shaper = Shaper::new();
+        let styles = NoStyles::default();
+
+        for position in 0..=story.text.len() {
+            if !story.text.is_char_boundary(position) {
+                continue;
+            }
+            let geometry = shaper.caret_geometry(&story, &styles, WIDTH, cursor(position), 1.5);
+            let caret = geometry.caret.expect("a caret for every offset");
+
+            // The middle of the caret bar, which is the point a person clicking
+            // on it would hit.
+            let back = shaper.offset_at(
+                &story,
+                &styles,
+                WIDTH,
+                caret.x0 + caret.width() / 2.0,
+                (caret.y0 + caret.y1) / 2.0,
+            );
+            assert_eq!(
+                back, position,
+                "offset {position} drew at {caret:?} which reads back as {back}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_caret_in_the_third_paragraph_is_below_the_second() {
+        let story = three_paragraphs();
+        let mut shaper = Shaper::new();
+        let styles = NoStyles::default();
+
+        let mut y = |at: usize| {
+            shaper
+                .caret_geometry(&story, &styles, WIDTH, cursor(at), 1.5)
+                .caret
+                .expect("a caret")
+                .y0
+        };
+        assert!(y(0) < y(12), "the first paragraph is above the second");
+        assert!(y(12) < y(24), "and the second above the third");
+    }
+
+    #[test]
+    fn the_indented_paragraph_starts_its_caret_further_in() {
+        let story = three_paragraphs();
+        let mut shaper = Shaper::new();
+        let styles = NoStyles::default();
+
+        let mut x = |at: usize| {
+            shaper
+                .caret_geometry(&story, &styles, WIDTH, cursor(at), 1.5)
+                .caret
+                .expect("a caret")
+                .x0
+        };
+        // Offset 11 is the start of "second para", which is indented 24pt.
+        assert!(
+            x(11) > x(0) + 20.0,
+            "the indented paragraph's caret is at {} against {}",
+            x(11),
+            x(0)
+        );
+    }
+
+    #[test]
+    fn a_selection_across_paragraphs_yields_a_rectangle_in_each() {
+        // Each paragraph is its own layout and knows nothing of its
+        // neighbours, so a selection spanning them has to be asked of each.
+        let story = three_paragraphs();
+        let mut shaper = Shaper::new();
+
+        let geometry = shaper.caret_geometry(
+            &story,
+            &NoStyles::default(),
+            WIDTH,
+            TextCursor {
+                anchor: 2,
+                position: story.text.len() - 2,
+            },
+            1.5,
+        );
+        assert!(
+            geometry.selection.len() >= 3,
+            "three paragraphs, at least three rectangles: {:?}",
+            geometry.selection
+        );
+    }
+
+    #[test]
+    fn a_double_click_in_the_last_paragraph_selects_a_word_there() {
+        let story = three_paragraphs();
+        let mut shaper = Shaper::new();
+        let styles = NoStyles::default();
+
+        // Aim at the caret for an offset inside "third", then ask what word is
+        // there — so the point is one the layout itself produced.
+        let inside = 25;
+        let caret = shaper
+            .caret_geometry(&story, &styles, WIDTH, cursor(inside), 1.5)
+            .caret
+            .expect("a caret");
+        let word = shaper.word_at(
+            &story,
+            &styles,
+            WIDTH,
+            caret.x0 + 1.0,
+            (caret.y0 + caret.y1) / 2.0,
+        );
+
+        assert!(
+            word.start >= 23 && word.end <= story.text.len(),
+            "expected a word in the last paragraph, got {word:?} of {:?}",
+            story.text
+        );
+        assert_eq!(&story.text[word.clone()], "third", "{word:?}");
     }
 }

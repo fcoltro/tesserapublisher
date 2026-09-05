@@ -1029,16 +1029,52 @@ fn text_section(
         );
     }
 
-    // Indents and paragraph spacing have no controls yet, and the reason is
-    // the same one that limits alignment: parley lays out a whole story as one
-    // layout, so a per-paragraph measure or a gap between paragraphs cannot be
-    // expressed. The model carries all five fields and the format migration
-    // preserves them; what is missing is one layout per paragraph, which also
-    // reaches the caret and is its own piece of work.
-    //
-    // A control that sets a value nothing draws is worse than one that is
-    // absent, because it makes the software look broken rather than
-    // unfinished.
+    /// Which field of a `ParagraphFormat` a row writes.
+    type Set = fn(&mut ParagraphFormat, f32);
+
+    for (label, read, set) in [
+        (
+            "Indent left",
+            paragraph.indent_left,
+            (|f: &mut ParagraphFormat, v| f.indent_left = Some(v)) as Set,
+        ),
+        (
+            "Indent right",
+            paragraph.indent_right,
+            (|f: &mut ParagraphFormat, v| f.indent_right = Some(v)) as Set,
+        ),
+        (
+            "First line",
+            paragraph.indent_first,
+            (|f: &mut ParagraphFormat, v| f.indent_first = Some(v)) as Set,
+        ),
+        (
+            "Space before",
+            paragraph.space_before,
+            (|f: &mut ParagraphFormat, v| f.space_before = Some(v)) as Set,
+        ),
+        (
+            "Space after",
+            paragraph.space_after,
+            (|f: &mut ParagraphFormat, v| f.space_after = Some(v)) as Set,
+        ),
+    ] {
+        // Shown as 0 rather than blank: an indent nobody has set is not
+        // ambiguous, it is zero.
+        let Some(value) = optional_number(
+            ui,
+            label,
+            Some(read.unwrap_or(0.0)),
+            0.25,
+            -720.0..=720.0,
+            " pt",
+        ) else {
+            continue;
+        };
+        let mut format = ParagraphFormat::default();
+        set(&mut format, value);
+        set_paragraph(state, story, target.clone(), format);
+    }
 
     style_rows(ui, state, story, target);
 }

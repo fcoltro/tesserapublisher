@@ -260,10 +260,6 @@ fn paragraph_fields(
     // authoring them now is not wasted — but nothing draws them yet, and a
     // control that silently sets a value nothing honours makes the software
     // look broken rather than unfinished.
-    ui.colored_label(
-        Theme::ERROR,
-        "Stored, but not yet drawn — needs one layout per paragraph:",
-    );
     for (label, field) in [
         ("Indent left", 0usize),
         ("Indent right", 1),
@@ -280,6 +276,10 @@ fn paragraph_fields(
         };
         optional_number(ui, label, value, 0.0, 0.25, -720.0..=720.0, " pt");
     }
+    // Hyphenation is the one paragraph property still stored without being
+    // drawn: parley does not hyphenate, so it needs a dictionary rather than a
+    // layout change.
+    ui.colored_label(Theme::ERROR, "Stored, but not yet drawn:");
     optional_flag(ui, "Hyphenate", &mut edited.format.hyphenate);
 
     if let Some(based_on) = chosen_parent {

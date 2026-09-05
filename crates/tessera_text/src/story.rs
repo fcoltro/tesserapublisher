@@ -979,20 +979,6 @@ impl Story {
         para.local.over(&format)
     }
 
-    /// The alignment the whole story is set in, if its paragraphs agree.
-    ///
-    /// `None` when they disagree, which the shaper reads as "cannot honour
-    /// this in one layout" — see the note there.
-    pub fn common_alignment(&self, styles: &dyn Styles) -> Option<Alignment> {
-        let mut alignments = self.paragraphs.iter().map(|p| {
-            self.resolve_paragraph(p, styles)
-                .alignment
-                .unwrap_or(Alignment::Left)
-        });
-        let first = alignments.next()?;
-        alignments.all(|a| a == first).then_some(first)
-    }
-
     /// The resolved formatting every run in `range` agrees on.
     ///
     /// What the inspector shows. A field the runs disagree about comes back
@@ -1796,42 +1782,6 @@ mod run_tests {
     }
 
     // --- alignment across a story ---------------------------------------
-
-    #[test]
-    fn a_story_set_one_way_reports_that_alignment() {
-        let mut story = Story::new("one\ntwo");
-        story.apply_paragraph_format(0..7, &centred());
-        assert_eq!(
-            story.common_alignment(&NoStyles::default()),
-            Some(Alignment::Centre)
-        );
-    }
-
-    #[test]
-    fn a_story_with_two_alignments_reports_none() {
-        let mut story = Story::new("one\ntwo");
-        story.apply_paragraph_format(0..1, &centred());
-        assert_eq!(
-            story.common_alignment(&NoStyles::default()),
-            None,
-            "one layout cannot be two alignments at once"
-        );
-    }
-
-    #[test]
-    fn a_story_nobody_has_aligned_reads_as_left() {
-        let story = Story::new("one\ntwo");
-        assert_eq!(
-            story.common_alignment(&NoStyles::default()),
-            Some(Alignment::Left),
-            "unset is left, and unset everywhere still agrees"
-        );
-    }
-
-    #[test]
-    fn an_empty_story_has_no_alignment_to_report() {
-        assert_eq!(Story::new("").common_alignment(&NoStyles::default()), None);
-    }
 
     /// A `Styles` whose one paragraph style is right-aligned.
     fn right_aligned_style() -> OneOfEach {
