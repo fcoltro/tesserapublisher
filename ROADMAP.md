@@ -361,12 +361,14 @@ working software alone: **C-i the rail** (C1–C5), **C-ii the surface**
 > regression tests at the level the failure was really at. That is the
 > argument for the hand checks, made concrete.
 >
-> **Two items stay partial, and both for reasons outside phase C.** C10 shows
-> the page count but cannot navigate between pages, which waits on the pages
-> panel at milestone 3. C12's menus are generated from the action list, so
-> Layout, Type and Window have no menus because they have no commands yet —
+> **Two items stayed partial for reasons outside phase C, and both are now
+> closed.** C10 could show the page count and not navigate, because there had
+> only ever been one page; C12's Layout menu did not exist, because the menu
+> bar is generated from the action list and Layout had no actions. Milestone 3
+> phase 1 supplied the pages and the commands, and both were ticked there.
+> Window is still absent, and still for the right reason: it has no commands,
 > and a menu entry for an unbuilt feature is the lie this codebase was rebuilt
-> to stop telling. Neither is work phase C can finish.
+> to stop telling.
 >
 > **The sentences have not been performed by hand.** Three sessions of real
 > use found four bugs the suite missed — the resolve cache never invalidating
@@ -413,17 +415,19 @@ working software alone: **C-i the rail** (C1–C5), **C-ii the surface**
   and canvas toolbar, paints the surround the fixed neutral grey of D8, and
   **crops the document to what it reveals** — so Preview shows the trim as it
   will print rather than merely hiding the furniture around it.
-- [~] **C10 — Status bar**: a zoom that can be typed, stepped along a
-  1-2-5-ish ladder, or fitted, beside the message area. *The page count is
-  shown; navigation between pages waits on the pages panel at milestone 3.*
+- [x] **C10 — Status bar**: a zoom that can be typed, stepped along a
+  1-2-5-ish ladder, or fitted, beside the message area, and previous / "3 of
+  12" / next. *Closed by milestone 3 phase 1, which is what it was waiting
+  on: there had only ever been one page to be on.*
 - [x] **C11 — Command palette** over the `Command` enum (A6), showing each
   command's shortcut beside it.
-- [~] **C12 — Menus**, generated from the same action list the palette reads,
-  so a command cannot be in one and missing from the other. File, Edit, Object
-  and View exist. *Layout, Type and Window do not — they have no commands yet,
-  and the rule this milestone works to is that a group with no actions gets no
-  menu. A menu entry for an unbuilt feature is the lie the previous codebase
-  told often.*
+- [x] **C12 — Menus**, generated from the same action list the palette reads,
+  so a command cannot be in one and missing from the other. File, Edit,
+  Layout, Object, Type and View. *Type arrived with the styles window and
+  Layout with milestone 3's pages — in both cases by adding the commands, not
+  the menu. Window is still absent, and still because it has no commands: a
+  group with no actions gets no menu, and a menu entry for an unbuilt feature
+  is the lie the previous codebase told often.*
 - [x] **C13 — Icon set**: 31 Lucide glyphs, up from 14, **converted
   mechanically from the official package's own SVG geometry** rather than
   transcribed — the icon tests prove a path parses and that it fits the grid,
@@ -591,9 +595,20 @@ unverified one.
 > Organise objects onto named layers, then hide and lock a layer.
 
 - [ ] Pages panel: a visual grid of spreads, with drag-to-reorder.
-- [ ] Add, delete and duplicate pages — **all undoable.** (The previous
-  implementation never made add or remove page undoable, because no inverse
-  was ever written. D5's snapshot undo removes that failure mode.)
+- [x] Add, delete and duplicate pages — **all undoable.** Snapshot undo made
+  the inverse free; that it stays free is tested by putting a frame on a page,
+  removing the page, and requiring the frame back. Removing the last page is
+  refused by the document rather than by the command, so no caller has to
+  remember not to ask. Spreads reorder, and the geometry follows.
+  - Pages are positioned by `reflow_spreads`: `Page.bounds` is document space
+    and the rulers, align-to-page, guides and the PDF's `TrimBox` all read it,
+    so the bounds stay the truth rather than being derived by each consumer.
+  - Facing pages read 1, 2-3, 4-5. The plan claimed this needed no rule about
+    cover pages and a test proved otherwise: page 1 is a right-hand page, so
+    the first spread holds one and the rest pair up.
+  - Duplicating is a **deep** copy, stories included. Sharing one would make
+    editing the copy edit the original, and both pages would look right until
+    somebody typed.
 - [ ] Facing-page spreads with correct left/right geometry. → **moved to
   milestone 1.5, phase B**, along with page size, margins, bleed, slug, and a
   spread that renders as a spread. Tracked there, not here.
