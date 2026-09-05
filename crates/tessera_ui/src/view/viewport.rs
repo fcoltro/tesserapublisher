@@ -769,17 +769,23 @@ fn overset_frames(state: &mut TesseraApp) -> Vec<FrameId> {
 /// Drawn for every text frame rather than the selected one: the point is to
 /// notice a frame you were not already looking at.
 fn overset_marks(state: &TesseraApp, rect: Rect, painter: &egui::Painter, overset: &[FrameId]) {
-    const MARK: f32 = 9.0;
+    const MARK: f32 = 14.0;
 
     for id in overset {
         let Some(frame) = state.active().document().frame(*id) else {
             continue;
         };
         let bounds = frame.bounds;
-        let corner = state.active().view.doc_to_screen(DocPoint {
-            x: bounds.x + bounds.width,
-            y: bounds.y + bounds.height,
-        });
+        // Through the frame's own transform, like everything else drawn for a
+        // frame. Without it the mark stayed where the frame was first laid
+        // out, so moving the frame left it behind.
+        let corner = state
+            .active()
+            .view
+            .doc_to_screen(frame.transform.apply(DocPoint {
+                x: bounds.x + bounds.width,
+                y: bounds.y + bounds.height,
+            }));
         let at = Rect::from_min_size(
             egui::pos2(rect.min.x + corner.x - MARK, rect.min.y + corner.y - MARK),
             egui::vec2(MARK, MARK),

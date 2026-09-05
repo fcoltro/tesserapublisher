@@ -746,7 +746,7 @@ mod tests {
             .map(|a| a.name)
             .collect();
         assert_eq!(typed, vec!["Paragraph and character styles"]);
-        assert_eq!(Group::Type.menu(), "Type");
+        assert_eq!(Group::Type.menu(), Some("Type"));
     }
 
     #[test]

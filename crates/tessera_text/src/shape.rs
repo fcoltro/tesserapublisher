@@ -117,8 +117,15 @@ fn draw_the_hyphen(
 ) {
     // Does this line actually end at one? `text_range` is in shaped
     // coordinates, which is where the soft hyphens live.
-    let range = line.text_range();
-    if !shaped_text[range].ends_with(SOFT_HYPHEN) {
+    //
+    // Taken with `get` rather than by indexing. parley reports `0..1` for the
+    // line of an **empty** paragraph — a paragraph left blank between two
+    // others, which is how anyone makes a gap — and indexing a zero-length
+    // string with it panicked the whole application.
+    let Some(tail) = shaped_text.get(line.text_range()) else {
+        return;
+    };
+    if !tail.ends_with(SOFT_HYPHEN) {
         return;
     }
 
@@ -2384,5 +2391,98 @@ mod tests {
             "they meet with no gap and no overlap"
         );
         assert_eq!(placed[1].range.end, story.text.len());
+    }
+
+    // --- empty paragraphs ----------------------------------------------------
+    //
+    // A blank line between two others is how anyone makes a gap, and it is the
+    // one paragraph with no text at all. parley reports its line as covering
+    // `0..1` of a zero-length string, which crashed the whole application when
+    // the hyphenator went looking for a trailing soft hyphen.
+
+    #[test]
+    fn a_hyphenated_empty_paragraph_does_not_panic() {
+        let mut shaper = Shaper::new();
+        let shaped = shaper.shape(&hyphenated(""), &NoStyles::default(), 200.0);
+        assert_eq!(shaped.glyph_count(), 0);
+    }
+
+    #[test]
+    fn a_blank_line_between_two_paragraphs_does_not_panic() {
+        // What the crash actually looked like: two paragraphs of copy with an
+        // empty one between them, in a story set to hyphenate.
+        use crate::story::ParagraphFormat;
+
+        let mut story = Story::new("first paragraph\n\nthird paragraph");
+        story.apply_paragraph_format(
+            0..story.text.len(),
+            &ParagraphFormat {
+                hyphenate: Some(true),
+                ..ParagraphFormat::default()
+            },
+        );
+
+        let mut shaper = Shaper::new();
+        let shaped = shaper.shape(&story, &NoStyles::default(), 200.0);
+        assert!(shaped.glyph_count() > 0, "the copy either side still drew");
+    }
+
+    #[test]
+    fn a_story_ending_in_a_newline_does_not_panic() {
+        // The trailing newline yields a final empty paragraph, which is right —
+        // a caret can sit on it — and is the same zero-length case.
+        use crate::story::ParagraphFormat;
+
+        let mut story = Story::new("a paragraph and then nothing\n");
+        story.apply_paragraph_format(
+            0..1,
+            &ParagraphFormat {
+                hyphenate: Some(true),
+                ..ParagraphFormat::default()
+            },
+        );
+
+        let mut shaper = Shaper::new();
+        let _ = shaper.shape(&story, &NoStyles::default(), 200.0);
+    }
+
+    #[test]
+    fn every_paragraph_shape_survives_an_empty_one_anywhere() {
+        // A sweep rather than three cases: an empty paragraph at the start, in
+        // the middle and at the end, hyphenated and not, in capitals and not.
+        // Each of those transformations rebuilds the shaped text, and the crash
+        // was in the seam between that text and what parley reported about it.
+        use crate::story::{Case, ParagraphFormat};
+
+        let texts = ["\nafter", "before\n\nafter", "before\n", "\n", ""];
+        for text in texts {
+            for hyphenate in [false, true] {
+                for upper in [false, true] {
+                    let mut story = Story::new(text);
+                    if !story.text.is_empty() {
+                        story.apply_paragraph_format(
+                            0..story.text.len(),
+                            &ParagraphFormat {
+                                hyphenate: Some(hyphenate),
+                                ..ParagraphFormat::default()
+                            },
+                        );
+                        if upper {
+                            story.apply_character_format(
+                                0..story.text.len(),
+                                &crate::story::CharacterFormat {
+                                    case: Some(Case::Upper),
+                                    ..crate::story::CharacterFormat::default()
+                                },
+                            );
+                        }
+                    }
+
+                    let mut shaper = Shaper::new();
+                    // The assertion is that this returns at all.
+                    let _ = shaper.shape(&story, &NoStyles::default(), 200.0);
+                }
+            }
+        }
     }
 }

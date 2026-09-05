@@ -248,7 +248,7 @@ mod tests {
             .map(|a| a.name)
             .collect();
         assert_eq!(named, vec!["Pages"]);
-        assert_eq!(Group::Window.menu(), "Window");
+        assert_eq!(Group::Window.menu(), Some("Window"));
     }
 
     #[test]

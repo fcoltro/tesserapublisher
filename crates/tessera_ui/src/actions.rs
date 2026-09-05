@@ -59,24 +59,30 @@ impl Group {
             Group::Arrange => Some("Arrange"),
             Group::Transform => Some("Transform"),
             Group::Align => Some("Align and distribute"),
-            Group::Tool => Some("Tools"),
             _ => None,
         }
     }
 
-    /// The menu this group appears under.
+    /// The menu this group appears under, if any.
     ///
-    /// Align and Tool share a menu with Object and View respectively: they are
-    /// groupings for the palette's benefit, not extra menus.
-    pub fn menu(self) -> &'static str {
+    /// **`Tool` has none.** Picking a tool is not a menu command in any layout
+    /// tool — there is a strip of them down the left and each has a single-key
+    /// shortcut. Filed under View it read as an oddity, because it was one.
+    /// The palette still lists every tool, which is where a name you half
+    /// remember belongs.
+    ///
+    /// Arrange, Transform and Align share the Object menu as submenus: they are
+    /// groupings, not extra menus.
+    pub fn menu(self) -> Option<&'static str> {
         match self {
-            Group::File => "File",
-            Group::Edit => "Edit",
-            Group::Object | Group::Arrange | Group::Transform | Group::Align => "Object",
-            Group::View | Group::Tool => "View",
-            Group::Type => "Type",
-            Group::Layout => "Layout",
-            Group::Window => "Window",
+            Group::File => Some("File"),
+            Group::Edit => Some("Edit"),
+            Group::Object | Group::Arrange | Group::Transform | Group::Align => Some("Object"),
+            Group::View => Some("View"),
+            Group::Type => Some("Type"),
+            Group::Layout => Some("Layout"),
+            Group::Window => Some("Window"),
+            Group::Tool => None,
         }
     }
 }
@@ -661,7 +667,7 @@ mod tests {
         for menu in ["File", "Edit", "Layout", "Object", "Type", "View", "Window"] {
             let groups: Vec<Group> = Group::ALL
                 .into_iter()
-                .filter(|g| g.menu() == menu)
+                .filter(|g| g.menu() == Some(menu))
                 .filter(|g| all().iter().any(|a| a.group == *g))
                 .collect();
 
@@ -681,16 +687,27 @@ mod tests {
     }
 
     #[test]
-    fn a_submenu_belongs_to_a_menu_that_exists() {
-        // A group whose actions have nowhere to appear is a command nobody can
-        // reach, which is the failure the one-list rule exists to prevent.
-        for group in Group::ALL {
-            if all().iter().any(|a| a.group == group) {
-                assert!(
-                    !group.menu().is_empty(),
-                    "{group:?} has actions and no menu"
-                );
-            }
+    fn only_the_tools_are_missing_from_the_menu_bar() {
+        // A command with no menu is reachable only through the palette, which
+        // is fine for a tool — there is a strip of them and each has a key —
+        // and would be a command nobody can find for anything else. So the
+        // exception is named rather than allowed generally.
+        let homeless: Vec<Group> = Group::ALL
+            .into_iter()
+            .filter(|g| all().iter().any(|a| a.group == *g))
+            .filter(|g| g.menu().is_none())
+            .collect();
+        assert_eq!(homeless, vec![Group::Tool]);
+    }
+
+    #[test]
+    fn every_tool_is_still_in_the_palette() {
+        // Which is what makes leaving them out of the menus acceptable.
+        for tool in Tool::ALL {
+            assert!(
+                filtered("").iter().any(|a| a.run == Run::PickTool(tool)),
+                "{tool:?} is reachable from nowhere at all"
+            );
         }
     }
 
@@ -719,7 +736,7 @@ mod tests {
         let transformed = all().iter().filter(|a| a.group == Group::Transform).count();
         assert_eq!(arranged, 4, "forward, front, backward, back");
         assert_eq!(transformed, 4, "two flips and two rotations");
-        assert_eq!(Group::Arrange.menu(), "Object");
-        assert_eq!(Group::Transform.menu(), "Object");
+        assert_eq!(Group::Arrange.menu(), Some("Object"));
+        assert_eq!(Group::Transform.menu(), Some("Object"));
     }
 }

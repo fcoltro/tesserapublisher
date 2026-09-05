@@ -110,8 +110,9 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
 fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
     use crate::actions::{self, Group};
 
-    // Menu order, not group order: Align sits inside Object and Tool inside
-    // View, so the bar has six menus rather than eight groups.
+    // Menu order, not group order: Arrange, Transform and Align sit inside
+    // Object as submenus, and Tool has no menu at all — picking a tool is not
+    // a menu command in any layout tool.
     const MENUS: [&str; 7] = ["File", "Edit", "Layout", "Object", "Type", "View", "Window"];
 
     let mut chosen = None;
@@ -119,14 +120,14 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
         for menu in MENUS {
             let mut groups = Group::ALL
                 .into_iter()
-                .filter(|g| g.menu() == menu)
+                .filter(|g| g.menu() == Some(menu))
                 .peekable();
             if groups.peek().is_none() {
                 continue;
             }
             ui.menu_button(menu, |ui| {
                 let mut first = true;
-                for group in Group::ALL.into_iter().filter(|g| g.menu() == menu) {
+                for group in Group::ALL.into_iter().filter(|g| g.menu() == Some(menu)) {
                     let entries: Vec<_> =
                         actions::all().iter().filter(|a| a.group == group).collect();
                     if entries.is_empty() {

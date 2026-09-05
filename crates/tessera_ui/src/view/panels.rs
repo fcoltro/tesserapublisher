@@ -300,7 +300,16 @@ point",
     ui.add_space(Theme::SPACING_SM);
 
     let unit = state.prefs.unit;
-    let origin = frame.corners()[0];
+    // X and Y are the **reference point's** position, not the top-left corner's.
+    // That is what the nine-point proxy above is for, and what it means in
+    // InDesign: choose the centre and the fields read the centre. They were
+    // reading `corners()[0]` whatever the proxy said, so clicking it changed
+    // nothing and looked broken.
+    //
+    // Resolved where the frame really is, through its own transform, for the
+    // same reason `Command::TransformAbout` does: `bounds` says where a frame
+    // is in its own space and not where it sits on the page.
+    let origin = frame.transform.apply(state.anchor.in_rect(frame.bounds));
     let (mut x, mut y) = (origin.x, origin.y);
     let mut bounds = frame.bounds;
     let (was_w, was_h) = (bounds.width, bounds.height);
