@@ -253,10 +253,28 @@ impl Document {
     }
 
     /// The page plus its bleed.
+    ///
+    /// **No bleed at the fold.** A spread is imposed as one sheet, so there is
+    /// no trim between two facing pages and nothing to bleed past: the ink
+    /// simply continues across. Only a page that stands alone — the first, or
+    /// a last one with no partner — bleeds on all four sides.
     pub fn bleed_rect(&self, page: PageId) -> Option<DocRect> {
         let b = self.setup.bleed;
         let bounds = self.pages.get(page)?.bounds;
-        Some(outset_each(bounds, b.top, b.bottom, b.left, b.right))
+        let (left, right) = self.outer_edges(page, b.left, b.right);
+        Some(outset_each(bounds, b.top, b.bottom, left, right))
+    }
+
+    /// The left and right amounts a page actually gets, given its side.
+    ///
+    /// Shared by bleed and slug, which have the same reason to stop at a fold.
+    fn outer_edges(&self, page: PageId, left: f64, right: f64) -> (f64, f64) {
+        match self.page_side(page) {
+            // A verso's fold is on its right, a recto's on its left.
+            PageSide::Left => (left, 0.0),
+            PageSide::Right => (0.0, right),
+            PageSide::Single => (left, right),
+        }
     }
 
     /// The page plus its slug.
@@ -267,7 +285,10 @@ impl Document {
     pub fn slug_rect(&self, page: PageId) -> Option<DocRect> {
         let s = self.setup.slug;
         let bounds = self.pages.get(page)?.bounds;
-        Some(outset_each(bounds, s.top, s.bottom, s.left, s.right))
+        // Stops at a fold for the same reason the bleed does: there is no trim
+        // there to carry marks past.
+        let (left, right) = self.outer_edges(page, s.left, s.right);
+        Some(outset_each(bounds, s.top, s.bottom, left, right))
     }
 
     pub fn first_page_bounds(&self) -> DocRect {
@@ -2419,7 +2440,10 @@ mod tests {
         doc.add_page();
         doc.set_setup(DocumentSetup {
             bleed: Insets::uniform(TEN_MM),
-            ..DocumentSetup::default()
+            // From the document's own setup, not from `default()`: the latter
+            // would quietly turn facing pages off, which is most of what these
+            // tests are about.
+            ..doc.setup
         });
 
         let boxes: Vec<DocRect> = doc.page_ids().filter_map(|p| doc.bleed_rect(p)).collect();
@@ -2444,7 +2468,7 @@ mod tests {
         doc.set_setup(DocumentSetup {
             bleed: Insets::uniform(3.0),
             slug: Insets::uniform(TEN_MM),
-            ..DocumentSetup::default()
+            ..doc.setup
         });
 
         let boxes: Vec<DocRect> = doc.page_ids().filter_map(|p| doc.slug_rect(p)).collect();
@@ -2472,7 +2496,10 @@ mod tests {
 
         doc.set_setup(DocumentSetup {
             bleed: Insets::uniform(TEN_MM),
-            ..DocumentSetup::default()
+            // From the document's own setup, not from `default()`: the latter
+            // would quietly turn facing pages off, which is most of what these
+            // tests are about.
+            ..doc.setup
         });
 
         assert!(
@@ -2507,7 +2534,10 @@ mod tests {
         doc.add_page();
         doc.set_setup(DocumentSetup {
             bleed: Insets::uniform(TEN_MM),
-            ..DocumentSetup::default()
+            // From the document's own setup, not from `default()`: the latter
+            // would quietly turn facing pages off, which is most of what these
+            // tests are about.
+            ..doc.setup
         });
 
         let pair = doc.pages_of(doc.spread_order[1]);
@@ -2516,6 +2546,128 @@ mod tests {
         assert!(
             (b.x - (a.x + a.width)).abs() < 1e-9,
             "the fold has no gap: {a:?} then {b:?}"
+        );
+    }
+
+    // --- there is no bleed at a fold ----------------------------------------
+
+    #[test]
+    fn facing_pages_do_not_bleed_into_the_fold() {
+        // A spread is imposed as one sheet: there is no trim between two
+        // facing pages, so there is nothing to bleed past. The ink simply
+        // continues across.
+        let mut doc = Document::new();
+        doc.add_page();
+        doc.add_page();
+        doc.set_setup(DocumentSetup {
+            bleed: Insets::uniform(TEN_MM),
+            // From the document's own setup, not from `default()`: the latter
+            // would quietly turn facing pages off, which is most of what these
+            // tests are about.
+            ..doc.setup
+        });
+
+        let pair = doc.pages_of(doc.spread_order[1]);
+        let verso = doc.pages[pair[0]].bounds;
+        let recto = doc.pages[pair[1]].bounds;
+        let verso_bleed = doc.bleed_rect(pair[0]).expect("a bleed");
+        let recto_bleed = doc.bleed_rect(pair[1]).expect("a bleed");
+
+        assert!(
+            (verso_bleed.x + verso_bleed.width - (verso.x + verso.width)).abs() < 1e-9,
+            "the verso does not bleed past its own right edge, which is the fold"
+        );
+        assert!(
+            (recto_bleed.x - recto.x).abs() < 1e-9,
+            "and the recto does not bleed past its left edge"
+        );
+        assert!(
+            (verso.x - verso_bleed.x - TEN_MM).abs() < 1e-9,
+            "but it still bleeds on its outside edge"
+        );
+        assert!(
+            (recto_bleed.x + recto_bleed.width - (recto.x + recto.width) - TEN_MM).abs() < 1e-9,
+            "and so does the recto"
+        );
+    }
+
+    #[test]
+    fn a_page_that_stands_alone_bleeds_on_all_four_sides() {
+        // Page one, and any last page without a partner.
+        let mut doc = Document::new();
+        doc.add_page();
+        doc.set_setup(DocumentSetup {
+            bleed: Insets::uniform(TEN_MM),
+            // From the document's own setup, not from `default()`: the latter
+            // would quietly turn facing pages off, which is most of what these
+            // tests are about.
+            ..doc.setup
+        });
+
+        let first = doc.page_ids().next().expect("a page");
+        let bounds = doc.pages[first].bounds;
+        let bleed = doc.bleed_rect(first).expect("a bleed");
+
+        assert!((bounds.x - bleed.x - TEN_MM).abs() < 1e-9, "left");
+        assert!(
+            (bleed.x + bleed.width - (bounds.x + bounds.width) - TEN_MM).abs() < 1e-9,
+            "right"
+        );
+        assert!((bounds.y - bleed.y - TEN_MM).abs() < 1e-9, "top");
+        assert!(
+            (bleed.y + bleed.height - (bounds.y + bounds.height) - TEN_MM).abs() < 1e-9,
+            "bottom"
+        );
+    }
+
+    #[test]
+    fn a_slug_stops_at_a_fold_too() {
+        let mut doc = Document::new();
+        doc.add_page();
+        doc.add_page();
+        doc.set_setup(DocumentSetup {
+            slug: Insets::uniform(TEN_MM),
+            ..doc.setup
+        });
+
+        let pair = doc.pages_of(doc.spread_order[1]);
+        let verso = doc.pages[pair[0]].bounds;
+        let slug = doc.slug_rect(pair[0]).expect("a slug");
+        assert!(
+            (slug.x + slug.width - (verso.x + verso.width)).abs() < 1e-9,
+            "no slug at the fold"
+        );
+    }
+
+    #[test]
+    fn a_two_page_spread_bleeds_as_one_sheet() {
+        // The two bleed boxes, taken together, are the sheet: they meet at the
+        // fold with no gap and no overlap, and reach the bleed distance at
+        // either end.
+        let mut doc = Document::new();
+        doc.add_page();
+        doc.add_page();
+        doc.set_setup(DocumentSetup {
+            bleed: Insets::uniform(TEN_MM),
+            // From the document's own setup, not from `default()`: the latter
+            // would quietly turn facing pages off, which is most of what these
+            // tests are about.
+            ..doc.setup
+        });
+
+        let pair = doc.pages_of(doc.spread_order[1]);
+        let left = doc.bleed_rect(pair[0]).expect("a bleed");
+        let right = doc.bleed_rect(pair[1]).expect("a bleed");
+
+        assert!(
+            (right.x - (left.x + left.width)).abs() < 1e-9,
+            "they meet exactly: {left:?} then {right:?}"
+        );
+        let sheet = left.width + right.width;
+        let trim = doc.pages[pair[0]].bounds.width * 2.0;
+        assert!(
+            (sheet - trim - TEN_MM * 2.0).abs() < 1e-9,
+            "and the sheet is the two pages plus one bleed at each end"
         );
     }
 }
