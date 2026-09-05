@@ -5,7 +5,10 @@ use tessera_color::Color;
 use tessera_document::ids::StoryId;
 use tessera_document::nodes::{Orientation, PagePreset};
 use tessera_geometry::{Anchor, Unit};
-use tessera_text::story::{Alignment, CharacterFormat, ParagraphFormat};
+use tessera_text::story::{
+    Alignment, CharacterFormat, CharacterStyle, CharacterStyleId, ParagraphFormat,
+    ParagraphStyle, ParagraphStyleId,
+};
 
 use crate::app::TesseraApp;
 use crate::command::{Command, apply};
@@ -919,6 +922,8 @@ fn text_section(
     // A control that sets a value nothing draws is worse than one that is
     // absent, because it makes the software look broken rather than
     // unfinished.
+
+    style_rows(ui, state, story, target);
 }
 
 /// The font menu, with the faces this machine lacks marked.
@@ -1250,6 +1255,233 @@ pub fn status_bar(ui: &mut Ui, state: &mut TesseraApp) {
             );
         });
     });
+}
+
+/// The two style pickers, and the way a style comes into existence.
+///
+/// A style is defined *from* what the panel is currently showing. That is the
+/// only route that needs no dialog, and it is how a designer actually works:
+/// set a paragraph until it looks right, then name it.
+fn style_rows(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    story: StoryId,
+    target: std::ops::Range<usize>,
+) {
+    let Some(current) = state.active().document().story(story).cloned() else {
+        return;
+    };
+    let (character_style, _) = current.common_character_style(target.clone());
+    let (paragraph_style, _) = current.common_paragraph_style(target.clone());
+
+    let characters: Vec<(CharacterStyleId, String)> = state
+        .active()
+        .document()
+        .character_styles
+        .iter()
+        .map(|(id, s)| (id, s.name.clone()))
+        .collect();
+    let paragraphs: Vec<(ParagraphStyleId, String)> = state
+        .active()
+        .document()
+        .paragraph_styles
+        .iter()
+        .map(|(id, s)| (id, s.name.clone()))
+        .collect();
+
+    ui.add_space(Theme::SPACING_MD);
+
+    // --- paragraph styles
+
+    let mut attach_paragraph = None;
+    let mut define_paragraph = false;
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::TEXT_MUTED, "Paragraph style");
+        let label = paragraph_style
+            .and_then(|id| paragraphs.iter().find(|(p, _)| *p == id))
+            .map_or("None", |(_, name)| name.as_str())
+            .to_string();
+        egui::ComboBox::from_id_salt("paragraph-style")
+            .selected_text(label)
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(paragraph_style.is_none(), "None")
+                    .clicked()
+                {
+                    attach_paragraph = Some(None);
+                }
+                for (id, name) in &paragraphs {
+                    if ui
+                        .selectable_label(paragraph_style == Some(*id), name)
+                        .clicked()
+                    {
+                        attach_paragraph = Some(Some(*id));
+                    }
+                }
+            });
+        define_paragraph = ui
+            .button("New")
+            .on_hover_text("Define a paragraph style from what is shown")
+            .clicked();
+    });
+
+    if let Some(style) = attach_paragraph {
+        apply(
+            state,
+            Command::SetParagraphStyleOf {
+                story,
+                range: target.clone(),
+                style,
+            },
+        );
+    }
+    if define_paragraph {
+        let mut format = current.common_paragraph_format(target.clone());
+        // The character half goes inside the paragraph format, which is where
+        // the cascade reads it from.
+        format.character = current.common_format(target.clone(), state.active().document());
+        apply(
+            state,
+            Command::DefineParagraphStyle(ParagraphStyle {
+                name: format!("Paragraph style {}", paragraphs.len() + 1),
+                format,
+            }),
+        );
+    }
+
+    // The style's own fields, shown only while one is selected. Editing them
+    // changes every paragraph drawn through the style, which is the whole
+    // reason a style exists rather than a set of overrides.
+    if let Some(id) = paragraph_style
+        && let Some(existing) = state
+            .active()
+            .document()
+            .paragraph_styles
+            .get(id)
+            .cloned()
+    {
+        let mut edited = existing.clone();
+        ui.indent("paragraph-style-fields", |ui| {
+            ui.horizontal(|ui| {
+                ui.colored_label(Theme::TEXT_MUTED, "Name");
+                ui.text_edit_singleline(&mut edited.name);
+            });
+            if let Some(size) = optional_number(
+                ui,
+                "Style size",
+                Some(edited.format.character.size.unwrap_or(12.0)),
+                0.25,
+                1.0..=1440.0,
+                " pt",
+            ) {
+                edited.format.character.size = Some(size);
+            }
+            ui.horizontal(|ui| {
+                ui.colored_label(Theme::TEXT_MUTED, "Style align");
+                for (label, alignment) in [
+                    ("Left", Alignment::Left),
+                    ("Centre", Alignment::Centre),
+                    ("Right", Alignment::Right),
+                    ("Justify", Alignment::Justify),
+                ] {
+                    if ui
+                        .selectable_label(edited.format.alignment == Some(alignment), label)
+                        .clicked()
+                    {
+                        edited.format.alignment = Some(alignment);
+                    }
+                }
+            });
+        });
+        if edited != existing {
+            apply(state, Command::EditParagraphStyle { id, style: edited });
+        }
+    }
+
+    // --- character styles
+
+    let mut attach_character = None;
+    let mut define_character = false;
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::TEXT_MUTED, "Character style");
+        let label = character_style
+            .and_then(|id| characters.iter().find(|(c, _)| *c == id))
+            .map_or("None", |(_, name)| name.as_str())
+            .to_string();
+        egui::ComboBox::from_id_salt("character-style")
+            .selected_text(label)
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(character_style.is_none(), "None")
+                    .clicked()
+                {
+                    attach_character = Some(None);
+                }
+                for (id, name) in &characters {
+                    if ui
+                        .selectable_label(character_style == Some(*id), name)
+                        .clicked()
+                    {
+                        attach_character = Some(Some(*id));
+                    }
+                }
+            });
+        define_character = ui
+            .button("New")
+            .on_hover_text("Define a character style from what is shown")
+            .clicked();
+    });
+
+    if let Some(style) = attach_character {
+        apply(
+            state,
+            Command::SetCharacterStyleOf {
+                story,
+                range: target.clone(),
+                style,
+            },
+        );
+    }
+    if define_character {
+        let format = current.common_format(target.clone(), state.active().document());
+        apply(
+            state,
+            Command::DefineCharacterStyle(CharacterStyle {
+                name: format!("Character style {}", characters.len() + 1),
+                format,
+            }),
+        );
+    }
+
+    if let Some(id) = character_style
+        && let Some(existing) = state
+            .active()
+            .document()
+            .character_styles
+            .get(id)
+            .cloned()
+    {
+        let mut edited = existing.clone();
+        ui.indent("character-style-fields", |ui| {
+            ui.horizontal(|ui| {
+                ui.colored_label(Theme::TEXT_MUTED, "Name");
+                ui.text_edit_singleline(&mut edited.name);
+            });
+            if let Some(size) = optional_number(
+                ui,
+                "Style size",
+                Some(edited.format.size.unwrap_or(12.0)),
+                0.25,
+                1.0..=1440.0,
+                " pt",
+            ) {
+                edited.format.size = Some(size);
+            }
+        });
+        if edited != existing {
+            apply(state, Command::EditCharacterStyle { id, style: edited });
+        }
+    }
 }
 
 #[cfg(test)]

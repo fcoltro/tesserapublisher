@@ -14,7 +14,10 @@ use tessera_document::document::{Document, ZMove};
 use tessera_document::ids::{FrameId, StoryId};
 use tessera_document::nodes::{Frame, FrameKind};
 use tessera_geometry::{DocRect, Transform};
-use tessera_text::story::{CharacterFormat, ParagraphFormat, Story};
+use tessera_text::story::{
+    CharacterFormat, CharacterStyle, CharacterStyleId, ParagraphFormat, ParagraphStyle,
+    ParagraphStyleId, Story,
+};
 
 use crate::app::{Clipboard, TesseraApp};
 
@@ -67,6 +70,44 @@ pub enum Command {
         story: StoryId,
         range: std::ops::Range<usize>,
         format: ParagraphFormat,
+    },
+
+    /// Define a named style on the document.
+    ///
+    /// Defining and applying are separate commands, and separate undo entries,
+    /// because they are separate acts: a style can exist before anything uses
+    /// it, and deleting the text must not delete the style.
+    DefineCharacterStyle(CharacterStyle),
+    DefineParagraphStyle(ParagraphStyle),
+
+    /// Change a named style, and with it everything drawn through it.
+    ///
+    /// The whole struct travels, so one visit to the style's fields is one
+    /// undo entry.
+    EditCharacterStyle {
+        id: CharacterStyleId,
+        style: CharacterStyle,
+    },
+    EditParagraphStyle {
+        id: ParagraphStyleId,
+        style: ParagraphStyle,
+    },
+
+    /// Attach a named style to a range, or detach it with `None`.
+    ///
+    /// Separate from `SetCharacterFormat` because a style and an override are
+    /// different things: attaching a style must not discard the overrides a
+    /// run already carries, which is why this sets `run.style` and leaves
+    /// `run.local` alone.
+    SetCharacterStyleOf {
+        story: StoryId,
+        range: std::ops::Range<usize>,
+        style: Option<CharacterStyleId>,
+    },
+    SetParagraphStyleOf {
+        story: StoryId,
+        range: std::ops::Range<usize>,
+        style: Option<ParagraphStyleId>,
     },
 
     /// Move every selected frame by the same offset.
@@ -373,6 +414,52 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             }
             if let Some(buffer) = editing_buffer_for(state, story) {
                 buffer.apply_paragraph_format(range, &format);
+            }
+        }
+
+        Command::DefineCharacterStyle(style) => {
+            state.active_mut().document_mut().add_character_style(style);
+        }
+
+        Command::DefineParagraphStyle(style) => {
+            state.active_mut().document_mut().add_paragraph_style(style);
+        }
+
+        Command::EditCharacterStyle { id, style } => {
+            if let Some(existing) = state.active_mut().document_mut().character_style_mut(id) {
+                *existing = style;
+            }
+        }
+
+        Command::EditParagraphStyle { id, style } => {
+            if let Some(existing) = state.active_mut().document_mut().paragraph_style_mut(id) {
+                *existing = style;
+            }
+        }
+
+        Command::SetCharacterStyleOf {
+            story,
+            range,
+            style,
+        } => {
+            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
+                s.set_character_style(range.clone(), style);
+            }
+            if let Some(buffer) = editing_buffer_for(state, story) {
+                buffer.set_character_style(range, style);
+            }
+        }
+
+        Command::SetParagraphStyleOf {
+            story,
+            range,
+            style,
+        } => {
+            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
+                s.set_paragraph_style(range.clone(), style);
+            }
+            if let Some(buffer) = editing_buffer_for(state, story) {
+                buffer.set_paragraph_style(range, style);
             }
         }
 
@@ -2375,6 +2462,245 @@ mod tests {
             "the other frame's formatting must not land here"
         );
         assert!(buffer.story().runs_are_sound());
+    }
+
+
+    // --- named styles ----------------------------------------------------
+
+    #[test]
+    fn a_paragraph_style_applied_to_two_paragraphs_carries_a_later_edit_to_both() {
+        // Milestone 2's sentence, as a test: define a paragraph style, apply
+        // it to two paragraphs, change the style's size, and watch both
+        // follow. Nothing about either paragraph changes when the style does,
+        // which is exactly why it is worth pinning.
+        use tessera_text::story::{CharacterFormat, ParagraphStyle};
+
+        let (mut state, _, story) = a_text_frame("first\nsecond\nthird");
+
+        apply(
+            &mut state,
+            Command::DefineParagraphStyle(ParagraphStyle {
+                name: "Body".to_string(),
+                format: ParagraphFormat {
+                    character: CharacterFormat {
+                        size: Some(10.0),
+                        ..CharacterFormat::default()
+                    },
+                    ..ParagraphFormat::default()
+                },
+            }),
+        );
+        let id = state
+            .active()
+            .document()
+            .paragraph_styles
+            .keys()
+            .next()
+            .expect("the style exists");
+
+        // The first two paragraphs, not the third.
+        apply(
+            &mut state,
+            Command::SetParagraphStyleOf {
+                story,
+                range: 0..7,
+                style: Some(id),
+            },
+        );
+
+        let resolved = |state: &TesseraApp| -> Vec<Option<f32>> {
+            let doc = state.active().document();
+            let s = doc.story(story).expect("story");
+            s.paragraphs
+                .iter()
+                .map(|p| {
+                    // The run *covering* the paragraph's start. One run can
+                    // span every paragraph, which is the case here: nothing
+                    // has applied character formatting, so there is exactly
+                    // one run and three paragraphs.
+                    let run = s
+                        .runs
+                        .iter()
+                        .find(|r| r.range.contains(&p.range.start))
+                        .expect("every paragraph start is inside a run");
+                    s.resolve_run(run, doc).size
+                })
+                .collect()
+        };
+        // Two spans, not three: the first two paragraphs now say exactly the
+        // same thing, so `merge_equal_neighbours` folded them into one span.
+        assert_eq!(
+            resolved(&state),
+            vec![Some(10.0), Some(12.0)],
+            "the styled span, then the paragraph on the document default"
+        );
+
+        // Change the style, not the text.
+        apply(
+            &mut state,
+            Command::EditParagraphStyle {
+                id,
+                style: ParagraphStyle {
+                    name: "Body".to_string(),
+                    format: ParagraphFormat {
+                        character: CharacterFormat {
+                            size: Some(24.0),
+                            ..CharacterFormat::default()
+                        },
+                        ..ParagraphFormat::default()
+                    },
+                },
+            },
+        );
+
+        assert_eq!(
+            resolved(&state),
+            vec![Some(24.0), Some(12.0)],
+            "the styled span followed, and the third paragraph did not"
+        );
+    }
+
+    #[test]
+    fn editing_a_style_bumps_the_revision() {
+        // No run and no paragraph changes, and yet what they draw does. Every
+        // cache downstream is keyed on the revision, so a style edit that did
+        // not move it would appear only when something else did — the bug page
+        // setup had.
+        use tessera_text::story::CharacterStyle;
+
+        let mut state = TesseraApp::headless();
+        apply(
+            &mut state,
+            Command::DefineCharacterStyle(CharacterStyle {
+                name: "Lead".to_string(),
+                format: CharacterFormat::default(),
+            }),
+        );
+        let id = state
+            .active()
+            .document()
+            .character_styles
+            .keys()
+            .next()
+            .expect("style");
+
+        let before = state.active().document().revision();
+        apply(
+            &mut state,
+            Command::EditCharacterStyle {
+                id,
+                style: CharacterStyle {
+                    name: "Lead".to_string(),
+                    format: CharacterFormat {
+                        size: Some(30.0),
+                        ..CharacterFormat::default()
+                    },
+                },
+            },
+        );
+        assert!(state.active().document().revision() > before);
+    }
+
+    #[test]
+    fn attaching_a_style_keeps_the_overrides_the_text_already_had() {
+        // A style is the floor a run sits on. Applying one must not discard a
+        // size somebody set by hand.
+        use tessera_text::story::CharacterStyle;
+
+        let (mut state, _, story) = a_text_frame("abcd");
+        apply(
+            &mut state,
+            Command::SetCharacterFormat {
+                story,
+                range: 0..4,
+                format: CharacterFormat {
+                    size: Some(30.0),
+                    ..CharacterFormat::default()
+                },
+            },
+        );
+        apply(
+            &mut state,
+            Command::DefineCharacterStyle(CharacterStyle {
+                name: "Lead".to_string(),
+                format: CharacterFormat {
+                    size: Some(9.0),
+                    ..CharacterFormat::default()
+                },
+            }),
+        );
+        let id = state
+            .active()
+            .document()
+            .character_styles
+            .keys()
+            .next()
+            .expect("style");
+        apply(
+            &mut state,
+            Command::SetCharacterStyleOf {
+                story,
+                range: 0..4,
+                style: Some(id),
+            },
+        );
+
+        let s = state.active().document().story(story).expect("story");
+        assert_eq!(s.runs[0].style, Some(id));
+        assert_eq!(
+            s.runs[0].local.size,
+            Some(30.0),
+            "the override survives the style"
+        );
+    }
+
+    #[test]
+    fn defining_a_style_and_applying_it_are_two_undo_entries() {
+        // Two acts. A style can exist before anything uses it, and undoing the
+        // application must not delete the style.
+        use tessera_text::story::CharacterStyle;
+
+        let (mut state, _, story) = a_text_frame("abcd");
+        apply(
+            &mut state,
+            Command::DefineCharacterStyle(CharacterStyle {
+                name: "Lead".to_string(),
+                format: CharacterFormat::default(),
+            }),
+        );
+        let id = state
+            .active()
+            .document()
+            .character_styles
+            .keys()
+            .next()
+            .expect("style");
+        apply(
+            &mut state,
+            Command::SetCharacterStyleOf {
+                story,
+                range: 0..4,
+                style: Some(id),
+            },
+        );
+
+        apply(&mut state, Command::Undo);
+
+        assert_eq!(
+            state.active().document().character_styles.len(),
+            1,
+            "undoing the application must not delete the style"
+        );
+        assert_eq!(
+            state
+                .active()
+                .document()
+                .story(story)
+                .expect("story")
+                .runs[0]
+                .style,
+            None
+        );
     }
 
 }

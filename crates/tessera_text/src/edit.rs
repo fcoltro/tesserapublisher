@@ -119,6 +119,24 @@ impl EditBuffer {
         self.story.apply_paragraph_format(range, format);
     }
 
+    /// Attach a named character style to a range of the buffer's own story.
+    pub fn set_character_style(
+        &mut self,
+        range: Range<usize>,
+        style: Option<crate::story::CharacterStyleId>,
+    ) {
+        self.story.set_character_style(range, style);
+    }
+
+    /// As above, for the paragraphs a range touches.
+    pub fn set_paragraph_style(
+        &mut self,
+        range: Range<usize>,
+        style: Option<crate::story::ParagraphStyleId>,
+    ) {
+        self.story.set_paragraph_style(range, style);
+    }
+
     pub fn insert(&mut self, text: &str) {
         self.ime_preedit = None;
         self.delete_selection();

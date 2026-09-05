@@ -147,9 +147,14 @@ pub struct CharacterStyle {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ParagraphStyle {
     pub name: String,
+    /// Including the character formatting the paragraph imposes, which lives in
+    /// [`ParagraphFormat::character`].
+    ///
+    /// There was briefly a second `character` field here as well. Nothing read
+    /// it: [`Story::resolve_run`] folds in `format.character`, so a style whose
+    /// size was set on the other field silently did nothing. One place or the
+    /// cascade cannot say which wins.
     pub format: ParagraphFormat,
-    /// Character formatting the paragraph imposes before any run speaks.
-    pub character: CharacterFormat,
 }
 
 /// Where the named styles live.
@@ -501,6 +506,116 @@ impl Story {
         self.merge_equal_neighbours();
     }
 
+    /// Attach a named character style to every run the range covers.
+    ///
+    /// `None` detaches. The runs' own overrides are left alone: a style is the
+    /// floor a run sits on, so applying one must not silently discard the size
+    /// somebody set by hand — InDesign shows those as the style "plus"
+    /// overrides, and clearing them is a separate act.
+    pub fn set_character_style(
+        &mut self,
+        range: Range<usize>,
+        style: Option<CharacterStyleId>,
+    ) {
+        let start = range.start.min(self.text.len());
+        let end = range.end.min(self.text.len());
+        if start >= end {
+            return;
+        }
+        split_span_at(&mut self.runs, start, |r| &mut r.range);
+        split_span_at(&mut self.runs, end, |r| &mut r.range);
+        for run in &mut self.runs {
+            if run.range.start >= start && run.range.end <= end {
+                run.style = style;
+            }
+        }
+        self.merge_equal_neighbours();
+    }
+
+    /// Attach a named paragraph style to every paragraph the range touches.
+    ///
+    /// Widened to whole paragraphs, the same way the formatting is.
+    pub fn set_paragraph_style(
+        &mut self,
+        range: Range<usize>,
+        style: Option<ParagraphStyleId>,
+    ) {
+        if self.text.is_empty() {
+            return;
+        }
+        let start = range.start.min(self.text.len());
+        let end = range.end.min(self.text.len()).max(start);
+        let bounds = self.paragraph_bounds(start..end);
+
+        split_span_at(&mut self.paragraphs, bounds.start, |p| &mut p.range);
+        split_span_at(&mut self.paragraphs, bounds.end, |p| &mut p.range);
+        // See `apply_paragraph_format`: a run must not straddle a paragraph
+        // boundary, or its text on the far side takes the wrong style.
+        split_span_at(&mut self.runs, bounds.start, |r| &mut r.range);
+        split_span_at(&mut self.runs, bounds.end, |r| &mut r.range);
+        for para in &mut self.paragraphs {
+            if para.range.start >= bounds.start && para.range.end <= bounds.end {
+                para.style = style;
+            }
+        }
+        self.merge_equal_neighbours();
+    }
+
+    /// The named character style every run in the range shares, and whether
+    /// they all agree.
+    ///
+    /// `(None, true)` means every run is unstyled; `(_, false)` means they
+    /// differ and the picker has nothing single to show.
+    pub fn common_character_style(
+        &self,
+        range: Range<usize>,
+    ) -> (Option<CharacterStyleId>, bool) {
+        let mut runs = if range.start >= range.end {
+            self.runs
+                .iter()
+                .rev()
+                .find(|r| r.range.start < range.start)
+                .or_else(|| self.runs.first())
+                .into_iter()
+                .collect::<Vec<_>>()
+                .into_iter()
+        } else {
+            self.runs
+                .iter()
+                .filter(|r| r.range.start < range.end && range.start < r.range.end)
+                .collect::<Vec<_>>()
+                .into_iter()
+        };
+        let Some(first) = runs.next() else {
+            return (None, true);
+        };
+        let agree = runs.all(|r| r.style == first.style);
+        (first.style.filter(|_| agree), agree)
+    }
+
+    /// As above, for the paragraphs a range touches.
+    pub fn common_paragraph_style(
+        &self,
+        range: Range<usize>,
+    ) -> (Option<ParagraphStyleId>, bool) {
+        if self.text.is_empty() {
+            return (None, true);
+        }
+        let start = range.start.min(self.text.len());
+        let end = range.end.min(self.text.len()).max(start);
+        let bounds = self.paragraph_bounds(start..end);
+
+        let mut touched = self
+            .paragraphs
+            .iter()
+            .filter(|p| p.range.start < bounds.end && bounds.start < p.range.end);
+        let Some(first) = touched.next() else {
+            return (None, true);
+        };
+        let agree = touched.all(|p| p.style == first.style);
+        (first.style.filter(|_| agree), agree)
+    }
+
     /// Merge `format` into every paragraph the range touches.
     ///
     /// The range is first widened to whole paragraphs. `paragraphs` is a list
@@ -518,6 +633,13 @@ impl Story {
 
         split_span_at(&mut self.paragraphs, bounds.start, |p| &mut p.range);
         split_span_at(&mut self.paragraphs, bounds.end, |p| &mut p.range);
+        // And the runs, at the same places. `resolve_run` reads the paragraph
+        // holding a run's *start*, so a run straddling this boundary would
+        // take this paragraph's formatting for text in the next one — styling
+        // one paragraph would restyle its neighbour. Keeping runs inside
+        // paragraph spans makes that impossible rather than merely unlikely.
+        split_span_at(&mut self.runs, bounds.start, |r| &mut r.range);
+        split_span_at(&mut self.runs, bounds.end, |r| &mut r.range);
 
         for para in &mut self.paragraphs {
             if para.range.start >= bounds.start && para.range.end <= bounds.end {
@@ -655,11 +777,21 @@ impl Story {
     }
 
     /// Fold together adjacent runs that would draw the same.
+    ///
+    /// Two runs that meet **on a paragraph boundary** are left apart even when
+    /// they say the same thing, because merging them would recreate a run
+    /// straddling two paragraphs — and `resolve_run` reads only the paragraph
+    /// a run starts in, so the far half would take the near half's paragraph
+    /// formatting. The paragraph mutators split runs at those boundaries for
+    /// exactly this reason; folding them back would undo it in the same call.
     pub fn merge_equal_neighbours(&mut self) {
+        let paragraph_edges: Vec<usize> = self.paragraphs.iter().map(|p| p.range.start).collect();
+
         let mut merged: Vec<Run> = Vec::with_capacity(self.runs.len());
         for run in std::mem::take(&mut self.runs) {
+            let on_edge = paragraph_edges.contains(&run.range.start);
             match merged.last_mut() {
-                Some(previous) if previous.same_formatting(&run) => {
+                Some(previous) if !on_edge && previous.same_formatting(&run) => {
                     previous.range.end = run.range.end;
                 }
                 _ => merged.push(run),
@@ -1445,6 +1577,133 @@ mod run_tests {
                 .alignment,
             Some(Alignment::Centre)
         );
+    }
+
+
+    // --- attaching named styles -----------------------------------------
+
+    #[test]
+    fn a_character_style_attaches_to_the_range_and_splits_the_runs() {
+        let mut story = Story::new("the quick brown fox");
+        let id = CharacterStyleId::default();
+        story.set_character_style(4..9, Some(id));
+
+        assert!(story.runs_are_sound());
+        assert_eq!(story.runs.len(), 3);
+        assert_eq!(story.runs[1].style, Some(id));
+        assert_eq!(story.runs[0].style, None);
+    }
+
+    #[test]
+    fn attaching_a_style_keeps_the_overrides_a_run_already_had() {
+        // A style is the floor a run sits on. Applying one must not discard a
+        // size somebody set by hand.
+        let mut story = Story::new("abcd");
+        story.apply_character_format(0..4, &sized(30.0));
+        story.set_character_style(0..4, Some(CharacterStyleId::default()));
+
+        assert_eq!(story.runs[0].local.size, Some(30.0));
+    }
+
+    #[test]
+    fn detaching_a_style_leaves_the_text_where_it_was() {
+        let mut story = Story::new("abcd");
+        let id = CharacterStyleId::default();
+        story.set_character_style(0..4, Some(id));
+        story.set_character_style(0..4, None);
+
+        assert_eq!(story.runs.len(), 1);
+        assert_eq!(story.runs[0].style, None);
+        assert!(story.runs_are_sound());
+    }
+
+    #[test]
+    fn a_paragraph_style_takes_the_whole_paragraph() {
+        let mut story = Story::new("one\ntwo\nthree");
+        let id = ParagraphStyleId::default();
+        // Inside the second paragraph, so only the second is styled — and it
+        // is styled whole, including the newline that ends it.
+        story.set_paragraph_style(5..6, Some(id));
+
+        assert_eq!(story.paragraphs.len(), 3, "{:?}", story.paragraphs);
+        assert_eq!(story.paragraphs[1].range, 4..8);
+        assert_eq!(story.paragraphs[1].style, Some(id));
+        assert_eq!(story.paragraphs[0].style, None);
+        assert_eq!(story.paragraphs[2].style, None);
+        assert!(story.runs_are_sound());
+    }
+
+    #[test]
+    fn a_picker_shows_a_style_only_when_the_runs_agree() {
+        let mut story = Story::new("abcd");
+        let id = CharacterStyleId::default();
+        story.set_character_style(0..2, Some(id));
+
+        assert_eq!(story.common_character_style(0..2), (Some(id), true));
+        assert_eq!(
+            story.common_character_style(0..4),
+            (None, false),
+            "styled and unstyled have nothing single to show"
+        );
+        assert_eq!(story.common_character_style(2..4), (None, true));
+    }
+
+    #[test]
+    fn a_picker_over_an_empty_story_shows_no_style_and_agrees() {
+        assert_eq!(Story::new("").common_character_style(0..0), (None, true));
+        assert_eq!(Story::new("").common_paragraph_style(0..0), (None, true));
+    }
+
+    #[test]
+    fn a_caret_reads_the_style_typing_there_will_join() {
+        let mut story = Story::new("abcd");
+        let id = CharacterStyleId::default();
+        story.set_character_style(0..2, Some(id));
+
+        assert_eq!(story.common_character_style(2..2), (Some(id), true));
+        assert_eq!(story.common_character_style(3..3), (None, true));
+    }
+
+
+    #[test]
+    fn a_run_never_straddles_a_paragraph_boundary() {
+        // `resolve_run` reads the paragraph a run *starts* in. A run spanning
+        // two paragraphs would therefore take the first one's formatting for
+        // text in the second, so styling one paragraph would restyle its
+        // neighbour.
+        let mut story = Story::new("one\ntwo\nthree");
+        assert_eq!(story.runs.len(), 1, "one run to begin with");
+
+        story.set_paragraph_style(0..1, Some(ParagraphStyleId::default()));
+
+        assert!(story.runs_are_sound());
+        for run in &story.runs {
+            let para = story
+                .paragraphs
+                .iter()
+                .find(|p| p.range.contains(&run.range.start))
+                .expect("a run starts inside a paragraph");
+            assert!(
+                run.range.end <= para.range.end,
+                "run {:?} leaves paragraph {:?}",
+                run.range,
+                para.range
+            );
+        }
+    }
+
+    #[test]
+    fn styling_one_paragraph_leaves_the_next_one_alone() {
+        let styles = right_aligned_style();
+        let mut story = Story::new("one\ntwo");
+        story.set_paragraph_style(0..1, Some(ParagraphStyleId::default()));
+
+        let resolved: Vec<Option<Alignment>> = story
+            .paragraphs
+            .iter()
+            .map(|p| story.resolve_paragraph(p, &styles).alignment)
+            .collect();
+        assert_eq!(resolved, vec![Some(Alignment::Right), None]);
     }
 
     proptest! {

@@ -321,6 +321,35 @@ impl Document {
         self.stories.get(id)
     }
 
+    /// Define a named character style and return its id.
+    pub fn add_character_style(&mut self, style: CharacterStyle) -> CharacterStyleId {
+        self.revision += 1;
+        self.character_styles.insert(style)
+    }
+
+    /// Define a named paragraph style and return its id.
+    pub fn add_paragraph_style(&mut self, style: ParagraphStyle) -> ParagraphStyleId {
+        self.revision += 1;
+        self.paragraph_styles.insert(style)
+    }
+
+    /// Bumps the revision, because changing a style changes every run using it.
+    ///
+    /// This is the one mutation whose effect is entirely indirect: no run and
+    /// no paragraph changes, and yet what they draw does. Anything that
+    /// memoises on the document has to see it, which is why the bump is here
+    /// rather than left to the caller.
+    pub fn character_style_mut(&mut self, id: CharacterStyleId) -> Option<&mut CharacterStyle> {
+        self.revision += 1;
+        self.character_styles.get_mut(id)
+    }
+
+    /// As above, for a paragraph style.
+    pub fn paragraph_style_mut(&mut self, id: ParagraphStyleId) -> Option<&mut ParagraphStyle> {
+        self.revision += 1;
+        self.paragraph_styles.get_mut(id)
+    }
+
     /// Bumps the revision on the assumption the caller mutates.
     pub fn story_mut(&mut self, id: StoryId) -> Option<&mut Story> {
         self.revision += 1;
