@@ -949,11 +949,14 @@ fn show_cursor(ui: &Ui, response: &egui::Response, rect: Rect, state: &TesseraAp
 
     ui.ctx().set_cursor_icon(egui::CursorIcon::None);
     let cursor = canvas_cursor(ui, rect, state, pos);
-    // Inverted against the background: the page is white, the pasteboard is
-    // not, and those are the only two things the cursor is ever drawn on.
+    // Inverted against the background: a page is white, the pasteboard is not,
+    // and those are the only two things the cursor is ever drawn on. **Any**
+    // page — asking only the first was right while there was only one, and
+    // turned the cursor white on the white page of every spread below it.
     let on_light = state
-        .first_page_bounds()
-        .contains(doc_pos(state, rect, pos));
+        .active()
+        .document()
+        .on_a_page(doc_pos(state, rect, pos));
     crate::cursor::paint(&ui.painter_at(rect), pos, cursor, on_light);
 }
 

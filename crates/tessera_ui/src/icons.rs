@@ -12,7 +12,7 @@
 //! `ATTRIBUTION.md`.
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke};
 use kurbo::{BezPath, PathEl};
@@ -462,6 +462,15 @@ impl Icon {
 /// draws a dozen.
 static GEOMETRY: OnceLock<HashMap<Icon, Vec<BezPath>>> = OnceLock::new();
 
+/// Icons that were not in [`ALL`], parsed when first asked for.
+///
+/// The safety net for the bug this file already had: an icon missing from
+/// `ALL` used to draw nothing at all, silently, and the tests iterate `ALL` so
+/// they could not see it either. Parsing on demand costs one parse per icon
+/// for the life of the process and turns an invisible button into a correct
+/// one.
+static STRAGGLERS: Mutex<Option<HashMap<Icon, &'static [BezPath]>>> = Mutex::new(None);
+
 impl Icon {
     /// This icon's outlines, in the 24×24 Lucide grid.
     pub fn geometry(self) -> &'static [BezPath] {
@@ -490,7 +499,25 @@ impl Icon {
             })
             .get(&self)
             .map(Vec::as_slice)
-            .unwrap_or_default()
+            .unwrap_or_else(|| self.parsed_late())
+    }
+
+    /// Geometry for an icon that was left out of [`ALL`].
+    ///
+    /// Parsed once and kept, so forgetting the list costs a first draw rather
+    /// than the icon. `no_icon_is_missing_from_all` says it should never come
+    /// to this.
+    fn parsed_late(self) -> &'static [BezPath] {
+        let mut cache = STRAGGLERS.lock().expect("the icon cache is not poisoned");
+        let cache = cache.get_or_insert_with(HashMap::new);
+        cache.entry(self).or_insert_with(|| {
+            let parsed: Vec<BezPath> = self
+                .paths()
+                .iter()
+                .filter_map(|data| BezPath::from_svg(data).ok())
+                .collect();
+            Box::leak(parsed.into_boxed_slice())
+        })
     }
 }
 
@@ -565,7 +592,15 @@ pub fn paint_rotated(
 }
 
 /// Every icon, for exhaustive tests and for building a palette.
-pub const ALL: [Icon; 31] = [
+/// Every icon, which is what the geometry cache is built from.
+///
+/// **An icon missing from this list draws nothing.** Seventeen were once, and
+/// the tests could not see it either — they iterate this list, so an icon
+/// absent from it was absent from them as well. `geometry` now parses a missing
+/// icon rather than returning nothing, so the cost of forgetting is a slower
+/// first draw instead of an invisible button; this list is the fast path, not
+/// the only one.
+pub const ALL: [Icon; 48] = [
     Icon::Select,
     Icon::Rectangle,
     Icon::Ellipse,
@@ -592,6 +627,23 @@ pub const ALL: [Icon; 31] = [
     Icon::FlipVertical,
     Icon::RotateCw,
     Icon::RotateCcw,
+    Icon::Bold,
+    Icon::Italic,
+    Icon::AlignJustify,
+    Icon::Palette,
+    Icon::Pilcrow,
+    Icon::CaseSensitive,
+    Icon::TypeSize,
+    Icon::Plus,
+    Icon::Duplicate,
+    Icon::Trash,
+    Icon::ChevronLeft,
+    Icon::ChevronRight,
+    Icon::Layers,
+    Icon::Eye,
+    Icon::EyeOff,
+    Icon::Lock,
+    Icon::Unlock,
     Icon::Swap,
     Icon::NoFill,
     Icon::ZoomIn,
@@ -728,5 +780,59 @@ mod tests {
             .bounding_box();
         assert!((b.width() - 20.0).abs() < 0.5, "width was {}", b.width());
         assert!((b.height() - 20.0).abs() < 0.5, "height was {}", b.height());
+    }
+
+    #[test]
+    fn no_icon_is_missing_from_all() {
+        // Seventeen were, and nothing noticed: `ALL` feeds the geometry cache
+        // *and* every test in this file, so an icon absent from it drew nothing
+        // and was absent from its own coverage. The tests were checking the
+        // icons that worked.
+        //
+        // Rust cannot enumerate an enum's variants without a derive, so the
+        // count is what is checked. Adding a variant and not adding it here
+        // fails this rather than shipping an invisible button.
+        assert_eq!(
+            ALL.len(),
+            48,
+            "an icon was added to the enum without being added to ALL"
+        );
+    }
+
+    #[test]
+    fn the_icons_added_for_typography_and_pages_all_draw() {
+        // The ones that were missing, named so the failure says which.
+        for icon in [
+            Icon::Bold,
+            Icon::Italic,
+            Icon::AlignJustify,
+            Icon::Palette,
+            Icon::Pilcrow,
+            Icon::CaseSensitive,
+            Icon::TypeSize,
+            Icon::Plus,
+            Icon::Duplicate,
+            Icon::Trash,
+            Icon::ChevronLeft,
+            Icon::ChevronRight,
+            Icon::Layers,
+            Icon::Eye,
+            Icon::EyeOff,
+            Icon::Lock,
+            Icon::Unlock,
+        ] {
+            assert!(
+                !icon.geometry().is_empty(),
+                "{icon:?} has no geometry, so it draws nothing"
+            );
+            assert!(ALL.contains(&icon), "{icon:?} is not in ALL");
+        }
+    }
+
+    #[test]
+    fn an_icon_left_out_of_all_still_draws() {
+        // The safety net, exercised directly: geometry comes back even when the
+        // cache built from `ALL` does not have it.
+        assert!(!Icon::Bold.parsed_late().is_empty());
     }
 }

@@ -42,6 +42,19 @@ pub struct PositionedGlyph {
 /// with them, so this needs no impl of its own.
 pub type Brush = Option<tessera_color::Color>;
 
+/// A drop cap, laid out and waiting for the body to say where it goes.
+///
+/// Its baseline belongs on the baseline of the last line it covers, and nothing
+/// knows where that is until the body beside it has been laid out — which needs
+/// the cap's width first. Hence the pause.
+struct DropCap {
+    layout: parley::Layout<Brush>,
+    text: String,
+    map: Vec<(usize, usize)>,
+    /// Where the baseline sits inside this layout.
+    baseline: f64,
+}
+
 /// One paragraph's layout, and where it sits in the frame.
 pub(crate) struct Placed {
     /// The byte range of the story this paragraph covers, newline included.
@@ -400,10 +413,39 @@ fn break_lines_with_room(
 
 /// How many points a drop cap of `lines` lines should be set at.
 ///
-/// A cap's *cap height* is what has to span the lines, not its point size, and
-/// cap height is around seven tenths of the size in a text face.
-fn drop_cap_size(lines: u8, base_size: f32, line_height: f32) -> f32 {
-    (f32::from(lines) * base_size * line_height) / 0.7
+/// A cap's **cap height** is what has to span the lines, not its point size —
+/// so the size is the wanted cap height divided by how much of a size a cap
+/// height actually is. Seven tenths was a guess and it made the letter too
+/// tall: `cap_height_ratio` asks the font instead, and only falls back to the
+/// guess for a font that does not say.
+fn drop_cap_size(lines: u8, base_size: f32, line_height: f32, ratio: f32) -> f32 {
+    // **`lines - 1` leadings, plus one body cap height.** A three-line cap runs
+    // from the top of the first line's capitals to the baseline of the third,
+    // and that is two line heights plus the height of a capital — not three
+    // line heights, which is what it was, and which hung the letter below the
+    // lines it was supposed to occupy.
+    let leading = base_size * line_height;
+    let wanted = f32::from(lines.saturating_sub(1)) * leading + base_size * ratio;
+    wanted / ratio.max(0.1)
+}
+
+/// What fraction of its point size this font's capitals actually stand.
+///
+/// Around 0.7 in most text faces, and worth asking rather than assuming: the
+/// difference between 0.66 and 0.73 is a drop cap that sits on its line and one
+/// that hangs below it.
+fn cap_height_ratio(font: &FontData) -> f32 {
+    use skrifa::MetadataProvider as _;
+
+    const ASSUMED: f32 = 0.7;
+    let Ok(font) = skrifa::FontRef::from_index(font.data.as_ref(), font.index) else {
+        return ASSUMED;
+    };
+    let metrics = font.metrics(
+        skrifa::instance::Size::new(1.0),
+        skrifa::instance::LocationRef::default(),
+    );
+    metrics.cap_height.filter(|h| *h > 0.0).unwrap_or(ASSUMED)
 }
 
 /// The space between a drop cap and the text beside it.
@@ -716,50 +758,72 @@ impl Shaper {
             };
 
             let mut cap_width = 0.0;
+            // The cap is laid out here to find out how wide it is, and placed
+            // only once the body has been laid out beside it — its baseline has
+            // to land on the body's *last* covered line, and nothing knows
+            // where that is until the body exists.
+            let mut cap: Option<DropCap> = None;
+
             if cap_end > start {
+                let (cap_text, cap_pieces, cap_map) =
+                    shaping_text(story, styles, start..cap_end, false);
+
+                // Measured once at a nominal size to learn the font's cap
+                // height, then again at the size that makes it span the lines.
+                let build = |size: f32,
+                             ctx: &mut parley::LayoutContext<Brush>,
+                             fonts: &mut parley::FontContext| {
+                    let mut builder = ctx.ranged_builder(fonts, &cap_text, 1.0, true);
+                    if let Some(family) = &floor.family {
+                        builder.push_default(parley::StyleProperty::FontFamily(
+                            parley::FontFamily::Source(std::borrow::Cow::Owned(family.clone())),
+                        ));
+                    }
+                    builder.push_default(parley::StyleProperty::FontSize(size));
+                    for piece in &cap_pieces {
+                        if let Some(colour) = &piece.format.colour {
+                            builder.push(
+                                parley::StyleProperty::Brush(Some(colour.clone())),
+                                piece.shaped.clone(),
+                            );
+                        }
+                    }
+                    let mut layout: parley::Layout<Brush> = builder.build(&cap_text);
+                    layout.break_all_lines(None);
+                    layout
+                };
+
+                let probe = build(100.0, &mut self.layout_ctx, &mut self.font_ctx);
+                let ratio = probe
+                    .lines()
+                    .next()
+                    .and_then(|line| line.items().next())
+                    .and_then(|item| match item {
+                        parley::PositionedLayoutItem::GlyphRun(run) => {
+                            Some(cap_height_ratio(run.run().font()))
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or(0.7);
+
                 let size = drop_cap_size(
                     format.drop_cap_lines.unwrap_or(0),
                     floor.size.unwrap_or(12.0),
                     floor.line_height.unwrap_or(1.2),
+                    ratio,
                 );
-                let (cap_text, cap_pieces, cap_map) =
-                    shaping_text(story, styles, start..cap_end, false);
+                let layout = build(size, &mut self.layout_ctx, &mut self.font_ctx);
+                cap_width = f64::from(layout.width()) + DROP_CAP_GAP;
+                let baseline = layout
+                    .lines()
+                    .next()
+                    .map_or(0.0, |line| f64::from(line.metrics().baseline));
 
-                let mut builder =
-                    self.layout_ctx
-                        .ranged_builder(&mut self.font_ctx, &cap_text, 1.0, true);
-                if let Some(family) = &floor.family {
-                    builder.push_default(parley::StyleProperty::FontFamily(
-                        parley::FontFamily::Source(std::borrow::Cow::Owned(family.clone())),
-                    ));
-                }
-                // The cap's own size wins over everything the run says, because
-                // its size is what makes it a drop cap.
-                builder.push_default(parley::StyleProperty::FontSize(size));
-                // The font's own line height, not a pinned one. A cap set at
-                // 60pt has an ascent taller than 60pt of line box, and pinning
-                // it drew the caret above the top of the frame.
-                for piece in &cap_pieces {
-                    if let Some(colour) = &piece.format.colour {
-                        builder.push(
-                            parley::StyleProperty::Brush(Some(colour.clone())),
-                            piece.shaped.clone(),
-                        );
-                    }
-                }
-
-                let mut cap_layout: parley::Layout<Brush> = builder.build(&cap_text);
-                cap_layout.break_all_lines(None);
-                cap_width = f64::from(cap_layout.width()) + DROP_CAP_GAP;
-
-                placed.push(Placed {
-                    range: start..cap_end,
-                    layout: cap_layout,
-                    x: indent_left,
-                    y,
+                cap = Some(DropCap {
+                    layout,
+                    text: cap_text,
                     map: cap_map,
-                    shaped_text: cap_text,
-                    hyphenate: false,
+                    baseline,
                 });
             }
 
@@ -903,6 +967,39 @@ impl Shaper {
             );
 
             let height = f64::from(layout.height());
+            // Now the body exists, the cap can be put where it belongs: its
+            // own baseline sitting on the baseline of the last line it covers.
+            // Anything else leaves it hanging below the lines it is supposed to
+            // occupy, which is what "the drop cap overflows the line below"
+            // meant.
+            if let Some(cap) = cap {
+                let (cap_layout, cap_text, cap_map, cap_baseline) =
+                    (cap.layout, cap.text, cap.map, cap.baseline);
+                let target = layout
+                    .lines()
+                    .nth(cap_lines.saturating_sub(1))
+                    .or_else(|| layout.lines().last())
+                    .map_or(cap_baseline, |line| f64::from(line.metrics().baseline));
+
+                // Its baseline on the baseline of the last line it covers.
+                //
+                // That puts the layout's *box* a little above the frame, and
+                // that is correct: the space above a capital is where accents
+                // would go and holds no ink, so clipping to the frame loses
+                // nothing. Clamping it to the frame instead pushed the letter
+                // down by exactly that empty space, which is the sag this was
+                // meant to cure.
+                placed.push(Placed {
+                    range: start..cap_end,
+                    layout: cap_layout,
+                    x: indent_left,
+                    y: y + target - cap_baseline,
+                    map: cap_map,
+                    shaped_text: cap_text,
+                    hyphenate: false,
+                });
+            }
+
             placed.push(Placed {
                 range: cap_end.max(start)..end,
                 layout,
@@ -2484,5 +2581,95 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_drop_cap_does_not_hang_below_the_lines_it_covers() {
+        // Reported from real use: the letter overflowed the line below it. It
+        // was sized at N line heights, when a cap runs from the top of the
+        // first line's capitals to the baseline of the Nth — two leadings plus
+        // one cap height for a three-line cap, not three leadings.
+        let mut shaper = Shaper::new();
+        // Long enough to wrap past the cap, or there is no "line below" to
+        // overflow into and the test proves nothing.
+        let text = "Once upon a time there was a sentence long enough to wrap                     several times over beside a drop cap, which is what this                     needs in order to mean anything at all.";
+        let story = with_drop_cap(text, 3, None);
+        let placed = shaper.layout_paragraphs(&story, &NoStyles::default(), 200.0);
+
+        let (cap, body) = (&placed[0], &placed[1]);
+        assert!(
+            body.layout.lines().count() >= 3,
+            "the body has to reach three lines: {}",
+            body.layout.lines().count()
+        );
+        // Baselines, not layout heights: a capital's ink ends at its baseline,
+        // while `height` includes the descender box no capital uses.
+        let cap_baseline = cap.y
+            + cap
+                .layout
+                .lines()
+                .next()
+                .map_or(0.0, |line| f64::from(line.metrics().baseline));
+        let third = body
+            .layout
+            .lines()
+            .nth(2)
+            .map(|line| body.y + f64::from(line.metrics().baseline))
+            .expect("three lines of body");
+
+        assert!(
+            (cap_baseline - third).abs() < 1.0,
+            "a three-line cap sits on the third baseline: {cap_baseline} against {third}"
+        );
+    }
+
+    #[test]
+    fn a_cap_of_any_depth_sits_on_the_line_it_should() {
+        // The invariant the construction is built on, at three depths. Anything
+        // else about a drop cap's geometry — where its ink starts, how much
+        // empty ascent sits above it — follows from this and from the size.
+        let text = "Once upon a time there was a sentence long enough to wrap \
+                    several times over beside a drop cap, which is what this \
+                    needs in order to mean anything at all, and then some more.";
+
+        let mut shaper = Shaper::new();
+        for lines in [2usize, 3, 4] {
+            let story = with_drop_cap(text, lines as u8, None);
+            let placed = shaper.layout_paragraphs(&story, &NoStyles::default(), 200.0);
+            let (cap, body) = (&placed[0], &placed[1]);
+
+            let Some(target) = body.layout.lines().nth(lines - 1) else {
+                continue; // not enough body to cover; nothing to check
+            };
+            let target = body.y + f64::from(target.metrics().baseline);
+            let cap_baseline = cap.y
+                + cap
+                    .layout
+                    .lines()
+                    .next()
+                    .map_or(0.0, |line| f64::from(line.metrics().baseline));
+
+            assert!(
+                (cap_baseline - target).abs() < 1.0,
+                "a {lines}-line cap sits at {cap_baseline}, wanted {target}"
+            );
+        }
+    }
+
+    #[test]
+    fn more_lines_make_a_larger_cap() {
+        let mut shaper = Shaper::new();
+        let size_of = |shaper: &mut Shaper, lines: u8| -> f32 {
+            shaper
+                .shape(
+                    &with_drop_cap(SENTENCE, lines, None),
+                    &NoStyles::default(),
+                    200.0,
+                )
+                .runs()
+                .map(|r| r.size)
+                .fold(0.0_f32, f32::max)
+        };
+        assert!(size_of(&mut shaper, 4) > size_of(&mut shaper, 2));
     }
 }

@@ -291,6 +291,18 @@ impl Document {
         Some(outset_each(bounds, s.top, s.bottom, left, right))
     }
 
+    /// Whether `at` falls on any page, as opposed to the pasteboard.
+    ///
+    /// Not `first_page_bounds().contains(..)`, which is what the cursor used
+    /// to ask and was right only while there was one page. Over the second
+    /// spread it answered "pasteboard" and the cursor turned white on a white
+    /// page.
+    pub fn on_a_page(&self, at: DocPoint) -> bool {
+        self.page_ids()
+            .filter_map(|id| self.pages.get(id))
+            .any(|page| page.bounds.contains(at))
+    }
+
     pub fn first_page_bounds(&self) -> DocRect {
         self.page_ids()
             .next()
@@ -2669,5 +2681,35 @@ mod tests {
             (sheet - trim - TEN_MM * 2.0).abs() < 1e-9,
             "and the sheet is the two pages plus one bleed at each end"
         );
+    }
+
+    #[test]
+    fn a_point_on_the_second_page_is_still_on_a_page() {
+        // The cursor asked `first_page_bounds().contains(..)`, which is right
+        // only while there is one page: over the spread below it answered
+        // "pasteboard" and drew white on white.
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        let second = doc.add_page();
+        let bounds = doc.pages[second].bounds;
+
+        assert!(doc.on_a_page(DocPoint {
+            x: bounds.x + bounds.width / 2.0,
+            y: bounds.y + bounds.height / 2.0,
+        }));
+    }
+
+    #[test]
+    fn a_point_in_the_gap_between_spreads_is_not_on_a_page() {
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.add_page();
+        let first = doc.page_ids().next().expect("a page");
+        let bounds = doc.pages[first].bounds;
+
+        assert!(!doc.on_a_page(DocPoint {
+            x: bounds.x + bounds.width / 2.0,
+            y: bounds.y + bounds.height + 4.0,
+        }));
     }
 }

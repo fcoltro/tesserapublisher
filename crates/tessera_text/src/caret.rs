@@ -890,8 +890,12 @@ mod tests {
                 .caret_geometry(&story, &styles, WIDTH, cursor(position), 1.5)
                 .caret
                 .expect("a caret for every offset");
+            // The caret's *bottom*, not its top. Inside a drop cap the caret
+            // spans the letter's whole line box, and the empty space above a
+            // capital legitimately reaches above the frame — there is no ink
+            // up there to lose.
             assert!(
-                caret.x0 >= 0.0 && caret.y0 >= 0.0,
+                caret.x0 >= 0.0 && caret.y1 > 0.0,
                 "offset {position} drew off the frame at {caret:?}"
             );
         }
