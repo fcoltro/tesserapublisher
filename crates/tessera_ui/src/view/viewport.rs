@@ -331,6 +331,43 @@ fn frame_at(state: &TesseraApp, rect: Rect, pos: egui::Pos2) -> Option<FrameId> 
 
 // --- input -----------------------------------------------------------------
 
+/// Where a press landed, but **only if it landed on the canvas**.
+///
+/// `i.pointer.primary_pressed()` is global: it is true for a press anywhere in
+/// the window, panels and menus included. Reading it without this guard is
+/// what made clicking a field in the Properties panel end an on-canvas text
+/// edit and clear the selection — the click was "outside the frame being
+/// edited", which it was, in a place that had nothing to do with the canvas.
+///
+/// A gesture that starts on the canvas and wanders off it keeps working,
+/// because the press origin is what is tested rather than where the pointer
+/// is now.
+fn canvas_press(ui: &Ui, response: &egui::Response, rect: Rect) -> Option<egui::Pos2> {
+    if !ui.input(|i| i.pointer.primary_pressed()) {
+        return None;
+    }
+    on_canvas(press_pos(ui, response), rect)
+}
+
+/// The rule [`canvas_press`] applies, on its own so it can be tested.
+///
+/// egui's input state cannot be built in a unit test, but the part that was
+/// wrong can: a position outside the canvas is not a canvas press, however
+/// real the press was.
+fn on_canvas(pos: Option<egui::Pos2>, rect: Rect) -> Option<egui::Pos2> {
+    pos.filter(|p| rect.contains(*p))
+}
+
+/// Whether a single-key shortcut should act.
+///
+/// False whenever egui has given the keyboard to a widget — a text field in
+/// the inspector, the command palette's query. Raw key state ignores focus, so
+/// without this, typing `d` into a caption would apply the default fill and
+/// `w` would put the interface into preview.
+fn keys_are_ours(ui: &Ui) -> bool {
+    !ui.ctx().egui_wants_keyboard_input()
+}
+
 fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
     // Text editing takes priority: while a caret is live, keys are text —
     // including the single-key tool shortcuts, which is why this returns
@@ -340,13 +377,14 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
         return;
     }
 
+    // Nothing single-key acts while a field has the keyboard.
+    let ours = keys_are_ours(ui);
+
     let (picked_tool, delete_pressed) = ui.input(|i| {
-        let picked = i
-            .modifiers
-            .is_none()
+        let picked = (ours && i.modifiers.is_none())
             .then(|| Tool::ALL.into_iter().find(|t| i.key_pressed(t.shortcut())))
             .flatten();
-        let del = i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace);
+        let del = ours && (i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace));
         (picked, del)
     });
     if let Some(tool) = picked_tool {
@@ -363,7 +401,7 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
 
     // `W` puts the interface away and brings it back — InDesign's key, and
     // the one gesture worth having on a single stroke.
-    if ui.input(|i| i.modifiers.is_none() && i.key_pressed(egui::Key::W)) {
+    if ours && ui.input(|i| i.modifiers.is_none() && i.key_pressed(egui::Key::W)) {
         state.screen_mode = if state.screen_mode == crate::app::ScreenMode::Normal {
             crate::app::ScreenMode::Preview
         } else {
@@ -377,7 +415,7 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
     // colours.
     if let Some(id) = state.active().selection.single() {
         let (swap, default, none) = ui.input(|i| {
-            let plain = i.modifiers.is_none();
+            let plain = ours && i.modifiers.is_none();
             (
                 plain && i.key_pressed(egui::Key::X),
                 plain && i.key_pressed(egui::Key::D),
@@ -452,8 +490,7 @@ fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
         return;
     }
 
-    if ui.input(|i| i.pointer.primary_pressed())
-        && let Some(pos) = press_pos(ui, response)
+    if let Some(pos) = canvas_press(ui, response, rect)
         // A press on a grip belongs to the transform gesture above, which
         // cannot claim it until egui reports a drag. Standing aside here is
         // what lets a handle be grabbed without ending the edit — a corner
@@ -1561,6 +1598,38 @@ fn draw_overlays(
 
 #[cfg(test)]
 mod tests {
+    /// The bug this guards against, in the geometry it happened in.
+    ///
+    /// The canvas sits left of the inspector. A press in the inspector was
+    /// being read as a press "outside the frame being edited" — which it was,
+    /// in a place that had nothing to do with the canvas — and so ended the
+    /// edit and cleared the selection.
+    #[test]
+    fn a_press_in_the_inspector_is_not_a_press_on_the_canvas() {
+        let canvas = Rect::from_min_max(egui::pos2(60.0, 40.0), egui::pos2(1700.0, 1040.0));
+        let in_inspector = egui::pos2(1800.0, 300.0);
+        assert_eq!(on_canvas(Some(in_inspector), canvas), None);
+    }
+
+    #[test]
+    fn a_press_in_the_menu_bar_is_not_a_press_on_the_canvas() {
+        let canvas = Rect::from_min_max(egui::pos2(60.0, 40.0), egui::pos2(1700.0, 1040.0));
+        assert_eq!(on_canvas(Some(egui::pos2(200.0, 12.0)), canvas), None);
+    }
+
+    #[test]
+    fn a_press_on_the_canvas_still_counts() {
+        let canvas = Rect::from_min_max(egui::pos2(60.0, 40.0), egui::pos2(1700.0, 1040.0));
+        let inside = egui::pos2(400.0, 500.0);
+        assert_eq!(on_canvas(Some(inside), canvas), Some(inside));
+    }
+
+    #[test]
+    fn no_press_is_no_press() {
+        let canvas = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 100.0));
+        assert_eq!(on_canvas(None, canvas), None);
+    }
+
     use super::*;
 
     fn physical(rect: Rect, ppp: f32) -> [f32; 4] {

@@ -42,4 +42,17 @@ impl eframe::App for TesseraApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         view::show(ui, frame, self);
     }
+
+    /// A clean quit means the work is either saved or deliberately abandoned,
+    /// so the recovery copy has nothing left to recover.
+    ///
+    /// Without this the file survives every normal quit and the next launch
+    /// offers to restore work the user may have thrown away on purpose —
+    /// which teaches people to dismiss the prompt, and a prompt that is always
+    /// dismissed protects nobody on the day it matters.
+    ///
+    /// Only a crash should leave it behind. That is the whole point of it.
+    fn on_exit(&mut self) {
+        recovery::Recovery::discard();
+    }
 }
