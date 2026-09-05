@@ -388,11 +388,9 @@ working software alone: **C-i the rail** (C1–C5), **C-ii the surface**
 - [x] **C6 — Align and distribute**, to the selection, the margins, the page
   and the spread — every target reachable from the Object menu and the command
   palette, with a test asserting each one is in the action list by name.
-- [~] **C7 — Canvas toolbar**: six aligns and two distributes, beside the
-  object, appearing only for two or more; placement tested against the
-  window's edges. Flip and rotate 90° exist as commands and are reachable from
-  the menu and the palette. *They are not on the toolbar itself, and its
-  buttons carry short text labels rather than Lucide glyphs — C13.*
+- [x] **C7 — Canvas toolbar**: six aligns, two distributes, two flips and two
+  quarter-turns, beside the object, appearing only for two or more, in real
+  Lucide glyphs. Placement is tested against the window's edges.
 - [~] **C8 — Rulers**, with a 1-2-5 tick ladder, a unit selector that saves
   the preference, and a guide you can drag off either one — dropped back on a
   ruler, the drag is cancelled (B3). A placed guide can be grabbed, moved as
@@ -416,7 +414,11 @@ working software alone: **C-i the rail** (C1–C5), **C-ii the surface**
   and the rule this milestone works to is that a group with no actions gets no
   menu. A menu entry for an unbuilt feature is the lie the previous codebase
   told often.*
-- [ ] **C13 — Icon set** grown to roughly 60 Lucide glyphs (A9).
+- [~] **C13 — Icon set**: 26 Lucide glyphs, up from 14 — the twelve the canvas
+  toolbar needed, **converted mechanically from the official package's own
+  SVG geometry** rather than transcribed, because the icon tests prove a path
+  parses and not that it draws the right thing. *Roughly sixty was the target;
+  the rest arrive as the surfaces that need them do.*
 
 **Explicitly not in M1.5:** corner radius, opacity, effects, object styles,
 gradients, the swatches panel, text wrap, frame fitting, text-frame options,

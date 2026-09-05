@@ -42,6 +42,22 @@ pub enum Icon {
     /// The type tool before anything is drawn: a frame waiting to be dragged.
     TextFrame,
     Crosshair,
+
+    // The canvas toolbar's spatial verbs. Named for what they do here rather
+    // than for Lucide's own name, which describes the divider's axis; each
+    // one's source glyph is noted where its path data is.
+    AlignLeft,
+    AlignCentreH,
+    AlignRight,
+    AlignTop,
+    AlignMiddleV,
+    AlignBottom,
+    DistributeH,
+    DistributeV,
+    FlipHorizontal,
+    FlipVertical,
+    RotateCw,
+    RotateCcw,
 }
 
 impl Icon {
@@ -141,6 +157,93 @@ impl Icon {
                 "M12 6V2",
                 "M12 18v4",
             ],
+
+            // lucide: align-start-vertical
+            Self::AlignLeft => &[
+                "M8 14 h5 a2 2 0 0 1 2 2 v2 a2 2 0 0 1 -2 2 h-5 a2 2 0 0 1 -2 -2 v-2 a2 2 0 0 1 2 -2 z",
+                "M8 4 h12 a2 2 0 0 1 2 2 v2 a2 2 0 0 1 -2 2 h-12 a2 2 0 0 1 -2 -2 v-2 a2 2 0 0 1 2 -2 z",
+                "M2 2v20",
+            ],
+            // lucide: align-center-vertical
+            Self::AlignCentreH => &[
+                "M12 2v20",
+                "M8 10H4a2 2 0 0 1-2-2V6c0-1.1.9-2 2-2h4",
+                "M16 10h4a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-4",
+                "M8 20H7a2 2 0 0 1-2-2v-2c0-1.1.9-2 2-2h1",
+                "M16 14h1a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-1",
+            ],
+            // lucide: align-end-vertical
+            Self::AlignRight => &[
+                "M4 4 h12 a2 2 0 0 1 2 2 v2 a2 2 0 0 1 -2 2 h-12 a2 2 0 0 1 -2 -2 v-2 a2 2 0 0 1 2 -2 z",
+                "M11 14 h5 a2 2 0 0 1 2 2 v2 a2 2 0 0 1 -2 2 h-5 a2 2 0 0 1 -2 -2 v-2 a2 2 0 0 1 2 -2 z",
+                "M22 22V2",
+            ],
+            // lucide: align-start-horizontal
+            Self::AlignTop => &[
+                "M6 6 h2 a2 2 0 0 1 2 2 v12 a2 2 0 0 1 -2 2 h-2 a2 2 0 0 1 -2 -2 v-12 a2 2 0 0 1 2 -2 z",
+                "M16 6 h2 a2 2 0 0 1 2 2 v5 a2 2 0 0 1 -2 2 h-2 a2 2 0 0 1 -2 -2 v-5 a2 2 0 0 1 2 -2 z",
+                "M22 2H2",
+            ],
+            // lucide: align-center-horizontal
+            Self::AlignMiddleV => &[
+                "M2 12h20",
+                "M10 16v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-4",
+                "M10 8V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v4",
+                "M20 16v1a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2v-1",
+                "M14 8V7c0-1.1.9-2 2-2h2a2 2 0 0 1 2 2v1",
+            ],
+            // lucide: align-end-horizontal
+            Self::AlignBottom => &[
+                "M6 2 h2 a2 2 0 0 1 2 2 v12 a2 2 0 0 1 -2 2 h-2 a2 2 0 0 1 -2 -2 v-12 a2 2 0 0 1 2 -2 z",
+                "M16 9 h2 a2 2 0 0 1 2 2 v5 a2 2 0 0 1 -2 2 h-2 a2 2 0 0 1 -2 -2 v-5 a2 2 0 0 1 2 -2 z",
+                "M22 22H2",
+            ],
+            // lucide: align-horizontal-distribute-center
+            Self::DistributeH => &[
+                "M6 5 h2 a2 2 0 0 1 2 2 v10 a2 2 0 0 1 -2 2 h-2 a2 2 0 0 1 -2 -2 v-10 a2 2 0 0 1 2 -2 z",
+                "M16 7 h2 a2 2 0 0 1 2 2 v6 a2 2 0 0 1 -2 2 h-2 a2 2 0 0 1 -2 -2 v-6 a2 2 0 0 1 2 -2 z",
+                "M17 22v-5",
+                "M17 7V2",
+                "M7 22v-3",
+                "M7 5V2",
+            ],
+            // lucide: align-vertical-distribute-center
+            Self::DistributeV => &[
+                "M22 17h-3",
+                "M22 7h-5",
+                "M5 17H2",
+                "M7 7H2",
+                "M7 14 h10 a2 2 0 0 1 2 2 v2 a2 2 0 0 1 -2 2 h-10 a2 2 0 0 1 -2 -2 v-2 a2 2 0 0 1 2 -2 z",
+                "M9 4 h6 a2 2 0 0 1 2 2 v2 a2 2 0 0 1 -2 2 h-6 a2 2 0 0 1 -2 -2 v-2 a2 2 0 0 1 2 -2 z",
+            ],
+            // lucide: flip-horizontal
+            Self::FlipHorizontal => &[
+                "M8 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h3",
+                "M16 3h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-3",
+                "M12 20v2",
+                "M12 14v2",
+                "M12 8v2",
+                "M12 2v2",
+            ],
+            // lucide: flip-vertical
+            Self::FlipVertical => &[
+                "M21 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v3",
+                "M21 16v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3",
+                "M4 12H2",
+                "M10 12H8",
+                "M16 12h-2",
+                "M22 12h-2",
+            ],
+            // lucide: rotate-cw
+            Self::RotateCw => &[
+                "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8",
+                "M21 3v5h-5",
+            ],
+            // lucide: rotate-ccw
+            Self::RotateCcw => &[
+                "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8",
+                "M3 3v5h5",
+            ],
         }
     }
 
@@ -170,7 +273,22 @@ impl Icon {
             | Self::Scale
             | Self::TextCursor
             | Self::TextFrame
-            | Self::Crosshair => (12.0, 12.0),
+            | Self::Crosshair
+            // The toolbar's verbs are never cursors, so their hotspot is only
+            // ever the centre. Listed rather than caught by a wildcard, so
+            // that adding a cursor icon later still has to answer this.
+            | Self::AlignLeft
+            | Self::AlignCentreH
+            | Self::AlignRight
+            | Self::AlignTop
+            | Self::AlignMiddleV
+            | Self::AlignBottom
+            | Self::DistributeH
+            | Self::DistributeV
+            | Self::FlipHorizontal
+            | Self::FlipVertical
+            | Self::RotateCw
+            | Self::RotateCcw => (12.0, 12.0),
         }
     }
 }
@@ -285,7 +403,7 @@ pub fn paint_rotated(
 }
 
 /// Every icon, for exhaustive tests and for building a palette.
-pub const ALL: [Icon; 14] = [
+pub const ALL: [Icon; 26] = [
     Icon::Select,
     Icon::Rectangle,
     Icon::Ellipse,
@@ -300,6 +418,18 @@ pub const ALL: [Icon; 14] = [
     Icon::TextCursor,
     Icon::TextFrame,
     Icon::Crosshair,
+    Icon::AlignLeft,
+    Icon::AlignCentreH,
+    Icon::AlignRight,
+    Icon::AlignTop,
+    Icon::AlignMiddleV,
+    Icon::AlignBottom,
+    Icon::DistributeH,
+    Icon::DistributeV,
+    Icon::FlipHorizontal,
+    Icon::FlipVertical,
+    Icon::RotateCw,
+    Icon::RotateCcw,
 ];
 
 #[cfg(test)]

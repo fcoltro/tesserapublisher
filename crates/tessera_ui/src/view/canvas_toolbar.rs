@@ -14,6 +14,7 @@ use egui::{Pos2, Rect, Ui, Vec2};
 use crate::align::{AlignTo, Edge};
 use crate::app::TesseraApp;
 use crate::command::{Command, apply};
+use crate::icons::Icon;
 use crate::theme::Theme;
 
 /// How far the toolbar floats from the selection, in screen points.
@@ -53,22 +54,51 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp, selection: Rect, viewport: Rect
         return;
     }
 
-    // The buttons carry short labels rather than icons for now. The Lucide
-    // glyphs for align and distribute arrive with C13, which grows the icon
-    // set; fabricating path data here that nobody can check would be worse
-    // than a label that is merely plain.
-    const BUTTONS: &[(&str, &str, Verb)] = &[
-        ("L", "Align left edges", Verb::Align(Edge::Left)),
-        ("C", "Align horizontal centres", Verb::Align(Edge::HCentre)),
-        ("R", "Align right edges", Verb::Align(Edge::Right)),
-        ("T", "Align top edges", Verb::Align(Edge::Top)),
-        ("M", "Align vertical centres", Verb::Align(Edge::VCentre)),
-        ("B", "Align bottom edges", Verb::Align(Edge::Bottom)),
-        ("↔", "Distribute horizontally", Verb::DistributeH),
-        ("↕", "Distribute vertically", Verb::DistributeV),
+    // Real Lucide glyphs, converted from the official package's own geometry
+    // rather than transcribed — the icon tests prove a path parses, not that
+    // it draws the right thing, so a glyph typed from memory could pass the
+    // suite and still be wrong on screen.
+    const BUTTONS: &[(Icon, &str, Verb)] = &[
+        (Icon::AlignLeft, "Align left edges", Verb::Align(Edge::Left)),
+        (
+            Icon::AlignCentreH,
+            "Align horizontal centres",
+            Verb::Align(Edge::HCentre),
+        ),
+        (
+            Icon::AlignRight,
+            "Align right edges",
+            Verb::Align(Edge::Right),
+        ),
+        (Icon::AlignTop, "Align top edges", Verb::Align(Edge::Top)),
+        (
+            Icon::AlignMiddleV,
+            "Align vertical centres",
+            Verb::Align(Edge::VCentre),
+        ),
+        (
+            Icon::AlignBottom,
+            "Align bottom edges",
+            Verb::Align(Edge::Bottom),
+        ),
+        (
+            Icon::DistributeH,
+            "Distribute horizontally",
+            Verb::DistributeH,
+        ),
+        (
+            Icon::DistributeV,
+            "Distribute vertically",
+            Verb::DistributeV,
+        ),
+        (Icon::FlipHorizontal, "Flip horizontal", Verb::FlipH),
+        (Icon::FlipVertical, "Flip vertical", Verb::FlipV),
+        (Icon::RotateCw, "Rotate 90° clockwise", Verb::RotateCw),
+        (Icon::RotateCcw, "Rotate 90° anticlockwise", Verb::RotateCcw),
     ];
 
-    let size = Vec2::new(BUTTONS.len() as f32 * 26.0 + 12.0, 28.0);
+    const BUTTON: f32 = 24.0;
+    let size = Vec2::new(BUTTONS.len() as f32 * (BUTTON + 2.0) + 12.0, BUTTON + 10.0);
     let at = place(selection, size, viewport);
 
     let mut chosen = None;
@@ -80,8 +110,8 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp, selection: Rect, viewport: Rect
                 .fill(Theme::PANEL_BG)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        for (label, tip, verb) in BUTTONS {
-                            if ui.small_button(*label).on_hover_text(*tip).clicked() {
+                        for (icon, tip, verb) in BUTTONS {
+                            if icon_button(ui, *icon, tip).clicked() {
                                 chosen = Some(*verb);
                             }
                         }
@@ -105,6 +135,22 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp, selection: Rect, viewport: Rect
             state,
             Command::Distribute(tessera_document::nodes::Axis::Vertical),
         ),
+        Some(Verb::FlipH) => apply(
+            state,
+            Command::FlipSelection {
+                horizontal: true,
+                vertical: false,
+            },
+        ),
+        Some(Verb::FlipV) => apply(
+            state,
+            Command::FlipSelection {
+                horizontal: false,
+                vertical: true,
+            },
+        ),
+        Some(Verb::RotateCw) => apply(state, Command::RotateSelection90 { clockwise: true }),
+        Some(Verb::RotateCcw) => apply(state, Command::RotateSelection90 { clockwise: false }),
         None => {}
     }
 }
@@ -114,6 +160,23 @@ enum Verb {
     Align(Edge),
     DistributeH,
     DistributeV,
+    FlipH,
+    FlipV,
+    RotateCw,
+    RotateCcw,
+}
+
+/// One toolbar button: a Lucide glyph that lights on hover.
+fn icon_button(ui: &mut Ui, icon: Icon, tip: &str) -> egui::Response {
+    const BUTTON: f32 = 24.0;
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(BUTTON), egui::Sense::click());
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, Theme::RADIUS, Theme::HOVER_BG);
+    }
+    // Inset so the 24-unit grid does not touch the button's edge.
+    crate::icons::paint(ui.painter(), rect.shrink(4.0), icon, Theme::TEXT_PRIMARY);
+    response.on_hover_text(tip)
 }
 
 #[cfg(test)]
