@@ -79,9 +79,12 @@ impl Shaper {
             return CaretGeometry::default();
         };
         let here = &placed[at];
+        // Through the map, because the shaped text is not always the stored
+        // text: a paragraph set in capitals shapes a different string, and
+        // parley answers in *its* offsets.
         let caret = parley::Cursor::from_byte_index(
             &here.layout,
-            position - here.range.start,
+            here.to_shaped(position),
             parley::Affinity::Downstream,
         );
 
@@ -104,12 +107,12 @@ impl Shaper {
                 }
                 let a = parley::Cursor::from_byte_index(
                     &paragraph.layout,
-                    start - paragraph.range.start,
+                    paragraph.to_shaped(start),
                     parley::Affinity::Downstream,
                 );
                 let b = parley::Cursor::from_byte_index(
                     &paragraph.layout,
-                    end - paragraph.range.start,
+                    paragraph.to_shaped(end),
                     parley::Affinity::Downstream,
                 );
                 rects.extend(
@@ -176,7 +179,7 @@ impl Shaper {
             (y - here.y) as f32,
         )
         .text_range();
-        (here.range.start + local.start)..(here.range.start + local.end)
+        here.to_stored(local.start)..here.to_stored(local.end)
     }
 }
 
@@ -527,5 +530,71 @@ mod tests {
             story.text
         );
         assert_eq!(&story.text[word.clone()], "third", "{word:?}");
+    }
+
+    #[test]
+    fn every_offset_survives_a_round_trip_through_capitals() {
+        // The offset map, exercised where it matters: `ß` uppercases to `SS`,
+        // so the shaped text is longer than the stored text and parley's
+        // answers are in the wrong coordinates until they are translated. A
+        // caret that lands one character out here would corrupt the next edit.
+        use crate::story::Case;
+
+        let mut story = Story::new("straße und gasse");
+        story.runs[0].local.case = Some(Case::Upper);
+
+        let mut shaper = Shaper::new();
+        let styles = NoStyles::default();
+
+        for position in 0..=story.text.len() {
+            if !story.text.is_char_boundary(position) {
+                continue;
+            }
+            let geometry = shaper.caret_geometry(&story, &styles, WIDTH, cursor(position), 1.5);
+            let caret = geometry.caret.expect("a caret for every offset");
+            let back = shaper.offset_at(
+                &story,
+                &styles,
+                WIDTH,
+                caret.x0 + caret.width() / 2.0,
+                (caret.y0 + caret.y1) / 2.0,
+            );
+            assert!(
+                story.text.is_char_boundary(back),
+                "offset {position} read back as {back}, which is not a character boundary"
+            );
+            assert_eq!(
+                back, position,
+                "offset {position} drew at {caret:?} and reads back as {back}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_double_click_in_capitals_selects_the_stored_word() {
+        use crate::story::Case;
+
+        let mut story = Story::new("straße und gasse");
+        story.runs[0].local.case = Some(Case::Upper);
+
+        let mut shaper = Shaper::new();
+        let styles = NoStyles::default();
+        let caret = shaper
+            .caret_geometry(&story, &styles, WIDTH, cursor(2), 1.5)
+            .caret
+            .expect("a caret");
+        let word = shaper.word_at(
+            &story,
+            &styles,
+            WIDTH,
+            caret.x0 + 1.0,
+            (caret.y0 + caret.y1) / 2.0,
+        );
+
+        assert_eq!(
+            &story.text[word.clone()],
+            "straße",
+            "the word as stored, not as drawn: {word:?}"
+        );
     }
 }

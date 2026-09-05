@@ -50,7 +50,149 @@ pub(crate) struct Placed {
     /// Frame-local offset of this layout's own origin.
     pub x: f64,
     pub y: f64,
+    /// Where each shaped character came from, when the two differ.
+    ///
+    /// Setting text in capitals means shaping a **different string**: `ß`
+    /// uppercases to `SS`, so one stored character becomes two shaped ones and
+    /// every byte offset after it moves. The caret works in stored offsets and
+    /// parley answers in shaped ones, so something has to translate.
+    ///
+    /// Pairs of `(shaped, stored)` at character starts, ascending, with a final
+    /// pair for the ends. **Empty when nothing in the paragraph is
+    /// transformed**, which is the ordinary case and costs nothing.
+    pub map: Vec<(usize, usize)>,
 }
+
+impl Placed {
+    /// The stored offset a shaped offset came from.
+    pub(crate) fn to_stored(&self, shaped: usize) -> usize {
+        if self.map.is_empty() {
+            return self.range.start + shaped;
+        }
+        // The last pair at or before `shaped`: an offset inside a shaped
+        // character belongs to the character it is inside.
+        let i = self.map.partition_point(|(at, _)| *at <= shaped);
+        let (_, stored) = self.map[i.saturating_sub(1)];
+        stored
+    }
+
+    /// The shaped offset a stored offset became.
+    pub(crate) fn to_shaped(&self, stored: usize) -> usize {
+        if self.map.is_empty() {
+            return stored.saturating_sub(self.range.start);
+        }
+        let i = self.map.partition_point(|(_, at)| *at <= stored);
+        let (shaped, _) = self.map[i.saturating_sub(1)];
+        shaped
+    }
+}
+
+/// One stretch of a paragraph that shapes as a unit.
+///
+/// A run can split into several of these: small caps sets the letters that
+/// were lowercase at a smaller size, and that size change is a boundary.
+struct Piece {
+    shaped: std::ops::Range<usize>,
+    format: crate::story::CharacterFormat,
+}
+
+/// Build the text a paragraph actually shapes as, and how to get back.
+///
+/// Returns the shaped text, the pieces to push styles over, and the offset map
+/// — empty when nothing was transformed, so the common path pays nothing.
+///
+/// Small caps is synthesised here rather than asked of the font. The `smcp`
+/// feature is still pushed, and is right where a font has the table, but a
+/// probe over every family installed on the development machine found 0 of 191
+/// that do. Synthesis is what InDesign falls back to and what makes the control
+/// mean something: letters that were lowercase are set as capitals at a
+/// fraction of the size, and letters that were already capitals are left alone.
+fn shaping_text(
+    story: &Story,
+    styles: &dyn Styles,
+    stored: std::ops::Range<usize>,
+) -> (String, Vec<Piece>, Vec<(usize, usize)>) {
+    use crate::story::Case;
+
+    let mut text = String::new();
+    let mut pieces: Vec<Piece> = Vec::new();
+    let mut map: Vec<(usize, usize)> = Vec::new();
+    let mut transformed = false;
+
+    for run in &story.runs {
+        let from = run.range.start.max(stored.start);
+        let to = run.range.end.min(stored.end);
+        if from >= to {
+            continue;
+        }
+        let format = story.resolve_run(run, styles);
+        let case = format.case.unwrap_or(Case::Normal);
+
+        for (offset, character) in story.text[from..to].char_indices() {
+            let at = from + offset;
+            map.push((text.len(), at));
+
+            let piece_start = text.len();
+            let scale = match case {
+                Case::Normal => {
+                    text.push(character);
+                    1.0
+                }
+                Case::Upper => {
+                    transformed = true;
+                    text.extend(character.to_uppercase());
+                    1.0
+                }
+                Case::Lower => {
+                    transformed = true;
+                    text.extend(character.to_lowercase());
+                    1.0
+                }
+                Case::SmallCaps => {
+                    if character.is_lowercase() {
+                        transformed = true;
+                        text.extend(character.to_uppercase());
+                        SMALL_CAPS_SCALE
+                    } else {
+                        text.push(character);
+                        1.0
+                    }
+                }
+            };
+
+            // Fold into the previous piece when nothing about it changed, so a
+            // paragraph of ordinary text is one piece rather than one per
+            // character.
+            let mut format = format.clone();
+            if scale != 1.0 {
+                format.size = Some(format.size.unwrap_or(12.0) * scale);
+            }
+            match pieces.last_mut() {
+                Some(previous)
+                    if previous.shaped.end == piece_start && previous.format == format =>
+                {
+                    previous.shaped.end = text.len();
+                }
+                _ => pieces.push(Piece {
+                    shaped: piece_start..text.len(),
+                    format,
+                }),
+            }
+        }
+    }
+
+    map.push((text.len(), stored.end));
+    if !transformed {
+        map.clear();
+    }
+    (text, pieces, map)
+}
+
+/// How much smaller a synthesised small capital is than a full one.
+///
+/// InDesign's own default. Cap height rather than x-height, which is why it is
+/// nearer three quarters than a half.
+const SMALL_CAPS_SCALE: f32 = 0.7;
 
 /// The story's text split into paragraphs, each with its start offset.
 ///
@@ -392,9 +534,14 @@ impl Shaper {
 
             y += f64::from(format.space_before.unwrap_or(0.0));
 
-            let mut builder = self
-                .layout_ctx
-                .ranged_builder(&mut self.font_ctx, text, 1.0, true);
+            // What this paragraph actually shapes as, which is the stored
+            // text only while nothing in it is transformed. Setting text in
+            // capitals means shaping a different string.
+            let (shaped_text, pieces, map) = shaping_text(story, styles, start..content_end);
+
+            let mut builder =
+                self.layout_ctx
+                    .ranged_builder(&mut self.font_ctx, &shaped_text, 1.0, true);
 
             // The cascade's floor. `FontFamily::Source` takes the family name
             // as written and resolves generic names ("sans-serif") the way CSS
@@ -413,18 +560,14 @@ impl Shaper {
                 ));
             }
 
-            // One span per run, over the part of the run this paragraph holds.
-            // A run never straddles a paragraph *span* boundary, but a span can
-            // hold several paragraphs, so a run can still cross a newline —
-            // hence the clip rather than a straight copy.
-            for run in &story.runs {
-                let from = run.range.start.max(start);
-                let to = run.range.end.min(content_end);
-                if from >= to {
-                    continue;
-                }
-                let local = (from - start)..(to - start);
-                let format = story.resolve_run(run, styles);
+            // One span per piece. A piece is a stretch of the *shaped* text
+            // that formats as a unit — usually a whole run, but small caps
+            // splits a run wherever the original letters changed case, because
+            // a synthesised small capital is set at a smaller size than a real
+            // one beside it.
+            for piece in &pieces {
+                let format = &piece.format;
+                let local = piece.shaped.clone();
 
                 if let Some(family) = &format.family {
                     builder.push(
@@ -463,13 +606,11 @@ impl Shaper {
                         local.clone(),
                     );
                 }
-                // Small caps asked of the font, which costs nothing and is
-                // right where the font can answer. It usually cannot: a probe
-                // over every family installed on the development machine found
-                // 0 of 191 with an `smcp` table. What makes small caps appear
-                // is synthesis, which shapes a different string and so moves
-                // every byte offset the caret depends on — the same problem
-                // `Case::Upper` has, and the same task.
+                // Still asked of the font, and still right where the font has
+                // the table. `shaping_text` has already synthesised for the
+                // fonts that have not — 191 of 191 on the machine this was
+                // written on — so this is the better answer where it exists
+                // and harmless where it does not.
                 if format.case == Some(crate::story::Case::SmallCaps) {
                     builder.push(
                         parley::StyleProperty::FontFeatures(parley::FontFeatures::from("smcp")),
@@ -485,17 +626,17 @@ impl Shaper {
                         local.clone(),
                     );
                 }
-                // Pushed even when the run states no colour, because a *change*
-                // is what splits a glyph run: leaving the default in place for
-                // one run and setting it for the next is exactly the boundary
-                // needed.
+                // Pushed even when the piece states no colour, because a
+                // *change* is what splits a glyph run: leaving the default in
+                // place for one piece and setting it for the next is exactly
+                // the boundary needed.
                 builder.push(
                     parley::StyleProperty::Brush(format.colour.clone()),
                     local.clone(),
                 );
             }
 
-            let mut layout: parley::Layout<Brush> = builder.build(text);
+            let mut layout: parley::Layout<Brush> = builder.build(&shaped_text);
             break_with_first_line_indent(&mut layout, measure, indent_first);
 
             // Alignment is per layout, which is now per paragraph — so two
@@ -516,6 +657,7 @@ impl Shaper {
                 layout,
                 x: indent_left,
                 y,
+                map,
             });
             y += height + f64::from(format.space_after.unwrap_or(0.0));
         }
@@ -1509,5 +1651,117 @@ mod tests {
                 std::env::consts::OS
             );
         }
+    }
+
+    // --- case, and the offset map it needs ---------------------------------
+
+    fn cased(text: &str, case: crate::story::Case) -> Story {
+        let mut story = Story::new(text);
+        story.runs[0].local.case = Some(case);
+        story
+    }
+
+    #[test]
+    fn all_caps_shapes_capitals_and_leaves_the_stored_text_alone() {
+        use crate::story::Case;
+
+        let mut shaper = Shaper::new();
+        let story = cased("abc", Case::Upper);
+        assert_eq!(story.text, "abc", "the document still holds what was typed");
+
+        let upper = shaper.shape(&story, &NoStyles::default(), 400.0);
+        let plain = shaper.shape(&Story::new("abc"), &NoStyles::default(), 400.0);
+        let capitals = shaper.shape(&Story::new("ABC"), &NoStyles::default(), 400.0);
+
+        let ids = |t: &ShapedText| -> Vec<u32> {
+            t.runs()
+                .flat_map(|r| r.glyphs.iter().map(|g| g.glyph_id))
+                .collect()
+        };
+        assert_eq!(ids(&upper), ids(&capitals), "drawn as capitals");
+        assert_ne!(ids(&upper), ids(&plain), "and not as what was typed");
+    }
+
+    #[test]
+    fn lower_case_shapes_small_letters() {
+        use crate::story::Case;
+
+        let mut shaper = Shaper::new();
+        let lowered = shaper.shape(&cased("ABC", Case::Lower), &NoStyles::default(), 400.0);
+        let plain = shaper.shape(&Story::new("abc"), &NoStyles::default(), 400.0);
+
+        let ids = |t: &ShapedText| -> Vec<u32> {
+            t.runs()
+                .flat_map(|r| r.glyphs.iter().map(|g| g.glyph_id))
+                .collect()
+        };
+        assert_eq!(ids(&lowered), ids(&plain));
+    }
+
+    #[test]
+    fn small_caps_sets_what_was_lowercase_at_a_smaller_size() {
+        // Synthesised, because the font almost certainly has no `smcp` table.
+        // "Ab" gives a full-size A and a small-size B, which is the whole
+        // visible difference between small caps and All Caps.
+        use crate::story::Case;
+
+        let mut shaper = Shaper::new();
+        let shaped = shaper.shape(&cased("Ab", Case::SmallCaps), &NoStyles::default(), 400.0);
+
+        let sizes: Vec<f32> = shaped.runs().map(|r| r.size).collect();
+        assert_eq!(sizes.len(), 2, "one run each, split by size: {sizes:?}");
+        assert!(
+            sizes[0] > sizes[1],
+            "the capital is larger than the synthesised one: {sizes:?}"
+        );
+        assert!(
+            (sizes[1] / sizes[0] - SMALL_CAPS_SCALE).abs() < 0.01,
+            "and smaller by the stated fraction: {sizes:?}"
+        );
+    }
+
+    #[test]
+    fn small_caps_of_text_already_capital_changes_nothing() {
+        use crate::story::Case;
+
+        let mut shaper = Shaper::new();
+        let shaped = shaper.shape(&cased("ABC", Case::SmallCaps), &NoStyles::default(), 400.0);
+        let plain = shaper.shape(&Story::new("ABC"), &NoStyles::default(), 400.0);
+
+        let sizes: Vec<f32> = shaped.runs().map(|r| r.size).collect();
+        assert!(
+            sizes.iter().all(|s| (*s - 12.0).abs() < 0.01),
+            "nothing to shrink: {sizes:?}"
+        );
+        assert_eq!(shaped.glyph_count(), plain.glyph_count());
+    }
+
+    #[test]
+    fn a_character_whose_capital_is_two_letters_still_shapes() {
+        // `ß` uppercases to `SS`: one stored character becomes two shaped ones,
+        // which is the whole reason the offset map exists.
+        use crate::story::Case;
+
+        let mut shaper = Shaper::new();
+        let story = cased("straße", Case::Upper);
+        let shaped = shaper.shape(&story, &NoStyles::default(), 400.0);
+        let expected = shaper.shape(&Story::new("STRASSE"), &NoStyles::default(), 400.0);
+
+        assert_eq!(story.text, "straße", "the stored text is untouched");
+        assert_eq!(
+            shaped.glyph_count(),
+            expected.glyph_count(),
+            "seven letters drawn for six stored"
+        );
+    }
+
+    #[test]
+    fn text_nobody_has_cased_builds_no_map_at_all() {
+        // The ordinary path has to stay free: an empty map means the offsets
+        // are the same and no translation happens.
+        let mut shaper = Shaper::new();
+        let story = Story::new("the quick brown fox");
+        let placed = shaper.layout_paragraphs(&story, &NoStyles::default(), 400.0);
+        assert!(placed.iter().all(|p| p.map.is_empty()));
     }
 }

@@ -6,8 +6,8 @@ use tessera_document::ids::StoryId;
 use tessera_document::nodes::{Orientation, PagePreset};
 use tessera_geometry::{Anchor, Unit};
 use tessera_text::story::{
-    Alignment, CharacterFormat, CharacterStyle, CharacterStyleId, ParagraphFormat, ParagraphStyle,
-    ParagraphStyleId,
+    Alignment, Case, CharacterFormat, CharacterStyle, CharacterStyleId, ParagraphFormat,
+    ParagraphStyle, ParagraphStyleId,
 };
 
 use crate::app::TesseraApp;
@@ -894,6 +894,39 @@ fn text_section(
             target.clone(),
             CharacterFormat {
                 tracking: Some(tracking),
+                ..CharacterFormat::default()
+            },
+        );
+    }
+
+    // Case. A display transform, not an edit: the story keeps what was typed,
+    // so turning All Caps off gives back the original capitals rather than a
+    // sentence that has forgotten where they were.
+    let mut case_change = None;
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::TEXT_MUTED, "Case");
+        for (label, case, hint) in [
+            ("aa", Case::Normal, "As typed"),
+            ("AA", Case::Upper, "All capitals"),
+            ("Aa", Case::SmallCaps, "Small capitals"),
+            ("aa\u{0332}", Case::Lower, "All lower case"),
+        ] {
+            if ui
+                .selectable_label(shown.case == Some(case), label)
+                .on_hover_text(hint)
+                .clicked()
+            {
+                case_change = Some(case);
+            }
+        }
+    });
+    if let Some(case) = case_change {
+        set_character(
+            state,
+            story,
+            target.clone(),
+            CharacterFormat {
+                case: Some(case),
                 ..CharacterFormat::default()
             },
         );

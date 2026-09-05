@@ -519,7 +519,6 @@ fn character_format_fields(ui: &mut Ui, state: &mut TesseraApp, format: &mut Cha
     );
     optional_flag(ui, "Italic", &mut format.italic);
 
-    ui.colored_label(Theme::ERROR, "Stored, but not yet drawn:");
     optional_choice(
         ui,
         "Case",
