@@ -98,7 +98,10 @@ impl EditBuffer {
     pub fn insert(&mut self, text: &str) {
         self.ime_preedit = None;
         self.delete_selection();
-        self.story.text.insert_str(self.cursor.position, text);
+        // Through the story, so the runs come with it. Writing to `text`
+        // directly would leave them describing a string that no longer
+        // exists — corruption, and its symptom appears far from here.
+        self.story.insert_text(self.cursor.position, text);
         self.set_cursor(self.cursor.position + text.len());
     }
 
@@ -109,9 +112,7 @@ impl EditBuffer {
         let Some(previous) = self.previous_grapheme(self.cursor.position) else {
             return;
         };
-        self.story
-            .text
-            .replace_range(previous..self.cursor.position, "");
+        self.story.delete_range(previous..self.cursor.position);
         self.set_cursor(previous);
     }
 
@@ -122,9 +123,7 @@ impl EditBuffer {
         let Some(next) = self.next_grapheme(self.cursor.position) else {
             return;
         };
-        self.story
-            .text
-            .replace_range(self.cursor.position..next, "");
+        self.story.delete_range(self.cursor.position..next);
     }
 
     pub fn move_left(&mut self, extend: bool) {
@@ -152,7 +151,7 @@ impl EditBuffer {
         let Some(range) = self.selection_range() else {
             return false;
         };
-        self.story.text.replace_range(range.clone(), "");
+        self.story.delete_range(range.clone());
         self.set_cursor(range.start);
         true
     }
@@ -332,5 +331,100 @@ mod tests {
         let mut b = buffer_at_end("ab");
         b.set_cursor(999);
         assert_eq!(b.cursor().position, 2);
+    }
+}
+
+#[cfg(test)]
+mod run_integrity {
+    use super::*;
+    use crate::story::{CharacterFormat, Run};
+
+    fn bold() -> CharacterFormat {
+        CharacterFormat {
+            weight: Some(700),
+            ..CharacterFormat::default()
+        }
+    }
+
+    /// A story reading "ab", the first character bold.
+    fn two_runs() -> Story {
+        let mut story = Story::new("ab");
+        story.runs = vec![
+            Run {
+                range: 0..1,
+                style: None,
+                local: bold(),
+            },
+            Run::plain(1..2),
+        ];
+        story
+    }
+
+    #[test]
+    fn typing_keeps_the_runs_describing_the_text() {
+        let mut buffer = EditBuffer::new(two_runs());
+        buffer.set_cursor(1);
+        buffer.insert("XYZ");
+
+        let story = buffer.story();
+        assert_eq!(story.text, "aXYZb");
+        assert!(
+            story.runs_are_sound(),
+            "runs {:?} no longer describe {:?}",
+            story.runs,
+            story.text
+        );
+    }
+
+    #[test]
+    fn typing_after_a_bold_character_continues_bold() {
+        let mut buffer = EditBuffer::new(two_runs());
+        buffer.set_cursor(1);
+        buffer.insert("X");
+
+        let story = buffer.story();
+        assert_eq!(
+            story.run_at(1).map(|r| r.local.clone()),
+            Some(bold()),
+            "the new character took the run to its left"
+        );
+    }
+
+    #[test]
+    fn backspacing_across_a_run_boundary_keeps_the_runs_sound() {
+        let mut buffer = EditBuffer::new(two_runs());
+        buffer.set_cursor(2);
+        buffer.delete_backward();
+        buffer.delete_backward();
+
+        let story = buffer.story();
+        assert_eq!(story.text, "");
+        assert!(story.runs_are_sound());
+        assert!(story.runs.is_empty());
+    }
+
+    #[test]
+    fn deleting_forward_keeps_the_runs_sound() {
+        let mut buffer = EditBuffer::new(two_runs());
+        buffer.set_cursor(0);
+        buffer.delete_forward();
+
+        let story = buffer.story();
+        assert_eq!(story.text, "b");
+        assert!(story.runs_are_sound());
+    }
+
+    #[test]
+    fn deleting_a_selection_keeps_the_runs_sound() {
+        let mut buffer = EditBuffer::new(Story::new("hello world"));
+        buffer.set_cursor(0);
+        buffer.move_right(true);
+        buffer.move_right(true);
+        buffer.move_right(true);
+        buffer.insert("X");
+
+        let story = buffer.story();
+        assert_eq!(story.text, "Xlo world");
+        assert!(story.runs_are_sound());
     }
 }

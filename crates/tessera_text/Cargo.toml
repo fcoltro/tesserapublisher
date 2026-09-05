@@ -12,6 +12,7 @@ workspace = true
 tessera_color.workspace = true
 parley.workspace = true
 serde.workspace = true
+slotmap.workspace = true
 unicode-segmentation.workspace = true
 
 [dev-dependencies]
