@@ -617,9 +617,45 @@ unverified one.
 - [ ] Facing-page spreads with correct left/right geometry. → **moved to
   milestone 1.5, phase B**, along with page size, margins, bleed, slug, and a
   spread that renders as a spread. Tracked there, not here.
-- [ ] Master pages, applied by drag, rendered behind page content.
-- [ ] Master item override, promoting one item to a local editable copy.
-- [ ] Layers panel: named layers, reorder, visibility, lock.
+### The remaining work, reordered
+
+Layers come **before** masters, and the reason is not that they are smaller.
+A master page is a page whose items appear on the pages it is applied to, and
+"appear on" has to mean something in the containment model. Deciding what a
+layer is settles that question; deciding it afterwards would mean building
+masters twice.
+
+- [ ] **Layers are document-wide.** Today a layer belongs to a page —
+  `Page.layers` — which makes a frame's page and its layer the *same fact*.
+  That is why every frame drawn anywhere ended up on page one's layer, and why
+  `layer_at` and `rehome_frame` had to exist to correct it. InDesign's model is
+  the other way round: **a layer spans every page**, and a frame's page is
+  derived from where it is. Both bugs stop being possible, because a derived
+  fact cannot disagree with itself.
+  - `Document.layer_order: Vec<LayerId>`, back to front, replaces
+    `Page.layers`. Paint order becomes layer-major, which is what makes "this
+    layer is above that one" true across the whole document rather than within
+    a page.
+  - A frame's spread comes from its centre — the page holding it, or the
+    nearest page when it is out on the pasteboard.
+  - Format version 7 → 8. Per-page layers **merge by position**: layer 0 of
+    every page becomes one document-wide layer 0. For every document that
+    exists today that is one layer holding everything, which is the truth about
+    a document written before layers could be chosen.
+  - `layer_at` and `rehome_frame` are **deleted**. New frames go on the active
+    layer wherever they are drawn, and moving a frame changes nothing about
+    which layer it is on — which is correct, and is the InDesign behaviour.
+- [ ] Layers panel: named layers, reorder, visibility, lock, and an active
+  layer that new objects go onto. A locked layer's frames cannot be selected;
+  a hidden layer's are not drawn (already true) **and not selectable**, which
+  is the part that makes hiding useful for working.
+- [ ] Master pages, applied by drag, rendered behind page content. Applied by
+  **reference, not by copy**: a master whose items were copied onto each page
+  would not update the pages when it changed, which is the entire reason to
+  have one.
+- [ ] Master item override, promoting one item to a local editable copy. An
+  overridden item stops being the master's, but remembers where it came from,
+  so that "remove all overrides" can find its way back.
 - [ ] Document setup: page size, orientation, margins, bleed, slug. → **moved
   to milestone 1.5, phase B.** Too much stands on it to leave it this late:
   rulers, screen modes, align-to-page, `TrimBox` and `BleedBox`, and
