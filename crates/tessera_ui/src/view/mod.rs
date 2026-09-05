@@ -184,6 +184,17 @@ fn accelerators(ui: &Ui, state: &mut TesseraApp) {
         crate::actions::run(state, crate::actions::Run::ToggleStyles);
     }
 
+    // Everything below is about objects, and while a caret is live the same
+    // chords belong to the text. Consuming them here is what made Ctrl+V paste
+    // a duplicate frame instead of the clipboard's text, Ctrl+A select frames
+    // instead of characters, and Ctrl+X delete the very frame being edited.
+    //
+    // The file and history chords above stay: saving and undoing mean the same
+    // thing wherever the caret is.
+    if state.active().editing.is_some() {
+        return;
+    }
+
     if pressed(cmd, egui::Key::V) {
         apply(state, Command::Paste);
     }

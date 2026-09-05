@@ -116,6 +116,15 @@ impl EditBuffer {
         (start != end).then_some(start..end)
     }
 
+    /// The text the selection covers, if any.
+    ///
+    /// What Copy and Cut put on the system clipboard. `None` rather than an
+    /// empty string when nothing is selected, so a caller can tell "nothing
+    /// chosen" from "an empty choice" and leave the clipboard alone.
+    pub fn selected_text(&self) -> Option<&str> {
+        self.selection_range().map(|r| &self.story.text[r])
+    }
+
     pub fn select_all(&mut self) {
         self.cursor = TextCursor {
             anchor: 0,
