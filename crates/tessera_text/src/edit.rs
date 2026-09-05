@@ -30,6 +30,15 @@ pub struct EditBuffer {
     /// Text the platform's input method is composing but has not committed.
     /// It is drawn (underlined) but is not part of the story until commit.
     ime_preedit: Option<String>,
+    /// Formatting chosen at a caret, waiting for text to apply it to.
+    ///
+    /// Character formatting needs a range and a caret is not one. Applying it
+    /// to nothing is what used to happen, and it looked exactly like a broken
+    /// control: the colour picker moved and the page did not. So what the panel
+    /// sets at a caret is held here and lands on the next text typed, which is
+    /// InDesign's behaviour and the only reading of "make this red" a blinking
+    /// caret can honour.
+    pending: crate::story::CharacterFormat,
 }
 
 impl EditBuffer {
@@ -41,7 +50,22 @@ impl EditBuffer {
                 anchor: 0,
             },
             ime_preedit: None,
+            pending: crate::story::CharacterFormat::default(),
         }
+    }
+
+    /// Formatting chosen at a caret and not yet applied to anything.
+    pub fn pending(&self) -> &crate::story::CharacterFormat {
+        &self.pending
+    }
+
+    /// Hold formatting until there is text to put it on.
+    ///
+    /// Merged rather than replaced, so choosing red and then bold gives red
+    /// bold: the panel sets one property at a time, and a caret should
+    /// accumulate them the way a selection does.
+    pub fn set_pending(&mut self, format: &crate::story::CharacterFormat) {
+        self.pending = format.over(&self.pending);
     }
 
     pub fn story(&self) -> &Story {
@@ -59,6 +83,11 @@ impl EditBuffer {
             position: clamped,
             anchor: clamped,
         };
+        // Formatting chosen for one place is not an instruction about another,
+        // so moving the caret abandons it. InDesign does the same, and the
+        // alternative is a colour chosen an hour ago appearing in a paragraph
+        // nobody connected it to.
+        self.pending = crate::story::CharacterFormat::default();
     }
 
     /// Move the caret to `position`, keeping the anchor where it is.
@@ -188,11 +217,29 @@ impl EditBuffer {
     pub fn insert(&mut self, text: &str) {
         self.ime_preedit = None;
         self.delete_selection();
+        // Where the text lands, taken before the caret moves past it.
+        let at = self.cursor.position;
         // Through the story, so the runs come with it. Writing to `text`
         // directly would leave them describing a string that no longer
         // exists — corruption, and its symptom appears far from here.
-        self.story.insert_text(self.cursor.position, text);
-        self.set_cursor(self.cursor.position + text.len());
+        self.story.insert_text(at, text);
+
+        // Formatting chosen at the caret, now that there is something to put
+        // it on. Taken rather than read, so it lands once: the next character
+        // typed inherits it from this one by `insert_text`'s join-left rule,
+        // which is the same reason typing after a bold word continues bold.
+        let pending = std::mem::take(&mut self.pending);
+        if !pending.is_empty() && !text.is_empty() {
+            self.story
+                .apply_character_format(at..at + text.len(), &pending);
+        }
+
+        // `set_cursor` clears what is pending, so the caret is moved after the
+        // formatting has been applied rather than before.
+        self.cursor = TextCursor {
+            position: (at + text.len()).min(self.story.text.len()),
+            anchor: (at + text.len()).min(self.story.text.len()),
+        };
     }
 
     pub fn delete_backward(&mut self) {

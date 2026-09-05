@@ -811,6 +811,16 @@ fn text_section(
         )
     };
 
+    // At a caret, formatting is held until there is text to put it on — so the
+    // panel has to show what is held, or choosing red would leave the swatch
+    // black and look like nothing happened.
+    let shown = match &state.active().editing {
+        Some((editing, buffer)) if *editing == id && target.start >= target.end => {
+            buffer.pending().over(&shown)
+        }
+        _ => shown,
+    };
+
     // Which faces this document names that this machine has not got. parley
     // substitutes silently, which is right for drawing and wrong for the
     // person holding the file.
@@ -917,6 +927,13 @@ fn text_section(
     let [r, g, b, a] = shown_colour.to_rgb_f32();
     let mut rgba = [r, g, b, a];
     ui.horizontal(|ui| {
+        let (spot, _) = ui.allocate_exact_size(Vec2::splat(12.0), Sense::hover());
+        crate::icons::paint(
+            ui.painter(),
+            spot,
+            crate::icons::Icon::Palette,
+            Theme::TEXT_MUTED,
+        );
         ui.colored_label(Theme::TEXT_MUTED, "Colour");
         if fill_picker(ui, &mut rgba) {
             set_character(

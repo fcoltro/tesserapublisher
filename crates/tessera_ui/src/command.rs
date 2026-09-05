@@ -465,6 +465,18 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             range,
             format,
         } => {
+            // An empty range is a caret, and character formatting needs
+            // something to sit on. Held for the next text typed rather than
+            // discarded — discarding is what used to happen, and it looked
+            // exactly like a broken control: the picker moved and the page did
+            // not.
+            if range.start >= range.end {
+                if let Some(buffer) = editing_buffer_for(state, story) {
+                    buffer.set_pending(&format);
+                }
+                return;
+            }
+
             if let Some(s) = state.active_mut().document_mut().story_mut(story) {
                 s.apply_character_format(range.clone(), &format);
             }
@@ -3527,5 +3539,283 @@ mod tests {
             None,
             "and so is basing one on itself"
         );
+    }
+
+    #[test]
+    fn setting_a_text_colour_reaches_the_glyphs_that_get_drawn() {
+        // Reported from real use twice. The model carries the colour and the
+        // shaper puts it on the run, but the thing that matters is whether it
+        // survives the whole path the renderer walks: command, document,
+        // resolve, shaped run. Everything short of egui itself.
+        use tessera_color::Color;
+        use tessera_layout::resolve::ResolvedKind;
+
+        let red = Color::Rgb {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        };
+
+        let (mut state, _, story) = a_text_frame("hello");
+        apply(
+            &mut state,
+            Command::SetCharacterFormat {
+                story,
+                range: 0..5,
+                format: CharacterFormat {
+                    colour: Some(red.clone()),
+                    ..CharacterFormat::default()
+                },
+            },
+        );
+
+        let resolved = state.resolve_uncached();
+        let colours: Vec<Option<Color>> = resolved
+            .items
+            .iter()
+            .filter_map(|item| match &item.kind {
+                ResolvedKind::Text { shaped, .. } => Some(shaped),
+                _ => None,
+            })
+            .flat_map(|shaped| shaped.runs().map(|r| r.colour.clone()))
+            .collect();
+
+        assert!(
+            !colours.is_empty(),
+            "the frame resolved to no shaped runs at all"
+        );
+        assert!(
+            colours.iter().all(|c| c.as_ref() == Some(&red)),
+            "the colour did not reach the glyphs: {colours:?}"
+        );
+    }
+
+    #[test]
+    fn a_colour_on_one_word_leaves_the_other_alone() {
+        use tessera_color::Color;
+        use tessera_layout::resolve::ResolvedKind;
+
+        let red = Color::Rgb {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        };
+
+        let (mut state, _, story) = a_text_frame("red black");
+        apply(
+            &mut state,
+            Command::SetCharacterFormat {
+                story,
+                range: 0..3,
+                format: CharacterFormat {
+                    colour: Some(red.clone()),
+                    ..CharacterFormat::default()
+                },
+            },
+        );
+
+        let resolved = state.resolve_uncached();
+        let colours: Vec<Option<Color>> = resolved
+            .items
+            .iter()
+            .filter_map(|item| match &item.kind {
+                ResolvedKind::Text { shaped, .. } => Some(shaped),
+                _ => None,
+            })
+            .flat_map(|shaped| shaped.runs().map(|r| r.colour.clone()))
+            .collect();
+
+        assert!(
+            colours.contains(&Some(red)),
+            "the coloured word: {colours:?}"
+        );
+        assert!(
+            colours.contains(&Some(Color::BLACK)),
+            "and the one nobody touched: {colours:?}"
+        );
+    }
+
+    // --- formatting chosen at a caret --------------------------------------
+
+    #[test]
+    fn a_colour_chosen_at_a_caret_lands_on_the_next_text_typed() {
+        // Reported from real use: the colour control did nothing. It was doing
+        // nothing *correctly* — a caret is not a range, and character
+        // formatting needs one — but doing nothing is indistinguishable from
+        // being broken, so it is now held for the next text instead.
+        use tessera_color::Color;
+
+        let red = Color::Rgb {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        };
+
+        let (mut state, id, story) = a_text_frame("ab");
+        start_editing(&mut state, id, story);
+        if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+            buffer.set_cursor(2);
+        }
+
+        apply(
+            &mut state,
+            Command::SetCharacterFormat {
+                story,
+                range: 2..2,
+                format: CharacterFormat {
+                    colour: Some(red.clone()),
+                    ..CharacterFormat::default()
+                },
+            },
+        );
+
+        // Nothing has changed yet, because there is nothing to change.
+        let before = state
+            .active()
+            .document()
+            .story(story)
+            .expect("story")
+            .clone();
+        assert!(!before.has_character_overrides(0..2));
+
+        if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+            buffer.insert("cd");
+        }
+
+        let (_, buffer) = state.active().editing.as_ref().expect("editing");
+        let typed = buffer.story();
+        assert_eq!(typed.text, "abcd");
+        assert_eq!(
+            typed.run_at(2).and_then(|r| r.local.colour.clone()),
+            Some(red),
+            "the text typed after the caret took the colour: {:?}",
+            typed.runs
+        );
+        assert_eq!(
+            typed.run_at(0).and_then(|r| r.local.colour.clone()),
+            None,
+            "and the text that was already there did not"
+        );
+    }
+
+    #[test]
+    fn pending_formatting_accumulates_rather_than_replacing() {
+        // The panel sets one property at a time, so a caret has to gather them
+        // the way a selection does: red then bold is red bold.
+        use tessera_color::Color;
+
+        let (mut state, id, story) = a_text_frame("ab");
+        start_editing(&mut state, id, story);
+        if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+            buffer.set_cursor(2);
+        }
+
+        for format in [
+            CharacterFormat {
+                colour: Some(Color::Rgb {
+                    r: 1.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 1.0,
+                }),
+                ..CharacterFormat::default()
+            },
+            CharacterFormat {
+                weight: Some(700),
+                ..CharacterFormat::default()
+            },
+        ] {
+            apply(
+                &mut state,
+                Command::SetCharacterFormat {
+                    story,
+                    range: 2..2,
+                    format,
+                },
+            );
+        }
+
+        if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+            buffer.insert("c");
+        }
+
+        let (_, buffer) = state.active().editing.as_ref().expect("editing");
+        let run = buffer.story().run_at(2).expect("the typed run");
+        assert_eq!(run.local.weight, Some(700));
+        assert!(run.local.colour.is_some(), "both, not the last one");
+    }
+
+    #[test]
+    fn moving_the_caret_abandons_what_was_pending() {
+        // Formatting chosen for one place is not an instruction about another.
+        use tessera_color::Color;
+
+        let (mut state, id, story) = a_text_frame("ab");
+        start_editing(&mut state, id, story);
+        if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+            buffer.set_cursor(2);
+        }
+        apply(
+            &mut state,
+            Command::SetCharacterFormat {
+                story,
+                range: 2..2,
+                format: CharacterFormat {
+                    colour: Some(Color::Rgb {
+                        r: 1.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 1.0,
+                    }),
+                    ..CharacterFormat::default()
+                },
+            },
+        );
+
+        if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+            buffer.set_cursor(0);
+            buffer.insert("z");
+        }
+
+        let (_, buffer) = state.active().editing.as_ref().expect("editing");
+        assert_eq!(
+            buffer
+                .story()
+                .run_at(0)
+                .and_then(|r| r.local.colour.clone()),
+            None,
+            "the colour was chosen for the end, not the beginning"
+        );
+    }
+
+    #[test]
+    fn a_selection_still_formats_immediately() {
+        // The caret path must not have taken the ordinary one with it.
+        use tessera_color::Color;
+
+        let (mut state, id, story) = a_text_frame("abcd");
+        start_editing(&mut state, id, story);
+        apply(
+            &mut state,
+            Command::SetCharacterFormat {
+                story,
+                range: 0..2,
+                format: CharacterFormat {
+                    colour: Some(Color::Rgb {
+                        r: 1.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 1.0,
+                    }),
+                    ..CharacterFormat::default()
+                },
+            },
+        );
+
+        let s = state.active().document().story(story).expect("story");
+        assert!(s.has_character_overrides(0..2), "applied at once");
     }
 }
