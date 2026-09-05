@@ -136,8 +136,12 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // Measured before drawing, because laying the text out needs the shaper
     // mutably and drawing only needs to read.
     let caret = caret_geometry(state);
+    // Worked out here, where the shaper is reachable: `draw_overlays` takes
+    // the application immutably, and asking whether a story outgrows its frame
+    // means laying it out.
+    let overset = overset_frames(state);
     if state.screen_mode.shows_chrome() {
-        draw_overlays(ui, rect, state, caret.as_ref());
+        draw_overlays(ui, rect, state, caret.as_ref(), &overset);
     }
 
     // The spatial verbs, beside what they act on. After the overlays so it
@@ -494,8 +498,8 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
 
     camera_input(ui, response, rect, state);
 
-    if ui.input(|i| i.key_down(egui::Key::Space)) {
-        return; // spacebar means pan, never draw
+    if panning(ui) {
+        return; // panning, never draw or select
     }
 
     // Clicking an existing text frame with the type tool edits it, rather
@@ -541,6 +545,10 @@ fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
     // Panning and zooming keep working while editing; losing them the moment
     // a caret appears would be its own bug.
     camera_input(ui, response, rect, state);
+
+    if panning(ui) {
+        return; // panning, never move the caret or the frame
+    }
 
     // Nor do the frame's grips stop working. Resizing a text frame from inside
     // it is ordinary — it is how you fit the box to the copy — and it reshapes
@@ -716,6 +724,91 @@ fn guide_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
 
 fn finish_editing(state: &mut TesseraApp) {
     state.active_mut().editing = None;
+}
+
+/// Every text frame holding more copy than it can show.
+///
+/// Asked of the shaper, which is the only thing that knows: whether a story
+/// outgrows its box depends on the measure, the leading and every run's size.
+fn overset_frames(state: &mut TesseraApp) -> Vec<FrameId> {
+    use tessera_document::nodes::FrameKind;
+
+    let key = state.active;
+    let TesseraApp {
+        documents, shaper, ..
+    } = state;
+    let open = &documents[key];
+    let doc = open.document();
+
+    doc.paint_order()
+        .into_iter()
+        .filter(|id| {
+            let Some(frame) = doc.frame(*id) else {
+                return false;
+            };
+            let FrameKind::Text { story } = frame.kind else {
+                return false;
+            };
+            let Some(story) = doc.story(story) else {
+                return false;
+            };
+            // A hair of tolerance: a story that exactly fills its frame is not
+            // overset, and floating point should not decide otherwise.
+            shaper.shape(story, doc, frame.bounds.width).height > frame.bounds.height + 0.5
+        })
+        .collect()
+}
+
+/// A red mark at the bottom-right of a frame whose text does not all fit.
+///
+/// Text is clipped to its frame, so overset copy is simply not drawn — and
+/// without a mark, a frame that is too small looks exactly like one whose story
+/// ends there. InDesign puts the same mark in the same corner, and it is the
+/// only way to tell "finished" from "hidden".
+///
+/// Drawn for every text frame rather than the selected one: the point is to
+/// notice a frame you were not already looking at.
+fn overset_marks(state: &TesseraApp, rect: Rect, painter: &egui::Painter, overset: &[FrameId]) {
+    const MARK: f32 = 9.0;
+
+    for id in overset {
+        let Some(frame) = state.active().document().frame(*id) else {
+            continue;
+        };
+        let bounds = frame.bounds;
+        let corner = state.active().view.doc_to_screen(DocPoint {
+            x: bounds.x + bounds.width,
+            y: bounds.y + bounds.height,
+        });
+        let at = Rect::from_min_size(
+            egui::pos2(rect.min.x + corner.x - MARK, rect.min.y + corner.y - MARK),
+            egui::vec2(MARK, MARK),
+        );
+        if !rect.intersects(at) {
+            continue;
+        }
+        painter.rect_filled(at, 1.0, Theme::ERROR);
+        painter.text(
+            at.center(),
+            egui::Align2::CENTER_CENTER,
+            "+",
+            egui::FontId::proportional(MARK),
+            Theme::TEXT_PRIMARY,
+        );
+    }
+}
+
+/// Whether the pointer is panning rather than working.
+///
+/// `Response::dragged` is true for **any** button, so a middle-button pan reads
+/// as a drag to every tool. With the select tool that meant the marquee ran
+/// during the pan, caught nothing, and replaced the selection with nothing —
+/// so panning away from a selected object threw the selection away.
+///
+/// Checked once, here, rather than by teaching a dozen `dragged()` calls which
+/// button they meant.
+fn panning(ui: &Ui) -> bool {
+    ui.input(|i| i.key_down(egui::Key::Space) || i.pointer.button_down(egui::PointerButton::Middle))
 }
 
 fn camera_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
@@ -1469,6 +1562,7 @@ fn draw_overlays(
     rect: Rect,
     state: &TesseraApp,
     caret: Option<&(FrameId, tessera_text::CaretGeometry)>,
+    overset: &[FrameId],
 ) {
     let painter = ui.painter_at(rect);
 
@@ -1518,6 +1612,8 @@ fn draw_overlays(
             Stroke::new(1.0, Theme::FRAME_EDGE),
         ));
     }
+
+    overset_marks(state, rect, &painter, overset);
 
     // Every selected frame gets an outline; only a lone selection gets
     // handles, since a multiple selection has nothing single to resize yet.
@@ -1954,5 +2050,97 @@ mod tests {
         let now = to_screen_pos(&state, rect, DocPoint { x: 250.0, y: 120.0 });
         assert_eq!(centre_grab_at(&state, rect, was), None, "not where it was");
         assert_eq!(centre_grab_at(&state, rect, now), Some(id), "where it is");
+    }
+
+    // --- text that does not fit ---------------------------------------------
+
+    /// A text frame `height` tall holding `text`.
+    fn a_text_frame(height: f64, text: &str) -> (TesseraApp, FrameId) {
+        use crate::command::{Command, apply};
+
+        let mut state = TesseraApp::headless();
+        apply(
+            &mut state,
+            Command::AddTextFrame(DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 200.0,
+                height,
+            }),
+        );
+        let id = state.active().selection.single().expect("selected");
+        apply(
+            &mut state,
+            Command::SetText {
+                id,
+                text: text.to_string(),
+            },
+        );
+        (state, id)
+    }
+
+    #[test]
+    fn a_story_that_fits_is_not_overset() {
+        let (mut state, _) = a_text_frame(200.0, "a short line");
+        assert!(overset_frames(&mut state).is_empty());
+    }
+
+    #[test]
+    fn a_story_taller_than_its_frame_is_overset() {
+        // Reported from real use: long copy ran past its frame and over the
+        // page below. It is clipped now, which means it is *invisible* rather
+        // than misplaced — so something has to say it is there.
+        let long = "the quick brown fox jumps over the lazy dog. ".repeat(40);
+        let (mut state, id) = a_text_frame(30.0, &long);
+
+        assert_eq!(
+            overset_frames(&mut state),
+            vec![id],
+            "forty lines do not fit in thirty points"
+        );
+    }
+
+    #[test]
+    fn making_the_frame_taller_clears_the_overset() {
+        use crate::command::{Command, apply};
+
+        let long = "the quick brown fox jumps over the lazy dog. ".repeat(40);
+        let (mut state, id) = a_text_frame(30.0, &long);
+        assert!(!overset_frames(&mut state).is_empty());
+
+        apply(
+            &mut state,
+            Command::SetBounds {
+                id,
+                bounds: DocRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 200.0,
+                    height: 4000.0,
+                },
+            },
+        );
+
+        assert!(
+            overset_frames(&mut state).is_empty(),
+            "a frame big enough for its copy is not overset"
+        );
+    }
+
+    #[test]
+    fn a_frame_that_is_not_text_is_never_overset() {
+        use crate::command::{Command, apply};
+
+        let mut state = TesseraApp::headless();
+        apply(
+            &mut state,
+            Command::AddRectangle(DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 10.0,
+            }),
+        );
+        assert!(overset_frames(&mut state).is_empty());
     }
 }

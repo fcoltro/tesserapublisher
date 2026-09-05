@@ -74,6 +74,15 @@ pub enum Icon {
     Plus,
     Duplicate,
     Trash,
+    /// Navigation, and the disclosure a submenu shows.
+    ChevronLeft,
+    ChevronRight,
+    /// The layers panel, and what a layer's two switches look like.
+    Layers,
+    Eye,
+    EyeOff,
+    Lock,
+    Unlock,
 
     // The fill and stroke proxy, and the status bar's zoom.
     Swap,
@@ -307,6 +316,38 @@ impl Icon {
                 "M10 8 h10 a2 2 0 0 1 2 2 v10 a2 2 0 0 1 -2 2 h-10 a2 2 0 0 1 -2 -2 v-10 a2 2 0 0 1 2 -2 z",
                 "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2",
             ],
+            // lucide: chevron-left
+            Self::ChevronLeft => &["m15 18-6-6 6-6"],
+            // lucide: chevron-right
+            Self::ChevronRight => &["m9 18 6-6-6-6"],
+            // lucide: layers
+            Self::Layers => &[
+                "M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z",
+                "M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12",
+                "M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17",
+            ],
+            // lucide: eye
+            Self::Eye => &[
+                "M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0",
+                "M15 12 A3 3 0 1 1 9 12 A3 3 0 1 1 15 12 Z",
+            ],
+            // lucide: eye-off
+            Self::EyeOff => &[
+                "M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49",
+                "M14.084 14.158a3 3 0 0 1-4.242-4.242",
+                "M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143",
+                "m2 2 20 20",
+            ],
+            // lucide: lock — <rect width=18 height=11 x=3 y=11 rx=2> as a path
+            Self::Lock => &[
+                "M5 11 h14 a2 2 0 0 1 2 2 v7 a2 2 0 0 1 -2 2 h-14 a2 2 0 0 1 -2 -2 v-7 a2 2 0 0 1 2 -2 z",
+                "M7 11V7a5 5 0 0 1 10 0v4",
+            ],
+            // lucide: lock-open
+            Self::Unlock => &[
+                "M5 11 h14 a2 2 0 0 1 2 2 v7 a2 2 0 0 1 -2 2 h-14 a2 2 0 0 1 -2 -2 v-7 a2 2 0 0 1 2 -2 z",
+                "M7 11V7a5 5 0 0 1 9.9-1",
+            ],
             // lucide: trash-2
             Self::Trash => &[
                 "M10 11v6",
@@ -402,7 +443,14 @@ impl Icon {
             | Self::TypeSize
             | Self::Plus
             | Self::Duplicate
-            | Self::Trash => (12.0, 12.0),
+            | Self::Trash
+            | Self::ChevronLeft
+            | Self::ChevronRight
+            | Self::Layers
+            | Self::Eye
+            | Self::EyeOff
+            | Self::Lock
+            | Self::Unlock => (12.0, 12.0),
         }
     }
 }

@@ -267,6 +267,22 @@ fn draw_text(
     shaped: &tessera_text::shape::ShapedText,
     color: &Color,
 ) {
+    // **Text never leaves its frame.** A story longer than its box is overset:
+    // InDesign marks it and draws none of it past the edge. Letting it spill
+    // put one page's copy over the page below, which reads as though the text
+    // had flowed there — and flowing between frames is a real feature this is
+    // not.
+    //
+    // A plain layer clipped to the frame, because vello has no dedicated clip
+    // blend and the clip comes from the layer's own shape.
+    scene.push_layer(
+        Fill::NonZero,
+        vello::peniko::Mix::Normal,
+        1.0,
+        transform,
+        &bounds.to_kurbo(),
+    );
+
     // One draw call per run, because the size lives on the run. This was one
     // call per font while a story had a single size; grouping by font alone
     // would now draw a heading and its body text at whichever size happened
@@ -304,6 +320,8 @@ fn draw_text(
             .brush(to_peniko(colour))
             .draw(Fill::NonZero, glyphs.into_iter());
     }
+
+    scene.pop_layer();
 }
 
 #[cfg(test)]

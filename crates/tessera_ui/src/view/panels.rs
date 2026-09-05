@@ -1819,7 +1819,8 @@ fn page_navigator(ui: &mut Ui, state: &mut TesseraApp) {
 
     // Right to left in this layout, so the controls are built in reverse and
     // read forwards.
-    if glyph_button(ui, crate::icons::Icon::AlignRight, "Next spread").clicked() && at + 1 < spreads
+    if glyph_button(ui, crate::icons::Icon::ChevronRight, "Next spread").clicked()
+        && at + 1 < spreads
     {
         state.active_mut().current_spread = at + 1;
         state.active_mut().fitted = false;
@@ -1838,7 +1839,7 @@ fn page_navigator(ui: &mut Ui, state: &mut TesseraApp) {
 
     ui.colored_label(Theme::TEXT_MUTED, format!("{number} of {pages}"));
 
-    if glyph_button(ui, crate::icons::Icon::AlignLeft, "Previous spread").clicked() && at > 0 {
+    if glyph_button(ui, crate::icons::Icon::ChevronLeft, "Previous spread").clicked() && at > 0 {
         state.active_mut().current_spread = at - 1;
         state.active_mut().fitted = false;
     }
