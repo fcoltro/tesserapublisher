@@ -1,15 +1,15 @@
 # Milestone 2 — Typography
 
-**Status: PROPOSAL. Not approved, and no code should be written against it.**
+**Status: approved 2026-09-05.** Three of §7's four questions were put to the
+author and answered; the fourth is decided below.
 
 Milestone 1.5 closed on 2026-09-05 and this is the next thing in the roadmap.
 It is architectural — a new subsystem, a format version bump, and a change to
-the type the editable buffer is built on — so by the project's own process it
-wants questions answered before a plan exists. Nobody was available to answer
-them, so this states the decisions I would recommend, the reasoning, and the
-questions I would have asked, and stops there.
+the type the editable buffer is built on — so it went out as a proposal first
+and the shape-changing questions were settled before any code was written.
 
-§7 lists the open questions. Those are the ones to read first.
+**One answer went against the recommendation**, and it is the interesting one:
+character styles are in, not deferred. See D2.
 
 ---
 
@@ -72,6 +72,23 @@ test over generated edits is the place to catch it.
 
 ### D2 — Every format field is optional, and that is what makes a style cascade.
 
+**Approved with both style kinds, against the recommendation.** The proposal
+argued for paragraph styles first, on the grounds that the acceptance sentence
+names only those and that character styles double the cascade's surface. The
+decision was to build both, avoiding a second migration when they inevitably
+arrive — the same argument that was *rejected* for `ColorRef` in phase B. It
+lands differently here because the consumer is in this milestone rather than
+three away.
+
+So the cascade has four levels, not three:
+
+```text
+document default  ->  paragraph style  ->  character style  ->  local override
+```
+
+and that resolution order is fixed here and nowhere else.
+
+
 ```rust
 pub struct CharacterFormat {
     pub family: Option<String>,
@@ -107,6 +124,22 @@ being taken here rather than deferred for the opposite reason: phase B had no
 consumer for it before milestone 5, and this milestone's acceptance sentence
 *is* the consumer.
 
+### D2a — Styles live on the document, in their own arenas.
+
+```rust
+pub struct CharacterStyle { pub name: String, pub format: CharacterFormat }
+pub struct ParagraphStyle {
+    pub name: String,
+    pub format: ParagraphFormat,
+    /// Character formatting the paragraph imposes before any run speaks.
+    pub character: CharacterFormat,
+}
+```
+
+Held in `SlotMap`s on `Document`, beside `layers` and `pages`, so a style has
+an id that survives a rename and a run refers to it by that id. A style
+referenced by name would break the moment somebody renamed one.
+
 ### D3 — Font enumeration through parley, not a platform layer.
 
 `parley::FontContext` owns a `fontique::Collection`, and
@@ -118,7 +151,11 @@ The list is cached and sorted once; a font installed while Tessera is running
 is not picked up until asked for, and saying so is better than rescanning on
 every frame.
 
-*Open: what a document does when a font it names is not installed.* See §7.
+**A named font the system does not have is substituted and marked.** That is
+InDesign's behaviour and the only one of the three options that neither lies
+about what will print nor refuses to open a file whose text is perfectly
+readable. Milestone 6's preflight already has a missing-font rule to report
+it; this milestone only has to make the substitution visible.
 
 ### D4 — Edits carry the runs with them.
 
@@ -161,8 +198,9 @@ Four phases, in dependency order, each producing working software:
 4. **The typography inspector** — family, weight, size, leading, tracking,
    alignment, indents; then named styles and their cascade.
 
-IME and right-to-left are deliberately last and may want a milestone of their
-own; see §7.
+Right-to-left is verified in phase 3, where shaping lands — parley handles
+bidi, so the work is proving it rather than building it. IME has moved out to
+milestone 2.5.
 
 ## 6. Risks
 
@@ -179,23 +217,17 @@ cache key more complicated, and the performance guard from A7 only covers
 rectangles. It should be extended to a text-heavy document before phase 3, or
 the guard will not be watching the thing that got slower.
 
-## 7. Questions I would have asked
+## 7. The questions, and their answers
 
-1. **Is IME in this milestone or its own?** The roadmap puts it here, but it
-   is a windowing and platform concern rather than a text-model one, and it is
-   the only item that cannot be tested headlessly. Splitting it out would let
-   the rest of milestone 2 stay verifiable.
-2. **What should happen when a document names a font that is not installed?**
-   InDesign substitutes and marks the text pink. Preflight (milestone 6) has a
-   missing-font rule already. The options are: substitute silently, substitute
-   and mark, or refuse to open. I would recommend substitute-and-mark, but it
-   is a visible product decision.
-3. **Character styles as well as paragraph styles, or paragraph only first?**
-   The acceptance sentence names only paragraph styles. Character styles
-   double the cascade's surface for a capability the milestone does not ask
-   for.
-4. **Is vertical text in scope?** Not mentioned anywhere, and it changes the
-   line-breaking model if it ever is.
-
-Answers to 1 and 3 change the shape of the work materially. The rest can be
-decided later without rework.
+1. **Is IME in this milestone or its own?** -> **Its own.** It is a windowing
+   concern rather than a text-model one, and the only item in the milestone
+   that cannot be tested headlessly. Moved to **milestone 2.5**, so it stays
+   visible rather than being folded into platform work where an unverifiable
+   item quietly becomes an unverified one.
+2. **A font a document names but the system lacks?** -> **Substitute and
+   mark.** See D3.
+3. **Character styles too, or paragraph only first?** -> **Both**, against the
+   recommendation. See D2.
+4. **Is vertical text in scope?** -> Not asked, not answered, not in scope. It
+   changes the line-breaking model, so if it is ever wanted it wants its own
+   decision rather than an assumption made here.

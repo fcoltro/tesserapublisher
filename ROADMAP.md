@@ -447,11 +447,8 @@ dockable panels, document tabs.
 
 The reason a layout tool is not a drawing tool.
 
-> **A design proposal exists and is not approved:**
-> [milestone 2 typography](docs/superpowers/specs/2026-09-05-milestone-2-typography-proposal.md).
-> It states the recommended decisions and, in its §7, the four questions that
-> want answering first — two of which change the shape of the work. **No code
-> should be written against it until those are settled.**
+> **Design approved 2026-09-05:**
+> [milestone 2 typography](docs/superpowers/specs/2026-09-05-milestone-2-typography-design.md).
 >
 > The one-line version: `Story` holds a single `TextStyle` for all of its
 > text, so nothing in the model can express a bold word. That is the whole of
@@ -472,10 +469,34 @@ The reason a layout tool is not a drawing tool.
   and after, hyphenation, drop caps.
 - [ ] Paragraph and character styles, with live cascade on edit.
 - [ ] Text selection by click-drag, double-click word, triple-click paragraph.
-- [ ] IME composition rendered on canvas — **verified on Windows; Linux and
-  macOS recorded as unverified.**
+- [ ] IME composition rendered on canvas -> **moved to milestone 2.5.** It is
+  a windowing concern rather than a text-model one, and the only item here
+  that no headless test can reach; leaving it in would have made the whole
+  milestone unverifiable by the suite.
 - [ ] Right-to-left and bidirectional text render correctly.
 - [ ] Typography inspector panel.
+
+---
+
+# Milestone 2.5 — Input Methods
+
+**Split out of milestone 2 on 2026-09-05.** Composition is a windowing
+concern, not a text-model one, and it is the one piece of typography no
+headless test can reach. Keeping it visible as its own milestone beats folding
+it into platform work, where an unverifiable item quietly becomes an
+unverified one.
+
+### Acceptance
+
+> Type in a language that needs an input method and see the composition
+> preview on the canvas, in the frame, in the frame's own font — not in a
+> floating box over the top of it. Commit it and find the text where the
+> preview was.
+
+- [ ] Composition preview rendered on canvas, in the frame.
+- [ ] Candidate window positioned against the caret.
+- [ ] **Verified on Windows**, with Linux and macOS recorded as unverified
+  until someone has done it.
 
 ---
 
