@@ -137,6 +137,24 @@ impl EditBuffer {
         self.story.set_paragraph_style(range, style);
     }
 
+    /// Fold a deleted character style into the buffer's own story.
+    pub fn flatten_character_style(
+        &mut self,
+        id: crate::story::CharacterStyleId,
+        format: &crate::story::CharacterFormat,
+    ) {
+        self.story.flatten_character_style(id, format);
+    }
+
+    /// Fold a deleted paragraph style into the buffer's own story.
+    pub fn flatten_paragraph_style(
+        &mut self,
+        id: crate::story::ParagraphStyleId,
+        format: &crate::story::ParagraphFormat,
+    ) {
+        self.story.flatten_paragraph_style(id, format);
+    }
+
     pub fn insert(&mut self, text: &str) {
         self.ime_preedit = None;
         self.delete_selection();

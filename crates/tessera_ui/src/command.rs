@@ -93,6 +93,20 @@ pub enum Command {
         style: ParagraphStyle,
     },
 
+    /// Delete a named style, keeping every appearance it was producing.
+    ///
+    /// The style's format is folded into the local overrides of every span that
+    /// referenced it, across every story, before the style is removed. Reverting
+    /// that text to the document default would be quicker and would throw away
+    /// work; asking which style to replace it with — what InDesign does — asks a
+    /// question the fold has already answered.
+    DeleteCharacterStyle {
+        id: CharacterStyleId,
+    },
+    DeleteParagraphStyle {
+        id: ParagraphStyleId,
+    },
+
     /// Attach a named style to a range, or detach it with `None`.
     ///
     /// Separate from `SetCharacterFormat` because a style and an override are
@@ -435,6 +449,54 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             if let Some(existing) = state.active_mut().document_mut().paragraph_style_mut(id) {
                 *existing = style;
             }
+        }
+
+        Command::DeleteCharacterStyle { id } => {
+            // The format has to be read before the style goes, and every story
+            // folded before anything is removed — a story left referring to a
+            // deleted style silently loses its formatting, because
+            // `resolve_run` treats an unknown id as saying nothing.
+            let Some(format) = state
+                .active()
+                .document()
+                .character_styles
+                .get(id)
+                .map(|s| s.format.clone())
+            else {
+                return;
+            };
+            let ids: Vec<StoryId> = state.active().document().stories.keys().collect();
+            for story in ids {
+                if let Some(s) = state.active_mut().document_mut().story_mut(story) {
+                    s.flatten_character_style(id, &format);
+                }
+            }
+            if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+                buffer.flatten_character_style(id, &format);
+            }
+            state.active_mut().document_mut().remove_character_style(id);
+        }
+
+        Command::DeleteParagraphStyle { id } => {
+            let Some(format) = state
+                .active()
+                .document()
+                .paragraph_styles
+                .get(id)
+                .map(|s| s.format.clone())
+            else {
+                return;
+            };
+            let ids: Vec<StoryId> = state.active().document().stories.keys().collect();
+            for story in ids {
+                if let Some(s) = state.active_mut().document_mut().story_mut(story) {
+                    s.flatten_paragraph_style(id, &format);
+                }
+            }
+            if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+                buffer.flatten_paragraph_style(id, &format);
+            }
+            state.active_mut().document_mut().remove_paragraph_style(id);
         }
 
         Command::SetCharacterStyleOf {
@@ -2700,6 +2762,259 @@ mod tests {
                 .runs[0]
                 .style,
             None
+        );
+    }
+
+
+    // --- deleting a style --------------------------------------------------
+
+    #[test]
+    fn deleting_a_style_in_use_keeps_the_text_looking_the_same() {
+        use tessera_text::story::CharacterStyle;
+
+        let (mut state, _, story) = a_text_frame("abcd");
+        apply(
+            &mut state,
+            Command::DefineCharacterStyle(CharacterStyle {
+                name: "Lead".to_string(),
+                format: CharacterFormat {
+                    size: Some(30.0),
+                    ..CharacterFormat::default()
+                },
+            }),
+        );
+        let id = state
+            .active()
+            .document()
+            .character_styles
+            .keys()
+            .next()
+            .expect("style");
+        apply(
+            &mut state,
+            Command::SetCharacterStyleOf {
+                story,
+                range: 0..4,
+                style: Some(id),
+            },
+        );
+
+        apply(&mut state, Command::DeleteCharacterStyle { id });
+
+        let doc = state.active().document();
+        assert!(doc.character_styles.is_empty(), "the style is gone");
+        let s = doc.story(story).expect("story");
+        assert_eq!(s.runs[0].style, None, "and no dangling reference");
+        assert_eq!(
+            s.resolve_run(&s.runs[0], doc).size,
+            Some(30.0),
+            "the text is still 30pt, which is the whole point"
+        );
+    }
+
+    #[test]
+    fn deleting_a_style_reaches_every_story_not_just_the_selected_one() {
+        // A dangling reference is not corruption — `resolve_run` reads an
+        // unknown id as saying nothing — which is exactly why it is dangerous:
+        // the second frame would silently lose its formatting and nothing
+        // would report it.
+        use tessera_text::story::CharacterStyle;
+
+        let (mut state, _, first) = a_text_frame("abcd");
+        apply(&mut state, Command::AddTextFrame(bounds()));
+        let second_frame = state.active().selection.single().expect("selected");
+        apply(
+            &mut state,
+            Command::SetText {
+                id: second_frame,
+                text: "efgh".to_string(),
+            },
+        );
+        let FrameKind::Text { story: second } = state
+            .active()
+            .document()
+            .frame(second_frame)
+            .expect("frame")
+            .kind
+        else {
+            panic!("a text frame shows a story");
+        };
+
+        apply(
+            &mut state,
+            Command::DefineCharacterStyle(CharacterStyle {
+                name: "Lead".to_string(),
+                format: CharacterFormat {
+                    size: Some(30.0),
+                    ..CharacterFormat::default()
+                },
+            }),
+        );
+        let id = state
+            .active()
+            .document()
+            .character_styles
+            .keys()
+            .next()
+            .expect("style");
+        for story in [first, second] {
+            apply(
+                &mut state,
+                Command::SetCharacterStyleOf {
+                    story,
+                    range: 0..4,
+                    style: Some(id),
+                },
+            );
+        }
+
+        apply(&mut state, Command::DeleteCharacterStyle { id });
+
+        let doc = state.active().document();
+        for story in [first, second] {
+            let s = doc.story(story).expect("story");
+            assert_eq!(s.runs[0].style, None, "no story keeps a dead reference");
+            assert_eq!(s.resolve_run(&s.runs[0], doc).size, Some(30.0));
+        }
+    }
+
+    #[test]
+    fn deleting_a_style_keeps_the_overrides_that_beat_it() {
+        use tessera_text::story::CharacterStyle;
+
+        let (mut state, _, story) = a_text_frame("abcd");
+        apply(
+            &mut state,
+            Command::SetCharacterFormat {
+                story,
+                range: 0..4,
+                format: CharacterFormat {
+                    size: Some(50.0),
+                    ..CharacterFormat::default()
+                },
+            },
+        );
+        apply(
+            &mut state,
+            Command::DefineCharacterStyle(CharacterStyle {
+                name: "Lead".to_string(),
+                format: CharacterFormat {
+                    size: Some(9.0),
+                    weight: Some(700),
+                    ..CharacterFormat::default()
+                },
+            }),
+        );
+        let id = state
+            .active()
+            .document()
+            .character_styles
+            .keys()
+            .next()
+            .expect("style");
+        apply(
+            &mut state,
+            Command::SetCharacterStyleOf {
+                story,
+                range: 0..4,
+                style: Some(id),
+            },
+        );
+
+        apply(&mut state, Command::DeleteCharacterStyle { id });
+
+        let doc = state.active().document();
+        let s = doc.story(story).expect("story");
+        assert_eq!(s.runs[0].local.size, Some(50.0), "the override still wins");
+        assert_eq!(
+            s.runs[0].local.weight,
+            Some(700),
+            "and what only the style said was kept"
+        );
+    }
+
+    #[test]
+    fn deleting_a_style_is_one_undo_entry() {
+        use tessera_text::story::CharacterStyle;
+
+        let (mut state, _, story) = a_text_frame("abcd");
+        apply(
+            &mut state,
+            Command::DefineCharacterStyle(CharacterStyle {
+                name: "Lead".to_string(),
+                format: CharacterFormat {
+                    size: Some(30.0),
+                    ..CharacterFormat::default()
+                },
+            }),
+        );
+        let id = state
+            .active()
+            .document()
+            .character_styles
+            .keys()
+            .next()
+            .expect("style");
+        apply(
+            &mut state,
+            Command::SetCharacterStyleOf {
+                story,
+                range: 0..4,
+                style: Some(id),
+            },
+        );
+        apply(&mut state, Command::DeleteCharacterStyle { id });
+        apply(&mut state, Command::Undo);
+
+        let doc = state.active().document();
+        assert_eq!(doc.character_styles.len(), 1, "the style came back");
+        assert_eq!(
+            doc.story(story).expect("story").runs[0].style,
+            Some(id),
+            "and so did the reference to it"
+        );
+    }
+
+    #[test]
+    fn deleting_a_paragraph_style_keeps_the_alignment_it_gave() {
+        use tessera_text::story::{Alignment, ParagraphStyle};
+
+        let (mut state, _, story) = a_text_frame("one\ntwo");
+        apply(
+            &mut state,
+            Command::DefineParagraphStyle(ParagraphStyle {
+                name: "Body".to_string(),
+                format: ParagraphFormat {
+                    alignment: Some(Alignment::Centre),
+                    ..ParagraphFormat::default()
+                },
+            }),
+        );
+        let id = state
+            .active()
+            .document()
+            .paragraph_styles
+            .keys()
+            .next()
+            .expect("style");
+        apply(
+            &mut state,
+            Command::SetParagraphStyleOf {
+                story,
+                range: 0..1,
+                style: Some(id),
+            },
+        );
+
+        apply(&mut state, Command::DeleteParagraphStyle { id });
+
+        let doc = state.active().document();
+        assert!(doc.paragraph_styles.is_empty());
+        let s = doc.story(story).expect("story");
+        assert_eq!(
+            s.resolve_paragraph(&s.paragraphs[0], doc).alignment,
+            Some(Alignment::Centre),
+            "still centred, with no style to centre it"
         );
     }
 

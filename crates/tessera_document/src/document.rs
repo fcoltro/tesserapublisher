@@ -333,6 +333,25 @@ impl Document {
         self.paragraph_styles.insert(style)
     }
 
+    /// Remove a named character style.
+    ///
+    /// The caller is responsible for the text that referenced it — see
+    /// `Command::DeleteCharacterStyle`, which folds the style into every story
+    /// first so that nothing changes appearance. Leaving a dangling reference
+    /// is not corruption (`resolve_run` treats an unknown id as saying nothing)
+    /// but it does silently drop formatting, which is worse than corruption
+    /// because nothing reports it.
+    pub fn remove_character_style(&mut self, id: CharacterStyleId) -> Option<CharacterStyle> {
+        self.revision += 1;
+        self.character_styles.remove(id)
+    }
+
+    /// Remove a named paragraph style, under the same caveat.
+    pub fn remove_paragraph_style(&mut self, id: ParagraphStyleId) -> Option<ParagraphStyle> {
+        self.revision += 1;
+        self.paragraph_styles.remove(id)
+    }
+
     /// Bumps the revision, because changing a style changes every run using it.
     ///
     /// This is the one mutation whose effect is entirely indirect: no run and

@@ -561,6 +561,60 @@ impl Story {
         self.merge_equal_neighbours();
     }
 
+    /// Remove every reference to a character style, keeping the appearance.
+    ///
+    /// What deleting a style does. The style's format is merged **under** each
+    /// run's own overrides — the same precedence the version 6-to-7 migration
+    /// used when it folded a story's single style into its runs — so a run that
+    /// stated a size keeps it and one that said nothing inherits what the style
+    /// said. Then the reference goes.
+    ///
+    /// The alternative is letting the text fall back to the document default,
+    /// which throws away work to save a fold.
+    pub fn flatten_character_style(&mut self, id: CharacterStyleId, format: &CharacterFormat) {
+        for run in &mut self.runs {
+            if run.style != Some(id) {
+                continue;
+            }
+            run.local = run.local.over(format);
+            run.style = None;
+        }
+        self.merge_equal_neighbours();
+    }
+
+    /// As above, for a paragraph style.
+    ///
+    /// A paragraph style carries character formatting too, in
+    /// [`ParagraphFormat::character`], and that half has to land on the runs
+    /// inside the paragraph rather than on the paragraph — it is what those
+    /// runs were inheriting. Under their own overrides, for the same reason.
+    pub fn flatten_paragraph_style(&mut self, id: ParagraphStyleId, format: &ParagraphFormat) {
+        let affected: Vec<Range<usize>> = self
+            .paragraphs
+            .iter()
+            .filter(|p| p.style == Some(id))
+            .map(|p| p.range.clone())
+            .collect();
+
+        for para in &mut self.paragraphs {
+            if para.style != Some(id) {
+                continue;
+            }
+            para.local = para.local.over(format);
+            para.style = None;
+        }
+
+        for range in affected {
+            for run in &mut self.runs {
+                if run.range.start >= range.start && run.range.end <= range.end {
+                    run.local = run.local.over(&format.character);
+                }
+            }
+        }
+
+        self.merge_equal_neighbours();
+    }
+
     /// The named character style every run in the range shares, and whether
     /// they all agree.
     ///
@@ -1704,6 +1758,91 @@ mod run_tests {
             .map(|p| story.resolve_paragraph(p, &styles).alignment)
             .collect();
         assert_eq!(resolved, vec![Some(Alignment::Right), None]);
+    }
+
+
+    // --- folding a style back into the text ------------------------------
+
+    #[test]
+    fn flattening_a_character_style_keeps_the_appearance() {
+        let mut story = Story::new("abcd");
+        let id = CharacterStyleId::default();
+        story.runs[0].local.size = Some(30.0);
+        story.set_character_style(0..4, Some(id));
+
+        let style = CharacterFormat {
+            weight: Some(700),
+            size: Some(9.0),
+            ..CharacterFormat::default()
+        };
+        story.flatten_character_style(id, &style);
+
+        assert_eq!(story.runs[0].style, None, "the reference is gone");
+        assert_eq!(
+            story.runs[0].local.weight,
+            Some(700),
+            "what only the style said is kept"
+        );
+        assert_eq!(
+            story.runs[0].local.size,
+            Some(30.0),
+            "and the run's own override still beats it"
+        );
+        assert!(story.runs_are_sound());
+    }
+
+    #[test]
+    fn flattening_leaves_runs_using_a_different_style_alone() {
+        // Two styles, one deleted. A `SlotMap` gives distinct ids, which is
+        // what makes this testable at all.
+        let mut table: slotmap::SlotMap<CharacterStyleId, CharacterStyle> =
+            slotmap::SlotMap::with_key();
+        let doomed = table.insert(CharacterStyle::default());
+        let kept = table.insert(CharacterStyle::default());
+        assert_ne!(doomed, kept);
+
+        let mut story = Story::new("abcd");
+        story.set_character_style(0..2, Some(doomed));
+        story.set_character_style(2..4, Some(kept));
+
+        story.flatten_character_style(doomed, &CharacterFormat::default());
+
+        assert_eq!(story.runs.len(), 2, "{:?}", story.runs);
+        assert_eq!(story.runs[0].style, None);
+        assert_eq!(story.runs[1].style, Some(kept), "the other style survives");
+    }
+
+    #[test]
+    fn flattening_a_paragraph_style_lands_its_character_half_on_the_runs() {
+        // A paragraph style's character formatting is what the runs inside it
+        // were inheriting, so that is where it has to land.
+        let mut story = Story::new("one\ntwo");
+        let id = ParagraphStyleId::default();
+        story.set_paragraph_style(0..1, Some(id));
+
+        let format = ParagraphFormat {
+            alignment: Some(Alignment::Centre),
+            character: CharacterFormat {
+                size: Some(30.0),
+                ..CharacterFormat::default()
+            },
+            ..ParagraphFormat::default()
+        };
+        story.flatten_paragraph_style(id, &format);
+
+        assert_eq!(story.paragraphs[0].style, None);
+        assert_eq!(story.paragraphs[0].local.alignment, Some(Alignment::Centre));
+        assert_eq!(
+            story.runs[0].local.size,
+            Some(30.0),
+            "the first paragraph's runs kept the size it gave them"
+        );
+        assert_eq!(
+            story.runs.last().expect("a run").local.size,
+            None,
+            "and the second paragraph was never using it"
+        );
+        assert!(story.runs_are_sound());
     }
 
     proptest! {
