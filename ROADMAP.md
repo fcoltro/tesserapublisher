@@ -395,10 +395,10 @@ working software alone: **C-i the rail** (C1–C5), **C-ii the surface**
   buttons carry short text labels rather than Lucide glyphs — C13.*
 - [~] **C8 — Rulers**, with a 1-2-5 tick ladder, a unit selector that saves
   the preference, and a guide you can drag off either one — dropped back on a
-  ruler, the drag is cancelled (B3). *The zero point is fixed at the first
-  page's top-left; it is not yet a widget you can drag. An existing guide
-  cannot be moved or deleted once placed — the commands exist and are tested,
-  the canvas interaction does not.*
+  ruler, the drag is cancelled (B3). A placed guide can be grabbed, moved as
+  one undo entry, and thrown away by dropping it off the canvas. *The zero
+  point is fixed at the first page's top-left; it is not yet a widget you can
+  drag.*
 - [x] **C9 — Screen modes**: Normal, Preview, Bleed and Slug, all four,
   reachable from the View menu and the palette, with `W` toggling the first
   two. A printing mode hides the handles, frame edges, rules, rulers, guides

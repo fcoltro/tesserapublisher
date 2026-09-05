@@ -131,6 +131,13 @@ pub struct TesseraApp {
     /// Application state, like the anchor: a way of working rather than a
     /// property of any one object.
     pub constrain_proportions: bool,
+    /// A placed guide being dragged on the canvas, by its index.
+    ///
+    /// View state: the document holds the guide where it was when the drag
+    /// began, and one `MoveGuide` lands at the end — so the whole drag is one
+    /// undo entry rather than one per pointer move.
+    pub guide_grab: Option<usize>,
+
     /// A guide being dragged off a ruler, and where it is now.
     ///
     /// View state: the guide does not exist in the document until the drag
@@ -173,6 +180,7 @@ impl TesseraApp {
             screen_mode: ScreenMode::default(),
             anchor: tessera_geometry::Anchor::default(),
             constrain_proportions: false,
+            guide_grab: None,
             guide_drag: None,
             drag: None,
             status: None,

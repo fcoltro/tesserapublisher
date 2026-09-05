@@ -367,6 +367,35 @@ fn on_canvas(pos: Option<egui::Pos2>, rect: Rect) -> Option<egui::Pos2> {
     pos.filter(|p| rect.contains(*p))
 }
 
+/// How near a guide counts as grabbing it, in screen pixels.
+const GUIDE_GRAB_PX: f32 = 5.0;
+
+/// The guide nearest `pos`, if one is within grabbing distance.
+///
+/// `guides` holds each guide's axis and its screen coordinate along the axis
+/// it cuts across — an `x` for a vertical guide, a `y` for a horizontal one.
+/// Pure, so the awkward cases are testable: two guides on top of each other,
+/// and a pointer that is near neither.
+fn guide_hit(
+    guides: &[(tessera_document::nodes::Axis, f32)],
+    pos: egui::Pos2,
+    tolerance: f32,
+) -> Option<usize> {
+    use tessera_document::nodes::Axis;
+
+    let mut best: Option<(usize, f32)> = None;
+    for (i, (axis, at)) in guides.iter().enumerate() {
+        let distance = match axis {
+            Axis::Vertical => (pos.x - at).abs(),
+            Axis::Horizontal => (pos.y - at).abs(),
+        };
+        if distance <= tolerance && best.is_none_or(|(_, d)| distance < d) {
+            best = Some((i, distance));
+        }
+    }
+    best.map(|(i, _)| i)
+}
+
 /// Whether a single-key shortcut should act.
 ///
 /// False whenever egui has given the keyboard to a widget — a text field in
@@ -406,6 +435,10 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
     }
     if delete_pressed && !state.active().selection.is_empty() {
         apply(state, Command::DeleteSelection);
+    }
+
+    if guide_gesture(ui, response, rect, state) {
+        return;
     }
 
     // `W` puts the interface away and brings it back — InDesign's key, and
@@ -571,6 +604,95 @@ fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
 
 /// End the editing session. The text is already in the document — it is
 /// written there on every keystroke — so there is nothing to commit.
+/// Grab, move and throw away a placed guide.
+///
+/// Returns whether it claimed the gesture, so a press on a guide does not also
+/// start a marquee.
+fn guide_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) -> bool {
+    use tessera_document::nodes::Axis;
+
+    let Some(spread) = state.active().document().spread_ids().next() else {
+        return false;
+    };
+
+    // Each guide's screen coordinate along the axis it cuts across.
+    let view = state.active().view;
+    let on_screen: Vec<(Axis, f32)> = state
+        .active()
+        .document()
+        .guides_of(spread)
+        .iter()
+        .map(|g| {
+            let p = match g.axis {
+                Axis::Horizontal => DocPoint {
+                    x: 0.0,
+                    y: g.position,
+                },
+                Axis::Vertical => DocPoint {
+                    x: g.position,
+                    y: 0.0,
+                },
+            };
+            let s = view.doc_to_screen(p);
+            (
+                g.axis,
+                match g.axis {
+                    Axis::Horizontal => rect.min.y + s.y,
+                    Axis::Vertical => rect.min.x + s.x,
+                },
+            )
+        })
+        .collect();
+
+    // Press: take hold, and snapshot for undo before anything moves.
+    if state.guide_grab.is_none()
+        && let Some(pos) = canvas_press(ui, response, rect)
+        && let Some(index) = guide_hit(&on_screen, pos, GUIDE_GRAB_PX)
+    {
+        state.active_mut().record_history();
+        state.guide_grab = Some(index);
+    }
+
+    let Some(index) = state.guide_grab else {
+        return false;
+    };
+
+    let pointer = ui.ctx().pointer_latest_pos();
+    let released = ui.input(|i| i.pointer.primary_released());
+
+    if !released {
+        if let Some(pos) = pointer {
+            let at = view.screen_to_doc(tessera_geometry::ScreenPoint {
+                x: pos.x - rect.min.x,
+                y: pos.y - rect.min.y,
+            });
+            // undo-bracketed: live preview. The snapshot was taken on press
+            // and one MoveGuide lands on release, so the whole drag is one
+            // entry rather than one per pointer move.
+            let doc = state.active_mut().document_mut();
+            if let Some(s) = doc.spreads.get_mut(spread)
+                && let Some(guide) = s.guides.get_mut(index)
+            {
+                guide.position = match guide.axis {
+                    Axis::Horizontal => at.y,
+                    Axis::Vertical => at.x,
+                };
+                doc.touch();
+            }
+        }
+        return true;
+    }
+
+    state.guide_grab = None;
+    let landed_off_canvas = pointer.is_none_or(|p| !rect.contains(p));
+    if landed_off_canvas {
+        // Dropped on a ruler or a panel: thrown away, which is how a guide is
+        // deleted in every layout tool.
+        apply(state, Command::RemoveGuide { spread, index });
+    }
+    true
+}
+
 fn finish_editing(state: &mut TesseraApp) {
     state.active_mut().editing = None;
 }
@@ -1607,6 +1729,37 @@ fn draw_overlays(
 
 #[cfg(test)]
 mod tests {
+    use tessera_document::nodes::Axis;
+
+    #[test]
+    fn a_pointer_on_a_guide_grabs_it() {
+        let guides = [(Axis::Vertical, 300.0), (Axis::Horizontal, 500.0)];
+        assert_eq!(guide_hit(&guides, egui::pos2(302.0, 100.0), 5.0), Some(0));
+        assert_eq!(guide_hit(&guides, egui::pos2(100.0, 498.0), 5.0), Some(1));
+    }
+
+    #[test]
+    fn a_pointer_near_nothing_grabs_nothing() {
+        let guides = [(Axis::Vertical, 300.0)];
+        assert_eq!(guide_hit(&guides, egui::pos2(340.0, 100.0), 5.0), None);
+    }
+
+    #[test]
+    fn the_nearer_of_two_overlapping_guides_wins() {
+        // Two guides all but on top of each other is normal after a
+        // duplicate; grabbing whichever came first would feel arbitrary.
+        let guides = [(Axis::Vertical, 300.0), (Axis::Vertical, 303.0)];
+        assert_eq!(guide_hit(&guides, egui::pos2(303.5, 0.0), 5.0), Some(1));
+    }
+
+    #[test]
+    fn a_vertical_guide_is_not_grabbed_by_a_matching_y() {
+        // The axis decides which coordinate is compared. Comparing the wrong
+        // one would make every guide grabbable from anywhere along it.
+        let guides = [(Axis::Vertical, 300.0)];
+        assert_eq!(guide_hit(&guides, egui::pos2(20.0, 300.0), 5.0), None);
+    }
+
     /// The bug this guards against, in the geometry it happened in.
     ///
     /// The canvas sits left of the inspector. A press in the inspector was
