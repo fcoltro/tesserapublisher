@@ -35,6 +35,26 @@ pub enum ResolvedKind {
         fill: Option<Color>,
         stroke: Option<Stroke>,
     },
+    /// A container showing artwork, or waiting for some.
+    ///
+    /// The **path to the file** rather than its pixels: decoding belongs to
+    /// the renderer, which can cache what it decodes, and the PDF writer wants
+    /// the bytes rather than a decoded surface. Handing both a decoded image
+    /// would decode twice and cache neither.
+    Graphic {
+        /// Where the artwork sits inside the frame, in the frame's own space.
+        inner: Transform,
+        /// The file, when there is one and it is on disk.
+        source: Option<std::path::PathBuf>,
+        /// What the artwork wants to be, in points.
+        natural: (f64, f64),
+        /// Whether the frame is empty, or its file has gone.
+        ///
+        /// Both draw the placeholder, and the difference matters to the links
+        /// panel rather than to the renderer.
+        missing: bool,
+        stroke: Option<Stroke>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -349,6 +369,26 @@ fn resolve_one(
         // A group draws nothing of its own, and paint_order already
         // expanded it into its children, so it never reaches here.
         FrameKind::Group(_) => return None,
+
+        FrameKind::Graphic { placed } => {
+            let link = placed.and_then(|p| doc.links.get(p.link).cloned());
+            let missing = match (&placed, &link) {
+                // Nothing placed: an empty frame, which is a real thing rather
+                // than a fault — it is the box somebody drew to reserve room.
+                (None, _) => false,
+                (Some(_), Some(l)) => l.status() == tessera_document::links::Status::Missing,
+                // Placed, but the link has gone from the table. A broken
+                // document rather than a broken file.
+                (Some(_), None) => true,
+            };
+            ResolvedKind::Graphic {
+                inner: placed.map(|p| p.inner).unwrap_or(Transform::IDENTITY),
+                source: link.as_ref().filter(|_| !missing).map(|l| l.path.clone()),
+                natural: link.map(|l| l.natural).unwrap_or((0.0, 0.0)),
+                missing,
+                stroke: resolved_stroke(doc, frame.stroke.as_ref()),
+            }
+        }
 
         FrameKind::Text { story, layout } => {
             // A text frame whose story is missing is a broken document,

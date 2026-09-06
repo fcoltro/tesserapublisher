@@ -78,6 +78,18 @@ const BLEED_RULE: [f32; 4] = [0.85, 0.22, 0.18, 1.0];
 /// even for the most common colour-vision deficiencies, which red and green
 /// would not be.
 const MARGIN_RULE: [f32; 4] = [0.78, 0.24, 0.72, 1.0];
+/// An empty picture box.
+///
+/// The same violet the column guides use: both are furniture saying where
+/// something will go rather than something that is there.
+const PLACEHOLDER_RULE: [f32; 4] = [0.55, 0.36, 0.85, 1.0];
+/// A picture box whose file has gone.
+///
+/// Red, and it has to be a different colour from an empty one: "nothing has
+/// been placed here" and "what was placed here is gone" are different problems
+/// and only the second is a fault.
+const MISSING_RULE: [f32; 4] = [0.85, 0.20, 0.20, 1.0];
+
 /// The column guides.
 ///
 /// Violet: a relative of the magenta margin rule, because a column guide is a
@@ -251,6 +263,51 @@ pub fn build_scene_with(
         let transform = transform * item.transform.to_affine();
 
         match &item.kind {
+            // The container, and the cross an empty one is drawn with. The
+            // artwork itself is not painted yet — decoding and caching pixels
+            // is its own piece of work, and a frame that shows where a
+            // photograph will go is already worth having.
+            ResolvedKind::Graphic {
+                missing, stroke, ..
+            } => {
+                let rule = KurboStroke::new(1.0);
+                let colour = if *missing {
+                    MISSING_RULE
+                } else {
+                    PLACEHOLDER_RULE
+                };
+                scene.stroke(
+                    &rule,
+                    transform,
+                    AlphaColor::<Srgb>::new(colour),
+                    None,
+                    &rect,
+                );
+                // The diagonals, which is how every layout tool has drawn an
+                // empty picture box since the first one.
+                for line in [
+                    Line::new((rect.x0, rect.y0), (rect.x1, rect.y1)),
+                    Line::new((rect.x1, rect.y0), (rect.x0, rect.y1)),
+                ] {
+                    scene.stroke(
+                        &rule,
+                        transform,
+                        AlphaColor::<Srgb>::new(colour),
+                        None,
+                        &line,
+                    );
+                }
+                if let Some(s) = stroke {
+                    scene.stroke(
+                        &stroke_of(s),
+                        transform,
+                        to_peniko(&s.color),
+                        None,
+                        &stroked_rect(rect, s.offset()),
+                    );
+                }
+            }
+
             ResolvedKind::Rectangle { fill, stroke } => {
                 scene.fill(Fill::NonZero, transform, to_peniko(fill), None, &rect);
                 if let Some(s) = stroke {

@@ -887,8 +887,28 @@ full argument, with sources, is in `docs/superpowers/specs/`.
 > change. Assign a document ICC profile and see a soft proof on screen. Fill a
 > shape with a gradient and give it a drop shadow.
 
-- [ ] Image placement with linked (never embedded) assets.
-- [ ] Content-within-frame: independent inner transform, fit and fill modes.
+- [~] Image placement with linked (never embedded) assets — **placed and
+  modelled; the pixels are not drawn yet.** The frame, the link, the fit and
+  the round trip all work; decoding and caching the artwork is the next piece.
+  - The same path placed twice is **one** link. Two would be two entries in the
+    links panel for one file, two things to relink, and two chances to disagree
+    about whether it is missing.
+  - A link records the file's **natural size**, so a document opens and lays
+    out without touching the disk: a missing image must not stop a page being
+    drawn.
+  - `resolve` hands on the **path**, not the pixels. Decoding belongs to the
+    renderer, which can cache it, and the PDF writer wants bytes rather than a
+    decoded surface — handing both a decoded image would decode twice and
+    cache neither.
+  - The placeholder is **never written to the PDF**. A violet cross in a
+    printed job is far worse than a blank space.
+- [x] Content-within-frame: independent inner transform, fit and fill modes.
+  - Fit is an **operation, not stored state**. What persists is the transform
+    it produced; storing the mode as well would be a second description of the
+    same fact, and the two would disagree the moment somebody nudged the
+    picture by hand.
+  - Every fit centres what it places. "Fit" without "centre" leaves the slack
+    on two sides rather than four, and there is a test over all four modes.
 - [ ] Clipping of raster content by its container shape.
 - [ ] Link status: OK, missing, **and modified** — with relink and update.
 - [ ] Effective-PPI reporting with a configurable warning threshold.
@@ -923,9 +943,17 @@ full argument, with sources, is in `docs/superpowers/specs/`.
   blending.
 - [ ] **Object opacity** as a field distinct from blend mode, and distinct
   again from a fill colour's alpha.
-- [ ] **A graphic frame is not a shape.** The placeholder frame InDesign draws
-  with an X is a container with its own inner transform; making that explicit
-  in the model is what "content-within-frame" above depends on.
+- [x] **A graphic frame is not a shape.** `FrameKind::Graphic` is a container
+  with contents of its own, and the contents have a transform independent of
+  the frame's: moving the frame carries the picture, and moving the picture
+  inside leaves the frame alone. Conflating the two is why the previous
+  codebase could never move an image within its frame.
+  - **Cropping needs no model.** It is what you get when the content's box is
+    larger than the container's, which falls out of having two transforms.
+  - An empty graphic frame is a **real thing**, not a fault: it is the box a
+    designer draws to reserve room for a photograph that has not arrived. It
+    draws in the same violet as the column guides, and a frame whose file has
+    *gone* draws red — different problems, and only the second is a fault.
 - [ ] **Object styles**, cascading on edit the way paragraph styles do.
 
 ---

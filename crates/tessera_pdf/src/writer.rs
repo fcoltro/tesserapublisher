@@ -242,6 +242,13 @@ fn build_content(
         }
 
         match &item.kind {
+            // Not yet written. A picture box is **furniture** — the cross and
+            // the frame edge are interface, not ink — and until the pixels are
+            // embedded there is nothing about it that belongs in a PDF.
+            // Drawing the placeholder here would put a violet cross in a
+            // printed job, which is far worse than a blank space.
+            ResolvedKind::Graphic { .. } => {}
+
             ResolvedKind::Rectangle { fill, stroke } => {
                 content.save_state();
                 let [r, g, b, _] = fill.to_rgb_f32();

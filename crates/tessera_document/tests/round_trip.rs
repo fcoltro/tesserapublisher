@@ -588,9 +588,72 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_twelve() {
+fn the_format_version_is_thirteen() {
     // If this changes, a migration step is owed.
-    assert_eq!(format::FORMAT_VERSION, 12);
+    assert_eq!(format::FORMAT_VERSION, 13);
+}
+
+#[test]
+fn placed_artwork_round_trips_as_a_link_rather_than_as_pixels() {
+    // Linked, never embedded: what is saved is a path and what the document
+    // last knew about it.
+    use tessera_document::graphic::Fit;
+    use tessera_document::links::Link;
+
+    let path = temp_path("placed.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = Document::new();
+    let layer = doc.default_layer().expect("layer");
+    let id = doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 200.0,
+                height: 100.0,
+            },
+            kind: FrameKind::Graphic { placed: None },
+            transform: Transform::IDENTITY,
+            fill: Color::BLACK,
+            stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
+        },
+    );
+    let link = doc.add_link(Link::new("C:/art/photo.png", (640.0, 480.0)));
+    assert!(doc.place(id, link, Fit::Proportionally));
+
+    format::save(&doc, &path).expect("save");
+    let loaded = format::load(&path).expect("load");
+
+    assert_eq!(loaded.links.len(), 1);
+    let (_, saved) = loaded.links.iter().next().expect("a link");
+    assert_eq!(saved.path, std::path::PathBuf::from("C:/art/photo.png"));
+    assert_eq!(saved.natural, (640.0, 480.0));
+
+    let FrameKind::Graphic { placed: Some(p) } = loaded.frame(id).expect("frame").kind.clone()
+    else {
+        panic!("the artwork did not come back");
+    };
+    assert!(!p.inner.is_identity(), "and it is still fitted");
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_version_twelve_document_opens_with_no_links() {
+    let path = temp_path("legacy_v12.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let doc = Document::new();
+    format::save(&doc, &path).expect("save");
+    format::rewrite_version_for_test(&path, 12).expect("stamp");
+
+    let loaded = format::load(&path).expect("a version 12 document must still open");
+    assert!(loaded.links.is_empty());
+
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]

@@ -110,6 +110,20 @@ pub enum FrameKind {
     /// Text frames reference a story rather than owning it. A threaded story
     /// flows through several frames but exists once — which is what makes
     /// milestone 4's threading natural rather than bolted on.
+    /// A container showing artwork from a file.
+    ///
+    /// **Not a shape.** A rectangle has a fill; a graphic frame has contents,
+    /// which sit inside it under a transform of their own and are clipped by
+    /// it. Conflating the two is why the previous codebase could never move an
+    /// image inside its frame.
+    ///
+    /// Empty until something is placed, and an empty one is a real thing: it
+    /// is the box a designer draws to reserve room for a photograph that has
+    /// not arrived.
+    Graphic {
+        #[serde(default)]
+        placed: Option<crate::graphic::Placement>,
+    },
     Text {
         story: StoryId,
         /// How this frame lays that story out: columns, inset, and where the

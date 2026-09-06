@@ -9,8 +9,10 @@
 
 pub mod document;
 pub mod format;
+pub mod graphic;
 pub mod history;
 pub mod ids;
+pub mod links;
 pub mod masters;
 pub mod nodes;
 pub mod path;

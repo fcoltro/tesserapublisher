@@ -11,6 +11,9 @@ use crate::nodes::{
     DocumentSetup, Frame, FrameKind, Guide, Layer, Page, PageSide, Spread, TextLayout,
 };
 use tessera_color::Color;
+
+use crate::ids::LinkId;
+use crate::links::Link;
 use tessera_text::story::{
     CharacterFormat, CharacterStyle, CharacterStyleId, ParagraphFormat, ParagraphStyle,
     ParagraphStyleId, Story, Styles, TextStyle,
@@ -99,6 +102,13 @@ pub struct Document {
     #[serde(default)]
     pub active_layer: Option<LayerId>,
 
+    /// The artwork this document points at.
+    ///
+    /// Linked, never embedded: the pixels stay on disk so a job can be
+    /// re-supplied and a package can collect them.
+    #[serde(default)]
+    pub links: SlotMap<LinkId, Link>,
+
     /// The document's named colours, in the order the panel lists them.
     ///
     /// A `Vec` rather than a map: a swatches panel is an ordered list a person
@@ -147,6 +157,7 @@ impl Document {
             masters: SlotMap::with_key(),
             master_order: Vec::new(),
             overrides: slotmap::SecondaryMap::new(),
+            links: SlotMap::with_key(),
             swatches: Vec::new(),
             character_styles: SlotMap::with_key(),
             paragraph_styles: SlotMap::with_key(),
@@ -908,6 +919,123 @@ impl Document {
         }
 
         Some(self.frames.insert(frame))
+    }
+
+    // --- placed artwork ---------------------------------------------------
+
+    /// Record a file the document points at, and say which link it is.
+    ///
+    /// The same path placed twice is **one** link. Two would be two entries in
+    /// the links panel for one file, two things to relink, and two chances for
+    /// them to disagree about whether it is missing.
+    pub fn add_link(&mut self, link: Link) -> LinkId {
+        if let Some(id) = self
+            .links
+            .iter()
+            .find(|(_, existing)| existing.path == link.path)
+            .map(|(id, _)| id)
+        {
+            return id;
+        }
+        self.revision += 1;
+        self.links.insert(link)
+    }
+
+    /// Put artwork into a graphic frame, fitted the given way.
+    ///
+    /// Refused for a frame that is not a graphic one: a rectangle has a fill
+    /// rather than contents, and quietly turning it into a container would
+    /// throw away whatever it was.
+    pub fn place(&mut self, frame: FrameId, link: LinkId, how: crate::graphic::Fit) -> bool {
+        let Some(natural) = self.links.get(link).map(|l| l.natural) else {
+            return false;
+        };
+        let Some(bounds) = self.frames.get(frame).map(|f| f.bounds) else {
+            return false;
+        };
+        if !matches!(
+            self.frames.get(frame).map(|f| &f.kind),
+            Some(FrameKind::Graphic { .. })
+        ) {
+            return false;
+        }
+
+        // Fitted in the frame's own space, which is where the content's
+        // transform lives.
+        let inner = crate::graphic::fit(
+            DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: bounds.width,
+                height: bounds.height,
+            },
+            natural,
+            how,
+        );
+        if let Some(f) = self.frames.get_mut(frame) {
+            f.kind = FrameKind::Graphic {
+                placed: Some(crate::graphic::Placement { link, inner }),
+            };
+        }
+        self.revision += 1;
+        true
+    }
+
+    /// Re-fit what is already in a frame.
+    pub fn refit(&mut self, frame: FrameId, how: crate::graphic::Fit) -> bool {
+        let Some(FrameKind::Graphic {
+            placed: Some(placement),
+        }) = self.frames.get(frame).map(|f| f.kind.clone())
+        else {
+            return false;
+        };
+        self.place(frame, placement.link, how)
+    }
+
+    /// Size a graphic frame to the artwork in it.
+    pub fn fit_frame_to_content(&mut self, frame: FrameId) -> bool {
+        let Some(FrameKind::Graphic {
+            placed: Some(placement),
+        }) = self.frames.get(frame).map(|f| f.kind.clone())
+        else {
+            return false;
+        };
+        let Some(natural) = self.links.get(placement.link).map(|l| l.natural) else {
+            return false;
+        };
+        let Some(bounds) = self.frames.get(frame).map(|f| f.bounds) else {
+            return false;
+        };
+
+        let sized = crate::graphic::frame_to_content(bounds, natural);
+        if let Some(f) = self.frames.get_mut(frame) {
+            f.bounds = sized;
+        }
+        self.refit(frame, crate::graphic::Fit::Proportionally);
+        true
+    }
+
+    /// Which links a document uses, and how many frames use each.
+    ///
+    /// A link nothing shows is still a link — it may be about to be placed
+    /// again — so this reports zero rather than leaving it out.
+    pub fn link_uses(&self) -> Vec<(LinkId, usize)> {
+        self.links
+            .keys()
+            .map(|id| {
+                let count = self
+                    .frames
+                    .values()
+                    .filter(|f| {
+                        matches!(
+                            &f.kind,
+                            FrameKind::Graphic { placed: Some(p) } if p.link == id
+                        )
+                    })
+                    .count();
+                (id, count)
+            })
+            .collect()
     }
 
     // --- named colours --------------------------------------------------
@@ -1890,7 +2018,11 @@ impl Document {
         let rect = kurbo::Rect::new(b.x, b.y, b.x + b.width, b.y + b.height);
 
         let mut path = match &frame.kind {
-            FrameKind::Rectangle | FrameKind::Text { .. } => rect.to_path(ACCURACY),
+            // A graphic frame is a box like a text frame: the artwork inside
+            // it may be any shape, but the container is what is outlined.
+            FrameKind::Rectangle | FrameKind::Text { .. } | FrameKind::Graphic { .. } => {
+                rect.to_path(ACCURACY)
+            }
             FrameKind::Ellipse => kurbo::Ellipse::from_rect(rect).to_path(ACCURACY),
             FrameKind::Path(p) => {
                 let mut placed = crate::path::fit_to_bounds(p, b);
@@ -1995,8 +2127,12 @@ fn hits(frame: &Frame, point: DocPoint, tolerance: f64) -> bool {
     let local = frame.to_local(point);
 
     match &frame.kind {
-        // A text frame is a box, and an empty one still has to be clickable.
-        FrameKind::Rectangle | FrameKind::Text { .. } => grown(bounds, tolerance).contains(local),
+        // A text frame is a box, and an empty one still has to be clickable —
+        // so is a graphic frame, and an empty one is exactly the box somebody
+        // drew to reserve room for a photograph.
+        FrameKind::Rectangle | FrameKind::Text { .. } | FrameKind::Graphic { .. } => {
+            grown(bounds, tolerance).contains(local)
+        }
 
         FrameKind::Ellipse => {
             let (rx, ry) = (
@@ -5171,5 +5307,139 @@ mod tests {
     fn a_colour_that_is_not_a_swatch_resolves_to_itself() {
         let doc = Document::new();
         assert_eq!(doc.resolve_colour(&red()), red());
+    }
+
+    // --- placed artwork -----------------------------------------------------
+
+    use crate::graphic::Fit;
+    use crate::links::Link;
+
+    /// A graphic frame 200 by 100, and a link to artwork 50 square.
+    fn a_picture_box(doc: &mut Document) -> (FrameId, LinkId) {
+        let layer = doc.default_layer().expect("a layer");
+        let mut frame = rect_frame();
+        frame.bounds = DocRect {
+            x: 0.0,
+            y: 0.0,
+            width: 200.0,
+            height: 100.0,
+        };
+        frame.kind = FrameKind::Graphic { placed: None };
+        let id = doc.add_frame(layer, frame);
+        let link = doc.add_link(Link::new("C:/art/photo.png", (50.0, 50.0)));
+        (id, link)
+    }
+
+    #[test]
+    fn the_same_file_placed_twice_is_one_link() {
+        // Two would be two entries in the links panel for one file, two things
+        // to relink, and two chances to disagree about whether it is missing.
+        let mut doc = Document::new();
+        let a = doc.add_link(Link::new("C:/art/photo.png", (50.0, 50.0)));
+        let b = doc.add_link(Link::new("C:/art/photo.png", (50.0, 50.0)));
+        assert_eq!(a, b);
+        assert_eq!(doc.links.len(), 1);
+    }
+
+    #[test]
+    fn placing_artwork_fits_it_to_the_frame() {
+        let mut doc = Document::new();
+        let (id, link) = a_picture_box(&mut doc);
+
+        assert!(doc.place(id, link, Fit::Proportionally));
+
+        let FrameKind::Graphic {
+            placed: Some(placement),
+        } = doc.frame(id).expect("frame").kind.clone()
+        else {
+            panic!("nothing was placed");
+        };
+        assert_eq!(placement.link, link);
+        assert!(!placement.inner.is_identity(), "and it was fitted");
+    }
+
+    #[test]
+    fn a_frame_that_is_not_a_graphic_one_refuses_artwork() {
+        // A rectangle has a fill rather than contents, and quietly turning it
+        // into a container would throw away whatever it was.
+        let mut doc = Document::new();
+        let (_, link) = a_picture_box(&mut doc);
+        let layer = doc.default_layer().expect("a layer");
+        let square = doc.add_frame(layer, rect_frame());
+
+        assert!(!doc.place(square, link, Fit::Proportionally));
+        assert_eq!(doc.frame(square).expect("frame").kind, FrameKind::Rectangle);
+    }
+
+    #[test]
+    fn an_empty_graphic_frame_is_a_real_thing() {
+        // The box a designer draws to reserve room for a photograph that has
+        // not arrived, which is not the same as a fault.
+        let mut doc = Document::new();
+        let (id, _) = a_picture_box(&mut doc);
+        assert_eq!(
+            doc.frame(id).expect("frame").kind,
+            FrameKind::Graphic { placed: None }
+        );
+    }
+
+    #[test]
+    fn refitting_changes_how_the_artwork_sits_without_replacing_it() {
+        let mut doc = Document::new();
+        let (id, link) = a_picture_box(&mut doc);
+        doc.place(id, link, Fit::Proportionally);
+        let before = match doc.frame(id).expect("frame").kind.clone() {
+            FrameKind::Graphic { placed: Some(p) } => p.inner,
+            _ => panic!("nothing placed"),
+        };
+
+        assert!(doc.refit(id, Fit::FillProportionally));
+
+        let after = match doc.frame(id).expect("frame").kind.clone() {
+            FrameKind::Graphic { placed: Some(p) } => p,
+            _ => panic!("nothing placed"),
+        };
+        assert_eq!(after.link, link, "the same artwork");
+        assert_ne!(after.inner, before, "sitting differently");
+    }
+
+    #[test]
+    fn an_empty_frame_cannot_be_refitted() {
+        let mut doc = Document::new();
+        let (id, _) = a_picture_box(&mut doc);
+        assert!(!doc.refit(id, Fit::Proportionally));
+    }
+
+    #[test]
+    fn fitting_the_frame_to_its_artwork_resizes_the_box() {
+        let mut doc = Document::new();
+        let (id, link) = a_picture_box(&mut doc);
+        doc.place(id, link, Fit::Proportionally);
+
+        assert!(doc.fit_frame_to_content(id));
+
+        let bounds = doc.frame(id).expect("frame").bounds;
+        assert_eq!((bounds.width, bounds.height), (50.0, 50.0));
+        assert_eq!((bounds.x, bounds.y), (0.0, 0.0), "and keeps its corner");
+    }
+
+    #[test]
+    fn a_link_nothing_shows_is_still_a_link() {
+        // It may be about to be placed again, so it is reported with a count
+        // of zero rather than left out.
+        let mut doc = Document::new();
+        let (_, link) = a_picture_box(&mut doc);
+        assert_eq!(doc.link_uses(), vec![(link, 0)]);
+    }
+
+    #[test]
+    fn a_link_counts_every_frame_showing_it() {
+        let mut doc = Document::new();
+        let (a, link) = a_picture_box(&mut doc);
+        let (b, _) = a_picture_box(&mut doc);
+        doc.place(a, link, Fit::Proportionally);
+        doc.place(b, link, Fit::Proportionally);
+
+        assert_eq!(doc.link_uses(), vec![(link, 2)]);
     }
 }
