@@ -135,6 +135,11 @@ impl Document {
         });
         doc.spread_order.push(spread);
 
+        // Through the flow once, so page one lands where a recto belongs. The
+        // page was inserted at the origin above; only `reflow_spreads` knows
+        // which side of the fold it is meant to be on.
+        doc.reflow_spreads();
+
         doc
     }
 
@@ -583,13 +588,38 @@ impl Document {
                 (p.bounds.width, p.bounds.height)
             });
 
+        // Where everything is *now*, and what is standing on it. Both have to
+        // be read before a single page moves: afterwards, a frame asked which
+        // page it is on would answer with the page's new position, and the
+        // whole point is to move it by the difference.
+        let before: Vec<(PageId, DocRect, Vec<FrameId>)> = self
+            .page_ids()
+            .filter_map(|id| {
+                let bounds = self.pages.get(id)?.bounds;
+                Some((id, bounds, self.frames_on_page(id)))
+            })
+            .collect();
+
         let mut y = 0.0;
         for spread in self.spread_order.clone() {
             let pages = self.pages_of(spread);
+            // Which side of the fold this spread starts on.
+            //
+            // A recto is a right-hand page and page one is a recto, so a
+            // spread holding page one alone starts in the right-hand column
+            // rather than the left. A final lone page is a verso and starts on
+            // the left, which is where a column of one would have put it
+            // anyway — so only the odd-numbered case needs saying.
+            let offset = if self.setup.facing_pages && self.starts_on_a_recto(spread) {
+                1
+            } else {
+                0
+            };
+
             for (column, page) in pages.iter().enumerate() {
                 if let Some(page) = self.pages.get_mut(*page) {
                     page.bounds = DocRect {
-                        x: column as f64 * width,
+                        x: (column + offset) as f64 * width,
                         y,
                         width,
                         height,
@@ -601,7 +631,38 @@ impl Document {
             // the larger of the two is what stands out.
             y += height + SPREAD_GAP + self.vertical_clearance() * 2.0;
         }
+
+        // A page that moved takes what stands on it. Without this, removing a
+        // page slides every page after it upwards and leaves their contents
+        // behind — each landing on whichever page has arrived beneath it.
+        for (id, was, frames) in before {
+            let Some(now) = self.pages.get(id).map(|p| p.bounds) else {
+                continue;
+            };
+            let (dx, dy) = (now.x - was.x, now.y - was.y);
+            if dx == 0.0 && dy == 0.0 {
+                continue;
+            }
+            for frame in frames {
+                self.translate_deeply(frame, dx, dy);
+            }
+        }
+
         self.revision += 1;
+    }
+
+    /// Whether this spread's first page is odd-numbered in the reading order.
+    ///
+    /// Odd is a recto: the right-hand page of an opened book. Counted rather
+    /// than stored, because a page's number is a consequence of where it falls
+    /// in the reading order and storing it would let the two disagree.
+    fn starts_on_a_recto(&self, spread: SpreadId) -> bool {
+        let Some(first) = self.pages_of(spread).first().copied() else {
+            return false;
+        };
+        self.page_ids()
+            .position(|p| p == first)
+            .is_some_and(|i| i.is_multiple_of(2))
     }
 
     /// How far the furthest thing drawn stands above or below a page's trim.
@@ -795,6 +856,52 @@ impl Document {
         }
 
         Some(self.frames.insert(frame))
+    }
+
+    /// Move a page to another slot, in this spread or another.
+    ///
+    /// `at` is a position among the destination spread's pages; past the end
+    /// means last. Spreads are **not** repacked afterwards, so a spread may end
+    /// up holding one page or three: that is the island spread InDesign also
+    /// allows, and `reflow_spreads` and `spread_area` already work from the
+    /// count rather than assuming two. Repacking would also scramble guides,
+    /// which belong to a spread rather than to a page.
+    ///
+    /// A spread left with no pages is dropped — an empty one would still take
+    /// up room in the flow.
+    pub fn move_page(&mut self, page: PageId, to: SpreadId, at: usize) -> bool {
+        if !self.pages.contains_key(page) || !self.spreads.contains_key(to) {
+            return false;
+        }
+        let Some(from) = self.spread_of(page) else {
+            return false;
+        };
+
+        let was = self
+            .spreads
+            .get(from)
+            .and_then(|s| s.pages.iter().position(|p| *p == page));
+        if from == to && was == Some(at.min(self.pages_of(to).len().saturating_sub(1))) {
+            return false;
+        }
+
+        if let Some(spread) = self.spreads.get_mut(from) {
+            spread.pages.retain(|p| *p != page);
+        }
+        if let Some(spread) = self.spreads.get_mut(to) {
+            let at = at.min(spread.pages.len());
+            spread.pages.insert(at, page);
+        }
+
+        self.spread_order.retain(|s| {
+            self.spreads
+                .get(*s)
+                .is_some_and(|spread| !spread.pages.is_empty())
+        });
+        self.spreads.retain(|_, spread| !spread.pages.is_empty());
+
+        self.reflow_spreads();
+        true
     }
 
     /// Move a spread to another place in the reading order.
@@ -3434,6 +3541,214 @@ mod tests {
         assert!(
             doc.paint_order().contains(&out_of_reach),
             "and the locked layer is still drawn"
+        );
+    }
+
+    // --- which side of the fold a page falls on -----------------------------
+
+    #[test]
+    fn page_one_sits_on_the_right_of_its_spread() {
+        // A recto is a right-hand page and page one is a recto. Drawn in the
+        // left column it reads as the back of a sheet, and the whole document
+        // is a page out of step from there on.
+        let doc = Document::new();
+        assert!(doc.setup.facing_pages, "a new document faces its pages");
+
+        let first = doc.page_ids().next().expect("a page");
+        let bounds = doc.pages[first].bounds;
+        assert_eq!(
+            bounds.x, bounds.width,
+            "one page width in: the right-hand column"
+        );
+    }
+
+    #[test]
+    fn a_facing_spread_starts_in_the_left_column() {
+        let mut doc = Document::new();
+        doc.add_page();
+        doc.add_page();
+
+        let pages: Vec<_> = doc.page_ids().collect();
+        assert_eq!(pages.len(), 3);
+        let (left, right) = (doc.pages[pages[1]].bounds, doc.pages[pages[2]].bounds);
+
+        assert_eq!(left.x, 0.0, "page two is a verso");
+        assert_eq!(right.x, left.width, "and page three faces it");
+        assert_eq!(left.y, right.y, "on one sheet");
+    }
+
+    #[test]
+    fn a_final_lone_page_sits_on_the_left() {
+        // Page four, on its own, is even and so a verso.
+        let mut doc = Document::new();
+        for _ in 0..3 {
+            doc.add_page();
+        }
+        let pages: Vec<_> = doc.page_ids().collect();
+        assert_eq!(pages.len(), 4);
+
+        assert_eq!(doc.pages[pages[3]].bounds.x, 0.0);
+    }
+
+    #[test]
+    fn pages_that_do_not_face_all_sit_at_the_left() {
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.add_page();
+        doc.reflow_spreads();
+
+        for page in doc.page_ids() {
+            assert_eq!(
+                doc.pages[page].bounds.x, 0.0,
+                "with no spine there is no side to be on"
+            );
+        }
+    }
+
+    // --- content travels with its page --------------------------------------
+
+    #[test]
+    fn what_stands_on_a_page_moves_when_the_page_does() {
+        // Removing a page slides every page after it upwards. Before this, the
+        // contents stayed behind and landed on whichever page arrived beneath
+        // them.
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.add_page();
+        let third = doc.add_page();
+        let frame = frame_on(&mut doc, third);
+        let offset = {
+            let page = doc.pages[third].bounds;
+            let on = doc.frame(frame).expect("frame").bounds;
+            (on.x - page.x, on.y - page.y)
+        };
+
+        let second = doc.page_ids().nth(1).expect("a second page");
+        doc.remove_page(second);
+
+        assert_eq!(doc.page_of_frame(frame), Some(third), "still on its page");
+        let page = doc.pages[third].bounds;
+        let on = doc.frame(frame).expect("frame").bounds;
+        assert!(
+            ((on.x - page.x) - offset.0).abs() < 1e-9 && ((on.y - page.y) - offset.1).abs() < 1e-9,
+            "and in the same place on it"
+        );
+    }
+
+    #[test]
+    fn a_group_travels_with_its_page_whole() {
+        // A group's children carry their own geometry, so moving the group's
+        // page has to reach all the way down rather than only shifting the
+        // group's own box.
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        let page = doc.page_ids().next().expect("a page");
+        let a = frame_on(&mut doc, page);
+        let b = frame_on(&mut doc, page);
+        let group = doc.group(&[a, b]).expect("a group");
+        let (was_a, was_b) = (
+            doc.frame(a).expect("frame").bounds,
+            doc.frame(b).expect("frame").bounds,
+        );
+
+        // Turning facing pages on moves page one across the fold.
+        doc.setup.facing_pages = true;
+        doc.reflow_spreads();
+
+        let width = doc.pages[page].bounds.width;
+        assert_eq!(doc.pages[page].bounds.x, width, "the page moved");
+        assert!(doc.frame(group).is_some());
+        assert!(
+            (doc.frame(a).expect("frame").bounds.x - (was_a.x + width)).abs() < 1e-9
+                && (doc.frame(b).expect("frame").bounds.x - (was_b.x + width)).abs() < 1e-9,
+            "and both children went with it, not just the group's box"
+        );
+    }
+
+    // --- moving one page ----------------------------------------------------
+
+    #[test]
+    fn a_page_can_be_moved_within_its_own_spread() {
+        // Which is what turning a spread round means, and what the panel could
+        // not do at all.
+        let mut doc = Document::new();
+        doc.add_page();
+        doc.add_page();
+        let spread = doc.spread_order[1];
+        let pages = doc.pages_of(spread);
+        assert_eq!(pages.len(), 2);
+
+        assert!(doc.move_page(pages[1], spread, 0));
+
+        assert_eq!(doc.pages_of(spread), vec![pages[1], pages[0]]);
+    }
+
+    #[test]
+    fn a_page_can_be_moved_to_another_spread() {
+        let mut doc = Document::new();
+        doc.add_page();
+        doc.add_page();
+        let (first, second) = (doc.spread_order[0], doc.spread_order[1]);
+        let travelling = doc.pages_of(second)[1];
+
+        assert!(doc.move_page(travelling, first, 0));
+
+        assert!(doc.pages_of(first).contains(&travelling));
+        assert!(!doc.pages_of(second).contains(&travelling));
+        assert_eq!(doc.spread_of(travelling), Some(first));
+    }
+
+    #[test]
+    fn a_spread_emptied_by_a_move_goes() {
+        // An empty spread would still take up room in the flow.
+        let mut doc = Document::new();
+        doc.add_page();
+        let (first, second) = (doc.spread_order[0], doc.spread_order[1]);
+        let only = doc.pages_of(second)[0];
+
+        assert!(doc.move_page(only, first, 1));
+
+        assert_eq!(doc.spread_order.len(), 1);
+        assert!(!doc.spreads.contains_key(second));
+        assert_eq!(doc.pages_of(first).len(), 2);
+    }
+
+    #[test]
+    fn moving_a_page_where_it_already_is_changes_nothing() {
+        let mut doc = Document::new();
+        doc.add_page();
+        let spread = doc.spread_order[0];
+        let page = doc.pages_of(spread)[0];
+        let before = doc.revision();
+
+        assert!(!doc.move_page(page, spread, 0));
+
+        assert_eq!(doc.revision(), before);
+    }
+
+    #[test]
+    fn a_moved_page_takes_what_stands_on_it() {
+        let mut doc = Document::new();
+        doc.add_page();
+        doc.add_page();
+        let second = doc.spread_order[1];
+        let travelling = doc.pages_of(second)[1];
+        let frame = frame_on(&mut doc, travelling);
+        let offset = {
+            let page = doc.pages[travelling].bounds;
+            let on = doc.frame(frame).expect("frame").bounds;
+            (on.x - page.x, on.y - page.y)
+        };
+
+        assert!(doc.move_page(travelling, doc.spread_order[0], 0));
+
+        assert_eq!(doc.page_of_frame(frame), Some(travelling));
+        let page = doc.pages[travelling].bounds;
+        let on = doc.frame(frame).expect("frame").bounds;
+        assert!(
+            ((on.x - page.x) - offset.0).abs() < 1e-9 && ((on.y - page.y) - offset.1).abs() < 1e-9,
+            "in the same place on the page it was on"
         );
     }
 }

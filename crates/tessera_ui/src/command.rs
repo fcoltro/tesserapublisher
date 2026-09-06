@@ -227,6 +227,13 @@ pub enum Command {
         to: usize,
     },
 
+    /// Move a page to a slot in a spread — its own, or another.
+    MovePage {
+        id: PageId,
+        to: tessera_document::ids::SpreadId,
+        at: usize,
+    },
+
     /// Add a layer above the others and make it active.
     AddLayer,
     /// Remove a layer and everything on it. The last layer is refused.
@@ -933,6 +940,10 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             state.active_mut().document_mut().move_spread(from, to);
         }
 
+        Command::MovePage { id, to, at } => {
+            state.active_mut().document_mut().move_page(id, to, at);
+        }
+
         Command::AddLayer => {
             let name = state.active().document().unused_layer_name();
             state.active_mut().document_mut().add_layer(name);
@@ -1507,6 +1518,12 @@ mod tests {
                 to: AlignTo::Page,
             },
         );
+        // The page's own left edge, read rather than assumed. It was zero
+        // while page one sat at the origin, and page one is a recto: it stands
+        // one page width in, so a hard-coded zero was testing the old flow
+        // rather than the alignment.
+        let page = state.active().document().page_ids().next().expect("a page");
+        let edge = state.active().document().pages[page].bounds.x;
         let x = state
             .active()
             .document()
@@ -1514,8 +1531,8 @@ mod tests {
             .expect("bounds")
             .x;
         assert!(
-            x.abs() < 1e-9,
-            "it should sit on the page's left edge, got {x}"
+            (x - edge).abs() < 1e-9,
+            "it should sit on the page's left edge at {edge}, got {x}"
         );
     }
 

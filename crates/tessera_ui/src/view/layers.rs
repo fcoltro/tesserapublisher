@@ -71,6 +71,9 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
     // from the pointer's height alone.
     ui.spacing_mut().item_spacing.y = 0.0;
     let top = ui.cursor().top();
+    let left = ui.cursor().left();
+    let width = ui.available_width();
+    let mut dragging = false;
 
     // Top of the list is the top of the stack.
     let shown: Vec<LayerId> = order.iter().copied().rev().collect();
@@ -84,6 +87,8 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
             None => {}
         }
 
+        dragging |= outcome.dragging;
+
         if let Some(at) = outcome.dropped_at {
             let landed = landing(at, top, shown.len());
             let (from, to) = (
@@ -94,6 +99,25 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
                 moved = Some((from, to));
             }
         }
+    }
+
+    // The line where a dragged row would land. Without one, a drag is a
+    // gesture with no target: the row simply appears somewhere afterwards, and
+    // reordering by trial is how the panel was reported.
+    if dragging && let Some(p) = ui.ctx().pointer_interact_pos() {
+        let landed = landing(p.y, top, shown.len());
+        let y = top
+            + landed as f32 * ROW
+            + if p.y > top + landed as f32 * ROW + ROW / 2.0 {
+                ROW
+            } else {
+                0.0
+            };
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(egui::pos2(left, y - 1.0), Vec2::new(width, 2.0)),
+            1.0,
+            Theme::ACCENT,
+        );
     }
 
     if let Some(cmd) = command {
@@ -191,6 +215,8 @@ struct Outcome {
     touched: Option<Touched>,
     /// Where the pointer let go of a drag, if it did.
     dropped_at: Option<f32>,
+    /// Whether this row is being dragged right now.
+    dragging: bool,
 }
 
 /// One layer: its two switches, its name, and how much is on it.
@@ -198,6 +224,7 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
     let mut out = Outcome {
         touched: None,
         dropped_at: None,
+        dragging: false,
     };
 
     let doc = state.active().document();
@@ -238,6 +265,7 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
     // While a row is being dragged, an outline on it. Without one a drag is a
     // gesture with no visible subject.
     if response.dragged() {
+        out.dragging = true;
         painter.rect_stroke(
             rect,
             3.0,
