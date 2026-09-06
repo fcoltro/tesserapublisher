@@ -539,6 +539,24 @@ pub struct Column {
     pub height: f64,
 }
 
+/// Where the text sits in a box it does not fill.
+///
+/// Defined here rather than taken from the document, because this crate knows
+/// nothing about documents — the caller maps its own enum onto this one, which
+/// is the same arrangement `Styles` uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Vertical {
+    #[default]
+    Top,
+    Centre,
+    Bottom,
+    /// Spread the lines so the first sits at the top and the last at the
+    /// bottom. What makes facing pages align at the foot as well as the head,
+    /// and the only one of the four that changes the spacing rather than
+    /// moving the block.
+    Justify,
+}
+
 /// Text flowed through a sequence of boxes.
 #[derive(Debug, Clone, Default)]
 pub struct Flowed {
@@ -582,6 +600,16 @@ fn shift(line: &mut ShapedLine, dx: f64, dy: f64) {
 /// When the columns run out the rest is **overset**: dropped and counted, so
 /// the frame reports it with a mark rather than drawing text outside itself.
 pub fn flow(text: ShapedText, columns: &[Column]) -> Flowed {
+    flow_justified(text, columns, Vertical::Top)
+}
+
+/// The same, with the text sat somewhere other than the top of each box.
+///
+/// Justification is applied **per box**, after the lines have been handed out.
+/// It cannot be done while placing them: where the slack is depends on how
+/// many lines the box ended up with, and that is not known until the box is
+/// full.
+pub fn flow_justified(text: ShapedText, columns: &[Column], vertical: Vertical) -> Flowed {
     if columns.is_empty() {
         return Flowed {
             overset_lines: text.lines.len(),
@@ -601,6 +629,9 @@ pub fn flow(text: ShapedText, columns: &[Column]) -> Flowed {
     // when a column takes its first line, so the rest of that column keeps
     // its spacing relative to it.
     let mut offset = None::<f64>;
+    // Which box each placed line went into, so the slack can be shared out
+    // afterwards.
+    let mut boxes: Vec<usize> = Vec::with_capacity(out.lines.capacity());
 
     for mut line in text.lines {
         let (above, below) = extent(&line);
@@ -632,6 +663,7 @@ pub fn flow(text: ShapedText, columns: &[Column]) -> Flowed {
                 shift(&mut line, box_.x, shift_by);
                 out.height = out.height.max(baseline + below);
                 out.lines.push(line);
+                boxes.push(column);
                 break;
             }
 
@@ -644,10 +676,73 @@ pub fn flow(text: ShapedText, columns: &[Column]) -> Flowed {
         }
     }
 
+    justify(&mut out, &boxes, columns, vertical);
+
     Flowed {
         text: out,
         overset_lines: overset,
     }
+}
+
+/// Move each box's lines to sit where `vertical` asks.
+///
+/// A box whose text overflows it has no slack to share, and one with a single
+/// line has no gap to put it in — both are left where they are rather than
+/// given a special case that reads as a bug when it fires.
+fn justify(text: &mut ShapedText, boxes: &[usize], columns: &[Column], vertical: Vertical) {
+    if vertical == Vertical::Top || text.lines.is_empty() {
+        return;
+    }
+
+    for (index, box_) in columns.iter().enumerate() {
+        let mine: Vec<usize> = boxes
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| **b == index)
+            .map(|(i, _)| i)
+            .collect();
+        let (Some(&first), Some(&last)) = (mine.first(), mine.last()) else {
+            continue;
+        };
+
+        let top = text.lines[first].baseline - text.lines[first].ascent;
+        let bottom = text.lines[last].baseline + text.lines[last].descent;
+        let slack = (box_.y + box_.height) - bottom - (top - box_.y);
+        if slack <= 0.0 {
+            continue;
+        }
+
+        match vertical {
+            Vertical::Top => {}
+            Vertical::Centre => {
+                for i in &mine {
+                    shift(&mut text.lines[*i], 0.0, slack / 2.0);
+                }
+            }
+            Vertical::Bottom => {
+                for i in &mine {
+                    shift(&mut text.lines[*i], 0.0, slack);
+                }
+            }
+            Vertical::Justify => {
+                // One line has no gap to open, so it stays at the top rather
+                // than dropping to the middle of the box.
+                if mine.len() < 2 {
+                    continue;
+                }
+                let each = slack / (mine.len() - 1) as f64;
+                for (n, i) in mine.iter().enumerate() {
+                    shift(&mut text.lines[*i], 0.0, each * n as f64);
+                }
+            }
+        }
+    }
+
+    text.height = text
+        .lines
+        .iter()
+        .map(|l| l.baseline + l.descent)
+        .fold(0.0, f64::max);
 }
 
 /// Everything that changes the shaped result.
@@ -2975,5 +3070,121 @@ mod tests {
         let flowed = flow(ShapedText::default(), &[column(0.0, 0.0, 10.0, 10.0)]);
         assert!(flowed.text.lines.is_empty());
         assert_eq!(flowed.overset_lines, 0);
+    }
+
+    // --- vertical justification ---------------------------------------------
+
+    #[test]
+    fn top_leaves_the_text_where_the_flow_put_it() {
+        let box_ = column(0.0, 0.0, 100.0, 200.0);
+        let plain = flow(ruled(3), &[box_]);
+        let asked = flow_justified(ruled(3), &[box_], Vertical::Top);
+        assert_eq!(baselines(&plain.text), baselines(&asked.text));
+    }
+
+    #[test]
+    fn centring_puts_half_the_slack_above_the_text() {
+        // Three lines: top at 0, bottom at 10 + 24 + 2 = 36. In a 100-tall
+        // box that is 64 of slack, so 32 above.
+        let flowed = flow_justified(
+            ruled(3),
+            &[column(0.0, 0.0, 100.0, 100.0)],
+            Vertical::Centre,
+        );
+        assert_eq!(baselines(&flowed.text), vec![42.0, 54.0, 66.0]);
+    }
+
+    #[test]
+    fn the_bottom_puts_the_last_descender_on_the_bottom_edge() {
+        let flowed = flow_justified(
+            ruled(3),
+            &[column(0.0, 0.0, 100.0, 100.0)],
+            Vertical::Bottom,
+        );
+        let last = flowed.text.lines.last().expect("a line");
+        assert_eq!(last.baseline + last.descent, 100.0);
+    }
+
+    #[test]
+    fn justifying_spreads_the_lines_from_top_to_bottom() {
+        // The first line stays against the top, the last sits on the bottom,
+        // and the gaps between them are equal.
+        let flowed = flow_justified(
+            ruled(3),
+            &[column(0.0, 0.0, 100.0, 100.0)],
+            Vertical::Justify,
+        );
+        let at = baselines(&flowed.text);
+
+        assert_eq!(at[0], 10.0, "the first line does not move");
+        let last = flowed.text.lines.last().expect("a line");
+        assert_eq!(
+            last.baseline + last.descent,
+            100.0,
+            "the last sits on the foot"
+        );
+        assert!(
+            ((at[1] - at[0]) - (at[2] - at[1])).abs() < 1e-9,
+            "and the gaps are equal: {at:?}"
+        );
+    }
+
+    #[test]
+    fn a_single_line_is_not_justified_to_the_middle_of_nowhere() {
+        // One line has no gap to open. Dropping it to the centre would be a
+        // different alignment than the one asked for.
+        let flowed = flow_justified(
+            ruled(1),
+            &[column(0.0, 0.0, 100.0, 100.0)],
+            Vertical::Justify,
+        );
+        assert_eq!(baselines(&flowed.text), vec![10.0]);
+    }
+
+    #[test]
+    fn a_box_with_no_slack_is_left_alone() {
+        // Text that fills or overflows its box has nothing to share out, and
+        // moving it would push it further outside.
+        let flowed = flow_justified(ruled(2), &[column(0.0, 0.0, 100.0, 24.0)], Vertical::Centre);
+        assert_eq!(baselines(&flowed.text), vec![10.0, 22.0]);
+    }
+
+    #[test]
+    fn each_column_is_justified_in_its_own_right() {
+        // Two columns, three lines each in a box with room for more. Both
+        // columns centre independently rather than the block as a whole.
+        let columns = [
+            column(0.0, 0.0, 100.0, 40.0),
+            column(120.0, 0.0, 100.0, 100.0),
+        ];
+        let flowed = flow_justified(ruled(5), &columns, Vertical::Centre);
+
+        let first: Vec<f64> = flowed.text.lines[..3].iter().map(|l| l.baseline).collect();
+        let second: Vec<f64> = flowed.text.lines[3..].iter().map(|l| l.baseline).collect();
+        assert!(first[0] > 10.0, "the first column centred: {first:?}");
+        assert!(
+            second[0] > first[0],
+            "and the second, in a taller box, centred further down: {second:?}"
+        );
+    }
+
+    #[test]
+    fn justification_does_not_change_which_lines_fit() {
+        // It runs after the lines are handed out, so a box holds the same
+        // lines however its text is aligned in it.
+        let columns = [
+            column(0.0, 0.0, 100.0, 24.0),
+            column(120.0, 0.0, 100.0, 24.0),
+        ];
+        for vertical in [
+            Vertical::Top,
+            Vertical::Centre,
+            Vertical::Bottom,
+            Vertical::Justify,
+        ] {
+            let flowed = flow_justified(ruled(5), &columns, vertical);
+            assert_eq!(flowed.text.lines.len(), 4, "{vertical:?}");
+            assert_eq!(flowed.overset_lines, 1, "{vertical:?}");
+        }
     }
 }

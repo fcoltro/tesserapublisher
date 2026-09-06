@@ -781,11 +781,13 @@ full argument, with sources, is in `docs/superpowers/specs/`.
     watched it line up first.
   - Held off by Ctrl, and turned off for good from the View menu.
 - [ ] Baseline grid with a per-frame lock toggle.
-- [~] Multi-column text frames with gutter control and **frame inset**.
-  Vertical justification is modelled and stored but not yet honoured: the flow
-  puts every column's text against its top. Named here rather than ticked,
-  because a control that sets a value nothing reads is worse than one that is
-  absent.
+- [x] Multi-column text frames with gutter control, **frame inset, and
+  vertical justification**.
+  - Justification is applied **per box, after** the lines are handed out. It
+    cannot be done while placing them: where the slack is depends on how many
+    lines the box ended up with, and that is not known until the box is full.
+    A test requires the same lines to land in the same boxes under all four
+    alignments.
   - `TextLayout` lives on the **`Text` variant**, not on `Frame`: a column
     count is a fact about a text frame and a nonsense about a rectangle, and
     the kind is what decides which.

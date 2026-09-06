@@ -914,6 +914,24 @@ fn text_frame_controls(
     );
     changed |= c || d || e || f;
 
+    // Where the text sits when it does not fill the frame. Icons rather than
+    // a list: it is the same choice as horizontal alignment and reads the
+    // same way, turned a quarter turn.
+    field(ui, "Vertical", |ui| {
+        use tessera_document::nodes::VerticalJustify as V;
+        for (icon, tip, which) in [
+            (crate::icons::Icon::AlignTop, "Top", V::Top),
+            (crate::icons::Icon::AlignMiddleV, "Centre", V::Centre),
+            (crate::icons::Icon::AlignBottom, "Bottom", V::Bottom),
+            (crate::icons::Icon::AlignJustify, "Justify", V::Justify),
+        ] {
+            if icon_button(ui, icon, tip, wanted.vertical == which) {
+                wanted.vertical = which;
+                changed = true;
+            }
+        }
+    });
+
     if changed {
         apply(state, Command::SetTextLayout { id, layout: wanted });
     }

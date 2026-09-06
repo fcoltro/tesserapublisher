@@ -259,8 +259,24 @@ fn resolve_one(
                 })
                 .collect();
 
+            // The document's enum mapped onto the shaper's. Two enums rather
+            // than one because `tessera_text` knows nothing about documents,
+            // the same arrangement `Styles` uses.
+            let vertical = match layout.vertical {
+                tessera_document::nodes::VerticalJustify::Top => tessera_text::shape::Vertical::Top,
+                tessera_document::nodes::VerticalJustify::Centre => {
+                    tessera_text::shape::Vertical::Centre
+                }
+                tessera_document::nodes::VerticalJustify::Bottom => {
+                    tessera_text::shape::Vertical::Bottom
+                }
+                tessera_document::nodes::VerticalJustify::Justify => {
+                    tessera_text::shape::Vertical::Justify
+                }
+            };
+
             let shaped = shaper.shape(story, doc, measure);
-            let flowed = tessera_text::shape::flow(shaped, &boxes);
+            let flowed = tessera_text::shape::flow_justified(shaped, &boxes, vertical);
 
             ResolvedKind::Text {
                 shaped: flowed.text,
