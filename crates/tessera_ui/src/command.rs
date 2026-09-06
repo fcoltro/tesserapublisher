@@ -2027,6 +2027,7 @@ mod tests {
         let before = state.active().document().setup;
 
         let wanted = DocumentSetup {
+            baseline_grid: None,
             margins: Margins::uniform(36.0),
             bleed: Insets::uniform(9.0),
             slug: Insets::default(),

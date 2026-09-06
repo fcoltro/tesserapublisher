@@ -563,6 +563,27 @@ pub enum Vertical {
     Justify,
 }
 
+/// A rhythm lines may be locked to, in the frame's own space.
+///
+/// Given here already converted, so this crate needs no notion of a page: the
+/// caller works out where the page's grid falls inside the frame and hands the
+/// answer over.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Grid {
+    /// Where the first line of the grid sits in the frame.
+    pub first: f64,
+    pub step: f64,
+}
+
+impl Grid {
+    /// The first grid line at or below `y`.
+    fn at_or_below(&self, y: f64) -> f64 {
+        let step = self.step.max(f64::EPSILON);
+        let steps = ((y - self.first) / step).ceil();
+        self.first + steps * step
+    }
+}
+
 /// Text flowed through a sequence of boxes.
 #[derive(Debug, Clone, Default)]
 pub struct Flowed {
@@ -623,6 +644,25 @@ pub fn flow(text: ShapedText, columns: &[Column]) -> Flowed {
 /// many lines the box ended up with, and that is not known until the box is
 /// full.
 pub fn flow_justified(text: ShapedText, columns: &[Column], vertical: Vertical) -> Flowed {
+    flow_on_grid(text, columns, vertical, None)
+}
+
+/// The same, with every line locked to a rhythm.
+///
+/// A grid **overrides** vertical justification. Both decide where a line sits,
+/// and a line cannot be in two places; the grid wins because it is the one
+/// that makes columns in different frames line up, which is the reason to have
+/// either.
+pub fn flow_on_grid(
+    text: ShapedText,
+    columns: &[Column],
+    vertical: Vertical,
+    grid: Option<Grid>,
+) -> Flowed {
+    let vertical = match grid {
+        Some(_) => Vertical::Top,
+        None => vertical,
+    };
     if columns.is_empty() {
         return Flowed {
             overset_lines: text.lines.len(),
@@ -642,6 +682,10 @@ pub fn flow_justified(text: ShapedText, columns: &[Column], vertical: Vertical) 
     // when a column takes its first line, so the rest of that column keeps
     // its spacing relative to it.
     let mut offset = None::<f64>;
+    // The last baseline placed in the current box, for the grid. Two lines
+    // may not take the same slot: leading tighter than the grid step would
+    // otherwise round both onto one line and draw them over each other.
+    let mut lowest = None::<f64>;
     // Which box each placed line went into, so the slack can be shared out
     // afterwards.
     let mut boxes: Vec<usize> = Vec::with_capacity(out.lines.capacity());
@@ -666,15 +710,35 @@ pub fn flow_justified(text: ShapedText, columns: &[Column], vertical: Vertical) 
                 None => box_.y + above - line.baseline,
             };
             let baseline = line.baseline + shift_by;
+            // Locked lines take the next slot at or below where they fell.
+            // Down rather than to the nearest, so text never rides up into
+            // the line above it.
+            let baseline = match grid {
+                Some(grid) => {
+                    // At least one slot past the line above, and never above
+                    // the top of the box.
+                    let floor = lowest.map_or(box_.y + above, |b| b + grid.step.max(f64::EPSILON));
+                    grid.at_or_below(baseline.max(floor))
+                }
+                None => baseline,
+            };
+            let shift_by = baseline - line.baseline;
             let fits = baseline + below <= box_.y + box_.height;
 
             // A line taller than the column fits nowhere; putting it in
             // anyway is better than dropping every line of a story because
             // one of them is oversized.
             if fits || offset.is_none() {
-                offset = Some(shift_by);
+                // With a grid every line finds its own slot, so the column's
+                // running offset must not be carried: it is already in
+                // `baseline` by way of the line's own position.
+                offset = match grid {
+                    Some(_) => offset.or(Some(shift_by)),
+                    None => Some(shift_by),
+                };
                 shift(&mut line, box_.x, shift_by);
                 out.height = out.height.max(baseline + below);
+                lowest = Some(baseline);
                 out.lines.push(line);
                 boxes.push(column);
                 break;
@@ -682,6 +746,7 @@ pub fn flow_justified(text: ShapedText, columns: &[Column], vertical: Vertical) 
 
             column += 1;
             offset = None;
+            lowest = None;
             if column >= columns.len() {
                 overset += 1;
                 break;
@@ -3409,5 +3474,127 @@ mod tests {
         // for a single line would loop a whole thread back to the beginning.
         let flowed = flow(ruled(2), &[]);
         assert_eq!(flowed.consumed_to, None);
+    }
+
+    // --- the baseline grid ---------------------------------------------------
+
+    fn grid(first: f64, step: f64) -> Grid {
+        Grid { first, step }
+    }
+
+    #[test]
+    fn a_locked_line_takes_the_slot_at_or_below_where_it_fell() {
+        // Down rather than to the nearest: text must never ride up into the
+        // line above it.
+        let flowed = flow_on_grid(
+            ruled(1),
+            &[column(0.0, 0.0, 100.0, 500.0)],
+            Vertical::Top,
+            Some(grid(0.0, 16.0)),
+        );
+        assert_eq!(
+            baselines(&flowed.text),
+            vec![16.0],
+            "it fell at 10 and took the slot at 16"
+        );
+    }
+
+    #[test]
+    fn locked_lines_land_on_the_rhythm_whatever_their_leading() {
+        // The whole point of a grid: the lines are on it, not merely evenly
+        // spaced among themselves.
+        let flowed = flow_on_grid(
+            ruled(4),
+            &[column(0.0, 0.0, 100.0, 500.0)],
+            Vertical::Top,
+            Some(grid(0.0, 16.0)),
+        );
+        for at in baselines(&flowed.text) {
+            assert!(
+                (at / 16.0).fract().abs() < 1e-9,
+                "{at} is not on a sixteen-point grid"
+            );
+        }
+    }
+
+    #[test]
+    fn two_lines_never_share_a_slot() {
+        // Leading tighter than the grid step would round both onto one line
+        // and draw them over each other.
+        let flowed = flow_on_grid(
+            ruled(4),
+            &[column(0.0, 0.0, 100.0, 500.0)],
+            Vertical::Top,
+            // A step of 8 against a leading of 12: every line rounds up, and
+            // without a floor two of them would meet.
+            Some(grid(0.0, 8.0)),
+        );
+        let at = baselines(&flowed.text);
+        for pair in at.windows(2) {
+            assert!(pair[1] > pair[0], "two lines took the same slot: {at:?}");
+        }
+    }
+
+    #[test]
+    fn a_grid_offset_from_the_top_is_honoured() {
+        // The grid is measured from the page, so a frame partway down it
+        // starts on whichever slot falls inside the frame.
+        let flowed = flow_on_grid(
+            ruled(2),
+            &[column(0.0, 0.0, 100.0, 500.0)],
+            Vertical::Top,
+            Some(grid(3.0, 16.0)),
+        );
+        assert_eq!(baselines(&flowed.text), vec![19.0, 35.0]);
+    }
+
+    #[test]
+    fn a_grid_beats_vertical_justification() {
+        // Both decide where a line sits and a line cannot be in two places.
+        // The grid wins because it is the one that makes columns in different
+        // frames line up, which is the reason to have either.
+        let boxes = [column(0.0, 0.0, 100.0, 500.0)];
+        let locked = flow_on_grid(ruled(3), &boxes, Vertical::Bottom, Some(grid(0.0, 16.0)));
+        let plain = flow_on_grid(ruled(3), &boxes, Vertical::Top, Some(grid(0.0, 16.0)));
+        assert_eq!(baselines(&locked.text), baselines(&plain.text));
+    }
+
+    #[test]
+    fn no_grid_leaves_the_flow_exactly_as_it_was() {
+        let boxes = [column(0.0, 0.0, 100.0, 500.0)];
+        let with_none = flow_on_grid(ruled(3), &boxes, Vertical::Top, None);
+        let plain = flow(ruled(3), &boxes);
+        assert_eq!(baselines(&with_none.text), baselines(&plain.text));
+    }
+
+    #[test]
+    fn each_column_starts_its_grid_afresh_from_its_own_top() {
+        let columns = [
+            column(0.0, 0.0, 100.0, 40.0),
+            column(120.0, 0.0, 100.0, 500.0),
+        ];
+        let flowed = flow_on_grid(ruled(5), &columns, Vertical::Top, Some(grid(0.0, 16.0)));
+        let at = baselines(&flowed.text);
+
+        // Whatever the split, every line is still on the rhythm.
+        for one in &at {
+            assert!((one / 16.0).fract().abs() < 1e-9, "{at:?}");
+        }
+        assert!(at.len() >= 2);
+    }
+
+    #[test]
+    fn locking_to_a_grid_costs_lines_when_the_step_is_coarse() {
+        // Honest consequence, worth a test so it is not mistaken for a bug: a
+        // grid coarser than the leading fits fewer lines in the same box.
+        let boxes = [column(0.0, 0.0, 100.0, 60.0)];
+        let loose = flow_on_grid(ruled(6), &boxes, Vertical::Top, None);
+        let locked = flow_on_grid(ruled(6), &boxes, Vertical::Top, Some(grid(0.0, 24.0)));
+        assert!(
+            locked.text.lines.len() < loose.text.lines.len(),
+            "coarse grid, fewer lines: {} against {}",
+            locked.text.lines.len(),
+            loose.text.lines.len()
+        );
     }
 }

@@ -914,6 +914,17 @@ fn text_frame_controls(
     );
     changed |= c || d || e || f;
 
+    // Only offered when there is a grid to lock to. A switch that does
+    // nothing until a setting three panels away is turned on is a switch that
+    // reads as broken.
+    if state.active().document().setup.baseline_grid.is_some() {
+        let mut locked = wanted.lock_to_grid;
+        if ui.checkbox(&mut locked, "Lock to baseline grid").changed() {
+            wanted.lock_to_grid = locked;
+            changed = true;
+        }
+    }
+
     // Where the text sits when it does not fill the frame. Icons rather than
     // a list: it is the same choice as horizontal alignment and reads the
     // same way, turned a quarter turn.
@@ -1898,6 +1909,38 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
             ("Right", &mut setup.bleed.right),
         ),
     );
+    // The baseline grid, with the document's other page-wide rhythms.
+    ui.add_space(Theme::SPACE_3);
+    group_label(ui, "Baseline grid");
+    let mut on = setup.baseline_grid.is_some();
+    if ui.checkbox(&mut on, "Use a baseline grid").changed() {
+        setup.baseline_grid = on.then_some(tessera_document::nodes::BaselineGrid {
+            start: 0.0,
+            // Twelve on twelve: a grid that matches the default leading, so
+            // turning it on changes nothing until something is set against it.
+            step: 12.0,
+        });
+        changed = true;
+    }
+    if let Some(mut grid) = setup.baseline_grid {
+        let (g, h) = pair(
+            ui,
+            ("Start", |ui: &mut Ui| {
+                measure_bare(ui, &mut grid.start, unit)
+            }),
+            ("Every", |ui: &mut Ui| {
+                measure_bare(ui, &mut grid.step, unit)
+            }),
+        );
+        if g || h {
+            // A step of zero is a grid with every line in one place, which no
+            // caller can use and the flow would have to guard against.
+            grid.step = grid.step.max(0.1);
+            setup.baseline_grid = Some(grid);
+            changed = true;
+        }
+    }
+
     changed |= edges(
         ui,
         "Slug",

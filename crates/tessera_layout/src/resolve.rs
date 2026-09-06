@@ -340,8 +340,28 @@ fn resolve_one(
             // measures, so there is no shortcut past doing it.
             let from = story_starts_at(doc, shaper, id);
 
+            // The grid is measured from the top of the **page**, so two
+            // frames on the same page line up. The text crate has no notion of
+            // a page, so the page's rhythm is expressed in this frame's own
+            // space before it is handed over: a slot at document `y` is at
+            // `y - the frame's top` inside the frame.
+            //
+            // A rotated frame is left off the grid. A rhythm measured down the
+            // page means nothing to text running across it at an angle, and
+            // guessing would be worse than declining.
+            let grid = doc.setup.baseline_grid.and_then(|grid| {
+                if !layout.lock_to_grid || grid.step <= 0.0 || !frame.transform.is_identity() {
+                    return None;
+                }
+                let page = doc.pages.get(doc.page_of_frame(id)?)?.bounds;
+                Some(tessera_text::shape::Grid {
+                    first: page.y + grid.start - frame.bounds.y,
+                    step: grid.step,
+                })
+            });
+
             let shaped = shaper.shape_from(story, doc, measure, from);
-            let flowed = tessera_text::shape::flow_justified(shaped, &boxes, vertical);
+            let flowed = tessera_text::shape::flow_on_grid(shaped, &boxes, vertical, grid);
 
             ResolvedKind::Text {
                 shaped: flowed.text,

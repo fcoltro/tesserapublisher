@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 10;
+pub const FORMAT_VERSION: u32 = 11;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -170,6 +170,15 @@ fn migrate(value: &mut serde_json::Value, from: u32) {
     if from < 8 {
         layers_leave_the_page(value);
     }
+
+    // 10 -> 11: the document gained a baseline grid and a text frame gained
+    // the switch that locks its lines to it.
+    //
+    // Nothing to rewrite. `None` is the truth about a document written before
+    // grids existed — it has no grid — and `false` is the truth about every
+    // frame in it. The version moves so that an older build refuses a document
+    // using a grid rather than opening it with every line off the rhythm,
+    // which would look like the document rather than like the build.
 
     // 9 -> 10: a text frame gained the layout it flows its story through —
     // columns, a gutter, an inset, and where the text sits when it does not

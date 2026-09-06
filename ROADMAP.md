@@ -780,7 +780,24 @@ full argument, with sources, is in `docs/superpowers/specs/`.
     moment the mouse came up, which is worse than no snapping — the user
     watched it line up first.
   - Held off by Ctrl, and turned off for good from the View menu.
-- [ ] Baseline grid with a per-frame lock toggle.
+- [x] Baseline grid with a per-frame lock toggle.
+  - Measured from the top of the **page**, not the frame. That is the whole
+    point: two columns in different frames line up because both sit on the
+    page's rhythm, and a grid measured per frame would give each frame a
+    rhythm of its own. `resolve` converts it into the frame's space, because
+    the text crate has no notion of a page.
+  - The lock is **per frame**, because a caption or a pull quote is exactly
+    the thing that should not share the body text's rhythm.
+  - A locked line takes the slot **at or below** where it fell, never the
+    nearest: text must not ride up into the line above it.
+  - Two lines may not share a slot. Leading tighter than the step would
+    otherwise round both onto one line and draw them over each other.
+  - A grid **overrides** vertical justification. Both decide where a line
+    sits and a line cannot be in two places; the grid wins because it is the
+    one that makes separate frames line up.
+  - A rotated frame is left off the grid rather than guessed at. A rhythm
+    measured down the page means nothing to text running across it at an
+    angle.
 - [x] Multi-column text frames with gutter control, **frame inset, and
   vertical justification**.
   - Justification is applied **per box, after** the lines are handed out. It

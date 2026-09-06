@@ -243,6 +243,35 @@ impl FrameKind {
     }
 }
 
+/// The rhythm every line locked to it sits on.
+///
+/// Measured from the top of the **page**, not the frame. That is the whole
+/// point: two columns in different frames line up because they are both on the
+/// page's grid, and a grid measured per frame would put each frame on a rhythm
+/// of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BaselineGrid {
+    /// Where the first line of the grid sits, below the top of the page.
+    pub start: f64,
+    /// How far apart the rest are. Kept positive; a step of zero or less is a
+    /// grid with every line in one place, which no caller could use.
+    pub step: f64,
+}
+
+impl BaselineGrid {
+    /// The first grid line at or below `y`, in the same space `y` is in.
+    ///
+    /// Down rather than to the nearest, which is what locking to a grid means:
+    /// a line that does not fit its slot takes the next one, and text never
+    /// rides up into the line above it.
+    pub fn snap(&self, y: f64, origin: f64) -> f64 {
+        let step = self.step.max(f64::EPSILON);
+        let first = origin + self.start;
+        let steps = ((y - first) / step).ceil().max(0.0);
+        first + steps * step
+    }
+}
+
 /// Where text sits in a frame taller than the text needs.
 ///
 /// InDesign calls this vertical justification. `Justify` is the one that does
@@ -271,6 +300,13 @@ pub struct TextLayout {
     /// The margin inside the frame, before the text starts.
     pub inset: Insets,
     pub vertical: VerticalJustify,
+    /// Whether this frame's lines sit on the document's baseline grid.
+    ///
+    /// Per frame rather than per document, because a caption or a pull quote
+    /// is exactly the thing that should *not* be on the grid the body text is
+    /// on.
+    #[serde(default)]
+    pub lock_to_grid: bool,
     /// The frame this one overflows into.
     ///
     /// A **forward** link only. The frame before is found by looking for
@@ -292,6 +328,7 @@ impl Default for TextLayout {
             gutter: 12.0,
             inset: Insets::default(),
             vertical: VerticalJustify::Top,
+            lock_to_grid: false,
             next: None,
         }
     }
@@ -504,6 +541,13 @@ impl Orientation {
 /// right when they disagree.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct DocumentSetup {
+    /// The grid every locked line sits on, if the document has one.
+    ///
+    /// `None` rather than a zero step, and the difference is the point: a
+    /// document without a grid has no grid, and a step of zero would be a
+    /// grid whose lines are all in the same place.
+    #[serde(default)]
+    pub baseline_grid: Option<BaselineGrid>,
     pub margins: Margins,
     pub bleed: Insets,
     pub slug: Insets,

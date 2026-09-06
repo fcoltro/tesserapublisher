@@ -442,6 +442,7 @@ fn page_setup_and_guides_survive_a_round_trip() {
 
     let mut original = Document::new();
     original.setup = DocumentSetup {
+        baseline_grid: None,
         margins: Margins {
             top: 36.0,
             bottom: 42.0,
@@ -578,9 +579,52 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_ten() {
+fn the_format_version_is_eleven() {
     // If this changes, a migration step is owed.
-    assert_eq!(format::FORMAT_VERSION, 10);
+    assert_eq!(format::FORMAT_VERSION, 11);
+}
+
+#[test]
+fn a_baseline_grid_round_trips() {
+    use tessera_document::nodes::BaselineGrid;
+
+    let path = temp_path("grid.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = Document::new();
+    doc.setup.baseline_grid = Some(BaselineGrid {
+        start: 12.0,
+        step: 14.4,
+    });
+    format::save(&doc, &path).expect("save");
+
+    let loaded = format::load(&path).expect("load");
+    assert_eq!(
+        loaded.setup.baseline_grid,
+        Some(BaselineGrid {
+            start: 12.0,
+            step: 14.4
+        })
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_version_ten_document_opens_with_no_grid() {
+    // `None` is the truth about a document written before grids existed, and
+    // `false` about every frame in it.
+    let path = temp_path("legacy_v10.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let doc = Document::new();
+    format::save(&doc, &path).expect("save");
+    format::rewrite_version_for_test(&path, 10).expect("stamp");
+
+    let loaded = format::load(&path).expect("a version 10 document must still open");
+    assert_eq!(loaded.setup.baseline_grid, None);
+
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -647,6 +691,7 @@ fn a_columned_text_frame_round_trips() {
             right: 6.0,
         },
         vertical: VerticalJustify::Justify,
+        lock_to_grid: true,
         next: None,
     };
     let id = doc.add_frame(
