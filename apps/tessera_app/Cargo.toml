@@ -12,3 +12,4 @@ workspace = true
 tessera_ui.workspace = true
 eframe.workspace = true
 egui.workspace = true
+image.workspace = true

@@ -5,19 +5,29 @@
 // A console window alongside the app is for debugging, not for users.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod icon;
 mod platform;
 
 use tessera_ui::TesseraApp;
 
 fn main() -> eframe::Result<()> {
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([1280.0, 840.0])
+        .with_min_inner_size([720.0, 480.0])
+        .with_title("Tessera Publisher")
+        // Take focus on launch. Without this the window can open behind
+        // whatever the user clicked while it was starting.
+        .with_active(true);
+
+    // Only when there is one. An empty `IconData` is not "no icon", it is a
+    // zero-by-zero icon, and the window manager is entitled to make a mess
+    // of it.
+    if let Some(mark) = icon::load() {
+        viewport = viewport.with_icon(mark);
+    }
+
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1280.0, 840.0])
-            .with_min_inner_size([720.0, 480.0])
-            .with_title("Tessera Publisher")
-            // Take focus on launch. Without this the window can open behind
-            // whatever the user clicked while it was starting.
-            .with_active(true),
+        viewport,
         // No WgpuConfiguration: the Task 1 spike established that Vello runs
         // on eframe's stock device, with no extra features and no raised
         // limits. See docs/superpowers/notes/2026-09-01-vello-egui-spike.md.
