@@ -149,15 +149,28 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
         if !section.applies_to(&frame) {
             continue;
         }
-        ui.add_space(Theme::SPACE_3);
-        subheading(ui, section.icon(), section.title());
-        match section {
-            Section::Transform => transform_section(ui, state, id, &frame),
-            Section::Fill => fill_section(ui, state, id, &frame),
-            Section::Stroke => stroke_section(ui, state, id, &frame),
-            Section::Text => text_section(ui, state, id, &frame),
-            Section::Frame => frame_section(ui, &frame),
+        if !section_heading(ui, state, section.icon(), section.title()) {
+            continue;
         }
+        // Indented under its heading, which is what says the fields belong to
+        // it rather than merely follow it.
+        ui.scope(|ui| {
+            ui.add_space(Theme::SPACE_1);
+            egui::Frame::NONE
+                .inner_margin(egui::Margin {
+                    left: Theme::SPACE_3 as i8,
+                    right: 0,
+                    top: 0,
+                    bottom: Theme::SPACE_2 as i8,
+                })
+                .show(ui, |ui| match section {
+                    Section::Transform => transform_section(ui, state, id, &frame),
+                    Section::Fill => fill_section(ui, state, id, &frame),
+                    Section::Stroke => stroke_section(ui, state, id, &frame),
+                    Section::Text => text_section(ui, state, id, &frame),
+                    Section::Frame => frame_section(ui, &frame),
+                });
+        });
     }
 }
 
@@ -395,12 +408,12 @@ fn transform_section(
     let anchor = state.anchor;
 
     let (mut sx, mut sy) = (d.scale_x * 100.0, d.scale_y * 100.0);
-    let mut scaled = false;
-    egui::Grid::new("scale").num_columns(2).show(ui, |ui| {
-        scaled |= percent(ui, "Scale X", &mut sx);
-        scaled |= percent(ui, "Scale Y", &mut sy);
-        ui.end_row();
-    });
+    let (a, b) = pair(
+        ui,
+        ("Scale", |ui: &mut Ui| percent_bare(ui, &mut sx)),
+        ("by", |ui: &mut Ui| percent_bare(ui, &mut sy)),
+    );
+    let scaled = a || b;
     if scaled && d.scale_x != 0.0 && d.scale_y != 0.0 {
         apply(
             state,
@@ -604,7 +617,19 @@ fn constrained(was: (f64, f64), now: (f64, f64), w_changed: bool) -> (f64, f64) 
     }
 }
 
+/// A percentage control with no label of its own.
+fn percent_bare(ui: &mut Ui, value: &mut f64) -> bool {
+    ui.add(
+        egui::DragValue::new(value)
+            .speed(0.5)
+            .fixed_decimals(1)
+            .suffix("%"),
+    )
+    .changed()
+}
+
 /// A percentage field.
+#[allow(dead_code)]
 fn percent(ui: &mut Ui, label: &str, value: &mut f64) -> bool {
     field(ui, label, |ui| {
         ui.add(
@@ -822,6 +847,22 @@ pub(crate) fn icon_button(
     response.on_hover_text(tooltip).clicked()
 }
 
+/// A quiet label naming a group of fields inside a section.
+///
+/// Not a section heading: it does not collapse and it carries no icon. The
+/// difference in weight is what says one is a level above the other.
+fn group_label(ui: &mut Ui, text: &str) {
+    ui.add_space(Theme::SPACE_1);
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(text)
+                .size(Theme::TYPE_SM)
+                .color(Theme::TEXT_MUTED),
+        )
+        .selectable(false),
+    );
+}
+
 /// A heading inside a section, with the glyph that names what follows.
 fn subheading(ui: &mut Ui, icon: crate::icons::Icon, label: &str) {
     ui.add_space(Theme::SPACING_SM);
@@ -925,11 +966,19 @@ fn set_paragraph(
 /// wrapping. The column is fixed, the label is clipped rather than allowed to
 /// push, and the control begins at the same x in every row of the application.
 pub(crate) fn field<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+    labelled(ui, label, Theme::LABEL_COLUMN, add)
+}
+
+/// A labelled control with a chosen label width.
+///
+/// The control is given **all the room that is left**, rather than sizing
+/// itself and leaving the rest of the panel blank to its right. A 292-point
+/// panel with a 64-point label and a field that draws at its natural 60 was
+/// throwing away more than half its width on every row.
+fn labelled<R>(ui: &mut Ui, label: &str, width: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
     ui.horizontal(|ui| {
-        let (rect, _) = ui.allocate_exact_size(
-            Vec2::new(Theme::LABEL_COLUMN, ui.spacing().interact_size.y),
-            Sense::hover(),
-        );
+        let height = ui.spacing().interact_size.y;
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
         ui.painter().text(
             egui::pos2(rect.left(), rect.center().y),
             egui::Align2::LEFT_CENTER,
@@ -937,9 +986,171 @@ pub(crate) fn field<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R)
             egui::TextStyle::Body.resolve(ui.style()),
             Theme::TEXT_MUTED,
         );
-        add(ui)
+        ui.style_mut().spacing.slider_width = ui.available_width();
+        ui.scope(|ui| {
+            let room = ui.available_width();
+            ui.set_min_width(room);
+            ui.spacing_mut().interact_size.x = room;
+            add(ui)
+        })
+        .inner
     })
     .inner
+}
+
+/// Two labelled controls in one row.
+///
+/// **X and Y are one fact, not two.** So are a width and a height, an inside
+/// and an outside margin, a space before and a space after. Stacking them
+/// makes a panel twice as tall as it needs to be and hides the relationship
+/// that makes them easy to read; side by side, the pair is one line and the
+/// eye compares them without moving.
+pub(crate) fn pair<A, B>(
+    ui: &mut Ui,
+    first: (&str, impl FnOnce(&mut Ui) -> A),
+    second: (&str, impl FnOnce(&mut Ui) -> B),
+) -> (A, B) {
+    // A shorter label column inside a pair: each half has half the room, and
+    // the full column would leave nothing for the control.
+    const NARROW: f32 = 36.0;
+
+    let mut out = (None, None);
+    ui.horizontal(|ui| {
+        let half = (ui.available_width() - Theme::SPACE_2) / 2.0;
+        ui.scope(|ui| {
+            ui.set_max_width(half);
+            out.0 = Some(labelled(ui, first.0, NARROW, first.1));
+        });
+        ui.scope(|ui| {
+            ui.set_max_width(half);
+            out.1 = Some(labelled(ui, second.0, NARROW, second.1));
+        });
+    });
+    (
+        out.0.expect("the first half drew"),
+        out.1.expect("the second half drew"),
+    )
+}
+
+/// A section heading that opens and shuts, remembering which it was.
+///
+/// One component, used by the rail and by the inspector's own sections. A
+/// panel that shows Transform, Fill, Stroke, Text and Styles at once is a
+/// column nobody reads to the end of — which is the same complaint the Object
+/// menu earned before it grew submenus.
+pub(crate) fn section_heading(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    icon: crate::icons::Icon,
+    title: &'static str,
+) -> bool {
+    let was = state.sections.is_open(title);
+    let now = section_heading_with(ui, icon, title, was);
+    if now != was {
+        state.sections.set_open(title, now);
+    }
+    now
+}
+
+/// The same heading, for a caller that keeps the open state itself.
+///
+/// Returns what the state should now be. The rail's sections are the panels
+/// the Window menu opens and shut, so their flag lives with the panel — a
+/// heading with a second, private record of the same fact is two records that
+/// can disagree, and on the first frame they did.
+pub(crate) fn section_heading_with(
+    ui: &mut Ui,
+    icon: crate::icons::Icon,
+    title: &str,
+    open: bool,
+) -> bool {
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), Theme::ROW), Sense::click());
+    let painter = ui.painter_at(rect);
+
+    if response.hovered() {
+        painter.rect_filled(rect, Theme::RADIUS, Theme::HOVER_BG);
+    }
+
+    let caret = egui::Rect::from_min_size(
+        egui::pos2(rect.left(), rect.center().y - 5.0),
+        Vec2::splat(10.0),
+    );
+    crate::icons::paint_rotated(
+        &painter,
+        caret,
+        crate::icons::Icon::ChevronRight,
+        Theme::TEXT_MUTED,
+        if open { 90.0 } else { 0.0 },
+        1.0,
+    );
+
+    let glyph = egui::Rect::from_min_size(
+        egui::pos2(caret.right() + Theme::SPACE_1, rect.center().y - 6.0),
+        Vec2::splat(12.0),
+    );
+    crate::icons::paint(&painter, glyph, icon, Theme::TEXT_MUTED);
+
+    painter.text(
+        egui::pos2(glyph.right() + Theme::SPACE_2, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        title,
+        egui::FontId::proportional(Theme::TYPE_MD),
+        Theme::TEXT_PRIMARY,
+    );
+
+    if response.clicked() { !open } else { open }
+}
+
+/// A measurement control with no label of its own.
+fn measure_bare(ui: &mut Ui, points: &mut f64, unit: Unit) -> bool {
+    let mut shown = unit.from_points(*points);
+    let changed = ui
+        .add(
+            egui::DragValue::new(&mut shown)
+                .speed(0.25)
+                .custom_formatter(move |v, _| format!("{v:.2} {}", unit.suffix()))
+                .custom_parser(move |text| {
+                    Unit::parse_to_points(text, unit).map(|p| unit.from_points(p))
+                }),
+        )
+        .changed();
+    if changed {
+        *points = unit.to_points(shown);
+    }
+    changed
+}
+
+/// An optional number with no label of its own.
+fn optional_number_bare(
+    ui: &mut Ui,
+    shown: Option<f32>,
+    speed: f64,
+    range: std::ops::RangeInclusive<f64>,
+    suffix: &str,
+) -> Option<f32> {
+    match shown {
+        Some(value) => {
+            let mut edited = f64::from(value);
+            let suffix = suffix.to_string();
+            ui.add(
+                egui::DragValue::new(&mut edited)
+                    .speed(speed)
+                    .range(range)
+                    .custom_formatter(move |v, _| format!("{v:.2}{suffix}")),
+            )
+            .changed()
+            .then_some(edited as f32)
+        }
+        None => {
+            // Mixed. A zero here would be a lie the user cannot see through,
+            // so the field shows its absence and offers the way to resolve it.
+            ui.button("Mixed")
+                .on_hover_text("The selection has more than one value. Click to unify.")
+                .clicked()
+                .then(|| *range.start() as f32)
+        }
+    }
 }
 
 fn optional_number(
@@ -1321,33 +1532,63 @@ fn text_section(
     /// Which field of a `ParagraphFormat` a row writes.
     type Set = fn(&mut ParagraphFormat, f32);
 
-    for (label, read, set) in [
-        (
-            "Indent left",
+    // Paired by meaning: an indent against the opposite indent, a space
+    // before against the space after. Five rows in a column said nothing about
+    // which of them belong together.
+    group_label(ui, "Indents");
+    /// Two paragraph measurements shown side by side: their labels, what they
+    /// currently read, and where each writes back to.
+    struct Paired(
+        &'static str,
+        &'static str,
+        Option<f32>,
+        Option<f32>,
+        Set,
+        Set,
+    );
+
+    let indents = [
+        Paired(
+            "Left",
+            "Right",
             paragraph.indent_left,
-            (|f: &mut ParagraphFormat, v| f.indent_left = Some(v)) as Set,
-        ),
-        (
-            "Indent right",
             paragraph.indent_right,
-            (|f: &mut ParagraphFormat, v| f.indent_right = Some(v)) as Set,
+            |f: &mut ParagraphFormat, v| f.indent_left = Some(v),
+            |f: &mut ParagraphFormat, v| f.indent_right = Some(v),
         ),
-        (
-            "First line",
+        Paired(
+            "First",
+            "Before",
             paragraph.indent_first,
-            (|f: &mut ParagraphFormat, v| f.indent_first = Some(v)) as Set,
-        ),
-        (
-            "Space before",
             paragraph.space_before,
-            (|f: &mut ParagraphFormat, v| f.space_before = Some(v)) as Set,
+            |f: &mut ParagraphFormat, v| f.indent_first = Some(v),
+            |f: &mut ParagraphFormat, v| f.space_before = Some(v),
         ),
-        (
-            "Space after",
-            paragraph.space_after,
-            (|f: &mut ParagraphFormat, v| f.space_after = Some(v)) as Set,
-        ),
-    ] {
+    ];
+    for Paired(la, lb, ra, rb, sa, sb) in indents {
+        let (a, b) = pair(
+            ui,
+            (la, |ui: &mut Ui| {
+                optional_number_bare(ui, Some(ra.unwrap_or(0.0)), 0.25, 0.0..=1440.0, " pt")
+            }),
+            (lb, |ui: &mut Ui| {
+                optional_number_bare(ui, Some(rb.unwrap_or(0.0)), 0.25, 0.0..=1440.0, " pt")
+            }),
+        );
+        for (value, set) in [(a, sa), (b, sb)] {
+            if let Some(value) = value {
+                let mut format = ParagraphFormat::default();
+                set(&mut format, value);
+                set_paragraph(state, story, target.clone(), format);
+            }
+        }
+    }
+
+    for (label, read, set) in [(
+        "Space after",
+        paragraph.space_after,
+        (|f: &mut ParagraphFormat, v| f.space_after = Some(v)) as Set,
+    )] {
         // Shown as 0 rather than blank: an indent nobody has set is not
         // ambiguous, it is zero.
         let Some(value) = optional_number(
@@ -1526,38 +1767,54 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
         ("Left", "Right")
     };
 
-    ui.add_space(Theme::SPACING_MD);
-    ui.label("Margins");
-    egui::Grid::new("margins").num_columns(2).show(ui, |ui| {
-        changed |= measure(ui, "Top", &mut setup.margins.top, unit);
-        changed |= measure(ui, "Bottom", &mut setup.margins.bottom, unit);
-        ui.end_row();
-        changed |= measure(ui, near, &mut setup.margins.inside, unit);
-        changed |= measure(ui, far, &mut setup.margins.outside, unit);
-        ui.end_row();
-    });
+    // Four edges are two pairs, not four rows: top against bottom and one
+    // side against the other are the comparisons a person actually makes.
+    let edges = |ui: &mut Ui,
+                 title: &str,
+                 v: (&mut f64, &mut f64),
+                 h: ((&str, &mut f64), (&str, &mut f64))| {
+        ui.add_space(Theme::SPACE_3);
+        group_label(ui, title);
+        let (a, b) = pair(
+            ui,
+            ("Top", |ui: &mut Ui| measure_bare(ui, v.0, unit)),
+            ("Bottom", |ui: &mut Ui| measure_bare(ui, v.1, unit)),
+        );
+        let (c, d) = pair(
+            ui,
+            (h.0.0, |ui: &mut Ui| measure_bare(ui, h.0.1, unit)),
+            (h.1.0, |ui: &mut Ui| measure_bare(ui, h.1.1, unit)),
+        );
+        a || b || c || d
+    };
 
-    ui.add_space(Theme::SPACING_MD);
-    ui.label("Bleed");
-    egui::Grid::new("bleed").num_columns(2).show(ui, |ui| {
-        changed |= measure(ui, "Top", &mut setup.bleed.top, unit);
-        changed |= measure(ui, "Bottom", &mut setup.bleed.bottom, unit);
-        ui.end_row();
-        changed |= measure(ui, "Left", &mut setup.bleed.left, unit);
-        changed |= measure(ui, "Right", &mut setup.bleed.right, unit);
-        ui.end_row();
-    });
-
-    ui.add_space(Theme::SPACING_MD);
-    ui.label("Slug");
-    egui::Grid::new("slug").num_columns(2).show(ui, |ui| {
-        changed |= measure(ui, "Top", &mut setup.slug.top, unit);
-        changed |= measure(ui, "Bottom", &mut setup.slug.bottom, unit);
-        ui.end_row();
-        changed |= measure(ui, "Left", &mut setup.slug.left, unit);
-        changed |= measure(ui, "Right", &mut setup.slug.right, unit);
-        ui.end_row();
-    });
+    changed |= edges(
+        ui,
+        "Margins",
+        (&mut setup.margins.top, &mut setup.margins.bottom),
+        (
+            (near, &mut setup.margins.inside),
+            (far, &mut setup.margins.outside),
+        ),
+    );
+    changed |= edges(
+        ui,
+        "Bleed",
+        (&mut setup.bleed.top, &mut setup.bleed.bottom),
+        (
+            ("Left", &mut setup.bleed.left),
+            ("Right", &mut setup.bleed.right),
+        ),
+    );
+    changed |= edges(
+        ui,
+        "Slug",
+        (&mut setup.slug.top, &mut setup.slug.bottom),
+        (
+            ("Left", &mut setup.slug.left),
+            ("Right", &mut setup.slug.right),
+        ),
+    );
 
     if changed {
         // One command for the whole struct: a page-setup edit is one undo

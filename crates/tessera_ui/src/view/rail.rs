@@ -78,16 +78,26 @@ impl Dock {
 
 /// The rail, expanded. Draws every open section, headings for the shut ones.
 pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
-    let mut toggled: Option<Dock> = None;
-
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             for dock in Dock::ALL {
-                let open = dock.is_open(state);
-                if heading(ui, dock, open) {
-                    toggled = Some(dock);
-                }
+                // A dock's heading is on the raised surface, which is what
+                // separates it from the fields under it without a line.
+                let bar = ui.available_rect_before_wrap();
+                let open = crate::view::panels::section_heading_with(
+                    ui,
+                    dock.icon(),
+                    dock.title(),
+                    dock.is_open(state),
+                );
+                ui.painter().hline(
+                    bar.x_range(),
+                    ui.min_rect().bottom(),
+                    egui::Stroke::new(1.0, Theme::RULE),
+                );
+                dock.set_open(state, open);
+
                 if !open {
                     continue;
                 }
@@ -101,13 +111,9 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
                         ))
                         .show(ui, |ui| body(ui, state, dock));
                 });
+                ui.add_space(Theme::SPACE_2);
             }
         });
-
-    if let Some(dock) = toggled {
-        let open = dock.is_open(state);
-        dock.set_open(state, !open);
-    }
 }
 
 /// The rail, collapsed: one icon per section, lit when that section is open.
@@ -133,51 +139,6 @@ pub fn strip(ui: &mut Ui, state: &mut TesseraApp) {
         dock.set_open(state, true);
         state.rail_open = true;
     }
-}
-
-/// One section heading: its name, and the caret saying whether it is open.
-fn heading(ui: &mut Ui, dock: Dock, open: bool) -> bool {
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), Theme::ROW),
-        egui::Sense::click(),
-    );
-    let painter = ui.painter_at(rect);
-
-    painter.rect_filled(rect, 0.0, Theme::SURFACE_RAISED);
-    if response.hovered() {
-        painter.rect_filled(rect, 0.0, Theme::HOVER_BG);
-    }
-
-    let caret = egui::Rect::from_min_size(
-        egui::pos2(rect.left() + Theme::SPACE_1, rect.center().y - 5.0),
-        egui::Vec2::splat(10.0),
-    );
-    crate::icons::paint_rotated(
-        &painter,
-        caret,
-        Icon::ChevronRight,
-        Theme::TEXT_MUTED,
-        if open { 90.0 } else { 0.0 },
-        1.0,
-    );
-
-    painter.text(
-        egui::pos2(caret.right() + Theme::SPACE_1, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        dock.title(),
-        egui::FontId::proportional(Theme::TYPE_MD),
-        Theme::TEXT_PRIMARY,
-    );
-
-    // A hairline under the heading, which is grouping *inside* a surface and
-    // so is what a rule is for.
-    painter.hline(
-        rect.x_range(),
-        rect.bottom() - 0.5,
-        egui::Stroke::new(1.0, Theme::BORDER),
-    );
-
-    response.clicked()
 }
 
 fn body(ui: &mut Ui, state: &mut TesseraApp, dock: Dock) {

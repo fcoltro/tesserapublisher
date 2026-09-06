@@ -117,6 +117,34 @@ pub struct PagesWindow {
     pub open: bool,
 }
 
+/// Which collapsible sections are shut.
+///
+/// Shut rather than open, so that a section added later appears rather than
+/// hiding until somebody finds it.
+#[derive(Debug, Clone, Default)]
+pub struct Sections {
+    shut: std::collections::HashSet<&'static str>,
+}
+
+impl Sections {
+    pub fn is_open(&self, name: &'static str) -> bool {
+        !self.shut.contains(name)
+    }
+
+    pub fn set_open(&mut self, name: &'static str, open: bool) {
+        if open {
+            self.shut.remove(name);
+        } else {
+            self.shut.insert(name);
+        }
+    }
+
+    pub fn toggle(&mut self, name: &'static str) {
+        let open = self.is_open(name);
+        self.set_open(name, !open);
+    }
+}
+
 /// The layers panel's own state.
 ///
 /// Defaults to closed, so it cannot appear unasked.
@@ -168,6 +196,8 @@ pub struct TesseraApp {
     pub pages_window: PagesWindow,
     /// Whether the rail is expanded or collapsed to its strip of icons.
     pub rail_open: bool,
+    /// Which sections of the rail and the inspector are shut.
+    pub sections: Sections,
     /// Whether the Properties section of the rail is open.
     ///
     /// A section like the others, but with no menu entry: it is what the rail
@@ -260,6 +290,7 @@ impl TesseraApp {
             styles_window: StylesWindow::default(),
             pages_window: PagesWindow::default(),
             rail_open: true,
+            sections: Sections::default(),
             properties_open: true,
             layers_window: LayersWindow::default(),
             screen_mode: ScreenMode::default(),
@@ -480,5 +511,36 @@ mod tests {
         let mut app = TesseraApp::headless();
         app.active_mut().current_path = Some(PathBuf::from("/tmp/poster.tessera"));
         assert_eq!(app.window_title(), "poster.tessera - Tessera Publisher");
+    }
+
+    // --- collapsible sections ------------------------------------------------
+
+    #[test]
+    fn a_section_nobody_has_touched_is_open() {
+        // Shut is recorded rather than open, so a section added later appears
+        // instead of hiding until somebody goes looking for it.
+        let sections = Sections::default();
+        assert!(sections.is_open("Transform"));
+        assert!(sections.is_open("a section that does not exist yet"));
+    }
+
+    #[test]
+    fn shutting_a_section_is_remembered() {
+        let mut sections = Sections::default();
+        sections.set_open("Stroke", false);
+        assert!(!sections.is_open("Stroke"));
+        assert!(sections.is_open("Fill"), "and only that one");
+
+        sections.set_open("Stroke", true);
+        assert!(sections.is_open("Stroke"));
+    }
+
+    #[test]
+    fn toggling_a_section_turns_it_the_other_way() {
+        let mut sections = Sections::default();
+        sections.toggle("Text");
+        assert!(!sections.is_open("Text"));
+        sections.toggle("Text");
+        assert!(sections.is_open("Text"));
     }
 }
