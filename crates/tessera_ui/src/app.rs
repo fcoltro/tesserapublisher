@@ -194,6 +194,15 @@ pub struct TesseraApp {
     /// View state, like the styles window. Which panels are open is not part
     /// of the document.
     pub pages_window: PagesWindow,
+    /// Whether a dragged object settles onto the lines around it.
+    ///
+    /// On by default, because that is what makes a layout line up; held off
+    /// while a modifier is down, for the times it must not.
+    pub snapping: bool,
+    /// The lines the object being dragged is currently settled on, for the
+    /// indicator. Cleared when the gesture ends.
+    pub snapped_to: Option<(Option<f64>, Option<f64>)>,
+
     /// The parent page being edited on its own, if any.
     ///
     /// InDesign's arrangement, and the right one: a parent is edited in
@@ -297,6 +306,8 @@ impl TesseraApp {
             active_tool: Tool::Select,
             styles_window: StylesWindow::default(),
             pages_window: PagesWindow::default(),
+            snapping: true,
+            snapped_to: None,
             editing_master: None,
             rail_open: true,
             sections: Sections::default(),
@@ -581,5 +592,37 @@ mod tests {
         assert!(!sections.is_open("Text"));
         sections.toggle("Text");
         assert!(sections.is_open("Text"));
+    }
+
+    // --- snapping ------------------------------------------------------------
+
+    #[test]
+    fn snapping_is_on_to_begin_with() {
+        // It is what makes a layout line up. A tool that has to be switched on
+        // before it helps is a tool most people never find.
+        assert!(TesseraApp::headless().snapping);
+    }
+
+    #[test]
+    fn nothing_is_marked_as_snapped_until_something_is_dragged() {
+        assert!(TesseraApp::headless().snapped_to.is_none());
+    }
+
+    #[test]
+    fn the_view_menu_turns_snapping_off_and_on() {
+        let mut state = TesseraApp::headless();
+        crate::actions::run(&mut state, crate::actions::Run::ToggleSnapping);
+        assert!(!state.snapping);
+        crate::actions::run(&mut state, crate::actions::Run::ToggleSnapping);
+        assert!(state.snapping);
+    }
+
+    #[test]
+    fn turning_snapping_off_is_not_a_change_to_the_document() {
+        let mut state = TesseraApp::headless();
+        let before = state.active().document().revision();
+        crate::actions::run(&mut state, crate::actions::Run::ToggleSnapping);
+        assert_eq!(state.active().document().revision(), before);
+        assert!(!state.active().dirty);
     }
 }

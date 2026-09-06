@@ -93,6 +93,7 @@ pub enum Run {
     ToggleStyles,
     TogglePages,
     ToggleLayers,
+    ToggleSnapping,
     NewDocument,
     Open,
     Save,
@@ -415,6 +416,7 @@ pub fn all() -> &'static [Action] {
         // The last menu milestone 1.5 named as absent for having no commands.
         a("Pages", Some("F12"), Group::Window, TogglePages),
         a("Layers", Some("F7"), Group::Window, ToggleLayers),
+        a("Snap to guides", None, Group::View, ToggleSnapping),
         //
         a(
             "Selection tool",
@@ -486,6 +488,7 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             let window = &mut state.layers_window;
             window.open = !window.open;
         }
+        Run::ToggleSnapping => state.snapping = !state.snapping,
         Run::PickTool(tool) => state.active_tool = tool,
         Run::ScreenMode(mode) => state.screen_mode = mode,
         Run::ZoomToFit => state.active_mut().fitted = false,

@@ -762,7 +762,24 @@ full argument, with sources, is in `docs/superpowers/specs/`.
   drag-out to phase C. They rode along free on a format bump that was being
   paid anyway. Margin guides are drawn by phase B; **column guides stay here**,
   because columns are text-frame geometry that phase B does not model.
-- [ ] Snapping solver with a pixel-threshold lock and visible indicators.
+- [x] Snapping solver with a pixel-threshold lock and visible indicators.
+  - **The threshold is in screen pixels, not points.** Six points is
+    imperceptible at 25% and unshakeable at 800%; six pixels feels the same at
+    every zoom, which is what makes a snap read as a magnet rather than a
+    fight. The conversion happens at the viewport, where the zoom is.
+  - Three parts, kept apart: what a spread offers (trim, margins, guides, the
+    other objects), the arithmetic over that list, and the painting. Only the
+    first knows what a document is and only the last knows what a pixel is, so
+    the middle is testable without either.
+  - Edges **and centres**: lining two objects up by their middles is as common
+    as by their left edges and much harder to do by eye.
+  - The axes are solved apart, which is what lets an object settle its left
+    edge on a margin while its top stays where the pointer put it.
+  - The same arithmetic runs on the preview and on the command that ends the
+    drag. Settling only the preview would let the object jump off its line the
+    moment the mouse came up, which is worse than no snapping — the user
+    watched it line up first.
+  - Held off by Ctrl, and turned off for good from the View menu.
 - [ ] Baseline grid with a per-frame lock toggle.
 - [ ] Multi-column text frames with gutter control, **frame inset, and
   vertical justification**.

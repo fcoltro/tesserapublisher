@@ -6,6 +6,7 @@
 
 pub mod cache;
 pub mod resolve;
+pub mod snap;
 
 pub use cache::ResolveCache;
 pub use resolve::{ResolvedDocument, ResolvedItem, ResolvedKind, ResolvedPage, StoryMap, resolve};

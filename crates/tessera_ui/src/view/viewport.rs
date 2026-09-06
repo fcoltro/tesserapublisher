@@ -771,6 +771,29 @@ fn overset_frames(state: &mut TesseraApp) -> Vec<FrameId> {
 ///
 /// Drawn for every text frame rather than the selected one: the point is to
 /// notice a frame you were not already looking at.
+/// The lines a dragged object has settled onto.
+///
+/// Drawn across the whole canvas rather than only beside the object, which is
+/// what says *which* line was caught: a stub beside a frame could be the page
+/// edge, the margin or the object two spreads down, and the whole point of the
+/// indicator is to answer that.
+fn snap_indicator(state: &TesseraApp, rect: Rect, painter: &egui::Painter) {
+    let Some((on_x, on_y)) = state.snapped_to else {
+        return;
+    };
+    let view = state.active().view;
+    let stroke = egui::Stroke::new(1.0, Theme::SNAP);
+
+    if let Some(x) = on_x {
+        let at = rect.left() + view.doc_to_screen(DocPoint { x, y: 0.0 }).x;
+        painter.vline(at, rect.y_range(), stroke);
+    }
+    if let Some(y) = on_y {
+        let at = rect.top() + view.doc_to_screen(DocPoint { x: 0.0, y }).y;
+        painter.hline(rect.x_range(), at, stroke);
+    }
+}
+
 fn overset_marks(state: &TesseraApp, rect: Rect, painter: &egui::Painter, overset: &[FrameId]) {
     const MARK: f32 = 14.0;
 
@@ -824,6 +847,59 @@ fn current_spread_bounds(state: &TesseraApp) -> Option<DocRect> {
         width: (last.x + last.width) - first.x,
         height: first.height,
     })
+}
+
+/// A move, adjusted so the objects settle onto the lines around them.
+///
+/// Records what was caught on the way through, for the indicator: a snap the
+/// user cannot see is a snap they will fight, because the object stops going
+/// where they are pointing and nothing says why.
+/// `held_off` is the modifier, read at the call site so that releasing it
+/// mid-drag brings snapping straight back.
+fn settle(
+    state: &mut TesseraApp,
+    origins: &[(FrameId, Transform)],
+    dx: f64,
+    dy: f64,
+    held_off: bool,
+) -> (f64, f64) {
+    if !state.snapping || held_off {
+        state.snapped_to = None;
+        return (dx, dy);
+    }
+
+    let moving: Vec<FrameId> = origins.iter().map(|(id, _)| *id).collect();
+    let Some(first) = moving.first().copied() else {
+        return (dx, dy);
+    };
+    let Some(spread) = state.active().document().spread_of_frame(first) else {
+        return (dx, dy);
+    };
+
+    // Where the selection would land if nothing caught it.
+    let Some(bounds) = crate::align::bounding_box(
+        &moving
+            .iter()
+            .filter_map(|id| state.active().document().visual_bounds(*id))
+            .collect::<Vec<_>>(),
+    ) else {
+        return (dx, dy);
+    };
+    let landing = DocRect {
+        x: bounds.x + dx,
+        y: bounds.y + dy,
+        width: bounds.width,
+        height: bounds.height,
+    };
+
+    let lines = tessera_layout::snap::lines(state.active().document(), spread, &moving);
+    // Pixels into document units, which is what makes the pull feel the same
+    // at every zoom.
+    let threshold = f64::from(Theme::SNAP_THRESHOLD) / state.active().view.zoom;
+    let snap = tessera_layout::snap::solve(landing, &lines, threshold);
+
+    state.snapped_to = snap.caught().then_some((snap.on_x, snap.on_y));
+    (dx + snap.dx, dy + snap.dy)
 }
 
 /// Whether the pointer is panning rather than working.
@@ -1147,6 +1223,8 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
         }) = state.drag.clone()
         {
             let (dx, dy) = state.drag.as_ref().expect("just matched").delta();
+            let held_off = ui.input(|i| i.modifiers.ctrl);
+            let (dx, dy) = settle(state, &origins, dx, dy, held_off);
             let by = tessera_geometry::Transform::translate(dx, dy);
             // undo-bracketed: preview only. `drag_stopped` below restores
             // the starting state and reapplies the move through a Command,
@@ -1166,10 +1244,18 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
     {
         match drag.kind {
             DragKind::Move { ref origins } => {
+                // Settled with the same arithmetic the preview used, or the
+                // object would jump off its line the instant the mouse came
+                // up — which is worse than no snapping at all, because the
+                // user watched it line up first.
+                let (dx, dy) = drag.delta();
+                let held_off = ui.input(|i| i.modifiers.ctrl);
+                let (dx, dy) = settle(state, origins, dx, dy, held_off);
+                state.snapped_to = None;
+
                 // undo-bracketed: one entry for the whole gesture. Put
                 // everything back, then apply the move as a single command.
                 // Otherwise a drag would fill the undo stack frame by frame.
-                let (dx, dy) = drag.delta();
                 for (id, origin) in origins {
                     if let Some(f) = state.active_mut().document_mut().frame_mut(*id) {
                         f.transform = *origin;
@@ -1645,6 +1731,7 @@ fn draw_overlays(
     }
 
     overset_marks(state, rect, &painter, overset);
+    snap_indicator(state, rect, &painter);
 
     // Every selected frame gets an outline; only a lone selection gets
     // handles, since a multiple selection has nothing single to resize yet.

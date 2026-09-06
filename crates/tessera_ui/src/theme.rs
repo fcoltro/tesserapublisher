@@ -267,6 +267,20 @@ impl Theme {
     /// The reference point a rotation turns about.
     pub const REFERENCE_MARK: f32 = 4.0;
 
+    /// The line a dragged object has settled onto.
+    ///
+    /// Green, and deliberately not the accent: the accent means "selected",
+    /// and a snap indicator appears *around* a selection. Two meanings in one
+    /// colour on the same object at the same moment is one meaning too many.
+    pub const SNAP: Color32 = Color32::from_rgb(0x4C, 0xC3, 0x8A);
+
+    /// How near a line a dragged object has to come, **in screen pixels**.
+    ///
+    /// Pixels rather than points on purpose. Six points is imperceptible at
+    /// 25% and unshakeable at 800%; six pixels feels the same at every zoom,
+    /// which is what makes a snap read as a magnet rather than a fight.
+    pub const SNAP_THRESHOLD: f32 = 6.0;
+
     /// A ruler guide. Cyan, the convention, and distinct from the magenta
     /// margin rule and the red bleed rule at a glance.
     pub const GUIDE: Color32 = Color32::from_rgb(0x2C, 0xC8, 0xD8);
