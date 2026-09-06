@@ -35,6 +35,9 @@ const LABEL: f32 = 16.0;
 /// How thick the line marking where a dragged page would land is.
 const MARKER: f32 = 2.0;
 
+/// The tallest the page list grows before it scrolls inside itself.
+const LIST: f32 = 260.0;
+
 /// The section, as it sits in the rail.
 ///
 /// The buttons come last but take a fixed height of their own, so the list
@@ -42,28 +45,82 @@ const MARKER: f32 = 2.0;
 /// floating panel was reported for.
 pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
     masters(ui, state);
-    body(ui, state);
+
+    // The list scrolls inside a bounded height rather than growing without
+    // limit. Left to grow, twenty pages push the buttons off the bottom of the
+    // rail and every panel below this one with them.
+    egui::ScrollArea::vertical()
+        .id_salt("pages-list")
+        .max_height(LIST)
+        .auto_shrink([false, true])
+        .show(ui, |ui| body(ui, state));
+
     ui.add_space(Theme::SPACE_2);
     actions(ui, state);
 }
 
-/// The parent pages, above the document's own.
+/// The parent pages, listed above the document's own.
 ///
-/// Above, because that is where they are: a master spread is laid out at
-/// negative y, before the reading order begins. The panel says the same thing
-/// the canvas does rather than inventing a second arrangement.
+/// InDesign's arrangement: parents are their own short list at the top of the
+/// panel, with the document's pages under them. A parent is **edited in
+/// isolation** — double-clicking one opens it on its own canvas — rather than
+/// sitting in the scroll a person is trying to lay out in.
 fn masters(ui: &mut Ui, state: &mut TesseraApp) {
     let masters = state.active().document().master_order.clone();
-    if masters.is_empty() {
-        return;
-    }
 
-    crate::view::panels::group_label_pub(ui, "Parent pages");
+    // The heading carries the add button, so "add a parent" reads as part of
+    // the parent list rather than as a fifth unexplained glyph in the strip at
+    // the foot, which is where it was and what it looked like.
+    ui.horizontal(|ui| {
+        crate::view::panels::group_label_pub(ui, "Parent pages");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if crate::view::panels::icon_button(
+                ui,
+                crate::icons::Icon::Plus,
+                "Add parent page",
+                false,
+            ) {
+                apply(state, Command::AddMaster);
+            }
+        });
+    });
 
     let current = crate::view::panels::current_page(state);
     let applied = current.and_then(|p| state.active().document().pages[p].master);
+    let editing = state.editing_master;
 
     let mut chosen: Option<MasterId> = None;
+    let mut open: Option<MasterId> = None;
+    let mut detach = false;
+
+    // "None" first, which is how a page is taken off a parent. InDesign has
+    // the same entry for the same reason: without it, the only way to say "no
+    // parent" is to guess that clicking the current one twice does it.
+    {
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), Theme::ROW),
+            egui::Sense::click(),
+        );
+        let painter = ui.painter_at(rect);
+        if applied.is_none() {
+            painter.rect_filled(rect, Theme::RADIUS, Theme::SELECTED_BG);
+        } else if response.hovered() {
+            painter.rect_filled(rect, Theme::RADIUS, Theme::HOVER_BG);
+        }
+        painter.text(
+            egui::pos2(rect.left() + Theme::SPACE_2, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            "None",
+            egui::TextStyle::Body.resolve(ui.style()),
+            Theme::TEXT_MUTED,
+        );
+        if response
+            .on_hover_text("Build this page on no parent")
+            .clicked()
+        {
+            detach = true;
+        }
+    }
 
     for id in masters {
         let Some(master) = state.active().document().masters.get(id).cloned() else {
@@ -81,20 +138,30 @@ fn masters(ui: &mut Ui, state: &mut TesseraApp) {
             egui::Sense::click(),
         );
         let painter = ui.painter_at(rect);
-        if on_this_page {
+        if editing == Some(id) {
+            // Being edited beats being applied: it is where you are, not what
+            // this page happens to use.
+            painter.rect_filled(rect, Theme::RADIUS, Theme::HOVER_BG);
+            painter.rect_stroke(
+                rect,
+                Theme::RADIUS,
+                egui::Stroke::new(1.0, Theme::ACCENT),
+                egui::StrokeKind::Inside,
+            );
+        } else if on_this_page {
             painter.rect_filled(rect, Theme::RADIUS, Theme::SELECTED_BG);
         } else if response.hovered() {
             painter.rect_filled(rect, Theme::RADIUS, Theme::HOVER_BG);
         }
         painter.text(
-            egui::pos2(rect.left() + Theme::SPACE_1, rect.center().y),
+            egui::pos2(rect.left() + Theme::SPACE_2, rect.center().y),
             egui::Align2::LEFT_CENTER,
             &master.name,
             egui::TextStyle::Body.resolve(ui.style()),
             Theme::TEXT_PRIMARY,
         );
         painter.text(
-            egui::pos2(rect.right() - Theme::SPACE_1, rect.center().y),
+            egui::pos2(rect.right() - Theme::SPACE_2, rect.center().y),
             egui::Align2::RIGHT_CENTER,
             if holds == 1 {
                 "1 item".to_string()
@@ -105,41 +172,37 @@ fn masters(ui: &mut Ui, state: &mut TesseraApp) {
             Theme::TEXT_MUTED,
         );
 
-        // A parent is on the canvas above the document, so it is reached by
-        // scrolling to it rather than by a mode. Clicking here is about the
-        // page you are on, which is what the panel is for.
-        if response
-            .on_hover_text("Build the current page on this parent")
-            .clicked()
-        {
+        let response = response
+            .on_hover_text("Click to build this page on it. Double-click to open and edit it.");
+        if response.double_clicked() {
+            open = Some(id);
+        } else if response.clicked() {
             chosen = Some(id);
         }
     }
 
-    // Applying by click rather than by drag. A drag needs a target that is
-    // visible and a gesture that can be got wrong; the current page is already
-    // marked, and clicking the parent you want is one action with one meaning.
-    if let Some(master) = chosen
-        && let Some(page) = current
-    {
-        let already = state.active().document().pages[page]
-            .master
-            .is_some_and(|m| {
-                state
-                    .active()
-                    .document()
-                    .pages_of_master(master)
-                    .contains(&m)
-            });
-        apply(
-            state,
-            Command::ApplyMaster {
-                page,
-                // Clicking the parent a page is already built on takes it off,
-                // which is the only way to say "none" without a second control.
-                master: if already { None } else { Some(master) },
-            },
-        );
+    if let Some(page) = current {
+        if detach {
+            apply(state, Command::ApplyMaster { page, master: None });
+        } else if let Some(master) = chosen {
+            apply(
+                state,
+                Command::ApplyMaster {
+                    page,
+                    master: Some(master),
+                },
+            );
+        }
+    }
+    if let Some(master) = open {
+        // Toggling: double-clicking the parent already open closes it, so the
+        // way in is the way out as well as the bar at the top of the canvas.
+        let now = if state.editing_master == Some(master) {
+            None
+        } else {
+            Some(master)
+        };
+        state.edit_master(now);
     }
 
     ui.add_space(Theme::SPACE_3);
@@ -361,17 +424,13 @@ fn thumbnail(ui: &Ui, state: &TesseraApp, page: PageId, at: egui::Rect, current:
 
 /// Add, duplicate and delete: a strip of fixed height at the foot.
 fn actions(ui: &mut Ui, state: &mut TesseraApp) {
-    ui.horizontal_centered(|ui| {
+    // `horizontal`, not `horizontal_centered`. The centred version allocates
+    // **all** the height it is offered and centres its contents in it, which
+    // is what left a void the size of the rail under these four buttons and
+    // pushed Layers and Styles to the bottom of the panel.
+    ui.horizontal(|ui| {
         if crate::view::panels::icon_button(ui, crate::icons::Icon::Plus, "Add page", false) {
             apply(state, Command::AddPage);
-        }
-        if crate::view::panels::icon_button(
-            ui,
-            crate::icons::Icon::Layers,
-            "Add parent page",
-            false,
-        ) {
-            apply(state, Command::AddMaster);
         }
         if let Some(page) = crate::view::panels::current_page(state) {
             if crate::view::panels::icon_button(

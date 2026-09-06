@@ -24,6 +24,10 @@ use crate::resolve::{self, ResolvedDocument};
 pub struct ResolveCache {
     /// The revision the held answer was resolved from.
     at: Option<u64>,
+    /// What that answer was looking at. A parent page being opened changes
+    /// nothing about the document, so the revision alone would hand back the
+    /// document's own layout and the canvas would not move.
+    scope: Option<resolve::Scope>,
     resolved: ResolvedDocument,
     resolves: u64,
 }
@@ -31,10 +35,21 @@ pub struct ResolveCache {
 impl ResolveCache {
     /// The resolved document, resolving it first if the document has moved on.
     pub fn get(&mut self, document: &Document, shaper: &mut Shaper) -> &ResolvedDocument {
+        self.get_scope(document, shaper, resolve::Scope::Document)
+    }
+
+    /// The same, for a chosen scope.
+    pub fn get_scope(
+        &mut self,
+        document: &Document,
+        shaper: &mut Shaper,
+        scope: resolve::Scope,
+    ) -> &ResolvedDocument {
         let revision = document.revision();
-        if self.at != Some(revision) {
-            self.resolved = resolve::resolve(document, shaper);
+        if self.at != Some(revision) || self.scope != Some(scope) {
+            self.resolved = resolve::resolve_scope(document, shaper, scope);
             self.at = Some(revision);
+            self.scope = Some(scope);
             self.resolves += 1;
         }
         &self.resolved

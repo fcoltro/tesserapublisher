@@ -79,13 +79,47 @@ pub struct ResolvedPage {
     pub slug: DocRect,
 }
 
-/// Resolve every visible frame, in paint order.
+/// What a resolve is looking at.
+///
+/// A parent page is edited **in isolation**, so the canvas shows either the
+/// document or one parent, never both. Passing the choice in rather than
+/// filtering afterwards means the PDF writer cannot accidentally be handed a
+/// parent: export asks for [`Scope::Document`] and gets the document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// The reading order, with each page showing what it inherits.
+    Document,
+    /// One parent spread, on its own.
+    Master(tessera_document::ids::MasterId),
+}
+
+/// Resolve every visible frame of the document, in paint order.
 pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
-    // Master pages get their sheet drawn too, for the same reason their
-    // contents do.
-    let pages = doc
-        .page_ids()
-        .chain(doc.master_ids().flat_map(|m| doc.pages_of_master(m)))
+    resolve_scope(doc, shaper, Scope::Document)
+}
+
+/// Resolve what `scope` is looking at.
+pub fn resolve_scope(doc: &Document, shaper: &mut Shaper, scope: Scope) -> ResolvedDocument {
+    let shown: Vec<tessera_document::ids::PageId> = match scope {
+        Scope::Document => doc.page_ids().collect(),
+        Scope::Master(id) => doc.pages_of_master(id),
+    };
+    resolve_pages(doc, shaper, &shown)
+}
+
+/// Resolve exactly these pages, and what they inherit.
+///
+/// The scope has already been turned into a list of pages by the time this
+/// runs, which is the whole of the difference between looking at the document
+/// and looking at one parent.
+fn resolve_pages(
+    doc: &Document,
+    shaper: &mut Shaper,
+    shown: &[tessera_document::ids::PageId],
+) -> ResolvedDocument {
+    let pages = shown
+        .iter()
+        .copied()
         .filter_map(|id| {
             Some(ResolvedPage {
                 bounds: doc.pages.get(id)?.bounds,
@@ -106,7 +140,7 @@ pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
     // because nothing is moved. One master item is drawn once per page that
     // inherits it, from a single frame — copying it onto each page is the
     // thing a master exists in order not to do.
-    for page in doc.page_ids() {
+    for page in shown.iter().copied() {
         let Some(area) = doc.spread_of(page).and_then(|s| doc.spread_area(s)) else {
             continue;
         };
@@ -125,12 +159,17 @@ pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
         }
     }
 
-    // Everything else, master pages included: a parent page is laid out above
-    // the reading order and drawn there like any other spread, because a
-    // master you cannot see is a master you cannot edit. Its items appear
-    // twice — once on the parent, once on each page built on it — and that is
-    // what applying a master looks like.
+    // Everything standing on a page this scope is showing. A parent's own
+    // items are drawn when the parent is what is being looked at, and only
+    // then — otherwise a parent spread would sit in the scroll a person is
+    // trying to lay out in.
     for id in doc.paint_order() {
+        let Some(on) = doc.page_of_frame(id) else {
+            continue;
+        };
+        if !shown.contains(&on) {
+            continue;
+        }
         let Some(frame) = doc.frame(id) else { continue };
         if let Some(item) = resolve_one(doc, shaper, id, frame) {
             items.push(item);
@@ -467,8 +506,8 @@ mod tests {
 
         assert_eq!(
             resolved.items.len(),
-            2,
-            "once on the parent, once on the page built on it"
+            1,
+            "once, on the page — the parent is not on this canvas"
         );
         let item = &resolved.items[0];
         let landed = item.transform.apply(item.bounds.center());
@@ -483,31 +522,76 @@ mod tests {
     }
 
     #[test]
-    fn a_master_nobody_uses_still_draws_itself() {
-        // A master you cannot see is a master you cannot edit. It is laid out
-        // above the reading order and drawn there like any other spread.
+    fn a_parent_is_not_on_the_documents_canvas() {
+        // A parent is edited in isolation. Sitting it beside the document put
+        // a second set of pages into the scroll a person is laying out in, and
+        // made it a permanent fixture nobody asked for.
         let mut doc = Document::new();
         let master = doc.add_master("A-Master");
         let on = doc.pages_of_master(master)[0];
         let bounds = doc.pages[on].bounds;
         let layer = doc.default_layer().expect("layer");
-        let item = doc.add_frame(layer, rect(bounds.x + 10.0, bounds.y + 10.0, 20.0, 20.0));
+        doc.add_frame(layer, rect(bounds.x + 10.0, bounds.y + 10.0, 20.0, 20.0));
 
         let mut shaper = Shaper::new();
-        let resolved = resolve(&doc, &mut shaper);
-
-        assert_eq!(resolved.items.len(), 1, "drawn once, on the parent");
-        assert_eq!(resolved.items[0].frame, item);
+        assert!(resolve(&doc, &mut shaper).items.is_empty());
     }
 
     #[test]
-    fn a_master_page_has_a_sheet_of_its_own() {
+    fn the_documents_canvas_holds_only_the_documents_sheets() {
         let mut doc = Document::new();
         let before = resolve(&doc, &mut Shaper::new()).pages.len();
         doc.add_master("A-Master");
 
         let after = resolve(&doc, &mut Shaper::new()).pages.len();
-        assert_eq!(after, before + 2, "a facing parent is two sheets");
+        assert_eq!(
+            after, before,
+            "adding a parent adds no sheet to the document"
+        );
+    }
+
+    #[test]
+    fn opening_a_parent_shows_the_parent_and_nothing_else() {
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        let master = doc.add_master("A-Master");
+        let on = doc.pages_of_master(master)[0];
+        let bounds = doc.pages[on].bounds;
+        let layer = doc.default_layer().expect("layer");
+        let furniture = doc.add_frame(layer, rect(bounds.x + 10.0, bounds.y + 10.0, 20.0, 20.0));
+
+        // Something on the document, which must not appear.
+        let page = doc.pages[doc.page_ids().next().expect("a page")].bounds;
+        doc.add_frame(layer, rect(page.x + 5.0, page.y + 5.0, 10.0, 10.0));
+
+        let mut shaper = Shaper::new();
+        let resolved = resolve_scope(&doc, &mut shaper, Scope::Master(master));
+
+        assert_eq!(resolved.items.len(), 1, "the parent alone");
+        assert_eq!(resolved.items[0].frame, furniture);
+        assert_eq!(resolved.pages.len(), 1, "and its one sheet");
+    }
+
+    #[test]
+    fn a_parent_being_edited_shows_no_page_it_is_applied_to() {
+        // The isolation runs both ways: opening a parent must not drag in the
+        // pages built on it, or "edit the parent" would mean "edit everything".
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        let master = doc.add_master("A-Master");
+        let on = doc.pages_of_master(master)[0];
+        let bounds = doc.pages[on].bounds;
+        let layer = doc.default_layer().expect("layer");
+        doc.add_frame(layer, rect(bounds.x + 10.0, bounds.y + 10.0, 20.0, 20.0));
+        let page = doc.page_ids().next().expect("a page");
+        doc.apply_master(page, Some(master));
+
+        let mut shaper = Shaper::new();
+        let resolved = resolve_scope(&doc, &mut shaper, Scope::Master(master));
+
+        assert_eq!(resolved.items.len(), 1, "drawn once, on the parent");
     }
 
     #[test]
@@ -529,11 +613,7 @@ mod tests {
         let mut shaper = Shaper::new();
         let resolved = resolve(&doc, &mut shaper);
 
-        assert_eq!(
-            resolved.items.len(),
-            4,
-            "one drawing on the parent, and one on each of three pages"
-        );
+        assert_eq!(resolved.items.len(), 3, "one drawing, three pages");
         // Each on its own spread, which is what keeps it clipped to its sheet.
         let areas: Vec<_> = resolved.items.iter().map(|i| i.spread_area).collect();
         assert!(
@@ -592,15 +672,11 @@ mod tests {
         let mut shaper = Shaper::new();
         let resolved = resolve(&doc, &mut shaper);
 
-        assert_eq!(resolved.items.len(), 2, "the parent, and the local copy");
+        assert_eq!(resolved.items.len(), 1, "not doubled");
+        assert_eq!(resolved.items[0].frame, local, "the local copy stands in");
         assert!(
-            resolved.items.iter().any(|i| i.frame == local),
-            "the local copy stands in on the page"
-        );
-        assert_eq!(
-            resolved.items.iter().filter(|i| i.frame == item).count(),
-            1,
-            "and the master item is drawn only on the master"
+            !resolved.items.iter().any(|i| i.frame == item),
+            "and the parent's own item is not drawn on the document"
         );
     }
 }

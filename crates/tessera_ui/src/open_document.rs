@@ -106,6 +106,15 @@ impl OpenDocument {
         self.resolved.get(&self.document, shaper)
     }
 
+    /// The same, for what the canvas is currently looking at.
+    pub fn resolve_scope<'a>(
+        &'a mut self,
+        shaper: &mut Shaper,
+        scope: tessera_layout::resolve::Scope,
+    ) -> &'a ResolvedDocument {
+        self.resolved.get_scope(&self.document, shaper, scope)
+    }
+
     // The operations below pair the document with one of its neighbours —
     // the history, the selection. Each is a method here rather than an
     // expression at the call site because `document` is private: outside this

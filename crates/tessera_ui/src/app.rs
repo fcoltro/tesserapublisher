@@ -194,6 +194,14 @@ pub struct TesseraApp {
     /// View state, like the styles window. Which panels are open is not part
     /// of the document.
     pub pages_window: PagesWindow,
+    /// The parent page being edited on its own, if any.
+    ///
+    /// InDesign's arrangement, and the right one: a parent is edited in
+    /// isolation rather than sitting on the canvas beside the document. The
+    /// first attempt put master spreads above the reading order so they could
+    /// be seen — which made them a permanent fixture nobody asked for, and put
+    /// a second set of pages in the scroll a person is trying to lay out in.
+    pub editing_master: Option<tessera_document::ids::MasterId>,
     /// Whether the rail is expanded or collapsed to its strip of icons.
     pub rail_open: bool,
     /// Which sections of the rail and the inspector are shut.
@@ -289,6 +297,7 @@ impl TesseraApp {
             active_tool: Tool::Select,
             styles_window: StylesWindow::default(),
             pages_window: PagesWindow::default(),
+            editing_master: None,
             rail_open: true,
             sections: Sections::default(),
             properties_open: true,
@@ -393,7 +402,37 @@ impl TesseraApp {
     /// named in one place.
     pub fn resolve_active(&mut self) -> &tessera_layout::ResolvedDocument {
         let key = self.active;
-        self.documents[key].resolve(&mut self.shaper)
+        let scope = self.scope();
+        self.documents[key].resolve_scope(&mut self.shaper, scope)
+    }
+
+    /// What the canvas is looking at: the document, or one parent page.
+    ///
+    /// A parent whose id has gone — deleted while it was open — falls back to
+    /// the document rather than showing nothing, which is what a stale id
+    /// would otherwise buy.
+    pub fn scope(&self) -> tessera_layout::resolve::Scope {
+        match self.editing_master {
+            Some(id) if self.active().document().masters.contains_key(id) => {
+                tessera_layout::resolve::Scope::Master(id)
+            }
+            _ => tessera_layout::resolve::Scope::Document,
+        }
+    }
+
+    /// Open a parent page on its own, or go back to the document.
+    ///
+    /// The camera is asked to fit afresh either way: the parent is somewhere
+    /// else entirely, and arriving there looking at empty pasteboard would be
+    /// a mode change nobody could see.
+    pub fn edit_master(&mut self, master: Option<tessera_document::ids::MasterId>) {
+        if self.editing_master == master {
+            return;
+        }
+        self.editing_master = master;
+        self.active_mut().selection.clear();
+        self.active_mut().editing = None;
+        self.active_mut().fitted = false;
     }
 
     /// Lay the active document out afresh, ignoring the cache, and hand back

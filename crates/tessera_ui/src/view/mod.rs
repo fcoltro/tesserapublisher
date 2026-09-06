@@ -71,6 +71,32 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
             .show(ui, |ui| rail::strip(ui, state));
     }
 
+    // A mode you cannot see is a mode you get stuck in. InDesign shows the
+    // same bar for the same reason.
+    if let Some(master) = state.editing_master {
+        let name = state
+            .active()
+            .document()
+            .masters
+            .get(master)
+            .map(|m| m.name.clone())
+            .unwrap_or_default();
+        Panel::top("editing-master")
+            .exact_size(26.0)
+            .resizable(false)
+            .show(ui, |ui| {
+                ui.horizontal_centered(|ui| {
+                    ui.colored_label(Theme::ACCENT, "\u{25c0}");
+                    ui.colored_label(Theme::TEXT_PRIMARY, format!("Editing {name}"));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Done").clicked() {
+                            state.edit_master(None);
+                        }
+                    });
+                });
+            });
+    }
+
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {

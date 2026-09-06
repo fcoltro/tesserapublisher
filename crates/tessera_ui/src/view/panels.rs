@@ -2226,6 +2226,23 @@ fn overrides_row(
 /// The first page of the current spread, because a spread is what is looked at
 /// and a page is what is operated on. `None` only for a document with no
 /// spreads at all, which nothing can produce.
+/// The top-left of the spread being looked at, which every measurement in the
+/// interface is taken from.
+///
+/// The left-hand page of the spread, so that a two-page spread measures from
+/// the outside edge of its verso rather than from the fold.
+pub fn current_spread_origin(state: &TesseraApp) -> tessera_geometry::DocPoint {
+    let doc = state.active().document();
+    let bounds = current_page(state)
+        .and_then(|p| doc.pages.get(p))
+        .map(|p| p.bounds)
+        .unwrap_or_else(|| doc.first_page_bounds());
+    tessera_geometry::DocPoint {
+        x: bounds.x,
+        y: bounds.y,
+    }
+}
+
 pub fn current_page(state: &TesseraApp) -> Option<tessera_document::ids::PageId> {
     let doc = state.active().document();
     let at = state

@@ -45,14 +45,17 @@ pub fn paint(ui: &Ui, state: &TesseraApp, canvas: Rect, horizontal: Rect, vertic
     let zoom = view.zoom;
     let step = tick_spacing(unit, zoom);
 
-    // The zero point: wherever it has been dragged to, or the first page's
-    // top-left, which is where a measurement in a document is normally taken
-    // from.
-    let page = state.first_page_bounds();
-    let origin = state.ruler_origin.unwrap_or(DocPoint {
-        x: page.x,
-        y: page.y,
-    });
+    // The zero point: wherever it has been dragged to, or the top-left of the
+    // spread being looked at.
+    //
+    // **The spread, not the first page.** Spreads are laid out one below the
+    // next, so measuring every one of them from the document's origin makes
+    // the ruler on spread four read in the six hundreds — a number that means
+    // nothing to anybody, because a page is laid out against its own edges.
+    // Each spread starts at zero, which is what a ruler in a layout tool has
+    // always done.
+    let page = crate::view::panels::current_spread_origin(state);
+    let origin = state.ruler_origin.unwrap_or(page);
 
     for (strip, is_horizontal) in [(horizontal, true), (vertical, false)] {
         let painter = ui.painter_at(strip);
