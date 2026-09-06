@@ -134,6 +134,48 @@ impl Theme {
     pub const SELECTION: Color32 = Palette::DARK.selection;
     pub const ERROR: Color32 = Palette::DARK.error;
 
+    // --- surfaces ------------------------------------------------------
+    //
+    // Three values, and only three. Depth is carried by value rather than by
+    // line: a border drawn between every pair of regions is a border nowhere,
+    // and it was why the window read as one undifferentiated field.
+
+    /// The pasteboard. The darkest thing in the window.
+    pub const SURFACE_CANVAS: Color32 = Palette::DARK.canvas_bg;
+    /// Rail, tool strip, status bar.
+    pub const SURFACE_PANEL: Color32 = Palette::DARK.panel_bg;
+    /// Control bar and section headings — the only surface above panel.
+    pub const SURFACE_RAISED: Color32 = Palette::DARK.panel_bg_alt;
+
+    // --- spacing -------------------------------------------------------
+    //
+    // Four steps, each with a stated job. The old three had no rule about
+    // which applied where, so the same relationship was drawn at three sizes
+    // in three panels.
+
+    /// Inside a control: between an icon and its label.
+    pub const SPACE_1: f32 = 4.0;
+    /// Between controls in a row.
+    pub const SPACE_2: f32 = 8.0;
+    /// Between groups of controls.
+    pub const SPACE_3: f32 = 12.0;
+    /// Between regions.
+    pub const SPACE_4: f32 = 20.0;
+
+    /// Every list row — layers, styles, swatches, links. One height, so a
+    /// column of them scans as a column.
+    pub const ROW: f32 = 24.0;
+    /// The fixed column every labelled field aligns its label to. Without
+    /// one, no two panels line up and long labels clip instead of wrapping.
+    pub const LABEL_COLUMN: f32 = 64.0;
+
+    /// Captions, units, page numbers.
+    pub const TYPE_SM: f32 = 11.0;
+    /// Everything else.
+    pub const TYPE_MD: f32 = 12.5;
+    /// Section headings.
+    pub const TYPE_LG: f32 = 15.0;
+
     pub const SPACING_SM: f32 = 4.0;
     pub const SPACING_MD: f32 = 8.0;
     pub const SPACING_LG: f32 = 16.0;

@@ -35,32 +35,15 @@ const LABEL: f32 = 16.0;
 /// How thick the line marking where a dragged page would land is.
 const MARKER: f32 = 2.0;
 
-/// The window, if it is open.
-pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
-    if !state.pages_window.open {
-        return;
-    }
-
-    let mut open = true;
-    egui::Window::new("Pages")
-        .open(&mut open)
-        .default_width(180.0)
-        .default_height(420.0)
-        .show(ui.ctx(), |ui| {
-            // The buttons are a fixed strip at the foot, laid out **before**
-            // the list so they keep their height when the panel grows. Put
-            // after it, they were pushed down by however much empty room the
-            // list had, which is the waste the panel was reported for.
-            egui::Panel::bottom("pages-actions")
-                .exact_size(30.0)
-                .resizable(false)
-                .show(ui, |ui| actions(ui, state));
-
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| body(ui, state));
-        });
-    state.pages_window.open = open;
+/// The section, as it sits in the rail.
+///
+/// The buttons come last but take a fixed height of their own, so the list
+/// above them can grow without the strip growing with it — the waste the
+/// floating panel was reported for.
+pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
+    body(ui, state);
+    ui.add_space(Theme::SPACE_2);
+    actions(ui, state);
 }
 
 fn body(ui: &mut Ui, state: &mut TesseraApp) {

@@ -276,35 +276,28 @@ pub fn reference_proxy(ui: &mut Ui, anchor: &mut Anchor) -> bool {
     changed
 }
 
-fn transform_section(
+/// Position, size and angle, laid out as one row for the control bar.
+///
+/// **The one place geometry lives.** It was eight rows in a 240-point column
+/// that could not fit its own labels; it is a row now, in the same place
+/// whatever is selected. Scale and shear stay in Properties — they are asked
+/// for rarely and read badly in a row.
+pub fn transform_row(
     ui: &mut Ui,
     state: &mut TesseraApp,
     id: tessera_document::ids::FrameId,
     frame: &tessera_document::nodes::Frame,
 ) {
-    // Position is asked in document space and size in the frame's own space,
-    // which is what each of them means. `bounds` is the frame's own box, so it
-    // answers W and H directly — but it does not move when the frame does,
-    // because a move is a change of placement.
-    ui.horizontal(|ui| {
-        let mut anchor = state.anchor;
-        if reference_proxy(ui, &mut anchor) {
-            state.anchor = anchor;
-        }
-        ui.colored_label(
-            Theme::TEXT_MUTED,
-            "Reference
-point",
-        );
-    });
-    ui.add_space(Theme::SPACING_SM);
+    let mut anchor = state.anchor;
+    if reference_proxy(ui, &mut anchor) {
+        state.anchor = anchor;
+    }
+    crate::view::control::separator(ui);
 
     let unit = state.prefs.unit;
-    // X and Y are the **reference point's** position, not the top-left corner's.
-    // That is what the nine-point proxy above is for, and what it means in
-    // InDesign: choose the centre and the fields read the centre. They were
-    // reading `corners()[0]` whatever the proxy said, so clicking it changed
-    // nothing and looked broken.
+    // X and Y are the **reference point's** position, not the top-left
+    // corner's. That is what the nine-point proxy is for, and what it means in
+    // InDesign: choose the centre and the fields read the centre.
     //
     // Resolved where the frame really is, through its own transform, for the
     // same reason `Command::TransformAbout` does: `bounds` says where a frame
@@ -313,22 +306,35 @@ point",
     let (mut x, mut y) = (origin.x, origin.y);
     let mut bounds = frame.bounds;
     let (was_w, was_h) = (bounds.width, bounds.height);
-    let mut moved = false;
-    let (mut w_changed, mut h_changed) = (false, false);
 
-    egui::Grid::new("bounds").num_columns(2).show(ui, |ui| {
-        moved |= measure(ui, "X", &mut x, unit);
-        moved |= measure(ui, "Y", &mut y, unit);
-        ui.end_row();
-        w_changed = measure(ui, "W", &mut bounds.width, unit);
-        h_changed = measure(ui, "H", &mut bounds.height, unit);
-        ui.end_row();
-    });
+    let mut moved = measure_inline(ui, "X", &mut x, unit);
+    moved |= measure_inline(ui, "Y", &mut y, unit);
+    crate::view::control::separator(ui);
+
+    let w_changed = measure_inline(ui, "W", &mut bounds.width, unit);
+    let h_changed = measure_inline(ui, "H", &mut bounds.height, unit);
 
     let mut chain = state.constrain_proportions;
-    if ui.checkbox(&mut chain, "Constrain proportions").changed() {
+    // A padlock rather than InDesign's chain link, because there is no chain
+    // in the icon set and a locked ratio is what the control means.
+    if icon_button(
+        ui,
+        if chain {
+            crate::icons::Icon::Lock
+        } else {
+            crate::icons::Icon::Unlock
+        },
+        "Constrain proportions",
+        chain,
+    ) {
+        chain = !chain;
         state.constrain_proportions = chain;
     }
+    crate::view::control::separator(ui);
+
+    let d = frame.transform.decompose();
+    let mut rotation = d.rotation_degrees;
+    let turned = angle_inline(ui, &mut rotation);
 
     if moved {
         // Translated in document space, so a turned frame goes where the
@@ -349,10 +355,30 @@ point",
         }
         apply(state, Command::SetBounds { id, bounds });
     }
+    if turned {
+        apply(
+            state,
+            Command::TransformAbout {
+                id,
+                anchor: state.anchor,
+                scale: (1.0, 1.0),
+                rotate: rotation - d.rotation_degrees,
+                shear: 0.0,
+            },
+        );
+    }
+}
 
-    // Scale, rotation and shear are all read from one decomposition and
-    // written back as deltas about the reference point, so the fields, the
-    // handles and the proxy mean one thing rather than three.
+/// Scale and shear: what is left of the old transform section.
+fn transform_section(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::FrameId,
+    frame: &tessera_document::nodes::Frame,
+) {
+    // Read from one decomposition and written back as deltas about the
+    // reference point, so the fields, the handles and the proxy mean one
+    // thing rather than three.
     let d = frame.transform.decompose();
     let anchor = state.anchor;
 
@@ -380,21 +406,6 @@ point",
         return;
     }
 
-    let mut rotation = d.rotation_degrees;
-    if angle(ui, "Rotation", &mut rotation) {
-        apply(
-            state,
-            Command::TransformAbout {
-                id,
-                anchor,
-                scale: (1.0, 1.0),
-                rotate: rotation - d.rotation_degrees,
-                shear: 0.0,
-            },
-        );
-        return;
-    }
-
     let mut shear = d.shear_degrees;
     if angle(ui, "Shear", &mut shear) {
         apply(
@@ -408,6 +419,156 @@ point",
             },
         );
     }
+}
+
+/// A measurement in a row: its label, then a narrow field.
+///
+/// The control bar's counterpart to [`measure`], which lays a label and a
+/// field out as a grid row. Same parser, same formatter, same unit rule.
+fn measure_inline(ui: &mut Ui, label: &str, points: &mut f64, unit: Unit) -> bool {
+    crate::view::control::label(ui, label);
+    let mut shown = unit.from_points(*points);
+    let changed = ui
+        .add(
+            egui::DragValue::new(&mut shown)
+                .speed(0.25)
+                .custom_formatter(move |v, _| format!("{v:.2} {}", unit.suffix()))
+                .custom_parser(move |text| {
+                    Unit::parse_to_points(text, unit).map(|p| unit.from_points(p))
+                }),
+        )
+        .changed();
+    if changed {
+        *points = unit.to_points(shown);
+    }
+    changed
+}
+
+/// An angle in a row.
+fn angle_inline(ui: &mut Ui, degrees: &mut f64) -> bool {
+    crate::view::control::label(ui, "\u{2220}");
+    ui.add(egui::DragValue::new(degrees).speed(0.5).suffix("\u{00B0}"))
+        .changed()
+}
+
+/// Family, size and leading for the text being edited.
+///
+/// The three a person changes while typing. Everything else about type —
+/// tracking, case, baseline shift, the style tables — stays in Properties and
+/// in the Styles section, where there is room to read it.
+pub fn type_row(ui: &mut Ui, state: &mut TesseraApp) {
+    let Some((id, _)) = &state.active().editing else {
+        return;
+    };
+    let id = *id;
+    let Some(frame) = state.active().document().frame(id).cloned() else {
+        return;
+    };
+    let tessera_document::nodes::FrameKind::Text { story } = frame.kind else {
+        return;
+    };
+
+    let target = format_target(state, id, story);
+    let common = state
+        .active()
+        .document()
+        .story(story)
+        .map(|s| s.common_format(target.clone(), state.active().document()))
+        .unwrap_or_default();
+
+    if let Some(family) = family_picker(ui, state, common.family.as_deref(), &[]) {
+        set_character(
+            state,
+            story,
+            target.clone(),
+            CharacterFormat {
+                family: Some(family),
+                ..CharacterFormat::default()
+            },
+        );
+        return;
+    }
+
+    crate::view::control::separator(ui);
+
+    let mut size = common.size.unwrap_or(12.0) as f64;
+    crate::view::control::label(ui, "Size");
+    if ui
+        .add(egui::DragValue::new(&mut size).speed(0.25).suffix(" pt"))
+        .changed()
+    {
+        set_character(
+            state,
+            story,
+            target.clone(),
+            CharacterFormat {
+                size: Some(size as f32),
+                ..CharacterFormat::default()
+            },
+        );
+        return;
+    }
+
+    let mut leading = common.line_height.unwrap_or(1.2) as f64;
+    crate::view::control::label(ui, "Leading");
+    if ui
+        .add(
+            egui::DragValue::new(&mut leading)
+                .speed(0.02)
+                .range(0.5..=4.0),
+        )
+        .changed()
+    {
+        set_character(
+            state,
+            story,
+            target,
+            CharacterFormat {
+                line_height: Some(leading as f32),
+                ..CharacterFormat::default()
+            },
+        );
+    }
+}
+
+/// The page's own controls, for when nothing is selected.
+///
+/// The essentials only. Everything else about the page stays in Properties:
+/// the bar is a row, and a row that scrolls is a column that lies about it.
+pub fn page_row(ui: &mut Ui, state: &mut TesseraApp) {
+    let setup = state.active().document().setup;
+    let bounds = state.active().document().first_page_bounds();
+    let unit = state.prefs.unit;
+
+    let mut size = (bounds.width, bounds.height);
+    let mut changed = measure_inline(ui, "W", &mut size.0, unit);
+    changed |= measure_inline(ui, "H", &mut size.1, unit);
+    if changed {
+        apply(
+            state,
+            Command::SetPageSize {
+                width: size.0,
+                height: size.1,
+            },
+        );
+    }
+
+    crate::view::control::separator(ui);
+
+    let mut facing = setup.facing_pages;
+    if ui.checkbox(&mut facing, "Facing pages").changed() {
+        apply(
+            state,
+            Command::SetDocumentSetup(tessera_document::nodes::DocumentSetup {
+                facing_pages: facing,
+                ..setup
+            }),
+        );
+    }
+
+    crate::view::control::separator(ui);
+    crate::view::control::label(ui, "Measurements in");
+    ui.label(unit_name(unit));
 }
 
 /// Carry a size change across to the other side, keeping the ratio.

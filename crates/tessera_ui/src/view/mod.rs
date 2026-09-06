@@ -6,10 +6,12 @@
 //! `Ui`, so the whole window is one tree.
 
 pub mod canvas_toolbar;
+pub mod control;
 pub mod layers;
 pub mod pages;
 pub mod palette;
 pub mod panels;
+pub mod rail;
 pub mod rulers;
 pub mod styles;
 pub mod text_edit;
@@ -31,11 +33,16 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
 
     Panel::top("menu").show(ui, |ui| menu_bar(ui, state));
 
+    // The control bar, directly under the menu and always in the same place.
+    // It describes whatever is selected, which is why the geometry fields no
+    // longer need a column of their own.
+    Panel::top("control")
+        .exact_size(control::HEIGHT)
+        .resizable(false)
+        .show(ui, |ui| control::show(ui, state));
+
     // Above everything, so it can be reached from anywhere.
     palette::show(ui, state);
-    styles::show(ui, state);
-    pages::show(ui, state);
-    layers::show(ui, state);
 
     Panel::bottom("status")
         .exact_size(24.0)
@@ -47,9 +54,19 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
         .resizable(false)
         .show(ui, |ui| panels::tool_strip(ui, state));
 
-    Panel::right("inspector")
-        .default_size(240.0)
-        .show(ui, |ui| panels::inspector(ui, state));
+    // The rail. Every panel docks here — nothing floats over the canvas any
+    // more. Collapsed, it is a strip of icons rather than nothing at all: a
+    // panel you cannot see should still be somewhere you can find.
+    if state.rail_open {
+        Panel::right("rail")
+            .default_size(268.0)
+            .min_size(210.0)
+            .show(ui, |ui| rail::show(ui, state));
+    }
+    Panel::right("rail-strip")
+        .exact_size(rail::STRIP)
+        .resizable(false)
+        .show(ui, |ui| rail::strip(ui, state));
 
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)

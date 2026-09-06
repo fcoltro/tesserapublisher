@@ -166,6 +166,13 @@ pub struct TesseraApp {
     /// View state, like the styles window. Which panels are open is not part
     /// of the document.
     pub pages_window: PagesWindow,
+    /// Whether the rail is expanded or collapsed to its strip of icons.
+    pub rail_open: bool,
+    /// Whether the Properties section of the rail is open.
+    ///
+    /// A section like the others, but with no menu entry: it is what the rail
+    /// is for when nothing else is open.
+    pub properties_open: bool,
     pub layers_window: LayersWindow,
 
     /// The styles window: open or not, and which style is being edited.
@@ -252,6 +259,8 @@ impl TesseraApp {
             active_tool: Tool::Select,
             styles_window: StylesWindow::default(),
             pages_window: PagesWindow::default(),
+            rail_open: true,
+            properties_open: true,
             layers_window: LayersWindow::default(),
             screen_mode: ScreenMode::default(),
             anchor: tessera_geometry::Anchor::default(),

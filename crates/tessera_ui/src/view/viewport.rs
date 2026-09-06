@@ -1520,7 +1520,7 @@ fn enter_text_edit(state: &mut TesseraApp, rect: Rect, pos: egui::Pos2, id: Fram
     }
 }
 
-fn start_editing(state: &mut TesseraApp, id: FrameId) {
+pub(crate) fn start_editing(state: &mut TesseraApp, id: FrameId) {
     let story = match state.active().document().frame(id).map(|f| f.kind.clone()) {
         Some(tessera_document::nodes::FrameKind::Text { story }) => story,
         _ => return,

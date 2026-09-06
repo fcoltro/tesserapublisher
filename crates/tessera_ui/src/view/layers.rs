@@ -36,23 +36,11 @@ const SWITCH: f32 = 20.0;
 /// Room kept at the right for the object count.
 const COUNT: f32 = 62.0;
 
-/// The window, if it is open.
-pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
-    if !state.layers_window.open {
-        return;
-    }
-
-    let mut open = true;
-    egui::Window::new("Layers")
-        .open(&mut open)
-        .default_width(260.0)
-        .default_height(300.0)
-        .vscroll(true)
-        .show(ui.ctx(), |ui| body(ui, state));
-    state.layers_window.open = open;
-
-    // Outside the window, so the question survives the window being scrolled,
-    // moved or closed underneath it.
+/// The section, as it sits in the rail.
+pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
+    body(ui, state);
+    // Drawn from the context rather than inside the section, so the question
+    // survives the rail being scrolled or the section being shut under it.
     confirm_removal(ui, state);
 }
 

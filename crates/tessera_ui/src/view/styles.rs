@@ -21,19 +21,9 @@ use crate::command::{Command, apply};
 use crate::theme::Theme;
 
 /// The window, if it is open.
-pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
-    if !state.styles_window.open {
-        return;
-    }
-
-    let mut open = true;
-    egui::Window::new("Styles")
-        .open(&mut open)
-        .default_width(460.0)
-        .default_height(520.0)
-        .vscroll(true)
-        .show(ui.ctx(), |ui| body(ui, state));
-    state.styles_window.open = open;
+/// The section, as it sits in the rail.
+pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
+    body(ui, state);
 }
 
 fn body(ui: &mut Ui, state: &mut TesseraApp) {
