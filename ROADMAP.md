@@ -678,6 +678,49 @@ masters twice.
 
 ---
 
+# The interface
+
+Not a milestone: it cuts across all of them, and it was rebuilt once real use
+showed the panels were correct and homeless. The record is here so the reasons
+travel with the code.
+
+- [x] **Tokens.** Three surface values, four spacing steps each with a stated
+  job, one row height, one label column, three type sizes. The three spacing
+  constants before this had no rule about which applied where, so one
+  relationship was drawn at three sizes in three panels.
+- [x] **A twelve-step scale**, Radix's, with the role of every step asserted
+  rather than described. The neutral is warm, following Linear off blue-grey:
+  a cool grey beside a page proof makes warm paper look yellow, which is a
+  judgement the interface must not make for the user. Writing it against the
+  contrast tests found four real faults by measurement that the eye passed.
+- [x] **A docked rail.** Pages, Layers and Styles were floating windows that
+  overlapped the inspector and hid the work. They are sections of one column
+  the canvas is laid out beside; collapsed, the rail is a strip of icons
+  rather than nothing.
+- [x] **A control bar.** One row under the menu describing whatever is
+  selected. Geometry moved out of the inspector and lives here alone.
+- [x] **Information design in the inspector**: fields fill their width, pairs
+  sit side by side, sections collapse and remember, group labels are a weight
+  below section headings.
+- [ ] **A light theme, and a density preference.** Both are already decided —
+  the light palette is defined and contrast-tested, and `ThemeChoice` is saved
+  — and both are blocked on the same thing: the tokens are compile-time
+  constants, and a theme that can change while running needs them read at
+  runtime. That is a wide, mechanical change to every `Theme::` use, and it
+  should be made in one pass rather than half-made.
+  - Adobe's finding is the reason to do it at all: on a professional tool,
+    density and contrast are a **preference, not a constant**.
+
+### What the design argues from
+
+Alan Cooper's *About Face* names what Tessera is: a **sovereign** application,
+one a person works inside for hours with nothing else competing for the screen.
+His guidance for those runs against the usual advice, and it is why this
+interface is dense, muted and maximised rather than airy and colourful. The
+full argument, with sources, is in `docs/superpowers/specs/`.
+
+---
+
 # Milestone 4 — Layout Systems
 
 ### Acceptance
