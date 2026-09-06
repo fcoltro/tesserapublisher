@@ -6,7 +6,9 @@ use tessera_geometry::{DocPoint, DocRect, Transform};
 
 use crate::ids::{FrameId, LayerId, MasterId, PageId, SpreadId, StoryId};
 use crate::masters::Master;
-use crate::nodes::{DocumentSetup, Frame, FrameKind, Guide, Layer, Page, PageSide, Spread};
+use crate::nodes::{
+    DocumentSetup, Frame, FrameKind, Guide, Layer, Page, PageSide, Spread, TextLayout,
+};
 use tessera_text::story::{
     CharacterFormat, CharacterStyle, CharacterStyleId, ParagraphFormat, ParagraphStyle,
     ParagraphStyleId, Story, Styles, TextStyle,
@@ -881,6 +883,135 @@ impl Document {
         }
 
         Some(self.frames.insert(frame))
+    }
+
+    // --- threaded text ------------------------------------------------
+
+    /// The frame this one overflows into, if any.
+    pub fn next_in_thread(&self, frame: FrameId) -> Option<FrameId> {
+        match self.frames.get(frame).map(|f| &f.kind) {
+            Some(FrameKind::Text { layout, .. }) => layout.next,
+            _ => None,
+        }
+    }
+
+    /// The frame that overflows into this one, if any.
+    ///
+    /// Found by looking for whoever points here rather than stored, so a chain
+    /// has one description instead of two that can disagree.
+    pub fn previous_in_thread(&self, frame: FrameId) -> Option<FrameId> {
+        self.frames.keys().find(|id| {
+            matches!(
+                self.frames.get(*id).map(|f| &f.kind),
+                Some(FrameKind::Text { layout, .. }) if layout.next == Some(frame)
+            )
+        })
+    }
+
+    /// The whole chain `frame` belongs to, from its first frame to its last.
+    ///
+    /// **Cycle-safe.** A chain that pointed back into itself would otherwise
+    /// hang the renderer, and a user who threads A to B to A has made a
+    /// mistake rather than a request.
+    pub fn thread_of(&self, frame: FrameId) -> Vec<FrameId> {
+        let mut first = frame;
+        let mut seen = vec![frame];
+        while let Some(before) = self.previous_in_thread(first) {
+            if seen.contains(&before) {
+                break;
+            }
+            seen.push(before);
+            first = before;
+        }
+
+        let mut chain = vec![first];
+        let mut at = first;
+        while let Some(next) = self.next_in_thread(at) {
+            if chain.contains(&next) {
+                break;
+            }
+            chain.push(next);
+            at = next;
+        }
+        chain
+    }
+
+    /// Make `from` overflow into `to`.
+    ///
+    /// The two frames end up sharing **one story**, which is what threading
+    /// means: `to`'s own story is dropped in favour of `from`'s. Refused when
+    /// it would make a loop, when either frame holds no text, and when `to`
+    /// already takes overflow from somewhere else — a frame with two sources
+    /// would have to show two stories at once.
+    pub fn thread(&mut self, from: FrameId, to: FrameId) -> bool {
+        if from == to || self.previous_in_thread(to).is_some() {
+            return false;
+        }
+        let (Some(source), Some(target)) = (
+            self.frames.get(from).map(|f| f.kind.clone()),
+            self.frames.get(to).map(|f| f.kind.clone()),
+        ) else {
+            return false;
+        };
+        let (FrameKind::Text { story, layout }, FrameKind::Text { layout: theirs, .. }) =
+            (source, target)
+        else {
+            return false;
+        };
+        // Following `to` forward must not arrive back at `from`.
+        if self.thread_of(to).contains(&from) {
+            return false;
+        }
+
+        if let Some(frame) = self.frames.get_mut(from) {
+            frame.kind = FrameKind::Text {
+                story,
+                layout: TextLayout {
+                    next: Some(to),
+                    ..layout
+                },
+            };
+        }
+        if let Some(frame) = self.frames.get_mut(to) {
+            frame.kind = FrameKind::Text {
+                // The same story. A thread is one story shown across several
+                // frames, not several stories shown in a row.
+                story,
+                layout: TextLayout {
+                    next: theirs.next,
+                    ..theirs
+                },
+            };
+        }
+        self.revision += 1;
+        true
+    }
+
+    /// Break the link out of `frame`, leaving both halves standing.
+    ///
+    /// The frames that followed keep the story between them, which is what a
+    /// person means by unthreading: they are separating the flow, not deleting
+    /// the words.
+    pub fn unthread(&mut self, frame: FrameId) -> bool {
+        let Some(FrameKind::Text { story, layout }) =
+            self.frames.get(frame).map(|f| f.kind.clone())
+        else {
+            return false;
+        };
+        if layout.next.is_none() {
+            return false;
+        }
+        if let Some(f) = self.frames.get_mut(frame) {
+            f.kind = FrameKind::Text {
+                story,
+                layout: TextLayout {
+                    next: None,
+                    ..layout
+                },
+            };
+        }
+        self.revision += 1;
+        true
     }
 
     // --- parent pages -------------------------------------------------
@@ -4502,5 +4633,165 @@ mod tests {
         doc.remove_master(master);
 
         assert!(doc.frame(local).is_some(), "the local copy stays");
+    }
+
+    // --- threaded text ------------------------------------------------------
+
+    /// Three text frames on one page, each with its own story.
+    fn three_text_frames() -> (Document, Vec<FrameId>) {
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        let page = doc.page_ids().next().expect("a page");
+        let on = doc.pages[page].bounds;
+        let layer = doc.default_layer().expect("a layer");
+
+        let frames = (0..3)
+            .map(|i| {
+                let story = doc.add_story(Story::new(format!("story {i}")));
+                let mut frame = rect_frame();
+                frame.bounds = DocRect {
+                    x: on.x + 10.0,
+                    y: on.y + 10.0 + f64::from(i) * 80.0,
+                    width: 100.0,
+                    height: 60.0,
+                };
+                frame.kind = FrameKind::text(story);
+                doc.add_frame(layer, frame)
+            })
+            .collect();
+        (doc, frames)
+    }
+
+    fn story_of(doc: &Document, frame: FrameId) -> Option<StoryId> {
+        match doc.frame(frame).map(|f| &f.kind) {
+            Some(FrameKind::Text { story, .. }) => Some(*story),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn threading_two_frames_makes_them_share_one_story() {
+        // What threading *is*: one story shown across several frames, not
+        // several stories shown in a row.
+        let (mut doc, f) = three_text_frames();
+        let first = story_of(&doc, f[0]).expect("a story");
+        assert_ne!(story_of(&doc, f[1]), Some(first));
+
+        assert!(doc.thread(f[0], f[1]));
+
+        assert_eq!(story_of(&doc, f[1]), Some(first));
+        assert_eq!(doc.next_in_thread(f[0]), Some(f[1]));
+    }
+
+    #[test]
+    fn the_frame_before_is_found_rather_than_stored() {
+        // One description of a chain instead of two that can disagree.
+        let (mut doc, f) = three_text_frames();
+        doc.thread(f[0], f[1]);
+
+        assert_eq!(doc.previous_in_thread(f[1]), Some(f[0]));
+        assert_eq!(doc.previous_in_thread(f[0]), None);
+    }
+
+    #[test]
+    fn a_chain_reads_from_its_first_frame_to_its_last_from_anywhere_in_it() {
+        let (mut doc, f) = three_text_frames();
+        doc.thread(f[0], f[1]);
+        doc.thread(f[1], f[2]);
+
+        for start in &f {
+            assert_eq!(doc.thread_of(*start), f, "asked at {start:?}");
+        }
+    }
+
+    #[test]
+    fn a_frame_on_its_own_is_a_chain_of_one() {
+        let (doc, f) = three_text_frames();
+        assert_eq!(doc.thread_of(f[0]), vec![f[0]]);
+    }
+
+    #[test]
+    fn a_frame_cannot_flow_into_itself() {
+        let (mut doc, f) = three_text_frames();
+        assert!(!doc.thread(f[0], f[0]));
+        assert_eq!(doc.next_in_thread(f[0]), None);
+    }
+
+    #[test]
+    fn a_thread_cannot_be_made_into_a_loop() {
+        // A chain that pointed back into itself would hang the renderer, and
+        // somebody who threads A to B to A has made a mistake rather than a
+        // request.
+        let (mut doc, f) = three_text_frames();
+        doc.thread(f[0], f[1]);
+        doc.thread(f[1], f[2]);
+
+        assert!(!doc.thread(f[2], f[0]), "refused");
+        assert_eq!(doc.thread_of(f[0]), f, "and the chain is unharmed");
+    }
+
+    #[test]
+    fn a_frame_cannot_take_overflow_from_two_places() {
+        // It would have to show two stories at once.
+        let (mut doc, f) = three_text_frames();
+        assert!(doc.thread(f[0], f[2]));
+        assert!(!doc.thread(f[1], f[2]), "refused");
+        assert_eq!(doc.previous_in_thread(f[2]), Some(f[0]));
+    }
+
+    #[test]
+    fn a_frame_holding_no_text_cannot_be_threaded() {
+        let (mut doc, f) = three_text_frames();
+        let layer = doc.default_layer().expect("a layer");
+        let square = doc.add_frame(layer, rect_frame());
+
+        assert!(!doc.thread(f[0], square));
+        assert!(!doc.thread(square, f[0]));
+    }
+
+    #[test]
+    fn unthreading_separates_the_flow_without_deleting_the_words() {
+        let (mut doc, f) = three_text_frames();
+        doc.thread(f[0], f[1]);
+        let shared = story_of(&doc, f[0]).expect("a story");
+
+        assert!(doc.unthread(f[0]));
+
+        assert_eq!(doc.next_in_thread(f[0]), None);
+        assert_eq!(doc.thread_of(f[0]), vec![f[0]]);
+        assert_eq!(
+            story_of(&doc, f[1]),
+            Some(shared),
+            "both halves keep the story between them"
+        );
+        assert!(doc.story(shared).is_some(), "which still exists");
+    }
+
+    #[test]
+    fn unthreading_a_frame_that_flows_nowhere_is_refused_rather_than_pretended() {
+        let (mut doc, f) = three_text_frames();
+        let before = doc.revision();
+        assert!(!doc.unthread(f[0]));
+        assert_eq!(doc.revision(), before);
+    }
+
+    #[test]
+    fn threading_the_middle_of_a_chain_onto_a_fourth_frame_is_refused() {
+        // `f[1]` already flows into `f[2]`; asking it to flow into a fourth
+        // would mean two nexts. The refusal comes from `f[2]` already having a
+        // previous, which is the same rule stated once.
+        let (mut doc, f) = three_text_frames();
+        doc.thread(f[0], f[1]);
+        doc.thread(f[1], f[2]);
+
+        let layer = doc.default_layer().expect("a layer");
+        let story = doc.add_story(Story::new("fourth"));
+        let mut fourth = rect_frame();
+        fourth.kind = FrameKind::text(story);
+        let fourth = doc.add_frame(layer, fourth);
+
+        assert!(doc.thread(f[2], fourth), "the end of the chain may grow");
+        assert_eq!(doc.thread_of(f[0]).len(), 4);
     }
 }

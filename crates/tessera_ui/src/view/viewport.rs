@@ -771,6 +771,63 @@ fn overset_frames(state: &mut TesseraApp) -> Vec<FrameId> {
 ///
 /// Drawn for every text frame rather than the selected one: the point is to
 /// notice a frame you were not already looking at.
+/// The links between threaded frames, drawn when one of them is selected.
+///
+/// The previous implementation had a working story model and never drew these,
+/// which made threading invisible: a person could not tell a chain from three
+/// frames that happened to sit near each other. An arrow from the foot of one
+/// frame to the head of the next says which way the text runs, which is the
+/// question a connector answers.
+fn thread_connectors(state: &TesseraApp, rect: Rect, painter: &egui::Painter) {
+    if state.active().selection.is_empty() {
+        return;
+    }
+    let doc = state.active().document();
+    let view = state.active().view;
+
+    // Every chain any selected frame belongs to, without drawing one twice
+    // when two frames of the same chain are both selected.
+    let mut shown: Vec<tessera_document::ids::FrameId> = Vec::new();
+    for id in state.active().selection.as_slice() {
+        if shown.contains(id) {
+            continue;
+        }
+        let chain = doc.thread_of(*id);
+        if chain.len() < 2 {
+            continue;
+        }
+        shown.extend(chain.iter().copied());
+
+        for pair in chain.windows(2) {
+            let (Some(from), Some(to)) = (doc.visual_bounds(pair[0]), doc.visual_bounds(pair[1]))
+            else {
+                continue;
+            };
+            // Out of the bottom of one and into the top of the next, which is
+            // the direction the text runs.
+            let start = view.doc_to_screen(DocPoint {
+                x: from.x + from.width / 2.0,
+                y: from.y + from.height,
+            });
+            let end = view.doc_to_screen(DocPoint {
+                x: to.x + to.width / 2.0,
+                y: to.y,
+            });
+            let (start, end) = (
+                rect.min + egui::vec2(start.x, start.y),
+                rect.min + egui::vec2(end.x, end.y),
+            );
+
+            let stroke = egui::Stroke::new(1.0, Theme::ACCENT);
+            painter.line_segment([start, end], stroke);
+            // A blob at each end, so a connector that runs off the edge of the
+            // canvas still says which frames it joins.
+            painter.circle_filled(start, 3.0, Theme::ACCENT);
+            painter.circle_filled(end, 3.0, Theme::ACCENT);
+        }
+    }
+}
+
 /// The lines a dragged object has settled onto.
 ///
 /// Drawn across the whole canvas rather than only beside the object, which is
@@ -1732,6 +1789,7 @@ fn draw_overlays(
 
     overset_marks(state, rect, &painter, overset);
     snap_indicator(state, rect, &painter);
+    thread_connectors(state, rect, &painter);
 
     // Every selected frame gets an outline; only a lone selection gets
     // handles, since a multiple selection has nothing single to resize yet.

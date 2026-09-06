@@ -271,6 +271,15 @@ pub struct TextLayout {
     /// The margin inside the frame, before the text starts.
     pub inset: Insets,
     pub vertical: VerticalJustify,
+    /// The frame this one overflows into.
+    ///
+    /// A **forward** link only. The frame before is found by looking for
+    /// whoever points here, which is a scan of the document — cheap at these
+    /// sizes, and it means a chain has one description rather than two that
+    /// can disagree. Two links pointing at each other is a class of bug this
+    /// codebase has already paid for twice.
+    #[serde(default)]
+    pub next: Option<FrameId>,
 }
 
 impl Default for TextLayout {
@@ -283,6 +292,7 @@ impl Default for TextLayout {
             gutter: 12.0,
             inset: Insets::default(),
             vertical: VerticalJustify::Top,
+            next: None,
         }
     }
 }

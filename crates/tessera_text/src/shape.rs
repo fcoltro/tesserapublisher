@@ -481,6 +481,12 @@ pub struct ShapedRun {
 pub struct ShapedLine {
     pub runs: Vec<ShapedRun>,
     pub baseline: f64,
+    /// What of the story this line holds, in **stored** offsets.
+    ///
+    /// The whole point of carrying it: a frame in a thread has to say where it
+    /// stopped so the next frame knows where to begin, and "where it stopped"
+    /// is a place in the text rather than a line number.
+    pub range: std::ops::Range<usize>,
     /// How far the line reaches above its baseline, and below it.
     ///
     /// Carried from the layout rather than derived from the glyphs, because a
@@ -567,6 +573,13 @@ pub struct Flowed {
     /// mark asks. Counted rather than reported as a bool because "three lines
     /// short" and "three pages short" are different problems.
     pub overset_lines: usize,
+    /// Where in the story the last placed line ended.
+    ///
+    /// What the next frame in a thread begins at. `None` when nothing was
+    /// placed at all, which is not the same as zero: zero would mean "start
+    /// again from the top", and a frame too small for one line would then loop
+    /// the whole thread back to the beginning.
+    pub consumed_to: Option<usize>,
 }
 
 /// How far a line reaches above and below its own baseline.
@@ -678,9 +691,11 @@ pub fn flow_justified(text: ShapedText, columns: &[Column], vertical: Vertical) 
 
     justify(&mut out, &boxes, columns, vertical);
 
+    let consumed_to = out.lines.last().map(|l| l.range.end);
     Flowed {
         text: out,
         overset_lines: overset,
+        consumed_to,
     }
 }
 
@@ -937,11 +952,55 @@ impl Shaper {
         styles: &dyn Styles,
         width: f64,
     ) -> Vec<Placed> {
+        self.layout_paragraphs_from(story, styles, width, 0)
+    }
+
+    /// The same, beginning partway through the story.
+    ///
+    /// What a threaded frame needs: the second frame of a chain lays out the
+    /// text the first one could not hold, at its **own** measure. That is why
+    /// this cannot be a slice of one layout — line breaking depends on the
+    /// width, so the remainder has to be broken afresh.
+    ///
+    /// A paragraph the offset lands inside is laid out from that point, and
+    /// its indents apply as they would to a first line, because in the new
+    /// frame it *is* one.
+    pub(crate) fn layout_paragraphs_from(
+        &mut self,
+        story: &Story,
+        styles: &dyn Styles,
+        width: f64,
+        from: usize,
+    ) -> Vec<Placed> {
         let floor = styles.document_default();
         let mut placed = Vec::new();
         let mut y = 0.0;
 
         for (start, text) in paragraphs_of(&story.text) {
+            let end = start + text.len();
+            // Wholly behind the starting point: already set in an earlier
+            // frame of the thread.
+            //
+            // `start < from` as well as `end <= from`, and the empty story is
+            // why. Its one paragraph runs 0..0, so `end <= from` alone drops
+            // it at `from == 0` — and a story with no text still needs a
+            // layout, because a caret has to have somewhere to sit.
+            if end <= from && start < from {
+                continue;
+            }
+            // Partly behind it: keep the tail, and keep the offsets honest by
+            // moving `start` with it.
+            let (start, text) = if from > start {
+                let cut = from - start;
+                match text.is_char_boundary(cut) {
+                    true => (from, &text[cut..]),
+                    // A `from` inside a character is a caller's bug, and
+                    // panicking on a slice would be a poor way to say so.
+                    false => (start, text),
+                }
+            } else {
+                (start, text)
+            };
             let end = start + text.len();
             // The newline ends the paragraph, it is not part of it. Handing it
             // to parley makes the layout emit a second, empty line — so the
@@ -1268,14 +1327,47 @@ impl Shaper {
         shaped
     }
 
+    /// Shape the story from `from` onwards, at `width`.
+    ///
+    /// What the second frame of a thread needs: the text the frame before it
+    /// could not hold, broken afresh at **this** frame's measure. It cannot be
+    /// a slice of one layout, because line breaking depends on the width.
+    ///
+    /// Uncached on purpose. The cache is keyed on a whole story and one
+    /// measure, which is right for a frame holding a story to itself and wrong
+    /// for a thread — two frames of different widths would collide on the key.
+    pub fn shape_from(
+        &mut self,
+        story: &Story,
+        styles: &dyn Styles,
+        width: f64,
+        from: usize,
+    ) -> ShapedText {
+        if from == 0 {
+            return self.shape(story, styles, width);
+        }
+        if from >= story.text.len() {
+            return ShapedText::default();
+        }
+        let placed = self.layout_paragraphs_from(story, styles, width, from);
+        Self::assemble(story, styles, &placed)
+    }
+
     fn shape_uncached(&mut self, story: &Story, styles: &dyn Styles, width: f64) -> ShapedText {
         let placed = self.layout_paragraphs(story, styles, width);
+        Self::assemble(story, styles, &placed)
+    }
 
+    /// Turn laid-out paragraphs into positioned glyphs.
+    ///
+    /// Shared by both entry points, so a threaded frame and a lone one cannot
+    /// disagree about baseline shift, colour or which font a run came from.
+    fn assemble(story: &Story, styles: &dyn Styles, placed: &[Placed]) -> ShapedText {
         let mut fonts: Vec<FontData> = Vec::new();
         let mut lines = Vec::new();
         let mut height: f64 = 0.0;
 
-        for paragraph in &placed {
+        for paragraph in placed {
             for line in paragraph.layout.lines() {
                 let mut runs = Vec::new();
                 // The paragraph's own origin is folded into every position
@@ -1350,9 +1442,14 @@ impl Shaper {
                 }
 
                 let metrics = line.metrics();
+                // Back through the offset map: parley works in the shaped
+                // text, which is a different string whenever a case transform
+                // or a hyphenation point is in play.
+                let shaped = line.text_range();
                 lines.push(ShapedLine {
                     runs,
                     baseline,
+                    range: paragraph.to_stored(shaped.start)..paragraph.to_stored(shaped.end),
                     ascent: f64::from(metrics.ascent),
                     descent: f64::from(metrics.descent),
                 });
@@ -2925,6 +3022,7 @@ mod tests {
                 let baseline = 10.0 + 12.0 * i as f64;
                 ShapedLine {
                     baseline,
+                    range: i * 10..(i + 1) * 10,
                     ascent: 10.0,
                     descent: 2.0,
                     runs: vec![ShapedRun {
@@ -3186,5 +3284,130 @@ mod tests {
             assert_eq!(flowed.text.lines.len(), 4, "{vertical:?}");
             assert_eq!(flowed.overset_lines, 1, "{vertical:?}");
         }
+    }
+
+    // --- shaping from partway through ---------------------------------------
+
+    #[test]
+    fn shaping_from_zero_is_shaping_the_whole_story() {
+        let story = Story::new("the quick brown fox jumps over the lazy dog");
+        let mut shaper = Shaper::new();
+        let whole = shaper.shape(&story, &NoStyles::default(), 120.0);
+        let from = shaper.shape_from(&story, &NoStyles::default(), 120.0, 0);
+        assert_eq!(from.glyph_count(), whole.glyph_count());
+    }
+
+    #[test]
+    fn shaping_past_the_end_yields_nothing() {
+        // The last frame of a thread, when the one before it held everything.
+        let story = Story::new("short");
+        let mut shaper = Shaper::new();
+        let from = shaper.shape_from(&story, &NoStyles::default(), 120.0, 500);
+        assert_eq!(from.glyph_count(), 0);
+    }
+
+    #[test]
+    fn shaping_from_an_offset_sets_only_what_is_left() {
+        let story = Story::new("the quick brown fox jumps over the lazy dog");
+        let mut shaper = Shaper::new();
+        let whole = shaper.shape(&story, &NoStyles::default(), 400.0);
+        let tail = shaper.shape_from(&story, &NoStyles::default(), 400.0, 20);
+
+        assert!(tail.glyph_count() > 0, "there is text after twenty bytes");
+        assert!(
+            tail.glyph_count() < whole.glyph_count(),
+            "and less of it than the whole"
+        );
+    }
+
+    #[test]
+    fn what_is_shaped_from_an_offset_starts_at_that_offset() {
+        let story = Story::new("the quick brown fox jumps over the lazy dog");
+        let mut shaper = Shaper::new();
+        let tail = shaper.shape_from(&story, &NoStyles::default(), 400.0, 20);
+
+        let first = tail.lines.first().expect("a line");
+        assert!(
+            first.range.start >= 20,
+            "the tail begins where it was asked to, not at zero: {:?}",
+            first.range
+        );
+    }
+
+    #[test]
+    fn a_paragraph_the_offset_lands_inside_is_continued_not_skipped() {
+        // The remainder of a paragraph belongs in the next frame of a thread.
+        // Skipping to the next paragraph would silently drop half a sentence.
+        let story = Story::new("first paragraph is quite long\nsecond");
+        let mut shaper = Shaper::new();
+        let tail = shaper.shape_from(&story, &NoStyles::default(), 400.0, 6);
+
+        let first = tail.lines.first().expect("a line");
+        assert!(
+            first.range.start < 29,
+            "it continued the first paragraph: {:?}",
+            first.range
+        );
+    }
+
+    #[test]
+    fn the_tail_is_broken_afresh_at_its_own_measure() {
+        // The whole reason this is not a slice of one layout: a narrower
+        // frame breaks the same words onto more lines.
+        let story = Story::new("the quick brown fox jumps over the lazy dog again and again");
+        let mut shaper = Shaper::new();
+        let wide = shaper.shape_from(&story, &NoStyles::default(), 400.0, 10);
+        let narrow = shaper.shape_from(&story, &NoStyles::default(), 90.0, 10);
+
+        assert!(
+            narrow.lines.len() > wide.lines.len(),
+            "narrower means more lines: {} against {}",
+            narrow.lines.len(),
+            wide.lines.len()
+        );
+    }
+
+    #[test]
+    fn a_line_knows_which_text_it_holds() {
+        let story = Story::new("one two three four five six seven eight nine ten");
+        let mut shaper = Shaper::new();
+        let shaped = shaper.shape(&story, &NoStyles::default(), 80.0);
+
+        assert!(shaped.lines.len() > 1, "it wrapped");
+        for pair in shaped.lines.windows(2) {
+            assert!(
+                pair[0].range.end <= pair[1].range.start,
+                "lines cover the story in order without overlapping: {:?} then {:?}",
+                pair[0].range,
+                pair[1].range
+            );
+        }
+    }
+
+    #[test]
+    fn a_flow_says_where_it_stopped() {
+        let story = Story::new("one two three four five six seven eight nine ten eleven");
+        let mut shaper = Shaper::new();
+        let shaped = shaper.shape(&story, &NoStyles::default(), 80.0);
+        let lines = shaped.lines.len();
+        assert!(lines > 2, "enough to overflow");
+
+        // A box with room for two lines of it.
+        let flowed = flow(shaped, &[column(0.0, 0.0, 80.0, 30.0)]);
+
+        assert!(flowed.overset_lines > 0, "it did not all fit");
+        assert_eq!(
+            flowed.consumed_to,
+            flowed.text.lines.last().map(|l| l.range.end),
+            "and it stopped where its last line ended"
+        );
+    }
+
+    #[test]
+    fn a_flow_that_placed_nothing_says_so_rather_than_saying_zero() {
+        // Zero would mean "start again from the top", and a frame too small
+        // for a single line would loop a whole thread back to the beginning.
+        let flowed = flow(ruled(2), &[]);
+        assert_eq!(flowed.consumed_to, None);
     }
 }

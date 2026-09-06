@@ -245,6 +245,16 @@ pub enum Command {
         layout: tessera_document::nodes::TextLayout,
     },
 
+    /// Make one text frame overflow into another.
+    ThreadFrames {
+        from: FrameId,
+        to: FrameId,
+    },
+    /// Break the link out of a frame.
+    UnthreadFrame {
+        id: FrameId,
+    },
+
     /// Add a parent spread shaped like the document.
     AddMaster,
     /// Remove a master, unhooking every page that used it.
@@ -996,6 +1006,14 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 frame.kind = FrameKind::Text { story, layout };
             }
             state.active_mut().document_mut().touch();
+        }
+
+        Command::ThreadFrames { from, to } => {
+            state.active_mut().document_mut().thread(from, to);
+        }
+
+        Command::UnthreadFrame { id } => {
+            state.active_mut().document_mut().unthread(id);
         }
 
         Command::AddMaster => {
@@ -4747,5 +4765,110 @@ mod tests {
             panic!("not a text frame");
         };
         assert_eq!(layout.columns, 3);
+    }
+
+    // --- threading -----------------------------------------------------------
+
+    /// Two text frames, each with its own story.
+    fn two_text_frames(state: &mut TesseraApp) -> (FrameId, FrameId) {
+        apply(state, Command::AddTextFrame(bounds()));
+        let a = state.active().selection.single().expect("selected");
+        apply(
+            state,
+            Command::AddTextFrame(DocRect {
+                x: 200.0,
+                y: 20.0,
+                width: 60.0,
+                height: 40.0,
+            }),
+        );
+        let b = state.active().selection.single().expect("selected");
+        (a, b)
+    }
+
+    #[test]
+    fn threading_is_undoable() {
+        let mut state = TesseraApp::headless();
+        let (a, b) = two_text_frames(&mut state);
+
+        apply(&mut state, Command::ThreadFrames { from: a, to: b });
+        assert_eq!(state.active().document().next_in_thread(a), Some(b));
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().next_in_thread(a), None);
+    }
+
+    #[test]
+    fn unthreading_is_undoable() {
+        let mut state = TesseraApp::headless();
+        let (a, b) = two_text_frames(&mut state);
+        apply(&mut state, Command::ThreadFrames { from: a, to: b });
+
+        apply(&mut state, Command::UnthreadFrame { id: a });
+        assert_eq!(state.active().document().next_in_thread(a), None);
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().next_in_thread(a), Some(b));
+    }
+
+    #[test]
+    fn the_menu_threads_in_the_order_the_frames_were_selected() {
+        // Any other rule — top to bottom, left to right — would be guessing at
+        // which way somebody wants the text to run.
+        let mut state = TesseraApp::headless();
+        let (a, b) = two_text_frames(&mut state);
+
+        state.active_mut().selection.replace_all([b, a]);
+        crate::actions::run(
+            &mut state,
+            crate::actions::Run::Command(crate::actions::Cmd::ThreadSelection),
+        );
+
+        assert_eq!(
+            state.active().document().next_in_thread(b),
+            Some(a),
+            "b was picked first, so the text runs b to a"
+        );
+    }
+
+    #[test]
+    fn threading_needs_exactly_two_frames() {
+        let mut state = TesseraApp::headless();
+        let (a, _) = two_text_frames(&mut state);
+
+        state.active_mut().selection.set(a);
+        crate::actions::run(
+            &mut state,
+            crate::actions::Run::Command(crate::actions::Cmd::ThreadSelection),
+        );
+
+        assert_eq!(
+            state.active().document().next_in_thread(a),
+            None,
+            "one frame is not a thread"
+        );
+    }
+
+    #[test]
+    fn a_threaded_frame_shows_the_story_it_shares() {
+        let mut state = TesseraApp::headless();
+        let (a, b) = two_text_frames(&mut state);
+        apply(
+            &mut state,
+            Command::SetText {
+                id: a,
+                text: "the quick brown fox jumps over the lazy dog".repeat(4),
+            },
+        );
+
+        apply(&mut state, Command::ThreadFrames { from: a, to: b });
+
+        let chain = state.active().document().thread_of(a);
+        assert_eq!(chain, vec![a, b]);
+        let story_of = |id: FrameId| match state.active().document().frame(id).map(|f| &f.kind) {
+            Some(FrameKind::Text { story, .. }) => Some(*story),
+            _ => None,
+        };
+        assert_eq!(story_of(a), story_of(b), "one story between them");
     }
 }

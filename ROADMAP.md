@@ -800,11 +800,29 @@ full argument, with sources, is in `docs/superpowers/specs/`.
     of every column by exactly its own ascent. Found by a test, not by eye.
   - The same routine will thread frames: filling a sequence of boxes in order
     is one operation, which is why it takes `Column`s rather than columns.
-- [ ] **Text threading**: overflow flows to the next frame, and a resize
-  reflows the whole chain.
-- [ ] **Thread connector lines drawn on selection.** (The previous
-  implementation had a working story model and never drew these — the
-  capability was invisible to the user.)
+- [x] **Text threading**: overflow flows to the next frame, and a resize
+  reflows the whole chain. Both are tested, the second against the milestone's
+  own sentence.
+  - A **forward link only**. The frame before is found by looking for whoever
+    points here, so a chain has one description rather than two that can
+    disagree — the class of bug this codebase has already paid for twice.
+  - Threading makes two frames **share one story**. That is what threading is:
+    one story shown across several frames, not several stories in a row.
+  - Refused when it would make a loop, when either frame holds no text, and
+    when the target already takes overflow from somewhere else. A frame with
+    two sources would have to show two stories at once, and `thread_of` is
+    cycle-safe besides, because a chain that ate itself would hang the render.
+  - A frame in a chain is laid out **from where the frame before it stopped**,
+    and there is no shortcut past that: how much a frame holds depends on its
+    own measure and its own columns, so the frames before it really are laid
+    out to find the answer. `shape_from` breaks the remainder afresh at the new
+    measure, which is why a thread cannot be a slice of one layout.
+  - Unthreading separates the flow without deleting the words: both halves keep
+    the story between them.
+- [x] **Thread connector lines drawn on selection.** Out of the foot of one
+  frame and into the head of the next, so the line says which way the text
+  runs. A blob at each end, so a connector running off the edge of the canvas
+  still says which frames it joins.
 - [ ] Text wrap around objects.
 
 ---

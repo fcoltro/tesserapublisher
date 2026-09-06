@@ -115,6 +115,8 @@ pub enum Cmd {
     RemovePage,
     AddMaster,
     RemoveOverrides,
+    ThreadSelection,
+    UnthreadSelection,
     DuplicatePage,
     Undo,
     Redo,
@@ -408,6 +410,18 @@ pub fn all() -> &'static [Action] {
         a("Delete page", None, Group::Layout, Command(RemovePage)),
         a("Add parent page", None, Group::Layout, Command(AddMaster)),
         a(
+            "Thread text frames",
+            None,
+            Group::Object,
+            Command(ThreadSelection),
+        ),
+        a(
+            "Unthread text frame",
+            None,
+            Group::Object,
+            Command(UnthreadSelection),
+        ),
+        a(
             "Remove overrides on this page",
             None,
             Group::Layout,
@@ -498,6 +512,22 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
                 // where "this page" means anything at all.
                 Cmd::AddPage => Command::AddPage,
                 Cmd::AddMaster => Command::AddMaster,
+                Cmd::ThreadSelection => {
+                    // In the order they were selected, which is the order the
+                    // text will run. Any other rule — top to bottom, say —
+                    // would guess at what somebody meant.
+                    let picked = state.active().selection.as_slice().to_vec();
+                    let [from, to] = picked[..] else {
+                        return;
+                    };
+                    Command::ThreadFrames { from, to }
+                }
+                Cmd::UnthreadSelection => {
+                    let Some(id) = state.active().selection.single() else {
+                        return;
+                    };
+                    Command::UnthreadFrame { id }
+                }
                 Cmd::RemoveOverrides => {
                     let Some(page) = crate::view::panels::current_page(state) else {
                         return;

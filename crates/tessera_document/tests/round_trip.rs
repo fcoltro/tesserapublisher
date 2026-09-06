@@ -647,6 +647,7 @@ fn a_columned_text_frame_round_trips() {
             right: 6.0,
         },
         vertical: VerticalJustify::Justify,
+        next: None,
     };
     let id = doc.add_frame(
         layer,

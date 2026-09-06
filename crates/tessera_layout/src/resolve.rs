@@ -179,6 +179,65 @@ fn resolve_pages(
     ResolvedDocument { items, pages }
 }
 
+/// How far into its story a threaded frame begins.
+///
+/// Walks the chain from its first frame, laying each one out to find where it
+/// stopped. There is no cheaper answer: how much a frame holds depends on its
+/// own measure and its own columns, so the frames before it really do have to
+/// be laid out to know where this one starts.
+///
+/// A frame that is not threaded returns zero without laying anything out,
+/// which is every frame in most documents.
+fn story_starts_at(doc: &Document, shaper: &mut Shaper, frame: FrameId) -> usize {
+    let chain = doc.thread_of(frame);
+    let Some(at) = chain.iter().position(|f| *f == frame) else {
+        return 0;
+    };
+    if at == 0 {
+        return 0;
+    }
+
+    let mut from = 0usize;
+    for id in &chain[..at] {
+        let Some(before) = doc.frame(*id) else {
+            continue;
+        };
+        let FrameKind::Text { story, layout } = &before.kind else {
+            continue;
+        };
+        let Some(text) = doc.story(*story) else {
+            continue;
+        };
+
+        let columns = layout.columns_of(DocRect {
+            x: 0.0,
+            y: 0.0,
+            width: before.bounds.width,
+            height: before.bounds.height,
+        });
+        let measure = columns.first().map_or(before.bounds.width, |c| c.width);
+        let boxes: Vec<tessera_text::shape::Column> = columns
+            .iter()
+            .map(|c| tessera_text::shape::Column {
+                x: c.x,
+                y: c.y,
+                width: c.width,
+                height: c.height,
+            })
+            .collect();
+
+        let shaped = shaper.shape_from(text, doc, measure, from);
+        let flowed = tessera_text::shape::flow(shaped, &boxes);
+        // A frame that held nothing hands the story on untouched rather than
+        // restarting it: treating "placed nothing" as zero would loop the
+        // whole chain back to the beginning.
+        if let Some(to) = flowed.consumed_to {
+            from = to;
+        }
+    }
+    from
+}
+
 /// One frame, resolved.
 ///
 /// Pulled out of the walk so that a master's item can be resolved the same way
@@ -275,7 +334,13 @@ fn resolve_one(
                 }
             };
 
-            let shaped = shaper.shape(story, doc, measure);
+            // Where in the story this frame starts. Zero unless something
+            // flows into it, in which case the frames before it are laid out
+            // to find out how much they hold — the answer depends on their
+            // measures, so there is no shortcut past doing it.
+            let from = story_starts_at(doc, shaper, id);
+
+            let shaped = shaper.shape_from(story, doc, measure, from);
             let flowed = tessera_text::shape::flow_justified(shaped, &boxes, vertical);
 
             ResolvedKind::Text {
@@ -718,6 +783,138 @@ mod tests {
             !resolved.items.iter().any(|i| i.frame == item),
             "and the parent's own item is not drawn on the document"
         );
+    }
+
+    // --- threaded text ------------------------------------------------------
+
+    /// Two text frames holding one long story, threaded.
+    fn a_thread(first_height: f64) -> (Document, FrameId, FrameId) {
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        let layer = doc.default_layer().expect("layer");
+
+        let long = "one two three four five six seven eight nine ten \
+                    eleven twelve thirteen fourteen fifteen sixteen"
+            .to_string();
+        let story = doc.add_story(tessera_text::story::Story::new(&long));
+
+        let mut a = rect(0.0, 0.0, 90.0, first_height);
+        a.kind = FrameKind::text(story);
+        let a = doc.add_frame(layer, a);
+
+        let spare = doc.add_story(tessera_text::story::Story::new(""));
+        let mut b = rect(120.0, 0.0, 90.0, 400.0);
+        b.kind = FrameKind::text(spare);
+        let b = doc.add_frame(layer, b);
+
+        doc.thread(a, b);
+        (doc, a, b)
+    }
+
+    /// Which lines of the story a frame ended up drawing.
+    fn drawn(resolved: &ResolvedDocument, frame: FrameId) -> usize {
+        resolved
+            .items
+            .iter()
+            .filter(|i| i.frame == frame)
+            .map(|i| match &i.kind {
+                ResolvedKind::Text { shaped, .. } => shaped.lines.len(),
+                _ => 0,
+            })
+            .sum()
+    }
+
+    #[test]
+    fn a_story_too_long_for_its_frame_continues_in_the_next() {
+        let (doc, a, b) = a_thread(40.0);
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+
+        assert!(drawn(&resolved, a) > 0, "the first frame holds some");
+        assert!(drawn(&resolved, b) > 0, "and the second holds the rest");
+    }
+
+    #[test]
+    fn the_second_frame_does_not_repeat_the_first() {
+        // The bug this arrangement exists to prevent: a second frame that
+        // starts at zero shows the same opening lines again.
+        let (doc, a, b) = a_thread(40.0);
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+
+        let text_of = |frame: FrameId| -> Vec<std::ops::Range<usize>> {
+            resolved
+                .items
+                .iter()
+                .filter(|i| i.frame == frame)
+                .flat_map(|i| match &i.kind {
+                    ResolvedKind::Text { shaped, .. } => {
+                        shaped.lines.iter().map(|l| l.range.clone()).collect()
+                    }
+                    _ => Vec::new(),
+                })
+                .collect()
+        };
+
+        let first = text_of(a);
+        let second = text_of(b);
+        let ended = first.last().expect("lines").end;
+        let began = second.first().expect("lines").start;
+
+        assert!(
+            began >= ended,
+            "the second frame begins where the first stopped: {ended} then {began}"
+        );
+    }
+
+    #[test]
+    fn resizing_the_first_frame_reflows_the_chain() {
+        // Milestone 4's sentence: resize the first, and watch the text reflow
+        // through the chain.
+        let mut shaper = Shaper::new();
+
+        let (short, a, _) = a_thread(30.0);
+        let held_when_short = drawn(&resolve(&short, &mut shaper), a);
+
+        let (tall, a, b) = a_thread(200.0);
+        let resolved = resolve(&tall, &mut shaper);
+        let held_when_tall = drawn(&resolved, a);
+
+        assert!(
+            held_when_tall > held_when_short,
+            "a taller first frame holds more: {held_when_tall} against {held_when_short}"
+        );
+        // And what it holds, the second one does not.
+        assert!(drawn(&resolved, b) > 0 || held_when_tall > 0);
+    }
+
+    #[test]
+    fn an_unthreaded_frame_lays_its_own_story_out_from_the_start() {
+        let (mut doc, a, b) = a_thread(40.0);
+        doc.unthread(a);
+
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+
+        let second: Vec<std::ops::Range<usize>> = resolved
+            .items
+            .iter()
+            .filter(|i| i.frame == b)
+            .flat_map(|i| match &i.kind {
+                ResolvedKind::Text { shaped, .. } => {
+                    shaped.lines.iter().map(|l| l.range.clone()).collect()
+                }
+                _ => Vec::new(),
+            })
+            .collect();
+
+        assert_eq!(
+            second.first().map(|r| r.start),
+            Some(0),
+            "on its own again, it starts at the beginning"
+        );
+        assert!(drawn(&resolved, a) > 0);
     }
 }
 
