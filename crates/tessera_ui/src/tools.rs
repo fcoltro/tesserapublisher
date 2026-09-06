@@ -12,6 +12,8 @@ pub enum Tool {
     Line,
     Pen,
     Text,
+    /// Draws a picture box: a container to place artwork into.
+    Graphic,
     Hand,
 }
 
@@ -24,6 +26,7 @@ impl Tool {
             Self::Line => "Line",
             Self::Pen => "Pen",
             Self::Text => "Text",
+            Self::Graphic => "Picture box",
             Self::Hand => "Hand",
         }
     }
@@ -36,6 +39,7 @@ impl Tool {
             Self::Line => crate::icons::Icon::Line,
             Self::Pen => crate::icons::Icon::Pen,
             Self::Text => crate::icons::Icon::Text,
+            Self::Graphic => crate::icons::Icon::TextFrame,
             Self::Hand => crate::icons::Icon::Hand,
         }
     }
@@ -47,7 +51,7 @@ impl Tool {
     pub fn draws(self) -> bool {
         matches!(
             self,
-            Self::Rectangle | Self::Ellipse | Self::Line | Self::Text
+            Self::Rectangle | Self::Ellipse | Self::Line | Self::Text | Self::Graphic
         )
     }
 
@@ -61,17 +65,20 @@ impl Tool {
             Self::Line => egui::Key::Backslash,
             Self::Pen => egui::Key::P,
             Self::Text => egui::Key::T,
+            // F, as InDesign's frame tool is.
+            Self::Graphic => egui::Key::F,
             Self::Hand => egui::Key::H,
         }
     }
 
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Select,
         Self::Rectangle,
         Self::Ellipse,
         Self::Line,
         Self::Pen,
         Self::Text,
+        Self::Graphic,
         Self::Hand,
     ];
 }

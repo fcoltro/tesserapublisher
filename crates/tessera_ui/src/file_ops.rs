@@ -75,7 +75,48 @@ pub enum ExportError {
     Io(#[from] tessera_io::atomic::IoError),
 }
 
+/// Put artwork into the selected picture box.
+///
+/// Refused when nothing is selected or the selection is not a graphic frame —
+/// silently making one would throw away whatever was there, and InDesign's
+/// "place into nothing" behaviour (a loaded cursor) is a gesture rather than
+/// a command and belongs with the tools.
+pub fn place(state: &mut crate::app::TesseraApp) {
+    use tessera_document::nodes::FrameKind;
+
+    let Some(id) = state.active().selection.single() else {
+        return;
+    };
+    if !matches!(
+        state.active().document().frame(id).map(|f| &f.kind),
+        Some(FrameKind::Graphic { .. })
+    ) {
+        return;
+    }
+    let Some(path) = pick_artwork() else {
+        return;
+    };
+    crate::command::apply(
+        state,
+        crate::command::Command::PlaceArtwork {
+            id,
+            path,
+            fit: tessera_document::graphic::Fit::Proportionally,
+        },
+    );
+}
+
 // --- dialog wrappers ---------------------------------------------------
+
+/// The file kinds the renderer can actually decode.
+///
+/// Offering TIFF and PSD here would be offering something that then fails to
+/// draw, which is worse than not offering it.
+fn pick_artwork() -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .add_filter("Images", &["png", "jpg", "jpeg"])
+        .pick_file()
+}
 
 fn pick_save_path(current: Option<&PathBuf>) -> Option<PathBuf> {
     let mut dialog = rfd::FileDialog::new()

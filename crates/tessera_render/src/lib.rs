@@ -5,6 +5,7 @@
 //! what makes rendering regression-testable without a window.
 
 pub mod headless;
+pub mod images;
 pub mod scene;
 
 pub use headless::{HeadlessRenderer, RenderError};

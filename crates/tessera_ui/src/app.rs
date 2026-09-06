@@ -198,6 +198,13 @@ pub struct TesseraApp {
     ///
     /// On by default, because that is what makes a layout line up; held off
     /// while a modifier is down, for the times it must not.
+    /// Artwork, decoded and kept.
+    ///
+    /// On the application rather than made per frame, because a cache that
+    /// does not outlive a frame is not a cache — it would decode every
+    /// photograph on every redraw, which is the thing it exists to prevent.
+    pub images: tessera_render::images::Images,
+
     pub snapping: bool,
     /// The lines the object being dragged is currently settled on, for the
     /// indicator. Cleared when the gesture ends.
@@ -306,6 +313,7 @@ impl TesseraApp {
             active_tool: Tool::Select,
             styles_window: StylesWindow::default(),
             pages_window: PagesWindow::default(),
+            images: tessera_render::images::Images::new(),
             snapping: true,
             snapped_to: None,
             editing_master: None,

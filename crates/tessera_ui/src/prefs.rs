@@ -23,6 +23,17 @@ pub struct Preferences {
     pub version: u32,
     pub unit: Unit,
     pub theme: ThemeChoice,
+    /// The effective resolution below which artwork is reported as too low.
+    ///
+    /// A preference rather than a constant: 300 is the usual bar for offset
+    /// litho, 150 is fine for newsprint, and 72 is right for a screen PDF.
+    /// Hard-coding 300 would cry wolf at every newspaper.
+    #[serde(default = "default_minimum_ppi")]
+    pub minimum_ppi: f64,
+}
+
+fn default_minimum_ppi() -> f64 {
+    300.0
 }
 
 impl Default for Preferences {
@@ -32,6 +43,7 @@ impl Default for Preferences {
             // The unit most of the world lays out pages in.
             unit: Unit::Millimetres,
             theme: ThemeChoice::default(),
+            minimum_ppi: default_minimum_ppi(),
         }
     }
 }
@@ -171,6 +183,7 @@ mod tests {
             version: Preferences::PATH_VERSION,
             unit: Unit::Millimetres,
             theme: ThemeChoice::Light,
+            minimum_ppi: 150.0,
         };
         written.save_to(&path).expect("save failed");
 
@@ -230,5 +243,23 @@ mod tests {
                 .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("tessera")),
             "{dir:?} does not end in the application's name"
         );
+    }
+
+    #[test]
+    fn a_preferences_file_written_before_the_resolution_bar_reads_three_hundred() {
+        // The usual bar for offset litho, and the truth about a file that
+        // never chose one.
+        let path = temp_file("no-ppi");
+        std::fs::write(
+            &path,
+            br#"{"version":1,"unit":"Millimetres","theme":"Dark"}"#,
+        )
+        .expect("write");
+
+        let (read, complaint) = Preferences::load_from(&path);
+        assert!(complaint.is_none(), "{complaint:?}");
+        assert_eq!(read.minimum_ppi, 300.0);
+
+        let _ = std::fs::remove_file(&path);
     }
 }

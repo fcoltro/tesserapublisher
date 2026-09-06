@@ -28,6 +28,23 @@ pub enum Command {
     /// Bounds plus the path, in frame-local coordinates.
     AddPath(DocRect, kurbo::BezPath),
     AddTextFrame(DocRect),
+    /// Draw an empty picture box.
+    AddGraphicFrame(DocRect),
+    /// Put a file into a graphic frame.
+    PlaceArtwork {
+        id: FrameId,
+        path: std::path::PathBuf,
+        fit: tessera_document::graphic::Fit,
+    },
+    /// Re-fit what is already in a frame.
+    RefitArtwork {
+        id: FrameId,
+        fit: tessera_document::graphic::Fit,
+    },
+    /// Size a frame to the artwork in it.
+    FitFrameToArtwork {
+        id: FrameId,
+    },
 
     SetBounds {
         id: FrameId,
@@ -529,6 +546,45 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         Command::AddEllipse(bounds) => add(state, bounds, FrameKind::Ellipse, Color::BLACK),
 
         Command::AddPath(bounds, path) => add(state, bounds, FrameKind::Path(path), Color::BLACK),
+
+        Command::AddGraphicFrame(bounds) => {
+            add(
+                state,
+                bounds,
+                FrameKind::Graphic { placed: None },
+                Color::Rgb {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.0,
+                },
+            );
+        }
+
+        Command::PlaceArtwork { id, path, fit } => {
+            // The file is measured **now**, once, and the size is kept. A
+            // document must open and lay out without touching the disk: a
+            // missing image cannot be allowed to stop a page from drawing.
+            let natural = image::image_dimensions(&path)
+                .map(|(w, h)| (f64::from(w), f64::from(h)))
+                .unwrap_or((0.0, 0.0));
+            let modified = std::fs::metadata(&path)
+                .ok()
+                .and_then(|m| tessera_document::links::modified_seconds(&m));
+
+            let mut link = tessera_document::links::Link::new(path, natural);
+            link.modified = modified;
+            let link = state.active_mut().document_mut().add_link(link);
+            state.active_mut().document_mut().place(id, link, fit);
+        }
+
+        Command::RefitArtwork { id, fit } => {
+            state.active_mut().document_mut().refit(id, fit);
+        }
+
+        Command::FitFrameToArtwork { id } => {
+            state.active_mut().document_mut().fit_frame_to_content(id);
+        }
 
         Command::AddTextFrame(bounds) => {
             let story = state

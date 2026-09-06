@@ -132,6 +132,21 @@ pub fn build_scene(resolved: &ResolvedDocument, view: ViewTransform) -> Scene {
     build_scene_with(resolved, view, SceneOptions::default())
 }
 
+/// As [`build_scene`], with somewhere to decode artwork into.
+///
+/// Separate because the cache has to outlive one frame — that is the whole
+/// point of it — so the caller owns it and lends it. A scene builder that made
+/// its own would decode every photograph on every redraw, which is exactly
+/// what the cache exists to prevent.
+pub fn build_scene_with_images(
+    resolved: &ResolvedDocument,
+    view: ViewTransform,
+    options: SceneOptions,
+    images: &mut crate::images::Images,
+) -> Scene {
+    build_inner(resolved, view, options, Some(images))
+}
+
 /// As [`build_scene`], but able to leave the non-printing rules out.
 ///
 /// The printing screen modes show the page as it will come off the press, and
@@ -140,6 +155,15 @@ pub fn build_scene_with(
     resolved: &ResolvedDocument,
     view: ViewTransform,
     options: SceneOptions,
+) -> Scene {
+    build_inner(resolved, view, options, None)
+}
+
+fn build_inner(
+    resolved: &ResolvedDocument,
+    view: ViewTransform,
+    options: SceneOptions,
+    mut images: Option<&mut crate::images::Images>,
 ) -> Scene {
     let rules = options.rules;
     let mut scene = Scene::new();
@@ -262,11 +286,66 @@ pub fn build_scene_with(
         // before the view is.
         let transform = transform * item.transform.to_affine();
 
+        // The artwork, when there is any. Whether the link is missing decides
+        // the *placeholder's* colour, which the match below draws; here there
+        // is either artwork to paint or there is not.
+        if let ResolvedKind::Graphic {
+            inner,
+            source,
+            natural,
+            missing: _,
+            stroke,
+        } = &item.kind
+        {
+            // The artwork, clipped by its container. The clip is what
+            // makes a crop a crop: content larger than the frame is cut
+            // by it rather than spilling onto the page.
+            let drawn = source.as_ref().and_then(|path| {
+                images
+                    .as_mut()
+                    .and_then(|cache| cache.get(path))
+                    .map(|decoded| (decoded.image.clone(), decoded.pixels))
+            });
+
+            if let Some((image, pixels)) = drawn {
+                scene.push_layer(
+                    Fill::NonZero,
+                    vello::peniko::Mix::Normal,
+                    1.0,
+                    transform,
+                    &rect,
+                );
+                // The content's own transform, then the scale from pixels
+                // to the points the layout thinks in. `natural` is what
+                // the artwork wants to be; the pixels are what it is.
+                let to_points = if pixels.0 > 0 && pixels.1 > 0 && natural.0 > 0.0 {
+                    Affine::scale_non_uniform(
+                        natural.0 / f64::from(pixels.0),
+                        natural.1 / f64::from(pixels.1),
+                    )
+                } else {
+                    Affine::IDENTITY
+                };
+                scene.draw_image(
+                    &vello::peniko::ImageBrush::from(image),
+                    transform * inner.to_affine() * to_points,
+                );
+                scene.pop_layer();
+
+                if let Some(s) = stroke {
+                    scene.stroke(
+                        &stroke_of(s),
+                        transform,
+                        to_peniko(&s.color),
+                        None,
+                        &stroked_rect(rect, s.offset()),
+                    );
+                }
+                continue;
+            }
+        }
+
         match &item.kind {
-            // The container, and the cross an empty one is drawn with. The
-            // artwork itself is not painted yet — decoding and caching pixels
-            // is its own piece of work, and a frame that shows where a
-            // photograph will go is already worth having.
             ResolvedKind::Graphic {
                 missing, stroke, ..
             } => {

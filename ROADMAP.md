@@ -887,9 +887,9 @@ full argument, with sources, is in `docs/superpowers/specs/`.
 > change. Assign a document ICC profile and see a soft proof on screen. Fill a
 > shape with a gradient and give it a drop shadow.
 
-- [~] Image placement with linked (never embedded) assets — **placed and
-  modelled; the pixels are not drawn yet.** The frame, the link, the fit and
-  the round trip all work; decoding and caching the artwork is the next piece.
+- [x] Image placement with linked (never embedded) assets. Placed with
+  Ctrl+D, drawn from the file on disk, and decoded once rather than every
+  frame.
   - The same path placed twice is **one** link. Two would be two entries in the
     links panel for one file, two things to relink, and two chances to disagree
     about whether it is missing.
@@ -902,6 +902,13 @@ full argument, with sources, is in `docs/superpowers/specs/`.
     cache neither.
   - The placeholder is **never written to the PDF**. A violet cross in a
     printed job is far worse than a blank space.
+  - The decode cache is keyed on the file's **modification time as well as its
+    path**, so replacing the file on disk shows the new artwork without anybody
+    being asked to reload. A cache keyed on the path alone would happily show
+    last week's photograph forever.
+  - It is bounded by **total pixels**, not entry count. Ten thumbnails and one
+    poster are very different amounts of memory, and a limit that cannot tell
+    them apart either wastes room or thrashes.
 - [x] Content-within-frame: independent inner transform, fit and fill modes.
   - Fit is an **operation, not stored state**. What persists is the transform
     it produced; storing the mode as well would be a second description of the
@@ -909,10 +916,26 @@ full argument, with sources, is in `docs/superpowers/specs/`.
     picture by hand.
   - Every fit centres what it places. "Fit" without "centre" leaves the slack
     on two sides rather than four, and there is a test over all four modes.
-- [ ] Clipping of raster content by its container shape.
-- [ ] Link status: OK, missing, **and modified** — with relink and update.
-- [ ] Effective-PPI reporting with a configurable warning threshold.
-- [ ] Disk-backed proxy cache, so downscaling survives a restart.
+- [x] Clipping of raster content by its container shape. The clip is what
+  makes a crop a crop: content larger than its frame is cut by it rather than
+  spilling onto the page.
+- [x] Link status: OK, missing, **and modified** — with relink and update.
+  - **Three** states rather than two. "The file has changed" is the one the
+    previous codebase never drew, and the reason somebody could send a printer
+    last week's photograph.
+- [x] Effective-PPI reporting with a configurable warning threshold.
+  - **Effective**, not natural: a 300ppi photograph scaled to twice its size is
+    a 150ppi photograph, and the effective figure is the one a printer cares
+    about.
+  - Two figures when the axes differ, because a stretched placement really does
+    have two and a single number would hide it.
+  - The threshold is a **preference**, not a constant: 300 is the bar for
+    offset litho, 150 is fine for newsprint, and 72 is right for a screen PDF.
+    A hard-coded 300 would cry wolf at every newspaper.
+- [~] Disk-backed proxy cache, so downscaling survives a restart — **the
+  in-memory decode cache is done; nothing is written to disk yet.** A page of
+  photographs is decoded once per session rather than once per frame, which is
+  what makes panning usable; surviving a restart is the remaining half.
 - [ ] `lcms2` integration, **confirmed building on all three platforms.**
 - [x] RGB, CMYK, Lab and spot colour throughout the model. RGB, CMYK and spot
   were built in milestone 0 for exactly this moment; Lab and the swatch

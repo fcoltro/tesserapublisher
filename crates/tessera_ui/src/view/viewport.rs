@@ -102,7 +102,11 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
         // it -- see `tessera_layout::cache`.
         // Read before resolving: resolve_active borrows the whole of state.
         let mode = state.screen_mode;
-        let resolved = state.resolve_active();
+        // Resolved first and cloned, because building the scene needs the
+        // image cache mutably and the resolved document borrows the
+        // application. One clone a frame beats decoding a photograph a frame.
+        let resolved = state.resolve_active().clone();
+        let resolved = &resolved;
         // A printing mode crops to what it reveals, so what is on screen is
         // what will come off the press.
         let clip = (!mode.shows_chrome())
@@ -112,7 +116,12 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
             rules: mode.shows_chrome(),
             clip,
         };
-        let scene = tessera_render::scene::build_scene_with(resolved, view, options);
+        let scene = tessera_render::scene::build_scene_with_images(
+            resolved,
+            view,
+            options,
+            &mut state.images,
+        );
 
         ui.painter().add(egui_wgpu::Callback::new_paint_callback(
             rect,
@@ -1206,7 +1215,9 @@ fn canvas_cursor(
         // type tool chosen and nothing drawn yet, the gesture on offer is
         // drawing a frame, so the pointer says so.
         Tool::Text => Cursor::new(Icon::TextFrame),
-        Tool::Rectangle | Tool::Ellipse | Tool::Line => Cursor::new(Icon::Crosshair),
+        Tool::Rectangle | Tool::Ellipse | Tool::Line | Tool::Graphic => {
+            Cursor::new(Icon::Crosshair)
+        }
         Tool::Select => match grab_at(state, rect, pos) {
             Some((id, grab)) => grip_cursor(state, id, &grab),
             None => match move_target_at(state, rect, pos) {
@@ -1534,6 +1545,7 @@ fn draw_gesture(
 
         match state.active_tool {
             Tool::Rectangle => apply(state, Command::AddRectangle(bounds)),
+            Tool::Graphic => apply(state, Command::AddGraphicFrame(bounds)),
             Tool::Ellipse => apply(state, Command::AddEllipse(bounds)),
             Tool::Line => {
                 // Frame-local endpoints, so a line drawn bottom-left to

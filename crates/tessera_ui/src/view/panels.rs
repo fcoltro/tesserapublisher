@@ -72,12 +72,13 @@ pub enum Section {
     Stroke,
     Text,
     Frame,
+    Graphic,
     Wrap,
 }
 
 impl Section {
     /// Display order. Universal sections first; see the type's note.
-    pub const ALL: [Section; 6] = [
+    pub const ALL: [Section; 7] = [
         Section::Transform,
         Section::Fill,
         Section::Stroke,
@@ -85,6 +86,7 @@ impl Section {
         // are always there. The ones that can be absent come last, or hiding
         // one would move a section above it.
         Section::Wrap,
+        Section::Graphic,
         Section::Text,
         Section::Frame,
     ];
@@ -97,6 +99,7 @@ impl Section {
             Section::Text => "Text",
             Section::Frame => "Frame",
             Section::Wrap => "Text wrap",
+            Section::Graphic => "Artwork",
         }
     }
 
@@ -111,6 +114,7 @@ impl Section {
             Section::Text => Icon::CaseSensitive,
             Section::Frame => Icon::TextFrame,
             Section::Wrap => Icon::AlignJustify,
+            Section::Graphic => Icon::Rectangle,
         }
     }
 
@@ -126,6 +130,7 @@ impl Section {
             // Every kind of object. A picture is the thing most often
             // wrapped, and it is the obstacle that carries the setting.
             Section::Wrap => true,
+            Section::Graphic => matches!(frame.kind, FrameKind::Graphic { .. }),
         }
     }
 }
@@ -180,6 +185,7 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
                     Section::Text => text_section(ui, state, id, &frame),
                     Section::Frame => frame_section(ui, &frame),
                     Section::Wrap => wrap_controls(ui, state, id, &frame),
+                    Section::Graphic => graphic_section(ui, state, id, &frame),
                 });
         });
     }
@@ -861,6 +867,114 @@ pub(crate) fn icon_button(
 /// [`group_label`], for another module in the view.
 pub(crate) fn group_label_pub(ui: &mut Ui, text: &str) {
     group_label(ui, text);
+}
+
+/// What is in a picture box: the file, its state, and its real resolution.
+fn graphic_section(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::FrameId,
+    frame: &tessera_document::nodes::Frame,
+) {
+    use tessera_document::graphic::Fit;
+    use tessera_document::links::Status;
+    use tessera_document::nodes::FrameKind;
+
+    let FrameKind::Graphic { placed } = &frame.kind else {
+        return;
+    };
+
+    let Some(placement) = placed else {
+        ui.colored_label(Theme::TEXT_MUTED, "Empty");
+        if ui.button("Place artwork...").clicked() {
+            crate::file_ops::place(state);
+        }
+        return;
+    };
+
+    let link = state.active().document().links.get(placement.link).cloned();
+    let Some(link) = link else {
+        ui.colored_label(Theme::ERROR, "The link is missing from the document");
+        return;
+    };
+
+    // The file, by name. The whole path is usually too long for the rail and
+    // the name is what a person recognises; the path is on the tooltip.
+    let name = link
+        .path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| link.path.to_string_lossy().into_owned());
+    ui.label(&name)
+        .on_hover_text(link.path.to_string_lossy().into_owned());
+
+    // What the disk says, now. **Three** states rather than two: "the file has
+    // changed" is the one the previous codebase never drew, and the reason
+    // somebody could send a printer last week's photograph.
+    let status = link.status();
+    let (word, colour) = match status {
+        Status::Fine => ("Up to date", Theme::TEXT_MUTED),
+        Status::Modified => ("Modified on disk", Theme::ACCENT),
+        Status::Missing => ("Missing", Theme::ERROR),
+    };
+    ui.colored_label(colour, word);
+
+    if status != Status::Fine
+        && ui
+            .button("Relink...")
+            .on_hover_text("Choose the file this should point at")
+            .clicked()
+    {
+        crate::file_ops::place(state);
+    }
+
+    // The effective resolution, which is the number a printer cares about: a
+    // 300ppi photograph at twice its size is a 150ppi photograph.
+    let drawn = {
+        let a = placement.inner.apply(tessera_geometry::DocPoint::ZERO);
+        let b = placement.inner.apply(tessera_geometry::DocPoint {
+            x: link.natural.0,
+            y: link.natural.1,
+        });
+        ((b.x - a.x).abs(), (b.y - a.y).abs())
+    };
+    let pixels = (link.natural.0 as u32, link.natural.1 as u32);
+    if let Some((x, y)) = tessera_render::images::effective_ppi(pixels, drawn) {
+        let worst = x.min(y);
+        let colour = if worst < state.prefs.minimum_ppi {
+            Theme::ERROR
+        } else {
+            Theme::TEXT_MUTED
+        };
+        // Two figures when they differ, because a stretched placement really
+        // does have two and one would hide it.
+        let shown = if (x - y).abs() < 0.5 {
+            format!("{worst:.0} ppi")
+        } else {
+            format!("{x:.0} x {y:.0} ppi")
+        };
+        ui.colored_label(colour, shown).on_hover_text(format!(
+            "Effective resolution. Reported below {:.0} ppi.",
+            state.prefs.minimum_ppi
+        ));
+    }
+
+    group_label(ui, "Fit");
+    ui.horizontal(|ui| {
+        for (label, how) in [
+            ("Proportionally", Fit::Proportionally),
+            ("Fill", Fit::FillProportionally),
+            ("Stretch", Fit::Stretch),
+            ("Centre", Fit::Centre),
+        ] {
+            if ui.small_button(label).clicked() {
+                apply(state, Command::RefitArtwork { id, fit: how });
+            }
+        }
+    });
+    if ui.button("Fit frame to artwork").clicked() {
+        apply(state, Command::FitFrameToArtwork { id });
+    }
 }
 
 /// How text in other frames runs around this one.

@@ -3646,6 +3646,7 @@ dependencies = [
 name = "tessera_render"
 version = "0.1.0"
 dependencies = [
+ "image",
  "pollster",
  "proptest",
  "tessera_color",
@@ -3679,6 +3680,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui-wgpu",
+ "image",
  "kurbo",
  "proptest",
  "rfd",

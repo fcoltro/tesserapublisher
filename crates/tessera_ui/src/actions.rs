@@ -99,6 +99,7 @@ pub enum Run {
     Save,
     SaveAs,
     ExportPdf,
+    Place,
     Command(Cmd),
     PickTool(Tool),
     ScreenMode(ScreenMode),
@@ -408,6 +409,7 @@ pub fn all() -> &'static [Action] {
             Command(DuplicatePage),
         ),
         a("Delete page", None, Group::Layout, Command(RemovePage)),
+        a("Place artwork…", Some("Ctrl+D"), Group::File, Place),
         a("Add parent page", None, Group::Layout, Command(AddMaster)),
         a(
             "Thread text frames",
@@ -453,6 +455,12 @@ pub fn all() -> &'static [Action] {
         a("Line tool", Some("\\"), Group::Tool, PickTool(Tool::Line)),
         a("Pen tool", Some("P"), Group::Tool, PickTool(Tool::Pen)),
         a("Type tool", Some("T"), Group::Tool, PickTool(Tool::Text)),
+        a(
+            "Frame tool",
+            Some("F"),
+            Group::Tool,
+            PickTool(Tool::Graphic),
+        ),
         a("Hand tool", Some("H"), Group::Tool, PickTool(Tool::Hand)),
     ];
     LIST
@@ -490,6 +498,7 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         Run::Save => crate::file_ops::save(state),
         Run::SaveAs => crate::file_ops::save_as(state),
         Run::ExportPdf => crate::file_ops::export_pdf(state),
+        Run::Place => crate::file_ops::place(state),
         Run::ToggleStyles => {
             let window = &mut state.styles_window;
             window.open = !window.open;
