@@ -229,8 +229,40 @@ pub fn apply(ctx: &Context) {
         style.visuals.widgets.hovered.bg_fill = Theme::HOVER_BG;
         style.visuals.widgets.active.bg_fill = Theme::ACCENT;
 
-        style.spacing.item_spacing = egui::vec2(Theme::SPACING_MD, Theme::SPACING_MD);
-        style.spacing.button_padding = egui::vec2(Theme::SPACING_MD, Theme::SPACING_SM);
+        // Density, set once. Eight points of vertical spacing between every
+        // widget is a form; a panel of properties is a list, and a list wants
+        // the rhythm of a single row height.
+        style.spacing.item_spacing = egui::vec2(Theme::SPACE_2, Theme::SPACE_1);
+        style.spacing.button_padding = egui::vec2(Theme::SPACE_2, 2.0);
+        style.spacing.interact_size.y = 18.0;
+        style.spacing.indent = Theme::SPACE_3;
+
+        // Three sizes, and every one of them named. egui's defaults run from
+        // 10 to 18 across five styles, which is five sizes nobody chose.
+        use egui::{FontFamily, FontId, TextStyle};
+        style.text_styles = [
+            (
+                TextStyle::Small,
+                FontId::new(Theme::TYPE_SM, FontFamily::Proportional),
+            ),
+            (
+                TextStyle::Body,
+                FontId::new(Theme::TYPE_MD, FontFamily::Proportional),
+            ),
+            (
+                TextStyle::Button,
+                FontId::new(Theme::TYPE_MD, FontFamily::Proportional),
+            ),
+            (
+                TextStyle::Monospace,
+                FontId::new(Theme::TYPE_MD, FontFamily::Monospace),
+            ),
+            (
+                TextStyle::Heading,
+                FontId::new(Theme::TYPE_LG, FontFamily::Proportional),
+            ),
+        ]
+        .into();
     });
 }
 

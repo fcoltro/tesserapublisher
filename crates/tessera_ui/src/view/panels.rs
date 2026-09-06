@@ -94,6 +94,19 @@ impl Section {
         }
     }
 
+    /// The glyph that names the section, so a column of them can be found
+    /// by shape rather than read.
+    pub fn icon(self) -> crate::icons::Icon {
+        use crate::icons::Icon;
+        match self {
+            Section::Transform => Icon::Scale,
+            Section::Fill => Icon::Palette,
+            Section::Stroke => Icon::Line,
+            Section::Text => Icon::CaseSensitive,
+            Section::Frame => Icon::TextFrame,
+        }
+    }
+
     /// Whether this section says anything about `frame`.
     pub fn applies_to(self, frame: &tessera_document::nodes::Frame) -> bool {
         use tessera_document::nodes::FrameKind;
@@ -108,9 +121,8 @@ impl Section {
 }
 
 pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
-    ui.heading("Properties");
-    ui.separator();
-
+    // No heading: the rail draws one, and printing a second underneath it was
+    // the word "Properties" twice in a column 292 points wide.
     if state.active().selection.is_empty() {
         document_setup(ui, state);
         return;
@@ -137,8 +149,8 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
         if !section.applies_to(&frame) {
             continue;
         }
-        ui.add_space(Theme::SPACING_MD);
-        ui.label(section.title());
+        ui.add_space(Theme::SPACE_3);
+        subheading(ui, section.icon(), section.title());
         match section {
             Section::Transform => transform_section(ui, state, id, &frame),
             Section::Fill => fill_section(ui, state, id, &frame),
@@ -594,8 +606,7 @@ fn constrained(was: (f64, f64), now: (f64, f64), w_changed: bool) -> (f64, f64) 
 
 /// A percentage field.
 fn percent(ui: &mut Ui, label: &str, value: &mut f64) -> bool {
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, label);
+    field(ui, label, |ui| {
         ui.add(
             egui::DragValue::new(value)
                 .speed(0.5)
@@ -604,17 +615,14 @@ fn percent(ui: &mut Ui, label: &str, value: &mut f64) -> bool {
         )
         .changed()
     })
-    .inner
 }
 
 /// An angle field, in degrees.
 fn angle(ui: &mut Ui, label: &str, value: &mut f64) -> bool {
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, label);
+    field(ui, label, |ui| {
         ui.add(egui::DragValue::new(value).speed(0.5).suffix("°"))
             .changed()
     })
-    .inner
 }
 
 fn fill_section(
@@ -908,6 +916,32 @@ fn set_paragraph(
 ///
 /// `None` draws as a blank field with a hint, which is what the panel says
 /// when the runs disagree. Typing into it sets every run in the range.
+/// A labelled control: the label in a fixed column, then the control.
+///
+/// The reason every panel now lines up. Each control used to lay out its own
+/// `horizontal(label, widget)`, so the fields started wherever the label
+/// happened to end — different in every row and different again in every
+/// panel — and a long label pushed its field off the edge instead of
+/// wrapping. The column is fixed, the label is clipped rather than allowed to
+/// push, and the control begins at the same x in every row of the application.
+pub(crate) fn field<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(
+            Vec2::new(Theme::LABEL_COLUMN, ui.spacing().interact_size.y),
+            Sense::hover(),
+        );
+        ui.painter().text(
+            egui::pos2(rect.left(), rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::TextStyle::Body.resolve(ui.style()),
+            Theme::TEXT_MUTED,
+        );
+        add(ui)
+    })
+    .inner
+}
+
 fn optional_number(
     ui: &mut Ui,
     label: &str,
@@ -917,8 +951,7 @@ fn optional_number(
     suffix: &str,
 ) -> Option<f32> {
     let mut changed = None;
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, label);
+    field(ui, label, |ui| {
         match shown {
             Some(value) => {
                 let mut edited = f64::from(value);
@@ -1008,45 +1041,16 @@ fn text_section(
 
     subheading(ui, crate::icons::Icon::CaseSensitive, "Character");
 
-    if let Some(family) = family_picker(ui, state, shown.family.as_deref(), &missing) {
-        set_character(
-            state,
-            story,
-            target.clone(),
-            CharacterFormat {
-                family: Some(family),
-                ..CharacterFormat::default()
-            },
-        );
-    }
-
-    if let Some(size) = optional_number(ui, "Size", shown.size, 0.25, 1.0..=1440.0, " pt") {
-        set_character(
-            state,
-            story,
-            target.clone(),
-            CharacterFormat {
-                size: Some(size),
-                ..CharacterFormat::default()
-            },
-        );
-    }
-
-    // Leading as a multiple of the size rather than in points. A multiple
-    // survives a size change, which is what a designer setting 1.2 means and
-    // what points would silently break.
-    if let Some(line_height) =
-        optional_number(ui, "Leading", shown.line_height, 0.01, 0.5..=4.0, "×")
-    {
-        set_character(
-            state,
-            story,
-            target.clone(),
-            CharacterFormat {
-                line_height: Some(line_height),
-                ..CharacterFormat::default()
-            },
-        );
+    // Family, size and leading are **not** here. They are the three a person
+    // changes while typing, so they live in the control bar, and a control
+    // that appears in two places is two places to read a different answer
+    // from. What is left is what the bar has no room for.
+    //
+    // The families a story asks for and the system does not have are still
+    // reported here, because that is a fault to be seen rather than a control
+    // to be used.
+    if !missing.is_empty() {
+        ui.colored_label(Theme::ERROR, format!("Missing: {}", missing.join(", ")));
     }
 
     // Tracking in thousandths of an em, the unit every type specimen uses.
@@ -1376,8 +1380,7 @@ fn family_picker(
     missing: &[String],
 ) -> Option<String> {
     let mut chosen = None;
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, "Family");
+    field(ui, "Family", |ui| {
         let label = shown.unwrap_or("Mixed");
         egui::ComboBox::from_id_salt("family")
             .selected_text(label)
@@ -1585,23 +1588,20 @@ fn unit_name(unit: Unit) -> &'static str {
 /// and converts at the edge, which is the only place a conversion belongs.
 fn measure(ui: &mut Ui, label: &str, points: &mut f64, unit: Unit) -> bool {
     let mut shown = unit.from_points(*points);
-    let changed = ui
-        .horizontal(|ui| {
-            ui.colored_label(Theme::TEXT_MUTED, label);
-            ui.add(
-                egui::DragValue::new(&mut shown)
-                    .speed(0.25)
-                    // Typing `12mm` into a field showing points converts it.
-                    // This is D5: a unit is parsed, never moded, so the same
-                    // keystrokes never mean two different things.
-                    .custom_formatter(move |v, _| format!("{v:.2} {}", unit.suffix()))
-                    .custom_parser(move |text| {
-                        Unit::parse_to_points(text, unit).map(|p| unit.from_points(p))
-                    }),
-            )
-            .changed()
-        })
-        .inner;
+    let changed = field(ui, label, |ui| {
+        ui.add(
+            egui::DragValue::new(&mut shown)
+                .speed(0.25)
+                // Typing `12mm` into a field showing points converts it.
+                // This is D5: a unit is parsed, never moded, so the same
+                // keystrokes never mean two different things.
+                .custom_formatter(move |v, _| format!("{v:.2} {}", unit.suffix()))
+                .custom_parser(move |text| {
+                    Unit::parse_to_points(text, unit).map(|p| unit.from_points(p))
+                }),
+        )
+        .changed()
+    });
     if changed {
         *points = unit.to_points(shown);
     }

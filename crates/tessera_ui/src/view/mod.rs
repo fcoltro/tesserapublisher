@@ -59,14 +59,17 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // panel you cannot see should still be somewhere you can find.
     if state.rail_open {
         Panel::right("rail")
-            .default_size(268.0)
-            .min_size(210.0)
+            .default_size(292.0)
+            .min_size(232.0)
             .show(ui, |ui| rail::show(ui, state));
+    } else {
+        // The rail *collapsed*, not a second thing beside it. Showing both at
+        // once put a column of icons hard against the rail's own scrollbar.
+        Panel::right("rail-strip")
+            .exact_size(rail::STRIP)
+            .resizable(false)
+            .show(ui, |ui| rail::strip(ui, state));
     }
-    Panel::right("rail-strip")
-        .exact_size(rail::STRIP)
-        .resizable(false)
-        .show(ui, |ui| rail::strip(ui, state));
 
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
