@@ -693,25 +693,12 @@ impl Document {
             bounds: DEFAULT_PAGE,
         });
 
-        let joins_the_last = self.setup.facing_pages
-            && self.spread_order.len() > 1
-            && self
-                .spread_order
-                .last()
-                .is_some_and(|s| self.pages_of(*s).len() < 2);
-
-        if joins_the_last
-            && let Some(last) = self.spread_order.last().copied()
-            && let Some(spread) = self.spreads.get_mut(last)
-        {
-            spread.pages.push(page);
-        } else {
-            let spread = self.spreads.insert(Spread {
-                pages: vec![page],
-                guides: Vec::new(),
-            });
-            self.spread_order.push(spread);
-        }
+        // Appended to the sequence, then the sequence decides the spreads.
+        // Doing it the other way round — reasoning about whether the last
+        // spread has room — is how the two came to disagree.
+        let mut order: Vec<PageId> = self.page_ids().collect();
+        order.push(page);
+        self.repack_spreads(&order);
 
         self.reflow_spreads();
         page
@@ -735,18 +722,11 @@ impl Document {
         }
         self.pages.remove(id);
 
-        // And the spread, if that was the last page on it. A spread with no
-        // pages would still take up room in the flow.
-        for spread in self.spread_order.clone() {
-            if let Some(s) = self.spreads.get_mut(spread) {
-                s.pages.retain(|p| *p != id);
-            }
-        }
-        self.spread_order.retain(|s| {
-            self.spreads
-                .get(*s)
-                .is_some_and(|spread| !spread.pages.is_empty())
-        });
+        // The sequence without it, then repacked: taking page two out of
+        // 1 | 2-3 | 4-5 has to give 1 | 3-4 | 5, not 1 | 3 | 4-5, or every
+        // page after the hole is on the wrong side of the fold.
+        let order: Vec<PageId> = self.page_ids().filter(|p| *p != id).collect();
+        self.repack_spreads(&order);
 
         self.reflow_spreads();
         true
@@ -858,50 +838,86 @@ impl Document {
         Some(self.frames.insert(frame))
     }
 
-    /// Move a page to another slot, in this spread or another.
+    /// Move a page to another place in the reading order.
     ///
-    /// `at` is a position among the destination spread's pages; past the end
-    /// means last. Spreads are **not** repacked afterwards, so a spread may end
-    /// up holding one page or three: that is the island spread InDesign also
-    /// allows, and `reflow_spreads` and `spread_area` already work from the
-    /// count rather than assuming two. Repacking would also scramble guides,
-    /// which belong to a spread rather than to a page.
+    /// `to` is an index among the pages, not among the spreads: a document is
+    /// a sequence of pages, and which spread a page sits on is a consequence
+    /// of where it falls in that sequence rather than a fact about the page.
     ///
-    /// A spread left with no pages is dropped — an empty one would still take
-    /// up room in the flow.
-    pub fn move_page(&mut self, page: PageId, to: SpreadId, at: usize) -> bool {
-        if !self.pages.contains_key(page) || !self.spreads.contains_key(to) {
+    /// Spreads are **repacked** afterwards. The first draft of this did not,
+    /// on the reasoning that an island spread is something InDesign allows —
+    /// and it produced a spread of two pages whose first page was
+    /// odd-numbered, which is a contradiction: odd means recto means the
+    /// right-hand column, and two pages need both columns. Both were drawn on
+    /// the right, the second fell outside the sheet, and the empty left column
+    /// could not be dropped onto. A rule derived from the reading order has to
+    /// be *kept* consistent with the reading order, not merely computed from
+    /// it once.
+    pub fn move_page(&mut self, page: PageId, to: usize) -> bool {
+        if !self.pages.contains_key(page) {
             return false;
         }
-        let Some(from) = self.spread_of(page) else {
+
+        let mut order: Vec<PageId> = self.page_ids().collect();
+        let Some(was) = order.iter().position(|p| *p == page) else {
             return false;
         };
-
-        let was = self
-            .spreads
-            .get(from)
-            .and_then(|s| s.pages.iter().position(|p| *p == page));
-        if from == to && was == Some(at.min(self.pages_of(to).len().saturating_sub(1))) {
+        let to = to.min(order.len().saturating_sub(1));
+        if was == to {
             return false;
         }
 
-        if let Some(spread) = self.spreads.get_mut(from) {
-            spread.pages.retain(|p| *p != page);
-        }
-        if let Some(spread) = self.spreads.get_mut(to) {
-            let at = at.min(spread.pages.len());
-            spread.pages.insert(at, page);
-        }
-
-        self.spread_order.retain(|s| {
-            self.spreads
-                .get(*s)
-                .is_some_and(|spread| !spread.pages.is_empty())
-        });
-        self.spreads.retain(|_, spread| !spread.pages.is_empty());
-
+        order.remove(was);
+        order.insert(to, page);
+        self.repack_spreads(&order);
         self.reflow_spreads();
         true
+    }
+
+    /// Lay a sequence of pages out into spreads.
+    ///
+    /// Facing pages read 1, 2-3, 4-5: page one is a recto and stands alone,
+    /// and the rest pair up. Pages that do not face get one spread each.
+    ///
+    /// Existing spread objects are **reused in order** rather than rebuilt, so
+    /// guides — which belong to a spread rather than to a page — stay on the
+    /// spread they were dragged onto instead of following whichever page
+    /// happens to land there next.
+    fn repack_spreads(&mut self, order: &[PageId]) {
+        let mut groups: Vec<Vec<PageId>> = Vec::new();
+        let mut rest = order;
+
+        if self.setup.facing_pages && !rest.is_empty() {
+            groups.push(vec![rest[0]]);
+            rest = &rest[1..];
+        }
+        let per = if self.setup.facing_pages { 2 } else { 1 };
+        for chunk in rest.chunks(per) {
+            groups.push(chunk.to_vec());
+        }
+
+        let existing = self.spread_order.clone();
+        let mut kept = Vec::with_capacity(groups.len());
+
+        for (index, pages) in groups.into_iter().enumerate() {
+            let id = match existing.get(index) {
+                Some(id) => *id,
+                None => self.spreads.insert(Spread {
+                    pages: Vec::new(),
+                    guides: Vec::new(),
+                }),
+            };
+            if let Some(spread) = self.spreads.get_mut(id) {
+                spread.pages = pages;
+            }
+            kept.push(id);
+        }
+
+        // Any spread past the end has no pages left to hold.
+        for id in existing.into_iter().skip(kept.len()) {
+            self.spreads.remove(id);
+        }
+        self.spread_order = kept;
     }
 
     /// Move a spread to another place in the reading order.
@@ -3668,61 +3684,155 @@ mod tests {
 
     // --- moving one page ----------------------------------------------------
 
-    #[test]
-    fn a_page_can_be_moved_within_its_own_spread() {
-        // Which is what turning a spread round means, and what the panel could
-        // not do at all.
-        let mut doc = Document::new();
-        doc.add_page();
-        doc.add_page();
-        let spread = doc.spread_order[1];
-        let pages = doc.pages_of(spread);
-        assert_eq!(pages.len(), 2);
+    // --- the sequence decides the spreads -----------------------------------
 
-        assert!(doc.move_page(pages[1], spread, 0));
-
-        assert_eq!(doc.pages_of(spread), vec![pages[1], pages[0]]);
+    /// "1 | 2-3 | 4-5", as the spreads currently stand.
+    fn pagination(doc: &Document) -> String {
+        let all: Vec<_> = doc.page_ids().collect();
+        let number = |p: &PageId| all.iter().position(|x| x == p).map_or(0, |i| i + 1);
+        doc.spread_order
+            .iter()
+            .map(|s| {
+                doc.pages_of(*s)
+                    .iter()
+                    .map(|p| number(p).to_string())
+                    .collect::<Vec<_>>()
+                    .join("-")
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
     }
 
     #[test]
-    fn a_page_can_be_moved_to_another_spread() {
+    fn facing_pages_pack_one_then_pairs() {
         let mut doc = Document::new();
-        doc.add_page();
-        doc.add_page();
-        let (first, second) = (doc.spread_order[0], doc.spread_order[1]);
-        let travelling = doc.pages_of(second)[1];
-
-        assert!(doc.move_page(travelling, first, 0));
-
-        assert!(doc.pages_of(first).contains(&travelling));
-        assert!(!doc.pages_of(second).contains(&travelling));
-        assert_eq!(doc.spread_of(travelling), Some(first));
+        for _ in 0..5 {
+            doc.add_page();
+        }
+        assert_eq!(pagination(&doc), "1 | 2-3 | 4-5 | 6");
     }
 
     #[test]
-    fn a_spread_emptied_by_a_move_goes() {
-        // An empty spread would still take up room in the flow.
+    fn pages_that_do_not_face_get_one_spread_each() {
         let mut doc = Document::new();
+        doc.setup.facing_pages = false;
         doc.add_page();
-        let (first, second) = (doc.spread_order[0], doc.spread_order[1]);
-        let only = doc.pages_of(second)[0];
+        doc.add_page();
+        assert_eq!(pagination(&doc), "1 | 2 | 3");
+    }
 
-        assert!(doc.move_page(only, first, 1));
+    #[test]
+    fn a_moved_page_lands_where_it_was_dropped() {
+        let mut doc = Document::new();
+        for _ in 0..3 {
+            doc.add_page();
+        }
+        let pages: Vec<_> = doc.page_ids().collect();
+        let first = pages[0];
 
-        assert_eq!(doc.spread_order.len(), 1);
-        assert!(!doc.spreads.contains_key(second));
-        assert_eq!(doc.pages_of(first).len(), 2);
+        // Page one to the end.
+        assert!(doc.move_page(first, 3));
+
+        let after: Vec<_> = doc.page_ids().collect();
+        assert_eq!(after.iter().position(|p| *p == first), Some(3));
+    }
+
+    #[test]
+    fn moving_a_page_repacks_the_spreads_around_it() {
+        // Reported from real use: moving a page left a spread holding two
+        // pages whose first was odd-numbered — recto says right-hand column,
+        // two pages need both columns, so both drew on the right and the left
+        // column could not be dropped onto at all.
+        let mut doc = Document::new();
+        for _ in 0..4 {
+            doc.add_page();
+        }
+        assert_eq!(pagination(&doc), "1 | 2-3 | 4-5");
+
+        let last = doc.page_ids().last().expect("a page");
+        assert!(doc.move_page(last, 0));
+
+        assert_eq!(
+            pagination(&doc),
+            "1 | 2-3 | 4-5",
+            "the same shape, whatever moved through it"
+        );
+    }
+
+    #[test]
+    fn no_spread_ever_holds_two_pages_starting_on_a_recto() {
+        // The invariant the bug broke, checked over every move rather than at
+        // one place: a spread of two must begin on a verso.
+        let mut doc = Document::new();
+        for _ in 0..5 {
+            doc.add_page();
+        }
+
+        for from in 0..6 {
+            for to in 0..6 {
+                let mut doc = doc.clone();
+                let page = doc.page_ids().nth(from).expect("a page");
+                doc.move_page(page, to);
+
+                for spread in doc.spread_order.clone() {
+                    if doc.pages_of(spread).len() > 1 {
+                        assert!(
+                            !doc.starts_on_a_recto(spread),
+                            "moving {from} to {to} left {}",
+                            pagination(&doc)
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_page_sits_in_one_of_two_columns() {
+        // The other half of the same invariant: a page drawn in column two or
+        // beyond has fallen off the sheet, which is what the empty left-hand
+        // gap actually was.
+        let mut doc = Document::new();
+        for _ in 0..5 {
+            doc.add_page();
+        }
+        let width = doc.first_page_bounds().width;
+
+        let page = doc.page_ids().nth(4).expect("a page");
+        doc.move_page(page, 0);
+
+        for id in doc.page_ids() {
+            let column = (doc.pages[id].bounds.x / width).round() as i32;
+            assert!(
+                (0..=1).contains(&column),
+                "page in column {column}, which is off the sheet"
+            );
+        }
+    }
+
+    #[test]
+    fn removing_a_page_repacks_what_is_left() {
+        // Taking page two out of 1 | 2-3 | 4-5 has to give 1 | 3-4 | 5, not
+        // 1 | 3 | 4-5 — otherwise every page after the hole changes sides.
+        let mut doc = Document::new();
+        for _ in 0..4 {
+            doc.add_page();
+        }
+        let second = doc.page_ids().nth(1).expect("a second page");
+
+        doc.remove_page(second);
+
+        assert_eq!(pagination(&doc), "1 | 2-3 | 4");
     }
 
     #[test]
     fn moving_a_page_where_it_already_is_changes_nothing() {
         let mut doc = Document::new();
         doc.add_page();
-        let spread = doc.spread_order[0];
-        let page = doc.pages_of(spread)[0];
+        let page = doc.page_ids().next().expect("a page");
         let before = doc.revision();
 
-        assert!(!doc.move_page(page, spread, 0));
+        assert!(!doc.move_page(page, 0));
 
         assert_eq!(doc.revision(), before);
     }
@@ -3732,8 +3842,7 @@ mod tests {
         let mut doc = Document::new();
         doc.add_page();
         doc.add_page();
-        let second = doc.spread_order[1];
-        let travelling = doc.pages_of(second)[1];
+        let travelling = doc.page_ids().nth(2).expect("a third page");
         let frame = frame_on(&mut doc, travelling);
         let offset = {
             let page = doc.pages[travelling].bounds;
@@ -3741,7 +3850,7 @@ mod tests {
             (on.x - page.x, on.y - page.y)
         };
 
-        assert!(doc.move_page(travelling, doc.spread_order[0], 0));
+        assert!(doc.move_page(travelling, 0));
 
         assert_eq!(doc.page_of_frame(frame), Some(travelling));
         let page = doc.pages[travelling].bounds;
@@ -3750,5 +3859,31 @@ mod tests {
             ((on.x - page.x) - offset.0).abs() < 1e-9 && ((on.y - page.y) - offset.1).abs() < 1e-9,
             "in the same place on the page it was on"
         );
+    }
+
+    #[test]
+    fn guides_stay_on_the_spread_they_were_dragged_onto() {
+        // Guides belong to a spread, and repacking reuses spread objects in
+        // order rather than rebuilding them, so a guide does not follow
+        // whichever page happens to land there next.
+        let mut doc = Document::new();
+        for _ in 0..3 {
+            doc.add_page();
+        }
+        let second = doc.spread_order[1];
+        doc.add_guide(
+            second,
+            Guide {
+                axis: Axis::Vertical,
+                position: 100.0,
+                locked: false,
+            },
+        );
+
+        let last = doc.page_ids().last().expect("a page");
+        doc.move_page(last, 0);
+
+        assert_eq!(doc.spread_order.get(1).copied(), Some(second));
+        assert_eq!(doc.guides_of(second).len(), 1);
     }
 }

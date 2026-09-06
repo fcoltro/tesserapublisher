@@ -227,11 +227,13 @@ pub enum Command {
         to: usize,
     },
 
-    /// Move a page to a slot in a spread — its own, or another.
+    /// Move a page to another place in the reading order.
+    ///
+    /// `to` counts pages, not spreads: which spread a page sits on follows
+    /// from where it falls in the sequence.
     MovePage {
         id: PageId,
-        to: tessera_document::ids::SpreadId,
-        at: usize,
+        to: usize,
     },
 
     /// Add a layer above the others and make it active.
@@ -940,8 +942,8 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             state.active_mut().document_mut().move_spread(from, to);
         }
 
-        Command::MovePage { id, to, at } => {
-            state.active_mut().document_mut().move_page(id, to, at);
+        Command::MovePage { id, to } => {
+            state.active_mut().document_mut().move_page(id, to);
         }
 
         Command::AddLayer => {

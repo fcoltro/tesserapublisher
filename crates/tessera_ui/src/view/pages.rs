@@ -63,21 +63,12 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
     state.pages_window.open = open;
 }
 
-/// Where a dragged page would go if it were dropped now.
-#[derive(Clone, Copy, PartialEq)]
-struct Landing {
-    spread: SpreadId,
-    at: usize,
-    /// Where to draw the line saying so.
-    marker: egui::Rect,
-}
-
 fn body(ui: &mut Ui, state: &mut TesseraApp) {
-    let doc_spreads = state.active().document().spread_order.clone();
+    let spreads = state.active().document().spread_order.clone();
     let current = state
         .active()
         .current_spread
-        .min(doc_spreads.len().saturating_sub(1));
+        .min(spreads.len().saturating_sub(1));
 
     let facing = state.active().document().setup.facing_pages;
     let columns = if facing { 2.0 } else { 1.0 };
@@ -87,23 +78,29 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
     // renumber what is still being drawn.
     let mut turn_to: Option<usize> = None;
     let mut dragging: Option<PageId> = None;
-    let mut landing: Option<Landing> = None;
     let mut dropped = false;
 
-    let pointer = ui.ctx().pointer_interact_pos();
+    // Every page slot in reading order, which is what a drop position counts.
+    let mut slots: Vec<egui::Rect> = Vec::new();
 
-    for (index, spread) in doc_spreads.iter().enumerate() {
+    for (index, spread) in spreads.iter().enumerate() {
         let (rect, _) =
             ui.allocate_exact_size(egui::vec2(slot.x, slot.y + LABEL), egui::Sense::hover());
         let sheet = egui::Rect::from_min_size(rect.min, slot);
 
-        let pages = state.active().document().pages_of(*spread);
-        for (column, page) in pages.iter().enumerate() {
+        for (column, page) in state
+            .active()
+            .document()
+            .pages_of(*spread)
+            .iter()
+            .enumerate()
+        {
             let side = column_of(state, *spread, column, facing);
             let at = egui::Rect::from_min_size(
                 sheet.min + egui::vec2(side * (PAGE + FOLD), 0.0),
                 egui::vec2(PAGE, slot.y),
             );
+            slots.push(at);
 
             let response = ui.interact(
                 at,
@@ -125,28 +122,6 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
             }
         }
 
-        // Where a drop would land, worked out from the pointer rather than
-        // from a drop zone: the slots are a known grid, so this is arithmetic,
-        // and arithmetic cannot disagree with what was painted.
-        if let Some(p) = pointer
-            && dragging.is_some()
-            && sheet.expand2(egui::vec2(0.0, LABEL / 2.0)).contains(p)
-        {
-            let at = ((p.x - sheet.left()) / (PAGE + FOLD)).round().max(0.0) as usize;
-            let at = at.min(pages.len());
-            landing = Some(Landing {
-                spread: *spread,
-                at,
-                marker: egui::Rect::from_min_size(
-                    egui::pos2(
-                        sheet.left() + at as f32 * (PAGE + FOLD) - MARKER / 2.0,
-                        sheet.top(),
-                    ),
-                    egui::vec2(MARKER, slot.y),
-                ),
-            });
-        }
-
         // The page numbers this spread holds, under it.
         let numbers = page_numbers(state, *spread).unwrap_or_else(|| format!("{}", index + 1));
         ui.painter().text(
@@ -162,12 +137,16 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
         );
     }
 
+    let landing = dragging
+        .and(ui.ctx().pointer_interact_pos())
+        .map(|p| landing(p, &slots));
+
     // The line saying where it would land. Without one, a drag is a gesture
     // with no target and the page simply appears somewhere afterwards.
-    if let Some(landing) = landing
-        && dragging.is_some()
+    if let Some(at) = landing
+        && let Some(marker) = marker(at, &slots)
     {
-        ui.painter().rect_filled(landing.marker, 1.0, Theme::ACCENT);
+        ui.painter().rect_filled(marker, 1.0, Theme::ACCENT);
     }
 
     if let Some(at) = turn_to {
@@ -176,17 +155,40 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
     }
     if dropped
         && let Some(id) = dragging
-        && let Some(landing) = landing
+        && let Some(to) = landing
     {
-        apply(
-            state,
-            Command::MovePage {
-                id,
-                to: landing.spread,
-                at: landing.at,
-            },
-        );
+        apply(state, Command::MovePage { id, to });
     }
+}
+
+/// Which place in the reading order a drop at `p` means.
+///
+/// Counted rather than hit-tested: a page goes *after* every slot the pointer
+/// is past, where past means a row below, or the same row and beyond the
+/// middle of the page. Dropping onto the right half of page four means five.
+fn landing(p: egui::Pos2, slots: &[egui::Rect]) -> usize {
+    slots
+        .iter()
+        .filter(|r| p.y > r.bottom() || (p.y >= r.top() && p.x > r.center().x))
+        .count()
+}
+
+/// Where to draw the line for a drop at `at`.
+///
+/// On the leading edge of the slot it would take, or the trailing edge of the
+/// last one when it goes at the end.
+fn marker(at: usize, slots: &[egui::Rect]) -> Option<egui::Rect> {
+    let (slot, edge) = match slots.get(at) {
+        Some(slot) => (slot, slot.left()),
+        None => {
+            let slot = slots.last()?;
+            (slot, slot.right())
+        }
+    };
+    Some(egui::Rect::from_min_size(
+        egui::pos2(edge - MARKER / 2.0, slot.top()),
+        egui::vec2(MARKER, slot.height()),
+    ))
 }
 
 /// Which column of the slot this page is drawn in.
@@ -455,48 +457,113 @@ mod tests {
 
     // --- moving a page ------------------------------------------------------
 
+    // --- where a drop lands -------------------------------------------------
+
+    fn slot(x: f32, y: f32) -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(46.0, 60.0))
+    }
+
+    /// Two spreads: page one alone on the right, then two facing.
+    fn a_short_document() -> Vec<egui::Rect> {
+        vec![slot(48.0, 0.0), slot(0.0, 76.0), slot(48.0, 76.0)]
+    }
+
     #[test]
-    fn a_page_can_be_moved_within_its_spread() {
-        // What turning a spread round means, and what the panel could not do.
-        let mut state = TesseraApp::headless();
-        apply(&mut state, Command::AddPage);
-        apply(&mut state, Command::AddPage);
-        let spread = state.active().document().spread_order[1];
-        let pages = state.active().document().pages_of(spread);
+    fn dropping_on_the_left_half_of_a_page_goes_before_it() {
+        let slots = a_short_document();
+        assert_eq!(landing(egui::pos2(52.0, 30.0), &slots), 0);
+    }
 
-        apply(
-            &mut state,
-            Command::MovePage {
-                id: pages[1],
-                to: spread,
-                at: 0,
-            },
-        );
+    #[test]
+    fn dropping_on_the_right_half_of_a_page_goes_after_it() {
+        let slots = a_short_document();
+        assert_eq!(landing(egui::pos2(90.0, 30.0), &slots), 1);
+    }
 
+    #[test]
+    fn dropping_on_a_later_row_counts_every_page_above_it() {
+        let slots = a_short_document();
         assert_eq!(
-            state.active().document().pages_of(spread),
-            vec![pages[1], pages[0]]
+            landing(egui::pos2(4.0, 100.0), &slots),
+            1,
+            "before the second row's first page"
+        );
+        assert_eq!(
+            landing(egui::pos2(90.0, 100.0), &slots),
+            3,
+            "past both of them"
         );
     }
+
+    #[test]
+    fn dropping_below_everything_goes_last() {
+        let slots = a_short_document();
+        assert_eq!(landing(egui::pos2(20.0, 500.0), &slots), 3);
+    }
+
+    #[test]
+    fn the_marker_sits_on_the_leading_edge_of_the_slot_taken() {
+        let slots = a_short_document();
+        let at = marker(1, &slots).expect("a marker");
+        assert!((at.center().x - slots[1].left()).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_drop_at_the_end_marks_the_trailing_edge_of_the_last_slot() {
+        let slots = a_short_document();
+        let at = marker(3, &slots).expect("a marker");
+        assert!((at.center().x - slots[2].right()).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_marker_with_nowhere_to_go_is_no_marker() {
+        assert!(marker(0, &[]).is_none());
+    }
+
+    // --- moving a page ------------------------------------------------------
 
     #[test]
     fn moving_a_page_is_undoable() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddPage);
         apply(&mut state, Command::AddPage);
-        let spread = state.active().document().spread_order[1];
-        let before = state.active().document().pages_of(spread);
+        let before: Vec<_> = state.active().document().page_ids().collect();
 
         apply(
             &mut state,
             Command::MovePage {
-                id: before[1],
-                to: spread,
-                at: 0,
+                id: before[0],
+                to: 2,
             },
         );
-        apply(&mut state, Command::Undo);
+        let after: Vec<_> = state.active().document().page_ids().collect();
+        assert_ne!(after, before);
 
-        assert_eq!(state.active().document().pages_of(spread), before);
+        apply(&mut state, Command::Undo);
+        assert_eq!(
+            state.active().document().page_ids().collect::<Vec<_>>(),
+            before
+        );
+    }
+
+    #[test]
+    fn a_moved_page_never_leaves_a_spread_of_two_starting_on_a_recto() {
+        // The shape the panel could not recover from: both pages drawn in the
+        // right-hand column, and an empty left column that could not be
+        // dropped onto.
+        let mut state = TesseraApp::headless();
+        for _ in 0..4 {
+            apply(&mut state, Command::AddPage);
+        }
+        let last = state.active().document().page_ids().last().expect("a page");
+
+        apply(&mut state, Command::MovePage { id: last, to: 0 });
+
+        let doc = state.active().document();
+        let width = doc.first_page_bounds().width;
+        for page in doc.page_ids() {
+            let column = (doc.pages[page].bounds.x / width).round() as i32;
+            assert!((0..=1).contains(&column), "page off the sheet at {column}");
+        }
     }
 }
