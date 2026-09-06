@@ -87,6 +87,7 @@ pub enum Icon {
     // The fill and stroke proxy, and the status bar's zoom.
     Swap,
     NoFill,
+    Blend,
     ZoomIn,
     ZoomOut,
     ZoomFit,
@@ -111,6 +112,12 @@ impl Icon {
             Self::Ellipse => &["M22 12 A10 10 0 1 1 2 12 A10 10 0 1 1 22 12 Z"],
             // lucide: slash
             Self::Line => &["M22 2 2 22"],
+            // lucide: blend — two overlapping circles, which is compositing
+            // drawn rather than named.
+            Self::Blend => &[
+                "M16 9 A7 7 0 1 1 2 9 A7 7 0 1 1 16 9 Z",
+                "M22 15 A7 7 0 1 1 8 15 A7 7 0 1 1 22 15 Z",
+            ],
             // lucide: pen-tool
             Self::Pen => &[
                 "M15.707 21.293a1 1 0 0 1-1.414 0l-1.586-1.586a1 1 0 0 1 0-1.414l5.586-5.586a1 1 0 0 1 1.414 0l1.586 1.586a1 1 0 0 1 0 1.414z",
@@ -430,6 +437,7 @@ impl Icon {
             | Self::RotateCcw
             | Self::Swap
             | Self::NoFill
+            | Self::Blend
             | Self::ZoomIn
             | Self::ZoomOut
             | Self::ZoomFit
@@ -600,7 +608,7 @@ pub fn paint_rotated(
 /// icon rather than returning nothing, so the cost of forgetting is a slower
 /// first draw instead of an invisible button; this list is the fast path, not
 /// the only one.
-pub const ALL: [Icon; 48] = [
+pub const ALL: [Icon; 49] = [
     Icon::Select,
     Icon::Rectangle,
     Icon::Ellipse,
@@ -646,6 +654,7 @@ pub const ALL: [Icon; 48] = [
     Icon::Unlock,
     Icon::Swap,
     Icon::NoFill,
+    Icon::Blend,
     Icon::ZoomIn,
     Icon::ZoomOut,
     Icon::ZoomFit,
@@ -794,7 +803,7 @@ mod tests {
         // fails this rather than shipping an invisible button.
         assert_eq!(
             ALL.len(),
-            48,
+            49,
             "an icon was added to the enum without being added to ALL"
         );
     }

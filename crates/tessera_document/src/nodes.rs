@@ -180,6 +180,15 @@ pub struct Frame {
     /// telling each of them about each object.
     #[serde(default)]
     pub wrap: TextWrap,
+    /// How the whole object composites onto what is behind it.
+    ///
+    /// On the object, not on its fill. An object at half opacity is composited
+    /// once as a whole — fill, stroke and artwork together — which is what a
+    /// person means by "make this 50%"; a fill at half alpha leaves the stroke
+    /// opaque and shows it through its own fill. Both are worth having, and
+    /// they are different facts about different things.
+    #[serde(default)]
+    pub blend: crate::blending::Blending,
 }
 
 impl Frame {

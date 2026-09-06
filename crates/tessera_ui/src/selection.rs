@@ -122,6 +122,7 @@ mod tests {
             fill: tessera_color::Color::BLACK,
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         };
         let a = doc.add_frame(layer, frame());
         let b = doc.add_frame(layer, frame());

@@ -127,6 +127,7 @@ mod tests {
                 fill: Color::BLACK,
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
+                blend: tessera_document::blending::Blending::PLAIN,
             },
         );
         (doc, id)

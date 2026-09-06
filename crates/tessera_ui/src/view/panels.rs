@@ -70,6 +70,7 @@ pub enum Section {
     Transform,
     Fill,
     Stroke,
+    Effects,
     Text,
     Frame,
     Graphic,
@@ -78,10 +79,14 @@ pub enum Section {
 
 impl Section {
     /// Display order. Universal sections first; see the type's note.
-    pub const ALL: [Section; 7] = [
+    pub const ALL: [Section; 8] = [
         Section::Transform,
         Section::Fill,
         Section::Stroke,
+        // Every object composites, so this belongs with the always-present
+        // sections — and it reads under Fill and Stroke because it is about
+        // what happens to them once they are painted.
+        Section::Effects,
         // Wrap applies to every object, so it belongs with the sections that
         // are always there. The ones that can be absent come last, or hiding
         // one would move a section above it.
@@ -100,6 +105,7 @@ impl Section {
             Section::Frame => "Frame",
             Section::Wrap => "Text wrap",
             Section::Graphic => "Artwork",
+            Section::Effects => "Effects",
         }
     }
 
@@ -115,6 +121,7 @@ impl Section {
             Section::Frame => Icon::TextFrame,
             Section::Wrap => Icon::AlignJustify,
             Section::Graphic => Icon::Rectangle,
+            Section::Effects => Icon::Blend,
         }
     }
 
@@ -124,7 +131,7 @@ impl Section {
         match self {
             // Every frame has a place, a fill and a stroke — even when the
             // stroke is None, which is a value the section can set.
-            Section::Transform | Section::Fill | Section::Stroke => true,
+            Section::Transform | Section::Fill | Section::Stroke | Section::Effects => true,
             Section::Text => matches!(frame.kind, FrameKind::Text { .. }),
             Section::Frame => matches!(frame.kind, FrameKind::Group(_)),
             // Every kind of object. A picture is the thing most often
@@ -186,6 +193,7 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
                     Section::Frame => frame_section(ui, &frame),
                     Section::Wrap => wrap_controls(ui, state, id, &frame),
                     Section::Graphic => graphic_section(ui, state, id, &frame),
+                    Section::Effects => effects_section(ui, state, id, &frame),
                 });
         });
     }
@@ -974,6 +982,72 @@ fn graphic_section(
     });
     if ui.button("Fit frame to artwork").clicked() {
         apply(state, Command::FitFrameToArtwork { id });
+    }
+}
+
+/// Opacity and blend mode: what happens to the object's paint once it is
+/// painted.
+///
+/// **Not** in the Fill section, deliberately. A fill colour's alpha and an
+/// object's opacity look alike in a panel and are different facts — one makes
+/// the fill translucent and leaves the stroke solid, the other composites the
+/// whole object at once — and putting them side by side under one heading is
+/// how a person comes to believe they are the same control.
+fn effects_section(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::FrameId,
+    frame: &tessera_document::nodes::Frame,
+) {
+    use tessera_document::blending::BlendMode;
+
+    let mut blend = frame.blend;
+    let mut changed = false;
+
+    // Shown as a percentage, which is how a person says it; stored as the
+    // fraction, which is what every renderer wants. Converted here, once, at
+    // the edge.
+    let mut percent = blend.alpha() * 100.0;
+    changed |= field(ui, "Opacity", |ui| {
+        ui.add(
+            egui::Slider::new(&mut percent, 0.0..=100.0)
+                .suffix("%")
+                .fixed_decimals(0),
+        )
+        .changed()
+    });
+    if changed {
+        blend.opacity = percent / 100.0;
+    }
+
+    // A drop-down rather than a segmented row: four modes will not fit across
+    // a 292-point panel as words, and abbreviating them would make the reader
+    // learn a code for something they use rarely.
+    let before = blend.mode;
+    field(ui, "Blend", |ui| {
+        egui::ComboBox::from_id_salt(("blend-mode", id))
+            .selected_text(blend.mode.label())
+            .width(ui.available_width())
+            .show_ui(ui, |ui| {
+                for mode in BlendMode::ALL {
+                    ui.selectable_value(&mut blend.mode, mode, mode.label());
+                }
+            });
+    });
+    changed |= blend.mode != before;
+
+    // What an object at no opacity actually means, said plainly. It is still
+    // selectable and still in the layers panel, and somebody who cannot see it
+    // will otherwise think it has gone.
+    if blend.is_invisible() {
+        ui.colored_label(
+            Theme::TEXT_MUTED,
+            "Invisible. Still selectable, and still on its layer.",
+        );
+    }
+
+    if changed && blend != frame.blend {
+        apply(state, Command::SetBlending { id, blend });
     }
 }
 
@@ -2644,6 +2718,7 @@ mod tests {
             fill: Color::BLACK,
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         }
     }
 

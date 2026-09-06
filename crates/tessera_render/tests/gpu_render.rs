@@ -64,6 +64,7 @@ fn rect_doc(bounds: DocRect, fill: Color) -> ResolvedDocument {
             bounds,
             transform: Transform::IDENTITY,
             spread_area: None,
+            blend: tessera_document::blending::Blending::PLAIN,
             kind: ResolvedKind::Rectangle { fill, stroke: None },
         }],
         pages: vec![resolved_page()],
@@ -199,6 +200,7 @@ fn text_puts_dark_pixels_on_the_page() {
                 },
                 transform: Transform::IDENTITY,
                 spread_area: None,
+                blend: tessera_document::blending::Blending::PLAIN,
                 kind: ResolvedKind::Text {
                     shaped,
                     color: Color::BLACK,

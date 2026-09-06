@@ -130,6 +130,7 @@ mod tests {
             fill: tessera_color::Color::BLACK,
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
+            blend: crate::blending::Blending::PLAIN,
         }
     }
 

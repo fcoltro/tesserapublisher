@@ -962,10 +962,38 @@ full argument, with sources, is in `docs/superpowers/specs/`.
   - `resolve` flattens every swatch, so the renderer and the PDF writer never
     meet a name and stay ignorant of the document.
 - [ ] Document output intent with on-screen soft proofing.
-- [ ] Linear and radial gradients; drop shadow; multiply, screen and overlay
-  blending.
-- [ ] **Object opacity** as a field distinct from blend mode, and distinct
+- [~] Linear and radial gradients; drop shadow; multiply, screen and overlay
+  blending — **the blending is done; the gradients and the shadow are not.**
+  - Only the **separable** modes, deliberately. A non-separable mode cannot be
+    reproduced identically on screen and in the PDF, and a mode that looks one
+    way in Tessera and another in the file is worse than no mode at all — so
+    neither converter has a catch-all arm quietly exporting something as
+    Normal.
+- [x] **Object opacity** as a field distinct from blend mode, and distinct
   again from a fill colour's alpha.
+  - The distinction is the whole point. A fill at half alpha leaves the stroke
+    solid, so the stroke shows through its own fill; an object at half opacity
+    is composited **once, as a whole** — fill, stroke, artwork and glyphs
+    painted into one layer, and the result made translucent. Both are worth
+    having: a watermark wants the second, a tinted panel behind opaque type
+    wants the first.
+  - Opacity and mode are **one command**, so undoing "make this a 40% multiply"
+    is one step rather than two.
+  - A composite group is opened **only when the object needs one**. Nearly
+    every object is plain, and a layer per object would charge every one of
+    them for a feature none of them uses; a test pins that an opaque rectangle
+    opens no layer.
+  - An object at no opacity paints nothing and is not written to the PDF — but
+    stays selectable and stays on its layer. This is about ink, not existence,
+    and the panel says so where a person can read it.
+  - Opacity is clamped **on the way out**, not on the way in, so a document
+    carrying a stray value draws sensibly rather than being quietly rewritten.
+  - **A stated shortfall in the PDF.** `/ca` and `/CA` are per-paint alphas, so
+    a translucent object with both a fill and a stroke has each faded
+    separately in the file and its stroke shows faintly through its own fill,
+    where the screen composites the object as one group. Closing it needs a
+    transparency-group form XObject per object, which belongs with the rest of
+    export quality in milestone 6.
 - [x] **A graphic frame is not a shape.** `FrameKind::Graphic` is a container
   with contents of its own, and the contents have a transform independent of
   the frame's: moving the frame carries the picture, and moving the picture

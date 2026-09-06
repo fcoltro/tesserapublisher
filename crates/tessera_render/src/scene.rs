@@ -280,11 +280,36 @@ fn build_inner(
             }
         }
 
+        // An object at no opacity paints nothing. It is still selectable and
+        // still in the layers panel — this is about ink, not about existence.
+        if item.blend.is_invisible() {
+            continue;
+        }
+
         let rect: Rect = item.bounds.to_kurbo();
         // The frame's own space, then the camera. `bounds` is expressed in
         // that own space, so the item transform has to be applied to it
         // before the view is.
         let transform = transform * item.transform.to_affine();
+
+        // **The object's own composite group**, and the reason object opacity
+        // is not a fill colour's alpha: everything belonging to the object —
+        // fill, stroke, artwork, glyphs — is painted into this layer and the
+        // *result* is made translucent and mixed. Setting an alpha on each
+        // paint instead would show the object's stroke through its own fill.
+        //
+        // Only when it needs one. Nearly every object is plain, and a layer per
+        // object would cost a composite for each of them.
+        let composited = !item.blend.is_plain();
+        if composited {
+            scene.push_layer(
+                Fill::NonZero,
+                mix_of(item.blend.mode),
+                item.blend.alpha(),
+                transform,
+                &paint_extent(&item.kind, rect),
+            );
+        }
 
         // The artwork, when there is any. Whether the link is missing decides
         // the *placeholder's* colour, which the match below draws; here there
@@ -340,6 +365,9 @@ fn build_inner(
                         None,
                         &stroked_rect(rect, s.offset()),
                     );
+                }
+                if composited {
+                    scene.pop_layer();
                 }
                 continue;
             }
@@ -432,6 +460,10 @@ fn build_inner(
                 draw_text(&mut scene, transform, item.bounds, shaped, color);
             }
         }
+
+        if composited {
+            scene.pop_layer();
+        }
     }
 
     if in_spread {
@@ -442,6 +474,41 @@ fn build_inner(
     }
 
     scene
+}
+
+/// The mix vello paints an object's composite group with.
+///
+/// Only the separable modes milestone 5 promises. A mode that cannot be
+/// reproduced identically on screen and in the PDF is worse than no mode, so
+/// there is deliberately no catch-all arm converting something else to Normal.
+fn mix_of(mode: tessera_document::blending::BlendMode) -> vello::peniko::Mix {
+    use tessera_document::blending::BlendMode;
+    use vello::peniko::Mix;
+    match mode {
+        BlendMode::Normal => Mix::Normal,
+        BlendMode::Multiply => Mix::Multiply,
+        BlendMode::Screen => Mix::Screen,
+        BlendMode::Overlay => Mix::Overlay,
+    }
+}
+
+/// A rectangle certainly containing everything the object paints.
+///
+/// A composite group needs a shape, and the honest one is "at least the ink".
+/// Deliberately an over-approximation: a clip larger than the ink changes
+/// nothing, while one a hair too small cuts the outside half of a stroke off
+/// and would look like a rendering bug rather than like an opacity setting.
+fn paint_extent(kind: &ResolvedKind, rect: Rect) -> Rect {
+    let reach = match kind {
+        ResolvedKind::Rectangle { stroke, .. }
+        | ResolvedKind::Ellipse { stroke, .. }
+        | ResolvedKind::Path { stroke, .. }
+        | ResolvedKind::Graphic { stroke, .. } => stroke.as_ref().map(|s| s.width).unwrap_or(0.0),
+        // Text is clipped to its frame before it is composited, so the frame
+        // is already the whole of it.
+        ResolvedKind::Text { .. } => 0.0,
+    };
+    rect.inflate(reach, reach)
 }
 
 fn draw_text(
@@ -561,6 +628,129 @@ mod tests {
     }
 
     #[test]
+    fn a_translucent_object_gets_its_own_composite_group() {
+        // The reason object opacity is not a fill colour's alpha: everything
+        // belonging to the object is painted into one layer and the *result* is
+        // made translucent, so the object's stroke does not show through its
+        // own fill.
+        use tessera_document::blending::Blending;
+
+        let plain = one_item(
+            ResolvedKind::Rectangle {
+                fill: Color::BLACK,
+                stroke: None,
+            },
+            DocRect {
+                x: 10.0,
+                y: 10.0,
+                width: 50.0,
+                height: 50.0,
+            },
+        );
+        let mut faded = plain.clone();
+        faded.items[0].blend = Blending {
+            opacity: 0.5,
+            mode: tessera_document::blending::BlendMode::Normal,
+        };
+
+        let flat = build_scene(&plain, ViewTransform::default());
+        let composited = build_scene(&faded, ViewTransform::default());
+        assert!(
+            composited.encoding().n_clips > flat.encoding().n_clips,
+            "no composite group reached the encoding"
+        );
+    }
+
+    #[test]
+    fn a_blend_mode_at_full_opacity_still_composites() {
+        // A mode is a composite even when nothing is translucent, and treating
+        // "opacity is 1" as "nothing to do" would silently drop it.
+        use tessera_document::blending::{BlendMode, Blending};
+
+        let plain = one_item(
+            ResolvedKind::Rectangle {
+                fill: Color::BLACK,
+                stroke: None,
+            },
+            DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 20.0,
+            },
+        );
+        let mut multiplied = plain.clone();
+        multiplied.items[0].blend = Blending {
+            opacity: 1.0,
+            mode: BlendMode::Multiply,
+        };
+
+        assert!(
+            build_scene(&multiplied, ViewTransform::default())
+                .encoding()
+                .n_clips
+                > build_scene(&plain, ViewTransform::default())
+                    .encoding()
+                    .n_clips
+        );
+    }
+
+    #[test]
+    fn an_object_at_no_opacity_paints_nothing() {
+        use tessera_document::blending::{BlendMode, Blending};
+
+        let mut doc = one_item(
+            ResolvedKind::Rectangle {
+                fill: Color::BLACK,
+                stroke: None,
+            },
+            DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 50.0,
+                height: 50.0,
+            },
+        );
+        let with_it = build_scene(&doc, ViewTransform::default());
+        doc.items[0].blend = Blending {
+            opacity: 0.0,
+            mode: BlendMode::Normal,
+        };
+        let without = build_scene(&doc, ViewTransform::default());
+
+        assert!(
+            without.encoding().stream_offsets().path_data
+                < with_it.encoding().stream_offsets().path_data,
+            "an invisible object still put a path in the scene"
+        );
+    }
+
+    #[test]
+    fn a_plain_object_costs_no_composite_at_all() {
+        // Nearly every object is plain, so the cheap path has to stay cheap.
+        let empty = empty_scene();
+        let one = one_item(
+            ResolvedKind::Rectangle {
+                fill: Color::BLACK,
+                stroke: None,
+            },
+            DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 20.0,
+            },
+        );
+        assert_eq!(
+            build_scene(&one, ViewTransform::default())
+                .encoding()
+                .n_clips,
+            empty.encoding().n_clips,
+            "an opaque rectangle opened a layer it did not need"
+        );
+    }
+
+    #[test]
     fn a_clip_really_reaches_the_encoding() {
         // Preview must show the trim as it will print, not merely hide the
         // furniture around it — so the clip has to be in the scene, not just
@@ -676,6 +866,7 @@ mod tests {
                 frame: FrameId::default(),
                 transform: Transform::IDENTITY,
                 spread_area: None,
+                blend: tessera_document::blending::Blending::PLAIN,
                 bounds,
                 kind,
             }],

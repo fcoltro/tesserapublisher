@@ -2,7 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use pdf_writer::types::{LineCapStyle, LineJoinStyle};
+use pdf_writer::types::{BlendMode, LineCapStyle, LineJoinStyle};
+use pdf_writer::writers::ExtGraphicsState;
 use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref, Str};
 use tessera_color::Color;
 use tessera_document::nodes::{LineCap, LineJoin, Stroke};
@@ -96,7 +97,8 @@ pub fn export(resolved: &ResolvedDocument) -> Result<Vec<u8>, PdfError> {
     let content_id = alloc();
 
     let fonts = collect_fonts(resolved, &mut alloc)?;
-    let content = build_content(resolved, page, &fonts)?;
+    let states = collect_states(resolved, &mut alloc);
+    let content = build_content(resolved, page, &fonts, &states)?;
 
     pdf.catalog(catalog_id).pages(page_tree_id);
     pdf.pages(page_tree_id).kids([page_id]).count(1);
@@ -133,6 +135,13 @@ pub fn export(resolved: &ResolvedDocument) -> Result<Vec<u8>, PdfError> {
             font_dict.pair(Name(font.resource.as_bytes()), font.font_ref);
         }
         font_dict.finish();
+        if !states.is_empty() {
+            let mut state_dict = resources.ext_g_states();
+            for state in &states {
+                state_dict.pair(Name(state.resource.as_bytes()), state.id);
+            }
+            state_dict.finish();
+        }
         resources.finish();
         page_obj.finish();
     }
@@ -145,8 +154,80 @@ pub fn export(resolved: &ResolvedDocument) -> Result<Vec<u8>, PdfError> {
     for font in &fonts {
         write_font(&mut pdf, font);
     }
+    for state in &states {
+        write_state(&mut pdf, state);
+    }
 
     Ok(pdf.finish())
+}
+
+/// One `/ExtGState` the page will refer to by name.
+struct GraphicsState {
+    resource: String,
+    id: Ref,
+    blend: tessera_document::blending::Blending,
+}
+
+/// The distinct compositing states the document uses.
+///
+/// Deduplicated, because a PDF names graphics states in a page resource
+/// dictionary and forty objects at 50% should be one entry rather than forty.
+/// Keyed on the opacity's *bits* rather than on the value, since two f32s that
+/// compare equal are the same state and NaN is not a state at all.
+///
+/// **A known shortfall, stated rather than hidden.** `/ca` and `/CA` are
+/// per-paint alphas, so an object with both a fill and a stroke has each of
+/// them made translucent separately here, and its stroke shows faintly through
+/// its own fill — where the screen composites the object as one group and it
+/// does not. Closing that needs a transparency-group form XObject per object,
+/// which belongs with the rest of export quality in milestone 6.
+fn collect_states(
+    resolved: &ResolvedDocument,
+    alloc: &mut impl FnMut() -> Ref,
+) -> Vec<GraphicsState> {
+    let mut seen: BTreeMap<(u8, u32), GraphicsState> = BTreeMap::new();
+
+    for item in &resolved.items {
+        // A plain object is painted straight onto the page and needs no state.
+        // An invisible one is not written at all, exactly as it is not drawn.
+        if item.blend.is_plain() || item.blend.is_invisible() {
+            continue;
+        }
+        let key = (item.blend.mode as u8, item.blend.alpha().to_bits());
+        let next = seen.len();
+        seen.entry(key).or_insert_with(|| GraphicsState {
+            resource: format!("GS{next}"),
+            id: alloc(),
+            blend: item.blend,
+        });
+    }
+
+    seen.into_values().collect()
+}
+
+fn write_state(pdf: &mut Pdf, state: &GraphicsState) {
+    let alpha = state.blend.alpha();
+    let mut written = pdf.indirect(state.id).start::<ExtGraphicsState>();
+    written
+        .non_stroking_alpha(alpha)
+        .stroking_alpha(alpha)
+        .blend_mode(to_pdf_blend(state.blend.mode));
+    written.finish();
+}
+
+/// The document's blend mode as PDF names it.
+///
+/// Only the separable modes the model offers, and deliberately no catch-all
+/// arm: a mode added to the model must be answered for here rather than
+/// quietly exporting as Normal.
+fn to_pdf_blend(mode: tessera_document::blending::BlendMode) -> BlendMode {
+    use tessera_document::blending::BlendMode as Ours;
+    match mode {
+        Ours::Normal => BlendMode::Normal,
+        Ours::Multiply => BlendMode::Multiply,
+        Ours::Screen => BlendMode::Screen,
+        Ours::Overlay => BlendMode::Overlay,
+    }
 }
 
 fn collect_fonts(
@@ -229,16 +310,37 @@ fn build_content(
     resolved: &ResolvedDocument,
     page: DocRect,
     fonts: &[EmbeddedFont],
+    states: &[GraphicsState],
 ) -> Result<Vec<u8>, PdfError> {
     let mut content = Content::new();
 
     for item in &resolved.items {
+        // An object at no opacity is not written, exactly as it is not drawn.
+        // Writing it at `/ca 0` would put ink-free paint in the file for a
+        // press to process and a viewer to composite, for no visible result.
+        if item.blend.is_invisible() {
+            continue;
+        }
+
         // A placed item gets its own graphics state, with its transform
         // written as a `cm` matrix.
         let placed = !item.transform.is_identity();
         if placed {
             content.save_state();
             content.transform(to_pdf_matrix(item.transform, page).map(|v| v as f32));
+        }
+
+        // The object's compositing, named from the page's resources. Set
+        // outside the per-kind save/restore so that the fill and the stroke it
+        // brackets both inherit it.
+        let composited = states.iter().find(|s| {
+            !item.blend.is_plain()
+                && s.blend.mode == item.blend.mode
+                && s.blend.alpha().to_bits() == item.blend.alpha().to_bits()
+        });
+        if let Some(state) = composited {
+            content.save_state();
+            content.set_parameters(Name(state.resource.as_bytes()));
         }
 
         match &item.kind {
@@ -322,6 +424,9 @@ fn build_content(
             }
         }
 
+        if composited.is_some() {
+            content.restore_state();
+        }
         if placed {
             content.restore_state();
         }

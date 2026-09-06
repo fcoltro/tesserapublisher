@@ -46,6 +46,7 @@ fn one(kind: ResolvedKind, bounds: DocRect) -> ResolvedDocument {
             frame: FrameId::default(),
             transform: Transform::IDENTITY,
             spread_area: None,
+            blend: tessera_document::blending::Blending::PLAIN,
             bounds,
             kind,
         }],
@@ -205,6 +206,7 @@ fn several_items_all_reach_the_content_stream() {
                 frame: FrameId::default(),
                 transform: Transform::IDENTITY,
                 spread_area: None,
+                blend: tessera_document::blending::Blending::PLAIN,
                 bounds: rect(10.0, 10.0, 50.0, 50.0),
                 kind: ResolvedKind::Rectangle {
                     fill: Color::BLACK,
@@ -215,6 +217,7 @@ fn several_items_all_reach_the_content_stream() {
                 frame: FrameId::default(),
                 transform: Transform::IDENTITY,
                 spread_area: None,
+                blend: tessera_document::blending::Blending::PLAIN,
                 bounds: rect(100.0, 100.0, 80.0, 40.0),
                 kind: ResolvedKind::Ellipse {
                     fill: Color::BLACK,
@@ -225,6 +228,7 @@ fn several_items_all_reach_the_content_stream() {
                 frame: FrameId::default(),
                 transform: Transform::IDENTITY,
                 spread_area: None,
+                blend: tessera_document::blending::Blending::PLAIN,
                 bounds: rect(20.0, 300.0, 400.0, 40.0),
                 kind: ResolvedKind::Text {
                     shaped,
@@ -388,4 +392,124 @@ fn a_glyph_width_is_normalised_against_its_own_run() {
         a, b,
         "the same glyphs at different sizes produced an identical PDF"
     );
+}
+
+// --- compositing ------------------------------------------------------------
+
+/// A black rectangle with the given compositing.
+fn blended_rect(blend: tessera_document::blending::Blending) -> ResolvedDocument {
+    let mut doc = black_rect(rect(10.0, 10.0, 50.0, 50.0));
+    doc.items[0].blend = blend;
+    doc
+}
+
+#[test]
+fn a_translucent_object_writes_a_graphics_state_and_refers_to_it() {
+    // The screen and the file must agree, so opacity that draws on one and not
+    // in the other is a bug rather than a limitation.
+    use tessera_document::blending::{BlendMode, Blending};
+
+    let bytes = tessera_pdf::export(&blended_rect(Blending {
+        opacity: 0.5,
+        mode: BlendMode::Normal,
+    }))
+    .expect("export");
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+
+    assert!(text.contains("/ExtGState"), "no graphics state dictionary");
+    assert!(text.contains("/ca 0.5"), "no non-stroking alpha");
+    assert!(text.contains("/CA 0.5"), "no stroking alpha");
+    assert!(
+        text.contains("/GS0 gs"),
+        "the content stream never used the state"
+    );
+}
+
+#[test]
+fn a_blend_mode_is_written_by_name() {
+    use tessera_document::blending::{BlendMode, Blending};
+
+    let bytes = tessera_pdf::export(&blended_rect(Blending {
+        opacity: 1.0,
+        mode: BlendMode::Multiply,
+    }))
+    .expect("export");
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+
+    assert!(text.contains("/BM /Multiply"), "no blend mode");
+}
+
+#[test]
+fn a_plain_object_writes_no_graphics_state() {
+    // Nearly every object is plain, and a state per object would be a resource
+    // dictionary the length of the document for no effect.
+    let bytes = tessera_pdf::export(&black_rect(rect(10.0, 10.0, 50.0, 50.0))).expect("export");
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+
+    assert!(!text.contains("/ExtGState"), "an opaque object needed none");
+    assert!(!text.contains(" gs"));
+}
+
+#[test]
+fn an_object_at_no_opacity_is_not_written_at_all() {
+    // Exactly as it is not drawn. `/ca 0` would put ink-free paint in the file
+    // for a press to process, for no visible result.
+    use tessera_document::blending::{BlendMode, Blending};
+
+    let bytes = tessera_pdf::export(&blended_rect(Blending {
+        opacity: 0.0,
+        mode: BlendMode::Normal,
+    }))
+    .expect("export");
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+
+    assert!(!text.contains(" re"), "an invisible rectangle was written");
+    assert!(!text.contains("/ExtGState"));
+}
+
+#[test]
+fn objects_sharing_a_compositing_share_one_graphics_state() {
+    // Forty objects at 50% should be one entry in the page's resources rather
+    // than forty.
+    use tessera_document::blending::{BlendMode, Blending};
+
+    let half = Blending {
+        opacity: 0.5,
+        mode: BlendMode::Normal,
+    };
+    let mut doc = blended_rect(half);
+    let mut second = doc.items[0].clone();
+    second.bounds = rect(100.0, 100.0, 20.0, 20.0);
+    doc.items.push(second);
+
+    let text = String::from_utf8_lossy(&tessera_pdf::export(&doc).expect("export")).into_owned();
+    assert_eq!(
+        text.matches("/ca 0.5").count(),
+        1,
+        "two states for one fact"
+    );
+    assert_eq!(text.matches("/GS0 gs").count(), 2, "both must refer to it");
+}
+
+#[test]
+fn two_different_compositings_get_two_graphics_states() {
+    use tessera_document::blending::{BlendMode, Blending};
+
+    let mut doc = blended_rect(Blending {
+        opacity: 0.5,
+        mode: BlendMode::Normal,
+    });
+    let mut second = doc.items[0].clone();
+    second.bounds = rect(100.0, 100.0, 20.0, 20.0);
+    second.blend = Blending {
+        opacity: 0.25,
+        mode: BlendMode::Screen,
+    };
+    doc.items.push(second);
+
+    let text = String::from_utf8_lossy(&tessera_pdf::export(&doc).expect("export")).into_owned();
+    assert!(text.contains("/ca 0.5"));
+    assert!(text.contains("/ca 0.25"));
+    assert!(text.contains("/BM /Screen"));
+    assert!(text.contains("/GS0 gs") && text.contains("/GS1 gs"));
 }

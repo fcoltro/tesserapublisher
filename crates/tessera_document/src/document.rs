@@ -1946,6 +1946,7 @@ impl Document {
             fill: tessera_color::Color::BLACK,
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
+            blend: crate::blending::Blending::PLAIN,
         });
 
         let layer = self.layers.get_mut(layer_id)?;
@@ -2521,6 +2522,7 @@ mod tests {
             fill: Color::BLACK,
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
+            blend: crate::blending::Blending::PLAIN,
         }
     }
 
@@ -2676,6 +2678,7 @@ mod tests {
             fill: tessera_color::Color::BLACK,
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
+            blend: crate::blending::Blending::PLAIN,
         }
     }
 
@@ -2741,6 +2744,7 @@ mod tests {
             fill: tessera_color::Color::BLACK,
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
+            blend: crate::blending::Blending::PLAIN,
         }
     }
 
@@ -2763,6 +2767,7 @@ mod tests {
             fill: tessera_color::Color::BLACK,
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
+            blend: crate::blending::Blending::PLAIN,
         }
     }
 

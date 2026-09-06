@@ -272,6 +272,16 @@ pub enum Command {
         id: FrameId,
     },
 
+    /// Set how an object composites onto what is behind it.
+    ///
+    /// Opacity and blend mode together, in one command, because they are one
+    /// fact about the object and undoing "make this a 40% multiply" should be
+    /// one step rather than two.
+    SetBlending {
+        id: FrameId,
+        blend: tessera_document::blending::Blending,
+    },
+
     /// Set how text runs around an object.
     SetTextWrap {
         id: FrameId,
@@ -1085,6 +1095,13 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             state.active_mut().document_mut().unthread(id);
         }
 
+        Command::SetBlending { id, blend } => {
+            if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
+                frame.blend = blend;
+            }
+            state.active_mut().document_mut().touch();
+        }
+
         Command::SetTextWrap { id, wrap } => {
             if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
                 frame.wrap = wrap;
@@ -1423,6 +1440,7 @@ fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
             stroke: None,
             transform: Transform::IDENTITY,
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         },
     );
     state.active_mut().selection.set(id);
@@ -2724,6 +2742,7 @@ mod tests {
             fill: Color::BLACK,
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         };
         let a = state
             .active_mut()
@@ -4258,6 +4277,7 @@ mod tests {
                 fill: Color::BLACK,
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
+                blend: tessera_document::blending::Blending::PLAIN,
             },
         );
 
@@ -4605,6 +4625,7 @@ mod tests {
                 fill: Color::BLACK,
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
+                blend: tessera_document::blending::Blending::PLAIN,
             },
         );
         (master, item)
@@ -4961,6 +4982,85 @@ mod tests {
             _ => None,
         };
         assert_eq!(story_of(a), story_of(b), "one story between them");
+    }
+
+    // --- compositing ---------------------------------------------------------
+
+    #[test]
+    fn setting_an_objects_opacity_and_blend_mode_is_one_undo_step() {
+        // They are one fact about the object, so "make this a 40% multiply"
+        // should be one step rather than two.
+        use tessera_document::blending::{BlendMode, Blending};
+
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let id = state.active().selection.single().expect("selected");
+
+        let blend = Blending {
+            opacity: 0.4,
+            mode: BlendMode::Multiply,
+        };
+        apply(&mut state, Command::SetBlending { id, blend });
+        assert_eq!(
+            state.active().document().frame(id).expect("frame").blend,
+            blend
+        );
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(
+            state.active().document().frame(id).expect("frame").blend,
+            Blending::PLAIN,
+            "one undo must take back both halves"
+        );
+    }
+
+    #[test]
+    fn an_object_is_opaque_until_it_is_asked_not_to_be() {
+        // The default has to be free: every object in every document written
+        // before this one was solid, and fading them all would change every
+        // page.
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let id = state.active().selection.single().expect("selected");
+        assert_eq!(
+            state.active().document().frame(id).expect("frame").blend,
+            tessera_document::blending::Blending::PLAIN
+        );
+    }
+
+    #[test]
+    fn an_objects_opacity_is_not_its_fill_colours_alpha() {
+        // The distinction the whole feature rests on. Fading the object must
+        // leave the fill colour exactly as the user chose it, or the two
+        // controls would fight over one number.
+        use tessera_document::blending::{BlendMode, Blending};
+
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let id = state.active().selection.single().expect("selected");
+        let before = state
+            .active()
+            .document()
+            .frame(id)
+            .expect("frame")
+            .fill
+            .clone();
+
+        apply(
+            &mut state,
+            Command::SetBlending {
+                id,
+                blend: Blending {
+                    opacity: 0.25,
+                    mode: BlendMode::Screen,
+                },
+            },
+        );
+        assert_eq!(
+            state.active().document().frame(id).expect("frame").fill,
+            before,
+            "the fill colour was touched"
+        );
     }
 
     // --- text wrap -----------------------------------------------------------

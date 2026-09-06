@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 13;
+pub const FORMAT_VERSION: u32 = 14;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -170,6 +170,16 @@ fn migrate(value: &mut serde_json::Value, from: u32) {
     if from < 8 {
         layers_leave_the_page(value);
     }
+
+    // 13 -> 14: a frame gained its compositing — an opacity and a blend mode
+    // of its own, distinct from its fill colour's alpha.
+    //
+    // Nothing to rewrite. `Blending::PLAIN` — fully opaque, painted over — is
+    // exactly what every object written before this did, so the default is the
+    // truth rather than a fabrication. The version moves so an older build
+    // refuses a document using opacity rather than opening it with every
+    // watermark and every multiplied shadow drawn flat and solid, which would
+    // look like the document rather than like the build.
 
     // 12 -> 13: the document gained a table of links, and a frame gained the
     // kind that shows one.

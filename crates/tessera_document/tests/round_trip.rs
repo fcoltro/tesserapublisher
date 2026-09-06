@@ -58,6 +58,7 @@ fn a_document_with_a_rectangle_round_trips_exactly() {
             },
             stroke: Some(Stroke::new(Color::BLACK, 2.0)),
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         },
     );
 
@@ -166,6 +167,7 @@ fn any_frame() -> impl Strategy<Value = Frame> {
             fill,
             stroke: stroke_width.map(|width| Stroke::new(Color::BLACK, width)),
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         })
 }
 
@@ -215,6 +217,7 @@ fn text_survives_a_save_and_load() {
             fill: Color::WHITE,
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         },
     );
 
@@ -261,6 +264,7 @@ fn a_version_1_document_still_opens() {
             fill: Color::BLACK,
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         },
     );
 
@@ -338,6 +342,7 @@ fn a_placement_survives_a_save_and_load() {
             fill: Color::BLACK,
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         },
     );
 
@@ -373,6 +378,7 @@ fn a_version_2_rotation_becomes_the_placement_that_means_the_same_thing() {
             fill: Color::BLACK,
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         },
     );
 
@@ -550,6 +556,7 @@ fn a_version_four_document_still_opens_and_gains_no_setup_it_never_had() {
             fill: Color::BLACK,
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         },
     );
 
@@ -588,9 +595,68 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_thirteen() {
+fn the_format_version_is_fourteen() {
     // If this changes, a migration step is owed.
-    assert_eq!(format::FORMAT_VERSION, 13);
+    assert_eq!(format::FORMAT_VERSION, 14);
+}
+
+#[test]
+fn an_objects_opacity_and_blend_mode_round_trip() {
+    use tessera_document::blending::{BlendMode, Blending};
+
+    let path = temp_path("blended.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = Document::new();
+    let layer = doc.default_layer().expect("layer");
+    let id = doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 40.0,
+                height: 40.0,
+            },
+            transform: Default::default(),
+            kind: FrameKind::Rectangle,
+            fill: Color::default(),
+            stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
+            blend: Blending {
+                opacity: 0.375,
+                mode: BlendMode::Multiply,
+            },
+        },
+    );
+
+    format::save(&doc, &path).expect("save");
+    let back = format::load(&path).expect("load");
+    let frame = back.frame(id).expect("the frame");
+    assert_eq!(frame.blend.mode, BlendMode::Multiply);
+    assert!(
+        (frame.blend.opacity - 0.375).abs() < 1e-6,
+        "got {}",
+        frame.blend.opacity
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_document_written_before_opacity_existed_opens_fully_opaque() {
+    // The default is the truth about an older document, not a fabrication:
+    // every object in it was painted over, solid.
+    use tessera_document::blending::Blending;
+
+    let json = serde_json::json!({
+        "bounds": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        "kind": "Rectangle",
+        "fill": { "Rgb": { "r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0 } },
+        "stroke": null
+    });
+    let frame: Frame = serde_json::from_value(json).expect("an older frame");
+    assert_eq!(frame.blend, Blending::PLAIN);
 }
 
 #[test]
@@ -619,6 +685,7 @@ fn placed_artwork_round_trips_as_a_link_rather_than_as_pixels() {
             fill: Color::BLACK,
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         },
     );
     let link = doc.add_link(Link::new("C:/art/photo.png", (640.0, 480.0)));
@@ -694,6 +761,7 @@ fn swatches_and_the_objects_naming_them_round_trip() {
             },
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         },
     );
 
@@ -800,6 +868,7 @@ fn a_version_nine_text_frame_opens_as_a_single_column() {
             fill: Color::BLACK,
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         },
     );
 
@@ -858,6 +927,7 @@ fn a_columned_text_frame_round_trips() {
             fill: Color::BLACK,
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         },
     );
 
@@ -898,6 +968,7 @@ fn a_version_eight_document_opens_with_no_masters_and_no_overrides() {
             fill: Color::BLACK,
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         },
     );
 
@@ -942,6 +1013,7 @@ fn a_master_and_its_overrides_survive_a_round_trip() {
             fill: Color::BLACK,
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         },
     );
     let page = doc.page_ids().next().expect("a page");
@@ -1004,6 +1076,7 @@ fn version_7_archive(path: &std::path::Path) -> serde_json::Value {
                 fill: Color::BLACK,
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
+                blend: tessera_document::blending::Blending::PLAIN,
             },
         );
     }

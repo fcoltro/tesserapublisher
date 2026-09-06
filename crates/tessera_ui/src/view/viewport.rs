@@ -2195,6 +2195,7 @@ mod tests {
                 fill: tessera_color::Color::BLACK,
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
+                blend: tessera_document::blending::Blending::PLAIN,
             },
         );
         state.active_mut().selection.set(id);

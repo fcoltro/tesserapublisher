@@ -71,6 +71,13 @@ pub struct ResolvedItem {
     /// paper. Carried per item because the renderer walks a flat list and has
     /// no other way to know which sheet it is drawing on.
     pub spread_area: Option<DocRect>,
+    /// How this object composites onto what is behind it.
+    ///
+    /// Carried on the item rather than inside `kind`, because it applies to the
+    /// whole object whatever the object is — which is exactly what makes it a
+    /// different fact from a fill colour's alpha. Putting it on each kind would
+    /// be four copies of one property and an invitation to forget one.
+    pub blend: tessera_document::blending::Blending,
     pub kind: ResolvedKind,
 }
 
@@ -494,6 +501,7 @@ fn resolve_one(
         bounds: frame.bounds,
         transform: frame.transform,
         spread_area: doc.spread_of_frame(id).and_then(|s| doc.spread_area(s)),
+        blend: frame.blend,
         kind,
     })
 }
@@ -517,6 +525,7 @@ mod tests {
             fill: Color::BLACK,
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         }
     }
 
@@ -626,6 +635,7 @@ mod tests {
             fill: Color::BLACK,
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
         }
     }
 
