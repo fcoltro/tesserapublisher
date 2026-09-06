@@ -17,7 +17,13 @@ fn main() -> eframe::Result<()> {
         .with_title("Tessera Publisher")
         // Take focus on launch. Without this the window can open behind
         // whatever the user clicked while it was starting.
-        .with_active(true);
+        .with_active(true)
+        // Maximised. A layout application is what Alan Cooper calls a
+        // sovereign application — one a person works inside for hours at a
+        // time, with nothing else competing for the screen — and his guidance
+        // for those is to take the whole of it. The inner size above stays as
+        // the size the window restores to.
+        .with_maximized(true);
 
     // Only when there is one. An empty `IconData` is not "no icon", it is a
     // zero-by-zero icon, and the window manager is entitled to make a mess
