@@ -757,22 +757,18 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                     .translate_frame(id, dx, dy);
             }
             // Dragging an object to another page moves it to that page.
-            rehome_selection(state);
         }
 
         Command::SetTransforms(entries) => {
-            let moved: Vec<FrameId> = entries.iter().map(|(id, _, _)| *id).collect();
             for (id, bounds, placement) in entries {
                 if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
                     frame.bounds = bounds;
                     frame.transform = placement;
                 }
             }
-            // The end of a drag: whatever was moved may have crossed onto
-            // another page, and belongs to it now.
-            for id in moved {
-                state.active_mut().document_mut().rehome_frame(id);
-            }
+            // Nothing else to do. A frame's page is where it sits, so moving
+            // it *is* changing its page — there is no ownership left to update
+            // and so nothing for a caller to forget.
         }
 
         Command::GroupSelection => {
@@ -1106,14 +1102,10 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 }
 
 fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
-    // The layer of the page it is drawn on, not the first layer in the
-    // document. Everything used to land on page one whatever page it was drawn
-    // on, and was then clipped to page one's spread and vanished.
-    let layer = state
-        .active()
-        .document()
-        .layer_at(bounds.center())
-        .unwrap_or_else(|| state.default_layer());
+    // The layer being worked on, wherever on the document this was drawn. A
+    // layer spans every page, so which page the object is on is settled by
+    // where it landed rather than by which layer it joined.
+    let layer = state.default_layer();
     let id = state.active_mut().document_mut().add_frame(
         layer,
         Frame {
@@ -1125,17 +1117,6 @@ fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
         },
     );
     state.active_mut().selection.set(id);
-}
-
-/// Put every selected frame on the page it now sits on.
-///
-/// An object belongs to the spread it is on, so anything that moves one has to
-/// say so — otherwise it stays owned by the spread it was created on, and
-/// clipped to it.
-fn rehome_selection(state: &mut TesseraApp) {
-    for id in state.active().selection.as_slice().to_vec() {
-        state.active_mut().document_mut().rehome_frame(id);
-    }
 }
 
 /// Restore a snapshot, keeping the selection honest.
@@ -3918,13 +3899,20 @@ mod tests {
             .page_ids()
             .nth(1)
             .expect("the second page");
-        let layer = state.active().document().pages[page].layers[0];
-        // Straight onto the new page's layer, because `AddRectangle` puts it
-        // wherever the application is currently pointing.
+        let layer = state.active().document().default_layer().expect("a layer");
+        // Standing **on** the second page, which is now the only thing that
+        // makes it the second page's: placed by hand, because `AddRectangle`
+        // puts a frame wherever the application is currently pointing.
+        let on = state.active().document().pages[page].bounds;
         let frame = state.active_mut().document_mut().add_frame(
             layer,
             Frame {
-                bounds: bounds(),
+                bounds: DocRect {
+                    x: on.x + 10.0,
+                    y: on.y + 10.0,
+                    width: 40.0,
+                    height: 30.0,
+                },
                 transform: Transform::default(),
                 kind: FrameKind::Rectangle,
                 fill: Color::BLACK,

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use tessera_color::Color;
 use tessera_geometry::{DocPoint, DocRect, Transform};
 
-use crate::ids::{FrameId, LayerId, PageId, StoryId};
+use crate::ids::{FrameId, PageId, StoryId};
 
 /// Where a stroke sits relative to the edge it follows.
 ///
@@ -196,13 +196,34 @@ impl Frame {
     }
 }
 
+/// A stack of objects spanning the whole document.
+///
+/// **Document-wide, not per-page.** A layer used to belong to a page, which
+/// made a frame's page and its layer the same fact — and that is what put every
+/// frame drawn anywhere onto page one. InDesign's layer spans every page, so a
+/// frame's page is derived from where it sits and cannot disagree with itself.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Layer {
     pub name: String,
     pub visible: bool,
+    /// A locked layer's frames cannot be selected or moved. Hiding a layer
+    /// makes its frames unselectable too: a frame you cannot see but can still
+    /// catch with a click is worse than one you can see.
     pub locked: bool,
     /// Back to front. The last entry paints on top.
     pub frames: Vec<FrameId>,
+}
+
+impl Layer {
+    /// A new, empty, visible, unlocked layer.
+    pub fn named(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            visible: true,
+            locked: false,
+            frames: Vec::new(),
+        }
+    }
 }
 
 /// Distances **inward** from a page's edge to its type area.
@@ -387,10 +408,14 @@ pub struct DocumentSetup {
     pub facing_pages: bool,
 }
 
+/// One sheet, positioned in document space.
+///
+/// A page holds no objects. What is *on* a page is whatever lands on it, which
+/// is why moving a frame across the fold needs no bookkeeping — see
+/// [`Document::page_of_frame`](crate::document::Document::page_of_frame).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Page {
     pub bounds: DocRect,
-    pub layers: Vec<LayerId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

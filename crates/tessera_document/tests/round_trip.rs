@@ -577,9 +577,204 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_seven() {
+fn the_format_version_is_eight() {
     // If this changes, a migration step is owed.
-    assert_eq!(format::FORMAT_VERSION, 7);
+    assert_eq!(format::FORMAT_VERSION, 8);
+}
+
+/// A version-7 archive: two pages, each owning its own layer.
+///
+/// Written by hand, and it has to be. `rewrite_version_for_test` re-saves
+/// through the *current* model, which has no per-page layers at all — the
+/// fixture would carry `layer_order`, the migration would find nothing to
+/// move, and the test would pass while testing nothing. Four fixtures in this
+/// file were once built that way.
+fn version_7_archive(path: &std::path::Path) -> serde_json::Value {
+    use std::io::Write;
+
+    // Start from a current document with two pages and a frame on each, then
+    // rewrite its JSON into the shape version 7 wrote.
+    let mut doc = Document::new();
+    doc.setup.facing_pages = false;
+    let second = doc.add_page();
+    let first = doc.page_ids().next().expect("a page");
+    let layer = doc.default_layer().expect("a layer");
+
+    for page in [first, second] {
+        let on = doc.pages[page].bounds;
+        doc.add_frame(
+            layer,
+            Frame {
+                bounds: DocRect {
+                    x: on.x + 10.0,
+                    y: on.y + 10.0,
+                    width: 40.0,
+                    height: 30.0,
+                },
+                kind: FrameKind::Rectangle,
+                transform: Transform::IDENTITY,
+                fill: Color::BLACK,
+                stroke: None,
+            },
+        );
+    }
+
+    let mut value: serde_json::Value = serde_json::to_value(&doc).expect("to value");
+    let frames: Vec<serde_json::Value> = value["layers"][1]["value"]["frames"]
+        .as_array()
+        .expect("frames")
+        .clone();
+    assert_eq!(frames.len(), 2, "one frame per page");
+
+    // Two layers, one per page, each holding that page's frame — which is
+    // exactly what the old model produced, and why the bug existed.
+    value["layers"] = serde_json::json!([
+        { "value": null, "version": 0 },
+        {
+            "value": { "frames": [frames[0]], "name": "Layer 1",
+                       "visible": true, "locked": false },
+            "version": 1
+        },
+        {
+            "value": { "frames": [frames[1]], "name": "Layer 1",
+                       "visible": true, "locked": false },
+            "version": 1
+        },
+    ]);
+
+    let pages = value["pages"].as_array_mut().expect("pages");
+    let mut depth = 1;
+    for page in pages.iter_mut() {
+        if page["value"].is_null() {
+            continue;
+        }
+        page["value"].as_object_mut().expect("page").insert(
+            "layers".into(),
+            serde_json::json!([{ "idx": depth, "version": 1 }]),
+        );
+        depth += 1;
+    }
+
+    // And version 7 knew nothing of either of these.
+    let doc_map = value.as_object_mut().expect("document");
+    doc_map.remove("layer_order");
+    doc_map.remove("active_layer");
+
+    let body = serde_json::to_vec(&value).expect("body");
+    assert!(
+        !String::from_utf8_lossy(&body).contains("layer_order"),
+        "the fixture must genuinely lack the field"
+    );
+
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut buffer);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("meta.json", options).expect("meta");
+        zip.write_all(br#"{"format_version":7,"app_version":"0.1.0","created":"","modified":""}"#)
+            .expect("meta body");
+        zip.start_file("document.json", options).expect("doc");
+        zip.write_all(&body).expect("doc body");
+        zip.finish().expect("finish");
+    }
+    std::fs::write(path, buffer.into_inner()).expect("write fixture");
+    value
+}
+
+#[test]
+fn a_version_seven_documents_per_page_layers_merge_into_one() {
+    let path = temp_path("legacy_v7_layers.tessera");
+    let _ = std::fs::remove_file(&path);
+    version_7_archive(&path);
+
+    let loaded = format::load(&path).expect("a version 7 document must still open");
+
+    assert_eq!(
+        loaded.layer_ids().count(),
+        1,
+        "two pages that each had a layer come back with one between them"
+    );
+    let layer = loaded.default_layer().expect("a layer");
+    assert_eq!(
+        loaded.layers[layer].frames.len(),
+        2,
+        "and it holds what both pages held"
+    );
+    assert_eq!(loaded.layers[layer].name, "Layer 1");
+    assert_eq!(loaded.active_layer, Some(layer), "and it is the active one");
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_version_seven_documents_objects_stay_on_their_own_pages() {
+    // The migration must not move anything. Each frame was drawn on a
+    // different page and has to still be on it — which, now that a frame's
+    // page is derived from where it sits, means the geometry survived.
+    let path = temp_path("legacy_v7_pages.tessera");
+    let _ = std::fs::remove_file(&path);
+    version_7_archive(&path);
+
+    let loaded = format::load(&path).expect("load");
+    let pages: Vec<_> = loaded.page_ids().collect();
+    assert_eq!(pages.len(), 2);
+
+    for page in pages {
+        assert_eq!(
+            loaded.frames_on_page(page).len(),
+            1,
+            "one frame per page, as it was drawn"
+        );
+    }
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_version_seven_document_that_paints_nothing_still_gets_a_layer() {
+    // A document whose layer order came back empty would paint nothing at all
+    // — the file would open blank. An absent `layer_order` defaults to empty,
+    // so this is the case where the default is a lie.
+    use std::io::Write;
+
+    let path = temp_path("legacy_v7_bare.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut value: serde_json::Value = serde_json::to_value(Document::new()).expect("to value");
+    // No layers anywhere: not a file the old writer produced, but the shape
+    // the migration must not turn into a blank document.
+    value["layers"] = serde_json::json!([{ "value": null, "version": 0 }]);
+    for page in value["pages"].as_array_mut().expect("pages") {
+        if let Some(page) = page["value"].as_object_mut() {
+            page.insert("layers".into(), serde_json::json!([]));
+        }
+    }
+    let doc_map = value.as_object_mut().expect("document");
+    doc_map.remove("layer_order");
+    doc_map.remove("active_layer");
+
+    let body = serde_json::to_vec(&value).expect("body");
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut buffer);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("meta.json", options).expect("meta");
+        zip.write_all(br#"{"format_version":7,"app_version":"0.1.0","created":"","modified":""}"#)
+            .expect("meta body");
+        zip.start_file("document.json", options).expect("doc");
+        zip.write_all(&body).expect("doc body");
+        zip.finish().expect("finish");
+    }
+    std::fs::write(&path, buffer.into_inner()).expect("write fixture");
+
+    let loaded = format::load(&path).expect("load");
+    assert_eq!(
+        loaded.layer_ids().count(),
+        1,
+        "a document with nowhere to put an object is given somewhere"
+    );
+
+    let _ = std::fs::remove_file(&path);
 }
 
 /// Build a version-5 archive by hand and open it.

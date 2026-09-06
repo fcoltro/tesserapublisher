@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 7;
+pub const FORMAT_VERSION: u32 = 8;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -154,6 +154,126 @@ fn migrate(value: &mut serde_json::Value, from: u32) {
     if from < 7 {
         stories_fold_style_into_runs(value);
     }
+
+    // 7 -> 8: layers left the page and became document-wide.
+    //
+    // **This one rewrites, and the default would be a lie again.** An absent
+    // `layer_order` reads as empty, and an empty layer order means a document
+    // whose every object is on no layer at all — which paints nothing. The
+    // whole file would open blank.
+    //
+    // Per-page layers merge **by position**: layer 0 of every page becomes one
+    // document-wide layer 0, layer 1 becomes layer 1, and so on. For every
+    // document that exists today that is a single layer holding everything,
+    // because nothing before this could create a second one — and that is the
+    // truth about a document written when layers could not be chosen.
+    if from < 8 {
+        layers_leave_the_page(value);
+    }
+}
+
+/// Move layers off the pages and into a document-wide stack.
+///
+/// Rebuilds the layer table outright rather than editing slots in place, which
+/// it can do because **nothing but a page refers to a `LayerId`**: frames point
+/// at their children and their stories, never back at a layer.
+fn layers_leave_the_page(value: &mut serde_json::Value) {
+    use serde_json::{Map, Value};
+
+    let Some(doc) = value.as_object_mut() else {
+        return;
+    };
+
+    // A slotmap serialises as an array of `{value, version}`, indexed by slot,
+    // and a key is `{idx, version}`. Slot 0 is always the vacant sentinel.
+    let slot = |table: &Value, key: &Value| -> Option<Value> {
+        let idx = key.get("idx")?.as_u64()? as usize;
+        table
+            .get(idx)?
+            .get("value")
+            .cloned()
+            .filter(|v| !v.is_null())
+    };
+
+    let layer_table = doc.get("layers").cloned().unwrap_or(Value::Null);
+
+    // Each page's layers, deepest first, in page order.
+    let mut columns: Vec<Vec<Value>> = Vec::new();
+    if let Some(pages) = doc.get_mut("pages").and_then(Value::as_array_mut) {
+        for page in pages.iter_mut() {
+            let Some(page) = page.get_mut("value").and_then(Value::as_object_mut) else {
+                continue;
+            };
+            let Some(keys) = page.remove("layers") else {
+                continue;
+            };
+            let Some(keys) = keys.as_array() else {
+                continue;
+            };
+            for (depth, key) in keys.iter().enumerate() {
+                let Some(layer) = slot(&layer_table, key) else {
+                    continue;
+                };
+                while columns.len() <= depth {
+                    columns.push(Vec::new());
+                }
+                columns[depth].push(layer);
+            }
+        }
+    }
+
+    // One layer per depth, holding every page's frames at that depth. The
+    // first page's name, visibility and lock stand for the merged layer:
+    // they were all "Layer 1", visible and unlocked, because nothing could
+    // make them anything else.
+    let mut table = vec![serde_json::json!({ "value": null, "version": 0 })];
+    let mut order = Vec::new();
+    for column in &columns {
+        let mut frames = Vec::new();
+        for layer in column {
+            if let Some(list) = layer.get("frames").and_then(Value::as_array) {
+                frames.extend(list.iter().cloned());
+            }
+        }
+        let first = column.first();
+        let mut merged = Map::new();
+        merged.insert("frames".into(), Value::Array(frames));
+        merged.insert(
+            "name".into(),
+            first
+                .and_then(|l| l.get("name").cloned())
+                .unwrap_or_else(|| Value::String("Layer 1".into())),
+        );
+        merged.insert(
+            "visible".into(),
+            first
+                .and_then(|l| l.get("visible").cloned())
+                .unwrap_or(Value::Bool(true)),
+        );
+        merged.insert(
+            "locked".into(),
+            first
+                .and_then(|l| l.get("locked").cloned())
+                .unwrap_or(Value::Bool(false)),
+        );
+
+        let idx = table.len();
+        table.push(serde_json::json!({ "value": Value::Object(merged), "version": 1 }));
+        order.push(serde_json::json!({ "idx": idx, "version": 1 }));
+    }
+
+    // A document with no layers at all would paint nothing, so it gets one.
+    if order.is_empty() {
+        table.push(serde_json::json!({
+            "value": { "frames": [], "name": "Layer 1", "visible": true, "locked": false },
+            "version": 1
+        }));
+        order.push(serde_json::json!({ "idx": 1, "version": 1 }));
+    }
+
+    doc.insert("active_layer".into(), order[0].clone());
+    doc.insert("layer_order".into(), Value::Array(order));
+    doc.insert("layers".into(), Value::Array(table));
 }
 
 /// Fold each story's one style into its runs, then drop it.

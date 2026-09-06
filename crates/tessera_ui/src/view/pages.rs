@@ -132,19 +132,20 @@ fn thumbnail(
     // document rather than the resolve cache, because this draws inside a
     // window and the cache belongs to the canvas — asking for it here would
     // resolve a second time in the same frame.
-    for page in &pages {
-        let Some(page) = doc.pages.get(*page) else {
+    for id in &pages {
+        if doc.pages.get(*id).is_none() {
             continue;
-        };
-        for layer in &page.layers {
-            let Some(layer) = doc.layers.get(*layer) else {
-                continue;
-            };
-            if !layer.visible {
-                continue;
-            }
-            for frame in &layer.frames {
-                let Some(frame) = doc.frame(*frame) else {
+        }
+        // What stands on the page, in paint order. Layers span the document
+        // now, so this asks the page what is standing on it rather than
+        // walking layers the page used to own.
+        for frame in doc.frames_on_page(*id) {
+            let on_a_visible_layer = doc
+                .layer_of_frame(frame)
+                .and_then(|l| doc.layers.get(l))
+                .is_some_and(|l| l.visible);
+            if on_a_visible_layer {
+                let Some(frame) = doc.frame(frame) else {
                     continue;
                 };
                 let b = frame.bounds;
