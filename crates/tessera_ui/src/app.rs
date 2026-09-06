@@ -123,6 +123,15 @@ pub struct PagesWindow {
 #[derive(Debug, Clone, Default)]
 pub struct LayersWindow {
     pub open: bool,
+    /// The layer whose deletion is being asked about, if any.
+    pub confirm_removal: Option<tessera_document::ids::LayerId>,
+    /// The layer being renamed, if any.
+    ///
+    /// The name field exists only while this names a layer, which is what
+    /// leaves the row clickable the rest of the time.
+    pub renaming: Option<tessera_document::ids::LayerId>,
+    /// What is being typed into that field.
+    pub draft: String,
 }
 
 /// The styles window's own state.

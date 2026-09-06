@@ -1292,8 +1292,13 @@ impl Document {
     ///
     /// Top-level, also like clicking: a marquee over part of a group takes the
     /// group, because that is what grouping means.
+    ///
+    /// And **selectable**, like clicking. Reported from real use: locking a
+    /// layer stopped a click reaching it but not a rubber band, so a lock could
+    /// be walked straight past by dragging a box round it — which is worse than
+    /// no lock at all, because it looks like one.
     pub fn frames_touching(&self, area: DocRect) -> Vec<FrameId> {
-        self.top_level_order()
+        self.selectable_order()
             .into_iter()
             .filter(|id| self.touches_anywhere(*id, area))
             .collect()
@@ -3375,6 +3380,60 @@ mod tests {
             doc.hit_test(at, 0.0),
             None,
             "a frame you cannot see but can still catch is worse than one you can"
+        );
+    }
+
+    #[test]
+    fn a_rubber_band_cannot_reach_a_locked_layer() {
+        // Reported from real use: the lock stopped a click and not a marquee.
+        let mut doc = Document::new();
+        let page = doc.page_ids().next().expect("a page");
+        let frame = frame_on(&mut doc, page);
+        let all = doc.pages[page].bounds;
+        assert_eq!(doc.frames_touching(all), vec![frame]);
+
+        let layer = doc.layer_of_frame(frame).expect("a layer");
+        doc.layers[layer].locked = true;
+
+        assert!(
+            doc.frames_touching(all).is_empty(),
+            "a lock that a dragged box walks past is worse than none, \
+             because it looks like one"
+        );
+    }
+
+    #[test]
+    fn a_rubber_band_cannot_reach_a_hidden_layer_either() {
+        let mut doc = Document::new();
+        let page = doc.page_ids().next().expect("a page");
+        let frame = frame_on(&mut doc, page);
+        let all = doc.pages[page].bounds;
+
+        let layer = doc.layer_of_frame(frame).expect("a layer");
+        doc.layers[layer].visible = false;
+
+        assert!(doc.frames_touching(all).is_empty());
+    }
+
+    #[test]
+    fn a_rubber_band_still_catches_what_is_on_an_unlocked_layer_beside_it() {
+        // The lock has to be narrow: locking one layer must not make the
+        // marquee useless everywhere.
+        let mut doc = Document::new();
+        let page = doc.page_ids().next().expect("a page");
+        let reachable = frame_on(&mut doc, page);
+        let locked_layer = doc.add_layer("Layer 2");
+        let out_of_reach = frame_on(&mut doc, page);
+        doc.layers[locked_layer].locked = true;
+
+        assert_eq!(
+            doc.frames_touching(doc.pages[page].bounds),
+            vec![reachable],
+            "one layer locked, the other still workable"
+        );
+        assert!(
+            doc.paint_order().contains(&out_of_reach),
+            "and the locked layer is still drawn"
         );
     }
 }
