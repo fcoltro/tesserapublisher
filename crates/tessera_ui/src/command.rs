@@ -11,7 +11,7 @@
 
 use tessera_color::Color;
 use tessera_document::document::{Document, ZMove};
-use tessera_document::ids::{FrameId, LayerId, PageId, StoryId};
+use tessera_document::ids::{FrameId, LayerId, MasterId, PageId, StoryId};
 use tessera_document::nodes::{Frame, FrameKind};
 use tessera_geometry::{DocRect, Transform};
 use tessera_text::story::{
@@ -234,6 +234,35 @@ pub enum Command {
     MovePage {
         id: PageId,
         to: usize,
+    },
+
+    /// Add a parent spread shaped like the document.
+    AddMaster,
+    /// Remove a master, unhooking every page that used it.
+    RemoveMaster {
+        id: MasterId,
+    },
+    RenameMaster {
+        id: MasterId,
+        name: String,
+    },
+    /// Build a page on a master, or on none.
+    ApplyMaster {
+        page: PageId,
+        master: Option<MasterId>,
+    },
+    /// Apply a master to every page in the document at once.
+    ApplyMasterToAll {
+        master: Option<MasterId>,
+    },
+    /// Promote a master item to a local copy on this page.
+    OverrideMasterItem {
+        page: PageId,
+        item: FrameId,
+    },
+    /// Take every override on a page back, so the master shows through.
+    RemoveOverrides {
+        page: PageId,
     },
 
     /// Add a layer above the others and make it active.
@@ -944,6 +973,55 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::MovePage { id, to } => {
             state.active_mut().document_mut().move_page(id, to);
+        }
+
+        Command::AddMaster => {
+            let name = state.active().document().unused_master_name();
+            state.active_mut().document_mut().add_master(name);
+        }
+
+        Command::RemoveMaster { id } => {
+            state.active_mut().document_mut().remove_master(id);
+            // Its pages and their frames are gone; a selection still holding
+            // one would draw handles round nothing.
+            state.active_mut().retain_existing_selection();
+        }
+
+        Command::RenameMaster { id, name } => {
+            if let Some(master) = state.active_mut().document_mut().masters.get_mut(id) {
+                master.name = name;
+            }
+            state.active_mut().document_mut().touch();
+        }
+
+        Command::ApplyMaster { page, master } => {
+            state.active_mut().document_mut().apply_master(page, master);
+        }
+
+        Command::ApplyMasterToAll { master } => {
+            // One command for the whole document, so applying a master to
+            // twenty pages is one undo entry rather than twenty.
+            let pages: Vec<PageId> = state.active().document().page_ids().collect();
+            for page in pages {
+                state.active_mut().document_mut().apply_master(page, master);
+            }
+        }
+
+        Command::OverrideMasterItem { page, item } => {
+            if let Some(local) = state
+                .active_mut()
+                .document_mut()
+                .override_master_item(page, item)
+            {
+                // Selected, because overriding an item is what you do in order
+                // to change it.
+                state.active_mut().selection.set(local);
+            }
+        }
+
+        Command::RemoveOverrides { page } => {
+            state.active_mut().document_mut().remove_overrides(page);
+            state.active_mut().retain_existing_selection();
         }
 
         Command::AddLayer => {
@@ -4363,5 +4441,177 @@ mod tests {
 
         apply(&mut state, Command::Undo);
         assert_eq!(state.active().document().layer_order, before);
+    }
+
+    // --- parent pages -------------------------------------------------------
+
+    /// A document with a one-page master carrying a single item.
+    fn a_master(state: &mut TesseraApp) -> (MasterId, FrameId) {
+        state.active_mut().document_mut().setup.facing_pages = false;
+        state.active_mut().document_mut().reflow_spreads();
+        apply(state, Command::AddMaster);
+
+        let doc = state.active().document();
+        let master = doc.master_order[0];
+        let on = doc.pages_of_master(master)[0];
+        let bounds = doc.pages[on].bounds;
+        let layer = doc.default_layer().expect("a layer");
+
+        let item = state.active_mut().document_mut().add_frame(
+            layer,
+            Frame {
+                bounds: DocRect {
+                    x: bounds.x + 10.0,
+                    y: bounds.y + 10.0,
+                    width: 40.0,
+                    height: 30.0,
+                },
+                transform: Transform::default(),
+                kind: FrameKind::Rectangle,
+                fill: Color::BLACK,
+                stroke: None,
+            },
+        );
+        (master, item)
+    }
+
+    #[test]
+    fn adding_a_master_is_undoable() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddMaster);
+        assert_eq!(state.active().document().master_order.len(), 1);
+
+        apply(&mut state, Command::Undo);
+        assert!(state.active().document().master_order.is_empty());
+    }
+
+    #[test]
+    fn applying_a_master_is_undoable() {
+        let mut state = TesseraApp::headless();
+        let (master, _) = a_master(&mut state);
+        let page = state.active().document().page_ids().next().expect("a page");
+
+        apply(
+            &mut state,
+            Command::ApplyMaster {
+                page,
+                master: Some(master),
+            },
+        );
+        assert_eq!(state.active().document().inherited_by(page).len(), 1);
+
+        apply(&mut state, Command::Undo);
+        assert!(state.active().document().inherited_by(page).is_empty());
+    }
+
+    #[test]
+    fn applying_a_master_to_every_page_is_one_undo_entry() {
+        // Twenty pages is one decision, not twenty.
+        let mut state = TesseraApp::headless();
+        let (master, _) = a_master(&mut state);
+        apply(&mut state, Command::AddPage);
+        apply(&mut state, Command::AddPage);
+
+        apply(
+            &mut state,
+            Command::ApplyMasterToAll {
+                master: Some(master),
+            },
+        );
+        for page in state.active().document().page_ids() {
+            assert_eq!(state.active().document().inherited_by(page).len(), 1);
+        }
+
+        apply(&mut state, Command::Undo);
+        for page in state.active().document().page_ids() {
+            assert!(
+                state.active().document().inherited_by(page).is_empty(),
+                "one undo took all of them back"
+            );
+        }
+    }
+
+    #[test]
+    fn overriding_an_item_selects_it() {
+        // Overriding is what you do in order to change it, so the thing you
+        // wanted to change is what is selected afterwards.
+        let mut state = TesseraApp::headless();
+        let (master, item) = a_master(&mut state);
+        let page = state.active().document().page_ids().next().expect("a page");
+        apply(
+            &mut state,
+            Command::ApplyMaster {
+                page,
+                master: Some(master),
+            },
+        );
+
+        apply(&mut state, Command::OverrideMasterItem { page, item });
+
+        let local = state.active().selection.single().expect("selected");
+        assert_ne!(local, item, "the copy, not the master's own");
+        assert_eq!(
+            state.active().document().overrides.get(local).copied(),
+            Some(item)
+        );
+    }
+
+    #[test]
+    fn removing_overrides_is_undoable() {
+        let mut state = TesseraApp::headless();
+        let (master, item) = a_master(&mut state);
+        let page = state.active().document().page_ids().next().expect("a page");
+        apply(
+            &mut state,
+            Command::ApplyMaster {
+                page,
+                master: Some(master),
+            },
+        );
+        apply(&mut state, Command::OverrideMasterItem { page, item });
+        let local = state.active().selection.single().expect("selected");
+
+        apply(&mut state, Command::RemoveOverrides { page });
+        assert!(state.active().document().frame(local).is_none());
+
+        apply(&mut state, Command::Undo);
+        assert!(
+            state.active().document().frame(local).is_some(),
+            "the override came back"
+        );
+    }
+
+    #[test]
+    fn removing_a_master_is_undoable_and_lets_go_of_the_selection() {
+        let mut state = TesseraApp::headless();
+        let (master, item) = a_master(&mut state);
+        state.active_mut().selection.set(item);
+
+        apply(&mut state, Command::RemoveMaster { id: master });
+        assert!(state.active().selection.is_empty(), "it let go");
+        assert!(state.active().document().master_order.is_empty());
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().master_order.len(), 1);
+    }
+
+    #[test]
+    fn renaming_a_master_is_undoable() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddMaster);
+        let id = state.active().document().master_order[0];
+        assert_eq!(state.active().document().masters[id].name, "A-Master");
+
+        apply(
+            &mut state,
+            Command::RenameMaster {
+                id,
+                name: "Chapter opener".to_string(),
+            },
+        );
+        assert_eq!(state.active().document().masters[id].name, "Chapter opener");
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().masters[id].name, "A-Master");
     }
 }

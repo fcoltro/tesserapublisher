@@ -81,8 +81,11 @@ pub struct ResolvedPage {
 
 /// Resolve every visible frame, in paint order.
 pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
+    // Master pages get their sheet drawn too, for the same reason their
+    // contents do.
     let pages = doc
         .page_ids()
+        .chain(doc.master_ids().flat_map(|m| doc.pages_of_master(m)))
         .filter_map(|id| {
             Some(ResolvedPage {
                 bounds: doc.pages.get(id)?.bounds,
@@ -95,75 +98,121 @@ pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
 
     let mut items = Vec::new();
 
-    for id in doc.paint_order() {
-        let Some(frame) = doc.frame(id) else { continue };
-
-        let kind = match &frame.kind {
-            FrameKind::Rectangle => ResolvedKind::Rectangle {
-                fill: frame.fill.clone(),
-                stroke: frame.stroke.clone(),
-            },
-            FrameKind::Ellipse => ResolvedKind::Ellipse {
-                fill: frame.fill.clone(),
-                stroke: frame.stroke.clone(),
-            },
-            FrameKind::Path(path) => ResolvedKind::Path {
-                path: fit_to_bounds(path, frame.bounds),
-                // An open path with no explicit stroke would be invisible, so
-                // a path frame's fill is treated as its stroke colour when it
-                // has no stroke of its own.
-                fill: None,
-                stroke: Some(
-                    frame
-                        .stroke
-                        .clone()
-                        .unwrap_or_else(|| Stroke::new(frame.fill.clone(), 1.0)),
-                ),
-            },
-
-            // A group draws nothing of its own, and paint_order already
-            // expanded it into its children, so it never reaches here.
-            FrameKind::Group(_) => continue,
-
-            FrameKind::Text { story } => {
-                // A text frame whose story is missing is a broken document,
-                // not a blank frame. Skipping it silently would hide the
-                // breakage; milestone 6's preflight reports it. For now it
-                // simply does not paint, which is visible.
-                let Some(story) = doc.story(*story) else {
+    // What each page inherits from its parent, drawn **behind** its own
+    // contents and so before them: a master carries the furniture a page is
+    // laid out on top of.
+    //
+    // The offset is applied to the resolved item rather than to the frame,
+    // because nothing is moved. One master item is drawn once per page that
+    // inherits it, from a single frame — copying it onto each page is the
+    // thing a master exists in order not to do.
+    for page in doc.page_ids() {
+        let Some(area) = doc.spread_of(page).and_then(|s| doc.spread_area(s)) else {
+            continue;
+        };
+        for (item, dx, dy) in doc.inherited_by(page) {
+            for leaf in doc.descendants(item) {
+                let Some(frame) = doc.frame(leaf) else {
                     continue;
                 };
-                // The document is what resolves named styles, so it is what
-                // the shaper is handed.
-                //
-                // Colour is still one per frame rather than one per run: the
-                // shaper's brush is `()` and the consumer paints, so a run's
-                // own colour has nowhere to travel yet. Taken from the first
-                // run's resolved format, which is right for every story that
-                // has one colour and wrong for none that exist today.
-                let colour = story
-                    .runs
-                    .first()
-                    .map(|run| story.resolve_run(run, doc))
-                    .and_then(|f| f.colour)
-                    .unwrap_or(tessera_color::Color::BLACK);
-                ResolvedKind::Text {
-                    shaped: shaper.shape(story, doc, frame.bounds.width),
-                    color: colour,
-                }
+                let Some(mut resolved) = resolve_one(doc, shaper, leaf, frame) else {
+                    continue;
+                };
+                resolved.transform = Transform::translate(dx, dy).then(resolved.transform);
+                resolved.spread_area = Some(area);
+                items.push(resolved);
             }
-        };
+        }
+    }
 
-        items.push(ResolvedItem {
-            frame: id,
-            bounds: frame.bounds,
-            transform: frame.transform,
-            spread_area: doc.spread_of_frame(id).and_then(|s| doc.spread_area(s)),
-            kind,
-        });
+    // Everything else, master pages included: a parent page is laid out above
+    // the reading order and drawn there like any other spread, because a
+    // master you cannot see is a master you cannot edit. Its items appear
+    // twice — once on the parent, once on each page built on it — and that is
+    // what applying a master looks like.
+    for id in doc.paint_order() {
+        let Some(frame) = doc.frame(id) else { continue };
+        if let Some(item) = resolve_one(doc, shaper, id, frame) {
+            items.push(item);
+        }
     }
 
     ResolvedDocument { items, pages }
+}
+
+/// One frame, resolved.
+///
+/// Pulled out of the walk so that a master's item can be resolved the same way
+/// a page's own is — the difference between them is where it lands, not what
+/// it is. `None` for a frame that draws nothing: a group, or a text frame
+/// whose story has gone.
+fn resolve_one(
+    doc: &Document,
+    shaper: &mut Shaper,
+    id: FrameId,
+    frame: &tessera_document::nodes::Frame,
+) -> Option<ResolvedItem> {
+    let kind = match &frame.kind {
+        FrameKind::Rectangle => ResolvedKind::Rectangle {
+            fill: frame.fill.clone(),
+            stroke: frame.stroke.clone(),
+        },
+        FrameKind::Ellipse => ResolvedKind::Ellipse {
+            fill: frame.fill.clone(),
+            stroke: frame.stroke.clone(),
+        },
+        FrameKind::Path(path) => ResolvedKind::Path {
+            path: fit_to_bounds(path, frame.bounds),
+            // An open path with no explicit stroke would be invisible, so
+            // a path frame's fill is treated as its stroke colour when it
+            // has no stroke of its own.
+            fill: None,
+            stroke: Some(
+                frame
+                    .stroke
+                    .clone()
+                    .unwrap_or_else(|| Stroke::new(frame.fill.clone(), 1.0)),
+            ),
+        },
+
+        // A group draws nothing of its own, and paint_order already
+        // expanded it into its children, so it never reaches here.
+        FrameKind::Group(_) => return None,
+
+        FrameKind::Text { story } => {
+            // A text frame whose story is missing is a broken document,
+            // not a blank frame. Skipping it silently would hide the
+            // breakage; milestone 6's preflight reports it. For now it
+            // simply does not paint, which is visible.
+            let story = doc.story(*story)?;
+            // The document is what resolves named styles, so it is what
+            // the shaper is handed.
+            //
+            // Colour is still one per frame rather than one per run: the
+            // shaper's brush is `()` and the consumer paints, so a run's
+            // own colour has nowhere to travel yet. Taken from the first
+            // run's resolved format, which is right for every story that
+            // has one colour and wrong for none that exist today.
+            let colour = story
+                .runs
+                .first()
+                .map(|run| story.resolve_run(run, doc))
+                .and_then(|f| f.colour)
+                .unwrap_or(tessera_color::Color::BLACK);
+            ResolvedKind::Text {
+                shaped: shaper.shape(story, doc, frame.bounds.width),
+                color: colour,
+            }
+        }
+    };
+
+    Some(ResolvedItem {
+        frame: id,
+        bounds: frame.bounds,
+        transform: frame.transform,
+        spread_area: doc.spread_of_frame(id).and_then(|s| doc.spread_area(s)),
+        kind,
+    })
 }
 
 #[cfg(test)]
@@ -394,6 +443,164 @@ mod tests {
         assert!(
             b.height().abs() < 1e-9,
             "an axis with no extent must not blow up"
+        );
+    }
+
+    // --- parent pages -------------------------------------------------------
+
+    #[test]
+    fn a_master_item_is_drawn_on_the_page_that_inherits_it() {
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        let master = doc.add_master("A-Master");
+        let on = doc.pages_of_master(master)[0];
+        let bounds = doc.pages[on].bounds;
+        let layer = doc.default_layer().expect("layer");
+        doc.add_frame(layer, rect(bounds.x + 10.0, bounds.y + 10.0, 20.0, 20.0));
+
+        let page = doc.page_ids().next().expect("a page");
+        doc.apply_master(page, Some(master));
+
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+
+        assert_eq!(
+            resolved.items.len(),
+            2,
+            "once on the parent, once on the page built on it"
+        );
+        let item = &resolved.items[0];
+        let landed = item.transform.apply(item.bounds.center());
+        let target = doc.pages[page].bounds;
+        assert!(
+            landed.x >= target.x
+                && landed.x <= target.x + target.width
+                && landed.y >= target.y
+                && landed.y <= target.y + target.height,
+            "and it landed on that page, not on the master: {landed:?}"
+        );
+    }
+
+    #[test]
+    fn a_master_nobody_uses_still_draws_itself() {
+        // A master you cannot see is a master you cannot edit. It is laid out
+        // above the reading order and drawn there like any other spread.
+        let mut doc = Document::new();
+        let master = doc.add_master("A-Master");
+        let on = doc.pages_of_master(master)[0];
+        let bounds = doc.pages[on].bounds;
+        let layer = doc.default_layer().expect("layer");
+        let item = doc.add_frame(layer, rect(bounds.x + 10.0, bounds.y + 10.0, 20.0, 20.0));
+
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+
+        assert_eq!(resolved.items.len(), 1, "drawn once, on the parent");
+        assert_eq!(resolved.items[0].frame, item);
+    }
+
+    #[test]
+    fn a_master_page_has_a_sheet_of_its_own() {
+        let mut doc = Document::new();
+        let before = resolve(&doc, &mut Shaper::new()).pages.len();
+        doc.add_master("A-Master");
+
+        let after = resolve(&doc, &mut Shaper::new()).pages.len();
+        assert_eq!(after, before + 2, "a facing parent is two sheets");
+    }
+
+    #[test]
+    fn a_master_item_is_drawn_once_for_each_page_that_inherits_it() {
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        let master = doc.add_master("A-Master");
+        let on = doc.pages_of_master(master)[0];
+        let bounds = doc.pages[on].bounds;
+        let layer = doc.default_layer().expect("layer");
+        doc.add_frame(layer, rect(bounds.x + 10.0, bounds.y + 10.0, 20.0, 20.0));
+        doc.add_page();
+        doc.add_page();
+        for page in doc.page_ids().collect::<Vec<_>>() {
+            doc.apply_master(page, Some(master));
+        }
+
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+
+        assert_eq!(
+            resolved.items.len(),
+            4,
+            "one drawing on the parent, and one on each of three pages"
+        );
+        // Each on its own spread, which is what keeps it clipped to its sheet.
+        let areas: Vec<_> = resolved.items.iter().map(|i| i.spread_area).collect();
+        assert!(
+            areas.iter().all(|a| a.is_some()),
+            "every inherited item knows its sheet"
+        );
+        assert_ne!(areas[0], areas[1], "and they are different sheets");
+    }
+
+    #[test]
+    fn a_master_item_is_drawn_behind_the_page_it_is_on() {
+        // A master carries the furniture a page is laid out on top of.
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        let master = doc.add_master("A-Master");
+        let on = doc.pages_of_master(master)[0];
+        let master_bounds = doc.pages[on].bounds;
+        let layer = doc.default_layer().expect("layer");
+        let furniture = doc.add_frame(
+            layer,
+            rect(master_bounds.x + 10.0, master_bounds.y + 10.0, 20.0, 20.0),
+        );
+
+        let page = doc.page_ids().next().expect("a page");
+        let target = doc.pages[page].bounds;
+        let own = doc.add_frame(layer, rect(target.x + 40.0, target.y + 40.0, 20.0, 20.0));
+        doc.apply_master(page, Some(master));
+
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+
+        // On the page itself: the inherited furniture is resolved before the
+        // walk, so it precedes everything the page holds of its own.
+        let order: Vec<_> = resolved.items.iter().map(|i| i.frame).collect();
+        let inherited = order.iter().position(|f| *f == furniture).expect("drawn");
+        let mine = order.iter().position(|f| *f == own).expect("drawn");
+        assert!(inherited < mine, "the master first, then the page");
+    }
+
+    #[test]
+    fn an_overridden_item_is_drawn_once() {
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        let master = doc.add_master("A-Master");
+        let on = doc.pages_of_master(master)[0];
+        let bounds = doc.pages[on].bounds;
+        let layer = doc.default_layer().expect("layer");
+        let item = doc.add_frame(layer, rect(bounds.x + 10.0, bounds.y + 10.0, 20.0, 20.0));
+
+        let page = doc.page_ids().next().expect("a page");
+        doc.apply_master(page, Some(master));
+        let local = doc.override_master_item(page, item).expect("a copy");
+
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+
+        assert_eq!(resolved.items.len(), 2, "the parent, and the local copy");
+        assert!(
+            resolved.items.iter().any(|i| i.frame == local),
+            "the local copy stands in on the page"
+        );
+        assert_eq!(
+            resolved.items.iter().filter(|i| i.frame == item).count(),
+            1,
+            "and the master item is drawn only on the master"
         );
     }
 }

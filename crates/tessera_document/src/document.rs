@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 use tessera_geometry::{DocPoint, DocRect, Transform};
 
-use crate::ids::{FrameId, LayerId, PageId, SpreadId, StoryId};
+use crate::ids::{FrameId, LayerId, MasterId, PageId, SpreadId, StoryId};
+use crate::masters::Master;
 use crate::nodes::{DocumentSetup, Frame, FrameKind, Guide, Layer, Page, PageSide, Spread};
 use tessera_text::story::{
     CharacterFormat, CharacterStyle, CharacterStyleId, ParagraphFormat, ParagraphStyle,
@@ -59,6 +60,34 @@ pub struct Document {
     /// migration is what fills this in.
     #[serde(default)]
     pub layer_order: Vec<LayerId>,
+    /// Named parent spreads, in the order the panel lists them.
+    ///
+    /// A master's spread is deliberately **absent from `spread_order`**: it is
+    /// not in the reading order, is never numbered, and never reflows with the
+    /// document. Everything else about it is an ordinary spread.
+    #[serde(default)]
+    pub masters: SlotMap<MasterId, Master>,
+    #[serde(default)]
+    pub master_order: Vec<MasterId>,
+    /// Which local frame stands in for which master item.
+    ///
+    /// Keyed by the **local** frame, because that is what a page holds and
+    /// what a lookup starts from. An overridden item stops being the master's
+    /// — it is an ordinary frame, editable and movable — but the document
+    /// remembers where it came from, so the master's copy can be suppressed on
+    /// that page and "remove overrides" can find its way back.
+    ///
+    /// A map on the document rather than a field on the frame: an override is
+    /// a relationship between two frames, and a relationship belongs to
+    /// neither of its ends.
+    ///
+    /// A `SecondaryMap` rather than a `HashMap`, and the round-trip test is
+    /// what said so: JSON object keys must be strings, and a `FrameId` is not
+    /// one. A secondary map is keyed by the same arena key the frames are and
+    /// serialises as a list, which is also what it is.
+    #[serde(default)]
+    pub overrides: slotmap::SecondaryMap<FrameId, FrameId>,
+
     /// The layer new objects go onto.
     ///
     /// Saved with the document, as InDesign saves it — which layer you were
@@ -103,6 +132,9 @@ impl Document {
             spread_order: Vec::new(),
             layer_order: Vec::new(),
             active_layer: None,
+            masters: SlotMap::with_key(),
+            master_order: Vec::new(),
+            overrides: slotmap::SecondaryMap::new(),
             character_styles: SlotMap::with_key(),
             paragraph_styles: SlotMap::with_key(),
             text_default: TextStyle::default(),
@@ -126,9 +158,7 @@ impl Document {
         let layer = doc.layers.insert(Layer::named("Layer 1"));
         doc.layer_order.push(layer);
         doc.active_layer = Some(layer);
-        let page = doc.pages.insert(Page {
-            bounds: DEFAULT_PAGE,
-        });
+        let page = doc.pages.insert(Page::at(DEFAULT_PAGE));
         let spread = doc.spreads.insert(Spread {
             pages: vec![page],
             guides: Vec::new(),
@@ -300,13 +330,19 @@ impl Document {
     /// pasteboard — somewhere is better than nowhere, and "nowhere" was how a
     /// frame beside the page lost its spread and its clipping with it.
     pub fn page_holding(&self, at: DocPoint) -> Option<PageId> {
-        let on = self.page_ids().find(|id| {
+        // **Every** page, master pages included. A frame drawn on a master
+        // has to belong to that master page; asking only the reading order
+        // would hand it to whichever document page happened to be nearest,
+        // and a master's contents would appear on page one.
+        let all = || self.pages.keys();
+
+        let on = all().find(|id| {
             self.pages
                 .get(*id)
                 .is_some_and(|page| page.bounds.contains(at))
         });
         on.or_else(|| {
-            self.page_ids().min_by(|a, b| {
+            all().min_by(|a, b| {
                 let distance = |id: &PageId| {
                     self.pages.get(*id).map_or(f64::MAX, |p| {
                         let c = p.bounds.center();
@@ -347,12 +383,22 @@ impl Document {
             .unwrap_or_default()
     }
 
-    /// Which spread holds this page.
+    /// Which spread holds this page, master spreads included.
+    ///
+    /// The reading order first, because that is the common case and the answer
+    /// a page number depends on; then the masters, so a frame on a master page
+    /// still has a sheet to be clipped to.
     pub fn spread_of(&self, page: PageId) -> Option<SpreadId> {
         self.spread_order
             .iter()
             .copied()
             .find(|s| self.pages_of(*s).contains(&page))
+            .or_else(|| {
+                self.master_ids()
+                    .filter_map(|m| self.masters.get(m))
+                    .map(|m| m.spread)
+                    .find(|s| self.pages_of(*s).contains(&page))
+            })
     }
 
     /// Which side of its spread this page sits on.
@@ -385,7 +431,7 @@ impl Document {
             .and_then(|p| self.pages.get(*p))
             .map_or_else(|| self.first_page_bounds(), |p| p.bounds);
 
-        let page = self.pages.insert(Page { bounds });
+        let page = self.pages.insert(Page::at(bounds));
         if let Some(s) = self.spreads.get_mut(spread) {
             s.pages.push(page);
         }
@@ -687,11 +733,8 @@ impl Document {
     /// that exception gives 1-2, 3-4, which reads as though the book opened on
     /// its own cover.
     pub fn add_page(&mut self) -> PageId {
-        let page = self.pages.insert(Page {
-            // Placed by the reflow below; a page is never left where this put
-            // it.
-            bounds: DEFAULT_PAGE,
-        });
+        // Placed by the reflow below; a page is never left where this put it.
+        let page = self.pages.insert(Page::at(DEFAULT_PAGE));
 
         // Appended to the sequence, then the sequence decides the spreads.
         // Doing it the other way round — reasoning about whether the last
@@ -746,9 +789,11 @@ impl Document {
         // Asked before the copy exists, and before the reflow moves anything.
         let standing_on_it = self.frames_on_page(id);
 
-        let page = self.pages.insert(Page {
-            bounds: source.bounds,
-        });
+        let mut copy = Page::at(source.bounds);
+        // A duplicate keeps its parent: the copy of a page built on a master
+        // is a page built on the same master.
+        copy.master = source.master;
+        let page = self.pages.insert(copy);
         let spread = self.spreads.insert(Spread {
             pages: vec![page],
             guides: self
@@ -836,6 +881,229 @@ impl Document {
         }
 
         Some(self.frames.insert(frame))
+    }
+
+    // --- parent pages -------------------------------------------------
+
+    /// Every master, in the order the panel lists them.
+    pub fn master_ids(&self) -> impl Iterator<Item = MasterId> + '_ {
+        self.master_order.iter().copied()
+    }
+
+    /// Add a master spread shaped like the document's own.
+    ///
+    /// One page when pages do not face, two when they do — a master exists to
+    /// be applied to document pages, and one shaped differently could not be.
+    pub fn add_master(&mut self, name: impl Into<String>) -> MasterId {
+        let bounds = self.first_page_bounds();
+        let facing = self.setup.facing_pages;
+
+        let mut pages = vec![self.pages.insert(Page::at(bounds))];
+        if facing {
+            pages.push(self.pages.insert(Page::at(bounds)));
+        }
+
+        // Laid out above the document, where y is negative: the reading order
+        // starts at zero and grows downwards, so nothing there can collide
+        // with it however many pages are added.
+        let gap = bounds.height + SPREAD_GAP;
+        let y = -gap * (self.master_order.len() as f64 + 1.0);
+        for (column, page) in pages.iter().enumerate() {
+            if let Some(page) = self.pages.get_mut(*page) {
+                page.bounds = DocRect {
+                    x: column as f64 * bounds.width,
+                    y,
+                    width: bounds.width,
+                    height: bounds.height,
+                };
+            }
+        }
+
+        let spread = self.spreads.insert(Spread {
+            pages,
+            guides: Vec::new(),
+        });
+        let id = self.masters.insert(Master::new(name, spread));
+        self.master_order.push(id);
+        self.revision += 1;
+        id
+    }
+
+    /// A name no existing master has: "A-Master", "B-Master", and so on.
+    pub fn unused_master_name(&self) -> String {
+        let taken: Vec<&str> = self
+            .master_ids()
+            .filter_map(|m| self.masters.get(m))
+            .map(|m| m.name.as_str())
+            .collect();
+        for letter in b'A'..=b'Z' {
+            let name = format!("{}-Master", letter as char);
+            if !taken.contains(&name.as_str()) {
+                return name;
+            }
+        }
+        format!("Master {}", self.master_order.len() + 1)
+    }
+
+    /// The pages of a master spread.
+    pub fn pages_of_master(&self, master: MasterId) -> Vec<PageId> {
+        self.masters
+            .get(master)
+            .map(|m| self.pages_of(m.spread))
+            .unwrap_or_default()
+    }
+
+    /// Whether this page belongs to a master rather than to the document.
+    pub fn is_master_page(&self, page: PageId) -> bool {
+        self.master_ids()
+            .any(|m| self.pages_of_master(m).contains(&page))
+    }
+
+    /// Apply a master to a document page.
+    ///
+    /// The master page chosen is the one on the **same side of the fold**: a
+    /// verso takes the master's verso and a recto takes its recto, which is
+    /// what makes a master with different inside and outside margins work at
+    /// all. A single-page master applies its one page to either side.
+    pub fn apply_master(&mut self, page: PageId, master: Option<MasterId>) -> bool {
+        if !self.pages.contains_key(page) || self.is_master_page(page) {
+            return false;
+        }
+
+        let parent = match master {
+            None => None,
+            Some(master) => {
+                let pages = self.pages_of_master(master);
+                if pages.is_empty() {
+                    return false;
+                }
+                // Which column this page sits in, which `reflow_spreads`
+                // already decided from its number.
+                let column = self
+                    .pages
+                    .get(page)
+                    .map(|p| (p.bounds.x / p.bounds.width.max(1.0)).round() as usize)
+                    .unwrap_or(0);
+                Some(pages.get(column).copied().unwrap_or(pages[0]))
+            }
+        };
+
+        let Some(target) = self.pages.get_mut(page) else {
+            return false;
+        };
+        if target.master == parent {
+            return false;
+        }
+        target.master = parent;
+        self.revision += 1;
+        true
+    }
+
+    /// The master items that appear on `page`, and where they land on it.
+    ///
+    /// Returned as offsets rather than as moved frames, because nothing is
+    /// moved: a master item is drawn on every page that inherits it, from one
+    /// frame. An item that has been overridden on this page is **left out** —
+    /// the local copy stands in its place, and drawing both would double it.
+    pub fn inherited_by(&self, page: PageId) -> Vec<(FrameId, f64, f64)> {
+        let Some(parent) = self.pages.get(page).and_then(|p| p.master) else {
+            return Vec::new();
+        };
+        let (Some(from), Some(to)) = (self.pages.get(parent), self.pages.get(page)) else {
+            return Vec::new();
+        };
+        let (dx, dy) = (to.bounds.x - from.bounds.x, to.bounds.y - from.bounds.y);
+
+        let replaced: Vec<FrameId> = self
+            .frames_on_page(page)
+            .iter()
+            .filter_map(|f| self.overrides.get(*f).copied())
+            .collect();
+
+        self.frames_on_page(parent)
+            .into_iter()
+            .filter(|f| !replaced.contains(f))
+            .map(|f| (f, dx, dy))
+            .collect()
+    }
+
+    /// Promote a master item to a local copy on `page`.
+    ///
+    /// The copy is a deep one, stories included, and it lands exactly where
+    /// the master item appeared — so overriding an item changes nothing about
+    /// how the page looks until the copy is edited, which is the whole point.
+    pub fn override_master_item(&mut self, page: PageId, item: FrameId) -> Option<FrameId> {
+        let (_, dx, dy) = self
+            .inherited_by(page)
+            .into_iter()
+            .find(|(f, _, _)| *f == item)?;
+
+        let copy = self.copy_frame_deeply(item)?;
+        self.translate_deeply(copy, dx, dy);
+
+        let layer = self
+            .layer_of_frame(item)
+            .filter(|l| self.layers.contains_key(*l))
+            .or_else(|| self.default_layer())?;
+        if let Some(layer) = self.layers.get_mut(layer) {
+            layer.frames.push(copy);
+        }
+        self.overrides.insert(copy, item);
+        self.revision += 1;
+        Some(copy)
+    }
+
+    /// Take every override on `page` back, so the master shows through again.
+    pub fn remove_overrides(&mut self, page: PageId) -> usize {
+        let local: Vec<FrameId> = self
+            .frames_on_page(page)
+            .into_iter()
+            .filter(|f| self.overrides.contains_key(*f))
+            .collect();
+
+        for frame in &local {
+            self.overrides.remove(*frame);
+            self.remove_frame(*frame);
+        }
+        if !local.is_empty() {
+            self.revision += 1;
+        }
+        local.len()
+    }
+
+    /// Remove a master, and unhook every page that used it.
+    pub fn remove_master(&mut self, id: MasterId) -> bool {
+        let Some(master) = self.masters.get(id).cloned() else {
+            return false;
+        };
+        let pages = self.pages_of(master.spread);
+
+        // A page that inherited from it keeps its overrides — they are
+        // ordinary frames now, and deleting somebody's work because a master
+        // went would be a surprise no undo should have to fix.
+        for page in self.page_ids().collect::<Vec<_>>() {
+            if self
+                .pages
+                .get(page)
+                .and_then(|p| p.master)
+                .is_some_and(|m| pages.contains(&m))
+                && let Some(page) = self.pages.get_mut(page)
+            {
+                page.master = None;
+            }
+        }
+
+        for page in &pages {
+            for frame in self.frames_on_page(*page) {
+                self.remove_frame(frame);
+            }
+            self.pages.remove(*page);
+        }
+        self.spreads.remove(master.spread);
+        self.masters.remove(id);
+        self.master_order.retain(|m| *m != id);
+        self.revision += 1;
+        true
     }
 
     /// Move a page to another place in the reading order.
@@ -3885,5 +4153,353 @@ mod tests {
 
         assert_eq!(doc.spread_order.get(1).copied(), Some(second));
         assert_eq!(doc.guides_of(second).len(), 1);
+    }
+
+    // --- parent pages -------------------------------------------------------
+
+    /// A document whose pages do not face, with a one-page master carrying a
+    /// single item. Returns the document, the master and its item.
+    ///
+    /// Non-facing on purpose: a facing master has a verso and a recto, and
+    /// which of them a page inherits is a separate question with a test of its
+    /// own. Mixing the two makes every inheritance test depend on page parity,
+    /// which is how the first draft of these came to assert nothing.
+    fn a_master_holding_one_item() -> (Document, MasterId, FrameId) {
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        let master = doc.add_master("A-Master");
+        let on = doc.pages_of_master(master)[0];
+        let item = frame_on(&mut doc, on);
+        (doc, master, item)
+    }
+
+    #[test]
+    fn a_master_is_shaped_like_the_document() {
+        // A master exists to be applied to document pages. One shaped
+        // differently could not be.
+        let mut doc = Document::new();
+        let master = doc.add_master("A-Master");
+
+        let pages = doc.pages_of_master(master);
+        assert_eq!(pages.len(), 2, "facing pages, so a facing master");
+        let page = doc.pages[pages[0]].bounds;
+        assert_eq!(page.width, doc.first_page_bounds().width);
+        assert_eq!(page.height, doc.first_page_bounds().height);
+    }
+
+    #[test]
+    fn a_master_for_pages_that_do_not_face_is_one_page() {
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        let master = doc.add_master("A-Master");
+        assert_eq!(doc.pages_of_master(master).len(), 1);
+    }
+
+    #[test]
+    fn a_master_page_is_not_a_document_page() {
+        // It is never numbered, never reflows with the document, and never
+        // appears in the reading order.
+        let mut doc = Document::new();
+        let before: Vec<_> = doc.page_ids().collect();
+        let master = doc.add_master("A-Master");
+
+        assert_eq!(doc.page_ids().collect::<Vec<_>>(), before);
+        for page in doc.pages_of_master(master) {
+            assert!(doc.is_master_page(page));
+            assert!(!doc.page_ids().any(|p| p == page));
+        }
+    }
+
+    #[test]
+    fn a_frame_drawn_on_a_master_belongs_to_the_master_page() {
+        // `page_holding` asks every page, not only the reading order. Asking
+        // only the reading order would hand a master's contents to whichever
+        // document page happened to be nearest.
+        let mut doc = Document::new();
+        let master = doc.add_master("A-Master");
+        let on = doc.pages_of_master(master)[0];
+        let frame = frame_on(&mut doc, on);
+
+        assert_eq!(doc.page_of_frame(frame), Some(on));
+        assert_eq!(doc.frames_on_page(on), vec![frame]);
+    }
+
+    #[test]
+    fn a_master_is_offered_a_name_no_other_master_has() {
+        let mut doc = Document::new();
+        assert_eq!(doc.unused_master_name(), "A-Master");
+        doc.add_master(doc.unused_master_name());
+        assert_eq!(doc.unused_master_name(), "B-Master");
+    }
+
+    // --- applying one -------------------------------------------------------
+
+    #[test]
+    fn a_page_shows_what_its_master_holds() {
+        let (mut doc, master, item) = a_master_holding_one_item();
+
+        let page = doc.page_ids().next().expect("a page");
+        assert!(doc.apply_master(page, Some(master)));
+
+        let inherited = doc.inherited_by(page);
+        assert_eq!(inherited.len(), 1);
+        assert_eq!(inherited[0].0, item, "the master's own frame, not a copy");
+    }
+
+    #[test]
+    fn applying_a_master_copies_nothing() {
+        // **The whole point.** A master whose items were copied onto each page
+        // would not update those pages when it changed.
+        let (mut doc, master, item) = a_master_holding_one_item();
+        let page = doc.page_ids().next().expect("a page");
+        doc.apply_master(page, Some(master));
+        let frames_before = doc.frames.len();
+
+        // Edit the master item.
+        doc.frame_mut(item).expect("frame").fill = Color::Rgb {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        };
+
+        assert_eq!(doc.frames.len(), frames_before, "no copy was ever made");
+        let (id, _, _) = doc.inherited_by(page)[0];
+        assert_eq!(
+            doc.frame(id).expect("frame").fill,
+            Color::Rgb {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0
+            },
+            "so the page shows the change"
+        );
+    }
+
+    #[test]
+    fn one_master_reaches_every_page_it_is_applied_to() {
+        let (mut doc, master, _) = a_master_holding_one_item();
+        doc.add_page();
+        doc.add_page();
+
+        for page in doc.page_ids().collect::<Vec<_>>() {
+            doc.apply_master(page, Some(master));
+        }
+
+        assert_eq!(doc.page_ids().count(), 3);
+        for page in doc.page_ids() {
+            assert_eq!(doc.inherited_by(page).len(), 1, "on every one of them");
+        }
+    }
+
+    #[test]
+    fn a_master_item_lands_in_the_same_place_on_the_page() {
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        let master = doc.add_master("A-Master");
+        let on = doc.pages_of_master(master)[0];
+        let item = frame_on(&mut doc, on);
+
+        let page = doc.page_ids().next().expect("a page");
+        doc.apply_master(page, Some(master));
+
+        let (_, dx, dy) = doc.inherited_by(page)[0];
+        let (from, to) = (doc.pages[on].bounds, doc.pages[page].bounds);
+        let was = doc.frame(item).expect("frame").bounds;
+        assert!(
+            ((was.x + dx) - (to.x + (was.x - from.x))).abs() < 1e-9
+                && ((was.y + dy) - (to.y + (was.y - from.y))).abs() < 1e-9,
+            "the offset carries it to the same spot on the page"
+        );
+    }
+
+    #[test]
+    fn a_page_takes_the_master_page_on_its_own_side_of_the_fold() {
+        // A master with different inside and outside margins is useless if a
+        // verso takes the recto's furniture.
+        let mut doc = Document::new();
+        doc.add_page();
+        doc.add_page();
+        let master = doc.add_master("A-Master");
+        let (verso, recto) = {
+            let pages = doc.pages_of_master(master);
+            (pages[0], pages[1])
+        };
+
+        let pages: Vec<_> = doc.page_ids().collect();
+        // Page one is a recto, page two a verso.
+        doc.apply_master(pages[0], Some(master));
+        doc.apply_master(pages[1], Some(master));
+
+        assert_eq!(
+            doc.pages[pages[0]].master,
+            Some(recto),
+            "page one is a recto"
+        );
+        assert_eq!(doc.pages[pages[1]].master, Some(verso), "page two a verso");
+    }
+
+    #[test]
+    fn a_master_cannot_be_applied_to_a_master_page() {
+        let mut doc = Document::new();
+        let a = doc.add_master("A-Master");
+        let b = doc.add_master("B-Master");
+        let page = doc.pages_of_master(b)[0];
+
+        assert!(!doc.apply_master(page, Some(a)));
+    }
+
+    #[test]
+    fn a_duplicated_page_keeps_its_master() {
+        let mut doc = Document::new();
+        let master = doc.add_master("A-Master");
+        let page = doc.page_ids().next().expect("a page");
+        doc.apply_master(page, Some(master));
+
+        let copy = doc.duplicate_page(page).expect("a copy");
+
+        assert_eq!(doc.pages[copy].master, doc.pages[page].master);
+    }
+
+    // --- overriding one item ------------------------------------------------
+
+    #[test]
+    fn overriding_an_item_leaves_the_page_looking_the_same() {
+        // Overriding changes nothing until the copy is edited, which is the
+        // whole point: it is a promotion, not an edit.
+        let (mut doc, master, item) = a_master_holding_one_item();
+        let page = doc.page_ids().next().expect("a page");
+        doc.apply_master(page, Some(master));
+
+        let (_, dx, dy) = doc.inherited_by(page)[0];
+        let was = doc.frame(item).expect("frame").bounds;
+
+        let local = doc.override_master_item(page, item).expect("a local copy");
+
+        let now = doc.frame(local).expect("frame").bounds;
+        assert!(
+            (now.x - (was.x + dx)).abs() < 1e-9 && (now.y - (was.y + dy)).abs() < 1e-9,
+            "it sits exactly where the master item appeared"
+        );
+    }
+
+    #[test]
+    fn an_overridden_item_is_drawn_once_not_twice() {
+        let (mut doc, master, item) = a_master_holding_one_item();
+        let page = doc.page_ids().next().expect("a page");
+        doc.apply_master(page, Some(master));
+
+        doc.override_master_item(page, item);
+
+        assert!(
+            doc.inherited_by(page).is_empty(),
+            "the master's copy is suppressed where the local one stands"
+        );
+        assert_eq!(
+            doc.frames_on_page(page).len(),
+            1,
+            "and the local one is there"
+        );
+    }
+
+    #[test]
+    fn overriding_on_one_page_leaves_the_others_alone() {
+        // The sentence milestone 3 has to perform.
+        let (mut doc, master, item) = a_master_holding_one_item();
+        doc.add_page();
+        doc.add_page();
+        let pages: Vec<_> = doc.page_ids().collect();
+        for page in &pages {
+            doc.apply_master(*page, Some(master));
+        }
+
+        doc.override_master_item(pages[1], item);
+
+        assert!(doc.inherited_by(pages[1]).is_empty(), "overridden here");
+        for page in [pages[0], pages[2]] {
+            assert_eq!(
+                doc.inherited_by(page).len(),
+                1,
+                "and untouched everywhere else"
+            );
+        }
+    }
+
+    #[test]
+    fn an_overridden_item_can_be_edited_without_changing_the_master() {
+        let (mut doc, master, item) = a_master_holding_one_item();
+        let page = doc.page_ids().next().expect("a page");
+        doc.apply_master(page, Some(master));
+        let local = doc.override_master_item(page, item).expect("a copy");
+
+        doc.frame_mut(local).expect("frame").fill = Color::Rgb {
+            r: 0.0,
+            g: 1.0,
+            b: 0.0,
+            a: 1.0,
+        };
+
+        assert_ne!(
+            doc.frame(item).expect("frame").fill,
+            Color::Rgb {
+                r: 0.0,
+                g: 1.0,
+                b: 0.0,
+                a: 1.0
+            },
+            "the master is not the copy"
+        );
+    }
+
+    #[test]
+    fn removing_overrides_lets_the_master_show_through_again() {
+        let (mut doc, master, item) = a_master_holding_one_item();
+        let page = doc.page_ids().next().expect("a page");
+        doc.apply_master(page, Some(master));
+        let local = doc.override_master_item(page, item).expect("a copy");
+
+        assert_eq!(doc.remove_overrides(page), 1);
+
+        assert!(doc.frame(local).is_none(), "the local copy went");
+        assert_eq!(doc.inherited_by(page).len(), 1, "the master is back");
+    }
+
+    #[test]
+    fn a_page_with_nothing_overridden_has_nothing_to_remove() {
+        let mut doc = Document::new();
+        let page = doc.page_ids().next().expect("a page");
+        assert_eq!(doc.remove_overrides(page), 0);
+    }
+
+    // --- removing a master --------------------------------------------------
+
+    #[test]
+    fn removing_a_master_unhooks_the_pages_that_used_it() {
+        let (mut doc, master, _) = a_master_holding_one_item();
+        let page = doc.page_ids().next().expect("a page");
+        doc.apply_master(page, Some(master));
+
+        assert!(doc.remove_master(master));
+
+        assert_eq!(doc.pages[page].master, None);
+        assert!(doc.inherited_by(page).is_empty());
+        assert!(!doc.master_ids().any(|m| m == master));
+    }
+
+    #[test]
+    fn removing_a_master_keeps_what_was_overridden_from_it() {
+        // An override is an ordinary frame by then, and deleting somebody's
+        // work because a master went is a surprise no undo should have to fix.
+        let (mut doc, master, item) = a_master_holding_one_item();
+        let page = doc.page_ids().next().expect("a page");
+        doc.apply_master(page, Some(master));
+        let local = doc.override_master_item(page, item).expect("a copy");
+
+        doc.remove_master(master);
+
+        assert!(doc.frame(local).is_some(), "the local copy stays");
     }
 }

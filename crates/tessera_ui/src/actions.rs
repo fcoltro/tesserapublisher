@@ -112,6 +112,8 @@ pub enum Run {
 pub enum Cmd {
     AddPage,
     RemovePage,
+    AddMaster,
+    RemoveOverrides,
     DuplicatePage,
     Undo,
     Redo,
@@ -403,6 +405,13 @@ pub fn all() -> &'static [Action] {
             Command(DuplicatePage),
         ),
         a("Delete page", None, Group::Layout, Command(RemovePage)),
+        a("Add parent page", None, Group::Layout, Command(AddMaster)),
+        a(
+            "Remove overrides on this page",
+            None,
+            Group::Layout,
+            Command(RemoveOverrides),
+        ),
         // The last menu milestone 1.5 named as absent for having no commands.
         a("Pages", Some("F12"), Group::Window, TogglePages),
         a("Layers", Some("F7"), Group::Window, ToggleLayers),
@@ -485,6 +494,13 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
                 // These three act on the spread being looked at, which is
                 // where "this page" means anything at all.
                 Cmd::AddPage => Command::AddPage,
+                Cmd::AddMaster => Command::AddMaster,
+                Cmd::RemoveOverrides => {
+                    let Some(page) = crate::view::panels::current_page(state) else {
+                        return;
+                    };
+                    Command::RemoveOverrides { page }
+                }
                 Cmd::DuplicatePage | Cmd::RemovePage => {
                     let Some(page) = crate::view::panels::current_page(state) else {
                         return;

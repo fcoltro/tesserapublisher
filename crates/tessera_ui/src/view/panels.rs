@@ -847,6 +847,11 @@ pub(crate) fn icon_button(
     response.on_hover_text(tooltip).clicked()
 }
 
+/// [`group_label`], for another module in the view.
+pub(crate) fn group_label_pub(ui: &mut Ui, text: &str) {
+    group_label(ui, text);
+}
+
 /// A quiet label naming a group of fields inside a section.
 ///
 /// Not a section heading: it does not collapse and it carries no icon. The

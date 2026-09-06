@@ -416,6 +416,24 @@ pub struct DocumentSetup {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Page {
     pub bounds: DocRect,
+    /// The parent page whose items appear on this one.
+    ///
+    /// A **reference**, never a copy. A master whose items were copied onto
+    /// each page would not update those pages when it changed, which is the
+    /// entire reason to have one. `serde(default)` reads as no parent, which
+    /// is the truth about a document written before masters existed.
+    #[serde(default)]
+    pub master: Option<PageId>,
+}
+
+impl Page {
+    /// A page at `bounds`, with no parent.
+    pub fn at(bounds: DocRect) -> Self {
+        Self {
+            bounds,
+            master: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

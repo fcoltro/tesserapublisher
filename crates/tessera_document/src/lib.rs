@@ -11,6 +11,7 @@ pub mod document;
 pub mod format;
 pub mod history;
 pub mod ids;
+pub mod masters;
 pub mod nodes;
 pub mod path;
 

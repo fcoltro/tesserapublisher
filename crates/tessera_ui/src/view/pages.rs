@@ -17,7 +17,7 @@
 
 use egui::Ui;
 
-use tessera_document::ids::{PageId, SpreadId};
+use tessera_document::ids::{MasterId, PageId, SpreadId};
 
 use crate::app::TesseraApp;
 use crate::command::{Command, apply};
@@ -41,9 +41,109 @@ const MARKER: f32 = 2.0;
 /// above them can grow without the strip growing with it — the waste the
 /// floating panel was reported for.
 pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
+    masters(ui, state);
     body(ui, state);
     ui.add_space(Theme::SPACE_2);
     actions(ui, state);
+}
+
+/// The parent pages, above the document's own.
+///
+/// Above, because that is where they are: a master spread is laid out at
+/// negative y, before the reading order begins. The panel says the same thing
+/// the canvas does rather than inventing a second arrangement.
+fn masters(ui: &mut Ui, state: &mut TesseraApp) {
+    let masters = state.active().document().master_order.clone();
+    if masters.is_empty() {
+        return;
+    }
+
+    crate::view::panels::group_label_pub(ui, "Parent pages");
+
+    let current = crate::view::panels::current_page(state);
+    let applied = current.and_then(|p| state.active().document().pages[p].master);
+
+    let mut chosen: Option<MasterId> = None;
+
+    for id in masters {
+        let Some(master) = state.active().document().masters.get(id).cloned() else {
+            continue;
+        };
+        let pages = state.active().document().pages_of_master(id);
+        let holds = pages
+            .iter()
+            .map(|p| state.active().document().frames_on_page(*p).len())
+            .sum::<usize>();
+        let on_this_page = pages.iter().any(|p| Some(*p) == applied);
+
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), Theme::ROW),
+            egui::Sense::click(),
+        );
+        let painter = ui.painter_at(rect);
+        if on_this_page {
+            painter.rect_filled(rect, Theme::RADIUS, Theme::SELECTED_BG);
+        } else if response.hovered() {
+            painter.rect_filled(rect, Theme::RADIUS, Theme::HOVER_BG);
+        }
+        painter.text(
+            egui::pos2(rect.left() + Theme::SPACE_1, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            &master.name,
+            egui::TextStyle::Body.resolve(ui.style()),
+            Theme::TEXT_PRIMARY,
+        );
+        painter.text(
+            egui::pos2(rect.right() - Theme::SPACE_1, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            if holds == 1 {
+                "1 item".to_string()
+            } else {
+                format!("{holds} items")
+            },
+            egui::TextStyle::Small.resolve(ui.style()),
+            Theme::TEXT_MUTED,
+        );
+
+        // A parent is on the canvas above the document, so it is reached by
+        // scrolling to it rather than by a mode. Clicking here is about the
+        // page you are on, which is what the panel is for.
+        if response
+            .on_hover_text("Build the current page on this parent")
+            .clicked()
+        {
+            chosen = Some(id);
+        }
+    }
+
+    // Applying by click rather than by drag. A drag needs a target that is
+    // visible and a gesture that can be got wrong; the current page is already
+    // marked, and clicking the parent you want is one action with one meaning.
+    if let Some(master) = chosen
+        && let Some(page) = current
+    {
+        let already = state.active().document().pages[page]
+            .master
+            .is_some_and(|m| {
+                state
+                    .active()
+                    .document()
+                    .pages_of_master(master)
+                    .contains(&m)
+            });
+        apply(
+            state,
+            Command::ApplyMaster {
+                page,
+                // Clicking the parent a page is already built on takes it off,
+                // which is the only way to say "none" without a second control.
+                master: if already { None } else { Some(master) },
+            },
+        );
+    }
+
+    ui.add_space(Theme::SPACE_3);
+    crate::view::panels::group_label_pub(ui, "Pages");
 }
 
 fn body(ui: &mut Ui, state: &mut TesseraApp) {
@@ -264,6 +364,14 @@ fn actions(ui: &mut Ui, state: &mut TesseraApp) {
     ui.horizontal_centered(|ui| {
         if crate::view::panels::icon_button(ui, crate::icons::Icon::Plus, "Add page", false) {
             apply(state, Command::AddPage);
+        }
+        if crate::view::panels::icon_button(
+            ui,
+            crate::icons::Icon::Layers,
+            "Add parent page",
+            false,
+        ) {
+            apply(state, Command::AddMaster);
         }
         if let Some(page) = crate::view::panels::current_page(state) {
             if crate::view::panels::icon_button(

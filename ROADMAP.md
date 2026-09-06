@@ -662,13 +662,38 @@ masters twice.
     click that chose where to draw it.
   - The last layer cannot be removed, refused by the document rather than by
     the caller — the same rule the last page has, for the same reason.
-- [ ] Master pages, applied by drag, rendered behind page content. Applied by
-  **reference, not by copy**: a master whose items were copied onto each page
-  would not update the pages when it changed, which is the entire reason to
-  have one.
-- [ ] Master item override, promoting one item to a local editable copy. An
-  overridden item stops being the master's, but remembers where it came from,
-  so that "remove all overrides" can find its way back.
+- [x] Master pages, rendered behind page content. Applied by **reference, not
+  by copy**: a master whose items were copied onto each page would not update
+  the pages when it changed, which is the entire reason to have one. There is a
+  test that edits a master item and requires the page to show the change, with
+  the frame count unmoved.
+  - A master is **a spread that is not in the reading order**. It holds pages
+    like any other spread and they hold frames like any other page, so layers,
+    text and transforms all work on it without knowing what it is.
+  - Laid out **above** the document, at negative y. It is drawn there like any
+    other spread, because a master you cannot see is a master you cannot edit —
+    and its items appear again on each page built on it, which is what applying
+    one looks like.
+  - A page takes the master page on its **own side of the fold**: a verso takes
+    the verso, a recto the recto. A master with different inside and outside
+    margins is useless otherwise.
+  - Applied by click rather than by drag. A drag needs a visible target and a
+    gesture that can be got wrong; the current page is already marked, and
+    clicking the parent is one action with one meaning. Clicking the parent a
+    page already uses takes it off.
+- [x] Master item override, promoting one item to a local editable copy. The
+  copy lands exactly where the master item appeared, so overriding changes
+  nothing until the copy is edited — it is a promotion, not an edit.
+  - The relationship lives on the **document**, not on the frame: an override
+    is a relationship between two frames and belongs to neither of its ends.
+    A `SecondaryMap`, because the round-trip test pointed out that JSON object
+    keys must be strings and a `FrameId` is not one.
+  - Removing a master **keeps** what was overridden from it. An override is an
+    ordinary frame by then, and deleting somebody's work because a parent went
+    is a surprise no undo should have to fix.
+  - Format version 8 → 9. Nothing to rewrite, and this time the defaults really
+    are the truth: a document written before parents existed has none, none of
+    its pages is built on one, and nothing overrides anything.
 - [ ] Document setup: page size, orientation, margins, bleed, slug. → **moved
   to milestone 1.5, phase B.** Too much stands on it to leave it this late:
   rulers, screen modes, align-to-page, `TrimBox` and `BleedBox`, and

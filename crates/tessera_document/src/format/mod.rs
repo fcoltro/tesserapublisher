@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 8;
+pub const FORMAT_VERSION: u32 = 9;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -170,6 +170,19 @@ fn migrate(value: &mut serde_json::Value, from: u32) {
     if from < 8 {
         layers_leave_the_page(value);
     }
+
+    // 8 -> 9: the document gained parent pages, a page gained the parent it
+    // is built on, and the document gained the map of which local frame
+    // stands in for which master item.
+    //
+    // Nothing to rewrite, and this time the defaults really are the truth: a
+    // document written before masters existed has no masters, none of its
+    // pages is built on one, and nothing in it overrides anything. Every one
+    // of those is what an empty collection means.
+    //
+    // The version moves anyway, so that a build without masters refuses a
+    // document that uses them rather than opening it with the furniture
+    // silently missing from every page.
 }
 
 /// Move layers off the pages and into a document-wide stack.

@@ -577,9 +577,105 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_eight() {
+fn the_format_version_is_nine() {
     // If this changes, a migration step is owed.
-    assert_eq!(format::FORMAT_VERSION, 8);
+    assert_eq!(format::FORMAT_VERSION, 9);
+}
+
+#[test]
+fn a_version_eight_document_opens_with_no_masters_and_no_overrides() {
+    // 8 -> 9 rewrites nothing, and for once the defaults really are the truth:
+    // a document written before parent pages existed has no masters, none of
+    // its pages is built on one, and nothing in it overrides anything. Every
+    // one of those is what an empty collection means — unlike `layer_order` at
+    // 7 -> 8, where empty meant a document that painted nothing.
+    let path = temp_path("legacy_v8.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = Document::new();
+    let layer = doc.default_layer().expect("layer");
+    let id = doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: 12.0,
+                y: 14.0,
+                width: 30.0,
+                height: 20.0,
+            },
+            kind: FrameKind::Rectangle,
+            transform: Transform::IDENTITY,
+            fill: Color::BLACK,
+            stroke: None,
+        },
+    );
+
+    format::save(&doc, &path).expect("save");
+    format::rewrite_version_for_test(&path, 8).expect("stamp");
+
+    let loaded = format::load(&path).expect("a version 8 document must still open");
+
+    assert!(loaded.master_order.is_empty());
+    assert!(loaded.overrides.is_empty());
+    for page in loaded.page_ids() {
+        assert_eq!(loaded.pages[page].master, None);
+    }
+    assert!(loaded.frame(id).is_some(), "and its contents came back");
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_master_and_its_overrides_survive_a_round_trip() {
+    let path = temp_path("masters.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = Document::new();
+    doc.setup.facing_pages = false;
+    doc.reflow_spreads();
+    let master = doc.add_master("A-Master");
+    let on = doc.pages_of_master(master)[0];
+    let bounds = doc.pages[on].bounds;
+    let layer = doc.default_layer().expect("layer");
+    let item = doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: bounds.x + 10.0,
+                y: bounds.y + 10.0,
+                width: 40.0,
+                height: 30.0,
+            },
+            kind: FrameKind::Rectangle,
+            transform: Transform::IDENTITY,
+            fill: Color::BLACK,
+            stroke: None,
+        },
+    );
+    let page = doc.page_ids().next().expect("a page");
+    doc.apply_master(page, Some(master));
+    let local = doc.override_master_item(page, item).expect("an override");
+
+    format::save(&doc, &path).expect("save");
+    let loaded = format::load(&path).expect("load");
+
+    assert_eq!(loaded.master_order.len(), 1);
+    assert_eq!(
+        loaded.masters[loaded.master_order[0]].name, "A-Master",
+        "the master kept its name"
+    );
+    assert_eq!(
+        loaded.pages[page].master,
+        Some(on),
+        "and the page still points at it"
+    );
+    assert_eq!(
+        loaded.overrides.get(local).copied(),
+        Some(item),
+        "and the override still remembers what it stands in for"
+    );
+
+    let _ = std::fs::remove_file(&path);
 }
 
 /// A version-7 archive: two pages, each owning its own layer.
