@@ -443,6 +443,8 @@ fn page_setup_and_guides_survive_a_round_trip() {
     let mut original = Document::new();
     original.setup = DocumentSetup {
         baseline_grid: None,
+        columns: 3,
+        column_gutter: 14.0,
         margins: Margins {
             top: 36.0,
             bottom: 42.0,

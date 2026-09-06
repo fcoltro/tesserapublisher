@@ -35,6 +35,7 @@ fn resolved_page() -> tessera_layout::ResolvedPage {
         margins: page(),
         bleed: page(),
         slug: page(),
+        columns: Vec::new(),
     }
 }
 
@@ -258,6 +259,7 @@ fn bled_page(bleed: f64) -> tessera_layout::ResolvedPage {
             height: p.height + bleed * 2.0,
         },
         slug: p,
+        columns: Vec::new(),
     }
 }
 

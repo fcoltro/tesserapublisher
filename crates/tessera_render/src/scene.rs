@@ -10,7 +10,7 @@ use tessera_color::Color;
 use tessera_document::nodes::{LineCap, LineJoin, Stroke};
 use tessera_geometry::{DocRect, ViewTransform};
 use tessera_layout::resolve::{ResolvedDocument, ResolvedKind};
-use vello::kurbo::{Affine, Ellipse, Rect, Stroke as KurboStroke};
+use vello::kurbo::{Affine, Ellipse, Line, Rect, Stroke as KurboStroke};
 use vello::peniko::Fill;
 use vello::peniko::color::{AlphaColor, Srgb};
 use vello::{Glyph, Scene};
@@ -78,6 +78,12 @@ const BLEED_RULE: [f32; 4] = [0.85, 0.22, 0.18, 1.0];
 /// even for the most common colour-vision deficiencies, which red and green
 /// would not be.
 const MARGIN_RULE: [f32; 4] = [0.78, 0.24, 0.72, 1.0];
+/// The column guides.
+///
+/// Violet: a relative of the magenta margin rule, because a column guide is a
+/// subdivision of the type area rather than a different kind of thing — and
+/// distinct enough that the two do not read as one line when they meet.
+const COLUMN_RULE: [f32; 4] = [0.55, 0.36, 0.85, 1.0];
 
 /// What to include when building a scene.
 ///
@@ -195,6 +201,20 @@ pub fn build_scene_with(
                 None,
                 &page.margins.to_kurbo(),
             );
+        }
+        // The column guides, drawn as the sides of each column rather than as
+        // boxes: their tops and bottoms lie on the margin rule already, and
+        // stroking them again doubles a line that is meant to be a hairline.
+        for column in &page.columns {
+            for x in [column.x, column.x + column.width] {
+                scene.stroke(
+                    &rule,
+                    transform,
+                    AlphaColor::<Srgb>::new(COLUMN_RULE),
+                    None,
+                    &Line::new((x, column.y), (x, column.y + column.height)),
+                );
+            }
         }
     }
 
@@ -501,6 +521,7 @@ mod tests {
             margins: page(),
             bleed: page(),
             slug: page(),
+            columns: Vec::new(),
         }
     }
 

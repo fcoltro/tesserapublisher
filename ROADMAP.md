@@ -758,10 +758,22 @@ full argument, with sources, is in `docs/superpowers/specs/`.
 
 - [ ] Rulers with unit selection (mm, pt, px, in, picas) → **moved to
   milestone 1.5**: the unit type to phase A, the ruler to phase C.
-- [ ] Ruler guides → **moved to milestone 1.5**: the data to phase B, the
-  drag-out to phase C. They rode along free on a format bump that was being
-  paid anyway. Margin guides are drawn by phase B; **column guides stay here**,
-  because columns are text-frame geometry that phase B does not model.
+- [x] Ruler guides → **moved to milestone 1.5**: the data to phase B, the
+  drag-out to phase C. Margin guides are drawn by phase B; **column guides
+  landed here**, and are done.
+  - They divide the **type area**, not the trim: a layout is built against its
+    margins, and guides dividing the page would put a column under one.
+  - Drawn as the sides of each column rather than as boxes. Their tops and
+    bottoms lie on the margin rule already, and stroking them again doubles a
+    line meant to be a hairline.
+  - Objects snap to them, which is most of what a guide is for.
+  - **One implementation of how columns divide**, shared by a page's guides and
+    a text frame, with a test that the two agree. Two would eventually differ,
+    and a frame that did not line up with the guides it was drawn against would
+    be a very confusing thing to debug.
+  - Zero columns and one column mean the same thing — one, so no interior
+    guides — which is what lets the field default cleanly and what a document
+    written before them reads as.
 - [x] Snapping solver with a pixel-threshold lock and visible indicators.
   - **The threshold is in screen pixels, not points.** Six points is
     imperceptible at 25% and unshakeable at 800%; six pixels feels the same at

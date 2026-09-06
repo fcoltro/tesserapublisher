@@ -334,6 +334,31 @@ impl Default for TextLayout {
     }
 }
 
+/// Divide an area into `columns` with `gutter` between them.
+///
+/// The one place that knows how columns divide, used by a text frame and by a
+/// page's column guides alike. Two implementations would eventually disagree,
+/// and a frame that did not line up with the guides it was drawn against would
+/// be a very confusing thing to debug.
+///
+/// A gutter wide enough to swallow the area yields columns of **zero** width
+/// rather than negative ones: text cannot be laid out in a negative measure,
+/// and clamping here means nothing downstream has to check.
+pub fn divide_into_columns(area: DocRect, columns: u8, gutter: f64) -> Vec<DocRect> {
+    let count = columns.max(1);
+    let gutters = gutter * f64::from(count - 1);
+    let each = ((area.width - gutters) / f64::from(count)).max(0.0);
+
+    (0..count)
+        .map(|i| DocRect {
+            x: area.x + f64::from(i) * (each + gutter),
+            y: area.y,
+            width: each,
+            height: area.height,
+        })
+        .collect()
+}
+
 impl TextLayout {
     /// The columns, in the frame's own space.
     ///
@@ -343,7 +368,6 @@ impl TextLayout {
     /// width rather than negative ones — text cannot be laid out in a negative
     /// measure, and clamping here means nothing downstream has to check.
     pub fn columns_of(&self, bounds: DocRect) -> Vec<DocRect> {
-        let count = self.columns.max(1) as f64;
         let inner = DocRect {
             x: bounds.x + self.inset.left,
             y: bounds.y + self.inset.top,
@@ -351,17 +375,7 @@ impl TextLayout {
             height: (bounds.height - self.inset.top - self.inset.bottom).max(0.0),
         };
 
-        let gutters = self.gutter * (count - 1.0);
-        let each = ((inner.width - gutters) / count).max(0.0);
-
-        (0..self.columns.max(1))
-            .map(|i| DocRect {
-                x: inner.x + f64::from(i) * (each + self.gutter),
-                y: inner.y,
-                width: each,
-                height: inner.height,
-            })
-            .collect()
+        divide_into_columns(inner, self.columns, self.gutter)
     }
 }
 
@@ -541,6 +555,17 @@ impl Orientation {
 /// right when they disagree.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct DocumentSetup {
+    /// How many columns the page's guides divide the type area into.
+    ///
+    /// Guides only: they are furniture to lay out against and to snap to, and
+    /// they do not make a text frame multi-column any more than a ruler guide
+    /// does. A frame's own columns are on [`TextLayout`].
+    #[serde(default)]
+    pub columns: u8,
+    /// The space between those guides.
+    #[serde(default)]
+    pub column_gutter: f64,
+
     /// The grid every locked line sits on, if the document has one.
     ///
     /// `None` rather than a zero step, and the difference is the point: a

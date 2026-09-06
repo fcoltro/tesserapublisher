@@ -2028,6 +2028,8 @@ mod tests {
 
         let wanted = DocumentSetup {
             baseline_grid: None,
+            columns: 2,
+            column_gutter: 10.0,
             margins: Margins::uniform(36.0),
             bleed: Insets::uniform(9.0),
             slug: Insets::default(),

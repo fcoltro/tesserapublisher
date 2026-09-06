@@ -554,6 +554,20 @@ impl Document {
         self.spread_of(self.page_of_frame(frame)?)
     }
 
+    /// The page's column guides: its type area divided by the setup.
+    ///
+    /// Empty when there is one column, because a single column *is* the type
+    /// area and drawing a guide on top of the margin rule says nothing.
+    pub fn column_rects(&self, page: PageId) -> Vec<DocRect> {
+        if self.setup.columns <= 1 {
+            return Vec::new();
+        }
+        let Some(area) = self.margin_rect(page) else {
+            return Vec::new();
+        };
+        crate::nodes::divide_into_columns(area, self.setup.columns, self.setup.column_gutter)
+    }
+
     /// Whether `at` falls on any page, as opposed to the pasteboard.
     ///
     /// Not `first_page_bounds().contains(..)`, which is what the cursor used
@@ -4793,5 +4807,77 @@ mod tests {
 
         assert!(doc.thread(f[2], fourth), "the end of the chain may grow");
         assert_eq!(doc.thread_of(f[0]).len(), 4);
+    }
+
+    // --- column guides ------------------------------------------------------
+
+    #[test]
+    fn column_guides_divide_the_type_area_not_the_page() {
+        // A layout is built against its margins; guides that divided the trim
+        // would put a column under the margin.
+        let mut doc = Document::new();
+        doc.setup.margins = Margins::uniform(36.0);
+        doc.setup.columns = 2;
+        doc.setup.column_gutter = 12.0;
+        doc.reflow_spreads();
+
+        let page = doc.page_ids().next().expect("a page");
+        let area = doc.margin_rect(page).expect("a type area");
+        let columns = doc.column_rects(page);
+
+        assert_eq!(columns.len(), 2);
+        assert_eq!(columns[0].x, area.x, "the first starts at the margin");
+        let last = columns.last().expect("a column");
+        assert!(
+            ((last.x + last.width) - (area.x + area.width)).abs() < 1e-9,
+            "and the last ends at the other one"
+        );
+    }
+
+    #[test]
+    fn one_column_draws_no_guide() {
+        let mut doc = Document::new();
+        doc.setup.columns = 1;
+        let page = doc.page_ids().next().expect("a page");
+        assert!(doc.column_rects(page).is_empty());
+    }
+
+    #[test]
+    fn a_document_written_before_column_guides_reads_as_one_column() {
+        // Zero and one mean the same thing, which is what lets the field
+        // default cleanly.
+        let mut doc = Document::new();
+        doc.setup.columns = 0;
+        let page = doc.page_ids().next().expect("a page");
+        assert!(doc.column_rects(page).is_empty());
+    }
+
+    #[test]
+    fn a_page_and_a_text_frame_divide_columns_the_same_way() {
+        // One implementation, used by both. Two would eventually disagree, and
+        // a frame that did not line up with the guides it was drawn against
+        // would be a very confusing thing to debug.
+        use crate::nodes::{Insets, TextLayout};
+
+        let mut doc = Document::new();
+        doc.setup.margins = Margins::uniform(36.0);
+        doc.setup.columns = 3;
+        doc.setup.column_gutter = 14.0;
+        doc.reflow_spreads();
+
+        let page = doc.page_ids().next().expect("a page");
+        let area = doc.margin_rect(page).expect("a type area");
+        let guides = doc.column_rects(page);
+
+        // A text frame filling the type area, with the same columns.
+        let frame = TextLayout {
+            columns: 3,
+            gutter: 14.0,
+            inset: Insets::default(),
+            ..TextLayout::default()
+        };
+        let inside = frame.columns_of(area);
+
+        assert_eq!(guides, inside);
     }
 }

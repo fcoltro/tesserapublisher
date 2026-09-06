@@ -35,12 +35,20 @@ pub enum PdfError {
 /// ends up subtly disagreeing with the screen.
 /// The page a document with no pages exports as. Unreachable through the
 /// application, which always has one; a default beats a panic in a writer.
-const DEFAULT_PAGE: tessera_layout::ResolvedPage = tessera_layout::ResolvedPage {
-    bounds: LETTER,
-    margins: LETTER,
-    bleed: LETTER,
-    slug: LETTER,
-};
+/// The page a document with no pages exports as.
+///
+/// A function rather than a `const`: `ResolvedPage` carries the column guides
+/// now, and a `Vec` cannot live in one. Column guides are furniture and never
+/// export, so the fallback simply has none.
+fn default_page() -> tessera_layout::ResolvedPage {
+    tessera_layout::ResolvedPage {
+        bounds: LETTER,
+        margins: LETTER,
+        bleed: LETTER,
+        slug: LETTER,
+        columns: Vec::new(),
+    }
+}
 
 const LETTER: DocRect = DocRect {
     x: 0.0,
@@ -72,7 +80,7 @@ pub fn export(resolved: &ResolvedDocument) -> Result<Vec<u8>, PdfError> {
     // The page comes from the resolved document rather than from a parameter,
     // so the screen and the PDF cannot disagree about where the trim is.
     // Milestone 3 makes this every page; today it is the first.
-    let resolved_page = resolved.pages.first().copied().unwrap_or(DEFAULT_PAGE);
+    let resolved_page = resolved.pages.first().cloned().unwrap_or_else(default_page);
     let page = resolved_page.bounds;
     let mut pdf = Pdf::new();
     let mut next = 1;

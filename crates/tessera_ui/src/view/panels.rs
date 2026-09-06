@@ -1909,6 +1909,29 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
             ("Right", &mut setup.bleed.right),
         ),
     );
+    // Column guides, next to the margins they subdivide.
+    ui.add_space(Theme::SPACE_3);
+    group_label(ui, "Columns");
+    let mut count = f64::from(setup.columns.max(1));
+    let (i, j) = pair(
+        ui,
+        ("Count", |ui: &mut Ui| {
+            ui.add(
+                egui::DragValue::new(&mut count)
+                    .speed(0.1)
+                    .range(1.0..=20.0),
+            )
+            .changed()
+        }),
+        ("Gutter", |ui: &mut Ui| {
+            measure_bare(ui, &mut setup.column_gutter, unit)
+        }),
+    );
+    if i {
+        setup.columns = count.round().clamp(1.0, 20.0) as u8;
+    }
+    changed |= i || j;
+
     // The baseline grid, with the document's other page-wide rhythms.
     ui.add_space(Theme::SPACE_3);
     group_label(ui, "Baseline grid");

@@ -507,6 +507,7 @@ mod tests {
             margins: trim,
             bleed: grown(bleed),
             slug: grown(slug),
+            columns: Vec::new(),
         }
     }
 

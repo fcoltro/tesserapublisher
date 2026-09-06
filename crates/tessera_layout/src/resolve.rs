@@ -67,7 +67,7 @@ pub struct ResolvedDocument {
 }
 
 /// One page, with the rectangles that describe it.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedPage {
     /// The trim: the paper itself.
     pub bounds: DocRect,
@@ -77,6 +77,8 @@ pub struct ResolvedPage {
     pub bleed: DocRect,
     /// The trim plus its slug.
     pub slug: DocRect,
+    /// The page's column guides. Empty for a single column.
+    pub columns: Vec<DocRect>,
 }
 
 /// What a resolve is looking at.
@@ -126,6 +128,7 @@ fn resolve_pages(
                 margins: doc.margin_rect(id)?,
                 bleed: doc.bleed_rect(id)?,
                 slug: doc.slug_rect(id)?,
+                columns: doc.column_rects(id),
             })
         })
         .collect();
@@ -953,7 +956,7 @@ mod page_tests {
         let resolved = resolve(&doc, &mut shaper);
 
         assert_eq!(resolved.pages.len(), doc.page_ids().count());
-        let page = resolved.pages[0];
+        let page = &resolved.pages[0];
         assert_eq!(page.margins.width, page.bounds.width - 72.0);
         assert_eq!(page.bleed.width, page.bounds.width + 18.0);
         assert_eq!(page.slug, page.bounds, "no slug set means no slug drawn");

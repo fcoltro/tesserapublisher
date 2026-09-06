@@ -75,6 +75,14 @@ pub fn lines(doc: &Document, spread: SpreadId, moving: &[FrameId]) -> Lines {
         if let Some(margins) = doc.margin_rect(page) {
             out.push_box(margins);
         }
+
+        // The column guides. The strongest lines on a page that has them: a
+        // multi-column layout is built against its columns, not against the
+        // type area as a whole.
+        for column in doc.column_rects(page) {
+            out.push(Axis::Vertical, column.x);
+            out.push(Axis::Vertical, column.x + column.width);
+        }
     }
 
     for guide in doc.guides_of(spread) {
@@ -388,5 +396,33 @@ mod tests {
         let spread = doc.spread_order[0];
 
         assert!(!lines(&doc, spread, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_spread_offers_its_column_guides() {
+        // A multi-column layout is built against its columns, not against the
+        // type area as a whole.
+        let (mut doc, spread, _) = a_page();
+        doc.setup.columns = 3;
+        doc.setup.column_gutter = 12.0;
+
+        let page = doc.page_ids().next().expect("a page");
+        let columns = doc.column_rects(page);
+        assert_eq!(columns.len(), 3);
+
+        let lines = lines(&doc, spread, &[]);
+        for column in columns {
+            assert!(lines.vertical.contains(&column.x), "a column's left edge");
+        }
+    }
+
+    #[test]
+    fn one_column_offers_no_guide_of_its_own() {
+        // A single column *is* the type area, and a guide drawn on the margin
+        // rule says nothing.
+        let (mut doc, _, _) = a_page();
+        doc.setup.columns = 1;
+        let page = doc.page_ids().next().expect("a page");
+        assert!(doc.column_rects(page).is_empty());
     }
 }
