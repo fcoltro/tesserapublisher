@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 9;
+pub const FORMAT_VERSION: u32 = 10;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -170,6 +170,16 @@ fn migrate(value: &mut serde_json::Value, from: u32) {
     if from < 8 {
         layers_leave_the_page(value);
     }
+
+    // 9 -> 10: a text frame gained the layout it flows its story through —
+    // columns, a gutter, an inset, and where the text sits when it does not
+    // fill the frame.
+    //
+    // Nothing to rewrite. `TextLayout::default()` is one column, no inset,
+    // aligned to the top, which is exactly what every text frame written
+    // before this did. The version moves so that a build without columns
+    // refuses a document that uses them rather than opening it with every
+    // column silently collapsed into one.
 
     // 8 -> 9: the document gained parent pages, a page gained the parent it
     // is built on, and the document gained the map of which local frame

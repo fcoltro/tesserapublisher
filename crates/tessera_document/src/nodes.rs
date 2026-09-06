@@ -112,6 +112,13 @@ pub enum FrameKind {
     /// milestone 4's threading natural rather than bolted on.
     Text {
         story: StoryId,
+        /// How this frame lays that story out: columns, inset, and where the
+        /// text sits when it does not fill the frame.
+        ///
+        /// `serde(default)` is a single column with no inset, aligned to the
+        /// top — which is what every text frame written before this did.
+        #[serde(default)]
+        layout: TextLayout,
     },
     /// An arbitrary path, in **frame-local** coordinates: `(0, 0)` is the
     /// frame's top-left. Storing it locally rather than in document space is
@@ -223,6 +230,91 @@ impl Layer {
             locked: false,
             frames: Vec::new(),
         }
+    }
+}
+
+impl FrameKind {
+    /// A text frame showing `story`, laid out as one column.
+    pub fn text(story: StoryId) -> Self {
+        Self::Text {
+            story,
+            layout: TextLayout::default(),
+        }
+    }
+}
+
+/// Where text sits in a frame taller than the text needs.
+///
+/// InDesign calls this vertical justification. `Justify` is the one that does
+/// real work: it spreads the lines to fill the frame, which is how facing
+/// pages are made to align at the foot as well as the head.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum VerticalJustify {
+    #[default]
+    Top,
+    Centre,
+    Bottom,
+    Justify,
+}
+
+/// How a text frame lays its story out.
+///
+/// On the `Text` variant rather than on `Frame`, because none of it means
+/// anything for a rectangle: a frame's kind is what decides whether a column
+/// count is a fact about it or a nonsense.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct TextLayout {
+    /// How many columns the text flows through. At least one.
+    pub columns: u8,
+    /// The space between them.
+    pub gutter: f64,
+    /// The margin inside the frame, before the text starts.
+    pub inset: Insets,
+    pub vertical: VerticalJustify,
+}
+
+impl Default for TextLayout {
+    fn default() -> Self {
+        Self {
+            columns: 1,
+            // A pica, the traditional gutter, and wide enough that two columns
+            // of text read as two columns rather than as one with a crack in
+            // it.
+            gutter: 12.0,
+            inset: Insets::default(),
+            vertical: VerticalJustify::Top,
+        }
+    }
+}
+
+impl TextLayout {
+    /// The columns, in the frame's own space.
+    ///
+    /// The inset comes off first and the gutters out of what is left, so a
+    /// frame's columns always add up to its width however either is set. A
+    /// gutter wide enough to swallow the frame yields columns of **zero**
+    /// width rather than negative ones — text cannot be laid out in a negative
+    /// measure, and clamping here means nothing downstream has to check.
+    pub fn columns_of(&self, bounds: DocRect) -> Vec<DocRect> {
+        let count = self.columns.max(1) as f64;
+        let inner = DocRect {
+            x: bounds.x + self.inset.left,
+            y: bounds.y + self.inset.top,
+            width: (bounds.width - self.inset.left - self.inset.right).max(0.0),
+            height: (bounds.height - self.inset.top - self.inset.bottom).max(0.0),
+        };
+
+        let gutters = self.gutter * (count - 1.0);
+        let each = ((inner.width - gutters) / count).max(0.0);
+
+        (0..self.columns.max(1))
+            .map(|i| DocRect {
+                x: inner.x + f64::from(i) * (each + self.gutter),
+                y: inner.y,
+                width: each,
+                height: inner.height,
+            })
+            .collect()
     }
 }
 
@@ -633,5 +725,138 @@ mod tests {
             "the miter limit must default to PostScript's, not to zero"
         );
         assert!(!s.is_dashed());
+    }
+
+    // --- columns ------------------------------------------------------------
+
+    fn frame(w: f64, h: f64) -> DocRect {
+        DocRect {
+            x: 10.0,
+            y: 20.0,
+            width: w,
+            height: h,
+        }
+    }
+
+    #[test]
+    fn one_column_is_the_frame_itself() {
+        let columns = TextLayout::default().columns_of(frame(200.0, 100.0));
+        assert_eq!(columns, vec![frame(200.0, 100.0)]);
+    }
+
+    #[test]
+    fn two_columns_share_the_width_with_a_gutter_between_them() {
+        let layout = TextLayout {
+            columns: 2,
+            gutter: 20.0,
+            ..TextLayout::default()
+        };
+        let columns = layout.columns_of(frame(220.0, 100.0));
+
+        assert_eq!(columns.len(), 2);
+        assert_eq!(columns[0].width, 100.0);
+        assert_eq!(columns[1].width, 100.0);
+        assert_eq!(
+            columns[1].x - (columns[0].x + columns[0].width),
+            20.0,
+            "the gutter sits between them"
+        );
+    }
+
+    #[test]
+    fn columns_always_add_up_to_the_frame() {
+        // Whatever the count and whatever the gutter, the last column ends
+        // where the frame does. A column that overhangs is text outside its
+        // own frame.
+        for count in 1..=6u8 {
+            for gutter in [0.0, 6.0, 12.0, 31.7] {
+                let layout = TextLayout {
+                    columns: count,
+                    gutter,
+                    ..TextLayout::default()
+                };
+                let bounds = frame(300.0, 100.0);
+                let columns = layout.columns_of(bounds);
+                let last = columns.last().expect("at least one");
+                assert!(
+                    ((last.x + last.width) - (bounds.x + bounds.width)).abs() < 1e-9,
+                    "{count} columns with a {gutter} gutter overhang"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_inset_comes_off_before_the_columns_are_divided() {
+        let layout = TextLayout {
+            columns: 2,
+            gutter: 10.0,
+            inset: Insets {
+                top: 5.0,
+                bottom: 5.0,
+                left: 15.0,
+                right: 15.0,
+            },
+            ..TextLayout::default()
+        };
+        let columns = layout.columns_of(frame(230.0, 100.0));
+
+        assert_eq!(
+            columns[0].x, 25.0,
+            "ten for the frame, fifteen for the inset"
+        );
+        assert_eq!(columns[0].y, 25.0);
+        assert_eq!(columns[0].height, 90.0, "top and bottom both come off");
+        assert_eq!(columns[0].width, 95.0, "and the gutter out of what is left");
+    }
+
+    #[test]
+    fn a_gutter_wide_enough_to_swallow_the_frame_yields_no_width_not_a_negative_one() {
+        // Text cannot be laid out in a negative measure. Clamping here means
+        // nothing downstream has to check for it.
+        let layout = TextLayout {
+            columns: 3,
+            gutter: 500.0,
+            ..TextLayout::default()
+        };
+        for column in layout.columns_of(frame(100.0, 100.0)) {
+            assert_eq!(column.width, 0.0);
+        }
+    }
+
+    #[test]
+    fn an_inset_bigger_than_the_frame_yields_no_room_rather_than_a_hole() {
+        let layout = TextLayout {
+            inset: Insets {
+                top: 90.0,
+                bottom: 90.0,
+                left: 200.0,
+                right: 200.0,
+            },
+            ..TextLayout::default()
+        };
+        let columns = layout.columns_of(frame(100.0, 100.0));
+        assert_eq!(columns[0].width, 0.0);
+        assert_eq!(columns[0].height, 0.0);
+    }
+
+    #[test]
+    fn a_column_count_of_zero_is_read_as_one() {
+        // A frame with no columns could hold no text, which is not a layout
+        // anybody means to ask for — and it would divide by zero on the way.
+        let layout = TextLayout {
+            columns: 0,
+            ..TextLayout::default()
+        };
+        assert_eq!(layout.columns_of(frame(100.0, 50.0)).len(), 1);
+    }
+
+    #[test]
+    fn a_new_text_frame_is_one_column_aligned_to_the_top() {
+        let layout = TextLayout::default();
+        assert_eq!(layout.columns, 1);
+        assert_eq!(layout.vertical, VerticalJustify::Top);
+        assert_eq!(layout.inset, Insets::default());
+        assert_eq!(layout.gutter, 12.0, "a pica, the traditional gutter");
     }
 }

@@ -236,6 +236,15 @@ pub enum Command {
         to: usize,
     },
 
+    /// Replace a text frame's whole layout at once.
+    ///
+    /// One command for the struct rather than one per field, so that setting
+    /// up a three-column frame is one undo entry instead of four.
+    SetTextLayout {
+        id: FrameId,
+        layout: tessera_document::nodes::TextLayout,
+    },
+
     /// Add a parent spread shaped like the document.
     AddMaster,
     /// Remove a master, unhooking every page that used it.
@@ -477,7 +486,7 @@ fn editing_buffer_for(
     let editing = *id;
     let shows = matches!(
         state.active().document().frame(editing).map(|f| &f.kind),
-        Some(FrameKind::Text { story: s }) if *s == story
+        Some(FrameKind::Text { story: s, .. }) if *s == story
     );
     if !shows {
         return None;
@@ -509,7 +518,7 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             add(
                 state,
                 bounds,
-                FrameKind::Text { story },
+                FrameKind::text(story),
                 Color::Rgb {
                     r: 0.0,
                     g: 0.0,
@@ -550,7 +559,7 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         }
 
         Command::SetText { id, text } => {
-            if let Some(FrameKind::Text { story }) =
+            if let Some(FrameKind::Text { story, .. }) =
                 state.active().document().frame(id).map(|f| f.kind.clone())
                 && let Some(s) = state.active_mut().document_mut().story_mut(story)
             {
@@ -922,9 +931,14 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                     // A pasted text frame needs its own story rather than a
                     // reference to the one it came from, or editing the paste
                     // would edit the original.
-                    if let (FrameKind::Text { .. }, Some(story)) = (&frame.kind, item.story) {
+                    if let (FrameKind::Text { layout, .. }, Some(story)) = (&frame.kind, item.story)
+                    {
+                        let layout = *layout;
                         frame.kind = FrameKind::Text {
                             story: state.active_mut().document_mut().add_story(story),
+                            // The copy keeps its columns. Resetting them would
+                            // silently undo what somebody set.
+                            layout,
                         };
                     }
                     let layer = state.default_layer();
@@ -973,6 +987,15 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::MovePage { id, to } => {
             state.active_mut().document_mut().move_page(id, to);
+        }
+
+        Command::SetTextLayout { id, layout } => {
+            if let Some(frame) = state.active_mut().document_mut().frame_mut(id)
+                && let FrameKind::Text { story, .. } = frame.kind
+            {
+                frame.kind = FrameKind::Text { story, layout };
+            }
+            state.active_mut().document_mut().touch();
         }
 
         Command::AddMaster => {
@@ -1333,7 +1356,7 @@ fn restore(state: &mut TesseraApp, document: Document) {
 fn clipboard_item(document: &Document, id: FrameId) -> Option<Clipboard> {
     let frame = document.frame(id).cloned()?;
     let story = match &frame.kind {
-        FrameKind::Text { story } => document.story(*story).cloned(),
+        FrameKind::Text { story, .. } => document.story(*story).cloned(),
         _ => None,
     };
     Some(Clipboard { frame, story })
@@ -1348,11 +1371,12 @@ fn duplicate_one(state: &mut TesseraApp, id: FrameId) -> Option<FrameId> {
 
     // Give the copy its own story, or editing the copy would edit the
     // original — the same aliasing trap as the frame/story split.
-    if let FrameKind::Text { story } = frame.kind
+    if let FrameKind::Text { story, layout } = frame.kind
         && let Some(content) = state.active().document().story(story).cloned()
     {
         frame.kind = FrameKind::Text {
             story: state.active_mut().document_mut().add_story(content),
+            layout,
         };
     }
 
@@ -2189,7 +2213,7 @@ mod tests {
             },
         );
 
-        let FrameKind::Text { story } = state
+        let FrameKind::Text { story, .. } = state
             .active()
             .document()
             .frame(original)
@@ -2267,7 +2291,7 @@ mod tests {
         apply(&mut state, Command::Paste);
 
         let pasted = state.active().selection.single().expect("pasted");
-        let FrameKind::Text { story } = state
+        let FrameKind::Text { story, .. } = state
             .active()
             .document()
             .frame(pasted)
@@ -2727,7 +2751,8 @@ mod tests {
                 text: text.to_string(),
             },
         );
-        let FrameKind::Text { story } = state.active().document().frame(id).expect("frame").kind
+        let FrameKind::Text { story, .. } =
+            state.active().document().frame(id).expect("frame").kind
         else {
             panic!("a text frame shows a story");
         };
@@ -2951,6 +2976,7 @@ mod tests {
         );
         let FrameKind::Text {
             story: second_story,
+            ..
         } = state.active().document().frame(second).expect("frame").kind
         else {
             panic!("a text frame shows a story");
@@ -3281,7 +3307,7 @@ mod tests {
                 text: "efgh".to_string(),
             },
         );
-        let FrameKind::Text { story: second } = state
+        let FrameKind::Text { story: second, .. } = state
             .active()
             .document()
             .frame(second_frame)
@@ -4613,5 +4639,113 @@ mod tests {
 
         apply(&mut state, Command::Undo);
         assert_eq!(state.active().document().masters[id].name, "A-Master");
+    }
+
+    // --- text frame layout ---------------------------------------------------
+
+    #[test]
+    fn setting_the_columns_is_one_undo_entry_for_the_whole_layout() {
+        // Setting up a three-column frame with an inset is one decision, not
+        // four, and one Ctrl+Z should take all of it back.
+        use tessera_document::nodes::{FrameKind, Insets, TextLayout};
+
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddTextFrame(bounds()));
+        let id = state.active().selection.single().expect("selected");
+
+        let wanted = TextLayout {
+            columns: 3,
+            gutter: 18.0,
+            inset: Insets {
+                top: 4.0,
+                bottom: 4.0,
+                left: 6.0,
+                right: 6.0,
+            },
+            ..TextLayout::default()
+        };
+        apply(&mut state, Command::SetTextLayout { id, layout: wanted });
+
+        let FrameKind::Text { layout, .. } =
+            state.active().document().frame(id).expect("frame").kind
+        else {
+            panic!("not a text frame");
+        };
+        assert_eq!(layout, wanted);
+
+        apply(&mut state, Command::Undo);
+        let FrameKind::Text { layout, .. } =
+            state.active().document().frame(id).expect("frame").kind
+        else {
+            panic!("not a text frame");
+        };
+        assert_eq!(layout, TextLayout::default(), "one entry took all of it");
+    }
+
+    #[test]
+    fn a_layout_is_not_set_on_a_frame_that_holds_no_text() {
+        // A column count is a fact about a text frame and a nonsense about a
+        // rectangle, which is why it lives on the variant.
+        use tessera_document::nodes::TextLayout;
+
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let id = state.active().selection.single().expect("selected");
+        let before = state
+            .active()
+            .document()
+            .frame(id)
+            .expect("frame")
+            .kind
+            .clone();
+
+        apply(
+            &mut state,
+            Command::SetTextLayout {
+                id,
+                layout: TextLayout {
+                    columns: 4,
+                    ..TextLayout::default()
+                },
+            },
+        );
+
+        assert_eq!(
+            state.active().document().frame(id).expect("frame").kind,
+            before,
+            "the rectangle is untouched"
+        );
+    }
+
+    #[test]
+    fn a_duplicated_text_frame_keeps_its_columns() {
+        // Resetting them would silently undo what somebody set — the aliasing
+        // trap's quieter twin.
+        use tessera_document::nodes::{FrameKind, TextLayout};
+
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddTextFrame(bounds()));
+        let id = state.active().selection.single().expect("selected");
+        apply(
+            &mut state,
+            Command::SetTextLayout {
+                id,
+                layout: TextLayout {
+                    columns: 3,
+                    ..TextLayout::default()
+                },
+            },
+        );
+
+        apply(&mut state, Command::DuplicateSelection);
+        let copy = state.active().selection.single().expect("selected");
+        assert_ne!(copy, id);
+
+        let FrameKind::Text { layout, .. } =
+            state.active().document().frame(copy).expect("frame").kind
+        else {
+            panic!("not a text frame");
+        };
+        assert_eq!(layout.columns, 3);
     }
 }

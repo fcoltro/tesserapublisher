@@ -218,7 +218,7 @@ fn resolve_one(
         // expanded it into its children, so it never reaches here.
         FrameKind::Group(_) => return None,
 
-        FrameKind::Text { story } => {
+        FrameKind::Text { story, layout } => {
             // A text frame whose story is missing is a broken document,
             // not a blank frame. Skipping it silently would hide the
             // breakage; milestone 6's preflight reports it. For now it
@@ -238,8 +238,32 @@ fn resolve_one(
                 .map(|run| story.resolve_run(run, doc))
                 .and_then(|f| f.colour)
                 .unwrap_or(tessera_color::Color::BLACK);
+            // Shaped at the width of a column, then flowed through them.
+            // One shaping serves every column because they are all the same
+            // width, which is what makes columns a cheap pass over a finished
+            // layout rather than a shaping each.
+            let columns = layout.columns_of(DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: frame.bounds.width,
+                height: frame.bounds.height,
+            });
+            let measure = columns.first().map_or(frame.bounds.width, |c| c.width);
+            let boxes: Vec<tessera_text::shape::Column> = columns
+                .iter()
+                .map(|c| tessera_text::shape::Column {
+                    x: c.x,
+                    y: c.y,
+                    width: c.width,
+                    height: c.height,
+                })
+                .collect();
+
+            let shaped = shaper.shape(story, doc, measure);
+            let flowed = tessera_text::shape::flow(shaped, &boxes);
+
             ResolvedKind::Text {
-                shaped: shaper.shape(story, doc, frame.bounds.width),
+                shaped: flowed.text,
                 color: colour,
             }
         }
@@ -317,7 +341,7 @@ mod tests {
         let story = doc.add_story(Story::new("Hello"));
 
         let mut frame = rect(0.0, 0.0, 500.0, 100.0);
-        frame.kind = FrameKind::Text { story };
+        frame.kind = FrameKind::text(story);
         doc.add_frame(layer, frame);
 
         let resolved = resolve(&doc, &mut Shaper::new());
@@ -335,7 +359,7 @@ mod tests {
         let story = doc.add_story(Story::new("the quick brown fox jumps over"));
 
         let mut frame = rect(0.0, 0.0, 60.0, 100.0);
-        frame.kind = FrameKind::Text { story };
+        frame.kind = FrameKind::text(story);
         doc.add_frame(layer, frame);
 
         let resolved = resolve(&doc, &mut Shaper::new());
@@ -367,7 +391,7 @@ mod tests {
         doc.stories.remove(story);
 
         let mut frame = rect(0.0, 0.0, 100.0, 20.0);
-        frame.kind = FrameKind::Text { story };
+        frame.kind = FrameKind::text(story);
         doc.add_frame(layer, frame);
 
         assert!(resolve(&doc, &mut Shaper::new()).items.is_empty());

@@ -208,7 +208,7 @@ fn text_survives_a_save_and_load() {
                 width: 400.0,
                 height: 40.0,
             },
-            kind: FrameKind::Text { story },
+            kind: FrameKind::text(story),
             transform: Transform::IDENTITY,
             fill: Color::WHITE,
             stroke: None,
@@ -220,6 +220,7 @@ fn text_survives_a_save_and_load() {
 
     let FrameKind::Text {
         story: loaded_story,
+        ..
     } = loaded.frame(frame).expect("frame survived").kind.clone()
     else {
         panic!("the frame must still be a text frame");
@@ -577,9 +578,104 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_nine() {
+fn the_format_version_is_ten() {
     // If this changes, a migration step is owed.
-    assert_eq!(format::FORMAT_VERSION, 9);
+    assert_eq!(format::FORMAT_VERSION, 10);
+}
+
+#[test]
+fn a_version_nine_text_frame_opens_as_a_single_column() {
+    // 9 -> 10 rewrites nothing: `TextLayout::default()` is one column with no
+    // inset aligned to the top, which is exactly what a text frame written
+    // before columns existed did.
+    use tessera_document::nodes::{TextLayout, VerticalJustify};
+
+    let path = temp_path("legacy_v9.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = Document::new();
+    let story = doc.add_story(tessera_text::story::Story::new("some copy"));
+    let layer = doc.default_layer().expect("layer");
+    let id = doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 60.0,
+            },
+            kind: FrameKind::text(story),
+            transform: Transform::IDENTITY,
+            fill: Color::BLACK,
+            stroke: None,
+        },
+    );
+
+    format::save(&doc, &path).expect("save");
+    format::rewrite_version_for_test(&path, 9).expect("stamp");
+
+    let loaded = format::load(&path).expect("a version 9 document must still open");
+    let FrameKind::Text { layout, .. } = loaded.frame(id).expect("frame").kind.clone() else {
+        panic!("a text frame came back as something else");
+    };
+
+    assert_eq!(layout, TextLayout::default());
+    assert_eq!(layout.columns, 1);
+    assert_eq!(layout.vertical, VerticalJustify::Top);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_columned_text_frame_round_trips() {
+    use tessera_document::nodes::{Insets, TextLayout, VerticalJustify};
+
+    let path = temp_path("columns.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = Document::new();
+    let story = doc.add_story(tessera_text::story::Story::new("some copy"));
+    let layer = doc.default_layer().expect("layer");
+    let wanted = TextLayout {
+        columns: 3,
+        gutter: 18.0,
+        inset: Insets {
+            top: 4.0,
+            bottom: 4.0,
+            left: 6.0,
+            right: 6.0,
+        },
+        vertical: VerticalJustify::Justify,
+    };
+    let id = doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 300.0,
+                height: 200.0,
+            },
+            kind: FrameKind::Text {
+                story,
+                layout: wanted,
+            },
+            transform: Transform::IDENTITY,
+            fill: Color::BLACK,
+            stroke: None,
+        },
+    );
+
+    format::save(&doc, &path).expect("save");
+    let loaded = format::load(&path).expect("load");
+    let FrameKind::Text { layout, .. } = loaded.frame(id).expect("frame").kind.clone() else {
+        panic!("not a text frame");
+    };
+
+    assert_eq!(layout, wanted);
+
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]

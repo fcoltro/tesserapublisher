@@ -481,6 +481,14 @@ pub struct ShapedRun {
 pub struct ShapedLine {
     pub runs: Vec<ShapedRun>,
     pub baseline: f64,
+    /// How far the line reaches above its baseline, and below it.
+    ///
+    /// Carried from the layout rather than derived from the glyphs, because a
+    /// `PositionedGlyph`'s `y` **is** its baseline — the ink's extent is not in
+    /// it. A flow that measured the glyphs would find every line zero high and
+    /// clip the first line of every column by exactly its own ascent.
+    pub ascent: f64,
+    pub descent: f64,
 }
 
 impl ShapedLine {
@@ -515,6 +523,130 @@ impl ShapedText {
     /// Every run, across every line.
     pub fn runs(&self) -> impl Iterator<Item = &ShapedRun> + '_ {
         self.lines.iter().flat_map(|l| l.runs.iter())
+    }
+}
+
+/// A box the text flows through, in the frame's own space.
+///
+/// A column today and a frame in a thread later: filling a sequence of boxes
+/// in order is the same operation either way, which is why this is not called
+/// a column.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Column {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// Text flowed through a sequence of boxes.
+#[derive(Debug, Clone, Default)]
+pub struct Flowed {
+    pub text: ShapedText,
+    /// How many lines would not fit anywhere.
+    ///
+    /// Zero means the boxes held it all, which is the question the overset
+    /// mark asks. Counted rather than reported as a bool because "three lines
+    /// short" and "three pages short" are different problems.
+    pub overset_lines: usize,
+}
+
+/// How far a line reaches above and below its own baseline.
+///
+/// Measured from the glyphs rather than from a font metric: a line carrying a
+/// drop cap or a raised superscript really is taller than its leading says,
+/// and a column that took the leading's word for it would clip them.
+fn extent(line: &ShapedLine) -> (f64, f64) {
+    (line.ascent, line.descent)
+}
+
+/// Move every glyph on a line, and its baseline, by an offset.
+fn shift(line: &mut ShapedLine, dx: f64, dy: f64) {
+    line.baseline += dy;
+    for run in &mut line.runs {
+        for glyph in &mut run.glyphs {
+            glyph.x += dx;
+            glyph.y += dy;
+        }
+    }
+}
+
+/// Flow shaped text through `columns`, in order.
+///
+/// The text is shaped **once**, at the width of a column, and the lines are
+/// then handed out. That works because every column of a frame is the same
+/// width, and it is why this is a cheap pass over a finished layout rather
+/// than a fresh shaping per column.
+///
+/// A line that will not fit the column it is offered moves to the next one.
+/// When the columns run out the rest is **overset**: dropped and counted, so
+/// the frame reports it with a mark rather than drawing text outside itself.
+pub fn flow(text: ShapedText, columns: &[Column]) -> Flowed {
+    if columns.is_empty() {
+        return Flowed {
+            overset_lines: text.lines.len(),
+            ..Flowed::default()
+        };
+    }
+
+    let mut out = ShapedText {
+        lines: Vec::with_capacity(text.lines.len()),
+        height: 0.0,
+        fonts: text.fonts,
+    };
+    let mut overset = 0usize;
+
+    let mut column = 0usize;
+    // What to add to a line's baseline to put it in the current column. Set
+    // when a column takes its first line, so the rest of that column keeps
+    // its spacing relative to it.
+    let mut offset = None::<f64>;
+
+    for mut line in text.lines {
+        let (above, below) = extent(&line);
+
+        // Text flows in order, so once a line has nowhere to go neither has
+        // anything after it.
+        if column >= columns.len() {
+            overset += 1;
+            continue;
+        }
+
+        loop {
+            let box_ = columns[column];
+            let shift_by = match offset {
+                Some(offset) => offset,
+                // The column's first line sits with its ascent against the
+                // top, not its baseline — otherwise the first line of every
+                // column is clipped by exactly its own height.
+                None => box_.y + above - line.baseline,
+            };
+            let baseline = line.baseline + shift_by;
+            let fits = baseline + below <= box_.y + box_.height;
+
+            // A line taller than the column fits nowhere; putting it in
+            // anyway is better than dropping every line of a story because
+            // one of them is oversized.
+            if fits || offset.is_none() {
+                offset = Some(shift_by);
+                shift(&mut line, box_.x, shift_by);
+                out.height = out.height.max(baseline + below);
+                out.lines.push(line);
+                break;
+            }
+
+            column += 1;
+            offset = None;
+            if column >= columns.len() {
+                overset += 1;
+                break;
+            }
+        }
+    }
+
+    Flowed {
+        text: out,
+        overset_lines: overset,
     }
 }
 
@@ -1122,7 +1254,13 @@ impl Shaper {
                     draw_the_hyphen(&mut runs, &fonts, &paragraph.shaped_text, &line);
                 }
 
-                lines.push(ShapedLine { runs, baseline });
+                let metrics = line.metrics();
+                lines.push(ShapedLine {
+                    runs,
+                    baseline,
+                    ascent: f64::from(metrics.ascent),
+                    descent: f64::from(metrics.descent),
+                });
             }
 
             height = height.max(paragraph.y + f64::from(paragraph.layout.height()));
@@ -2671,5 +2809,171 @@ mod tests {
                 .fold(0.0_f32, f32::max)
         };
         assert!(size_of(&mut shaper, 4) > size_of(&mut shaper, 2));
+    }
+
+    // --- flowing through columns --------------------------------------------
+
+    fn column(x: f64, y: f64, w: f64, h: f64) -> Column {
+        Column {
+            x,
+            y,
+            width: w,
+            height: h,
+        }
+    }
+
+    /// Lines at 12pt leading with a 10pt ascent and a 2pt descent, so the
+    /// first baseline sits 10 below the top and each line is 12 high.
+    fn ruled(count: usize) -> ShapedText {
+        let lines = (0..count)
+            .map(|i| {
+                let baseline = 10.0 + 12.0 * i as f64;
+                ShapedLine {
+                    baseline,
+                    ascent: 10.0,
+                    descent: 2.0,
+                    runs: vec![ShapedRun {
+                        font_index: 0,
+                        size: 12.0,
+                        colour: None,
+                        glyphs: vec![PositionedGlyph {
+                            glyph_id: 1,
+                            x: 0.0,
+                            // Sitting on the baseline: no ascent, no descent,
+                            // so the arithmetic under test is the flow's and
+                            // not a font's.
+                            y: baseline,
+                            advance: 6.0,
+                            font_index: 0,
+                        }],
+                    }],
+                }
+            })
+            .collect();
+        ShapedText {
+            lines,
+            height: 12.0 * count as f64,
+            fonts: Vec::new(),
+        }
+    }
+
+    fn baselines(text: &ShapedText) -> Vec<f64> {
+        text.lines.iter().map(|l| l.baseline).collect()
+    }
+
+    #[test]
+    fn one_column_leaves_the_lines_where_they_were() {
+        let flowed = flow(ruled(3), &[column(0.0, 0.0, 100.0, 1000.0)]);
+        assert_eq!(flowed.overset_lines, 0);
+        assert_eq!(baselines(&flowed.text), vec![10.0, 22.0, 34.0]);
+    }
+
+    #[test]
+    fn the_first_line_sits_against_the_top_of_its_column() {
+        // Its ascent against the top, not its baseline — otherwise the first
+        // line of every column is clipped by exactly its own height.
+        let flowed = flow(ruled(1), &[column(0.0, 50.0, 100.0, 1000.0)]);
+        assert_eq!(
+            baselines(&flowed.text),
+            vec![60.0],
+            "the column top plus the line's ascent"
+        );
+    }
+
+    #[test]
+    fn what_does_not_fit_moves_to_the_next_column() {
+        // Room for two lines each. Six lines fill three columns.
+        let columns = [
+            column(0.0, 0.0, 100.0, 24.0),
+            column(120.0, 0.0, 100.0, 24.0),
+            column(240.0, 0.0, 100.0, 24.0),
+        ];
+        let flowed = flow(ruled(6), &columns);
+
+        assert_eq!(flowed.overset_lines, 0);
+        assert_eq!(flowed.text.lines.len(), 6);
+
+        let xs: Vec<f64> = flowed
+            .text
+            .lines
+            .iter()
+            .map(|l| l.glyphs().next().expect("a glyph").x)
+            .collect();
+        assert_eq!(xs, vec![0.0, 0.0, 120.0, 120.0, 240.0, 240.0]);
+    }
+
+    #[test]
+    fn every_column_starts_its_lines_at_its_own_top() {
+        let columns = [
+            column(0.0, 0.0, 100.0, 24.0),
+            column(120.0, 0.0, 100.0, 24.0),
+        ];
+        let flowed = flow(ruled(4), &columns);
+
+        assert_eq!(
+            baselines(&flowed.text),
+            vec![10.0, 22.0, 10.0, 22.0],
+            "the third line begins the second column, not continues the first"
+        );
+    }
+
+    #[test]
+    fn a_column_at_an_offset_puts_its_lines_there() {
+        let flowed = flow(ruled(2), &[column(30.0, 40.0, 100.0, 1000.0)]);
+        assert_eq!(
+            baselines(&flowed.text),
+            vec![50.0, 62.0],
+            "forty, plus the ascent"
+        );
+        assert_eq!(flowed.text.lines[0].glyphs().next().expect("glyph").x, 30.0);
+    }
+
+    #[test]
+    fn what_fits_nowhere_is_overset_rather_than_drawn_outside() {
+        // Two columns of two lines each, five lines of text.
+        let columns = [
+            column(0.0, 0.0, 100.0, 24.0),
+            column(120.0, 0.0, 100.0, 24.0),
+        ];
+        let flowed = flow(ruled(5), &columns);
+
+        assert_eq!(flowed.text.lines.len(), 4, "four were placed");
+        assert_eq!(flowed.overset_lines, 1, "and one had nowhere to go");
+    }
+
+    #[test]
+    fn text_with_no_column_to_flow_into_is_entirely_overset() {
+        let flowed = flow(ruled(3), &[]);
+        assert!(flowed.text.lines.is_empty());
+        assert_eq!(flowed.overset_lines, 3);
+    }
+
+    #[test]
+    fn a_line_taller_than_its_column_is_shown_rather_than_lost() {
+        // Better a clipped line than a story that vanishes because one line of
+        // it is oversized.
+        let flowed = flow(ruled(1), &[column(0.0, 0.0, 100.0, 1.0)]);
+        assert_eq!(flowed.text.lines.len(), 1);
+        assert_eq!(flowed.overset_lines, 0);
+    }
+
+    #[test]
+    fn the_flowed_height_is_the_lowest_thing_drawn() {
+        let columns = [
+            column(0.0, 0.0, 100.0, 24.0),
+            column(120.0, 0.0, 100.0, 24.0),
+        ];
+        let flowed = flow(ruled(4), &columns);
+        assert_eq!(
+            flowed.text.height, 24.0,
+            "the deepest descender of any column, not the sum of them"
+        );
+    }
+
+    #[test]
+    fn nothing_to_flow_is_nothing_overset() {
+        let flowed = flow(ShapedText::default(), &[column(0.0, 0.0, 10.0, 10.0)]);
+        assert!(flowed.text.lines.is_empty());
+        assert_eq!(flowed.overset_lines, 0);
     }
 }

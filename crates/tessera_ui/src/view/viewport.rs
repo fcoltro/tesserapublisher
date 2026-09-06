@@ -620,7 +620,7 @@ fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
         // undo-bracketed: live update without an entry per keystroke. The
         // whole editing session became one undo step when it began, in
         // `begin_editing`.
-        if let Some(tessera_document::nodes::FrameKind::Text { story: target }) =
+        if let Some(tessera_document::nodes::FrameKind::Text { story: target, .. }) =
             state.active().document().frame(id).map(|f| f.kind.clone())
             && let Some(s) = state.active_mut().document_mut().story_mut(target)
         {
@@ -749,7 +749,7 @@ fn overset_frames(state: &mut TesseraApp) -> Vec<FrameId> {
             let Some(frame) = doc.frame(*id) else {
                 return false;
             };
-            let FrameKind::Text { story } = frame.kind else {
+            let FrameKind::Text { story, .. } = frame.kind else {
                 return false;
             };
             let Some(story) = doc.story(story) else {
@@ -1608,7 +1608,7 @@ fn enter_text_edit(state: &mut TesseraApp, rect: Rect, pos: egui::Pos2, id: Fram
 
 pub(crate) fn start_editing(state: &mut TesseraApp, id: FrameId) {
     let story = match state.active().document().frame(id).map(|f| f.kind.clone()) {
-        Some(tessera_document::nodes::FrameKind::Text { story }) => story,
+        Some(tessera_document::nodes::FrameKind::Text { story, .. }) => story,
         _ => return,
     };
     let content = state

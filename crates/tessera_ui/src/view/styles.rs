@@ -775,7 +775,7 @@ mod tests {
                 text: "abcd".to_string(),
             },
         );
-        let tessera_document::nodes::FrameKind::Text { story } =
+        let tessera_document::nodes::FrameKind::Text { story, .. } =
             state.active().document().frame(frame).expect("frame").kind
         else {
             panic!("a text frame shows a story");

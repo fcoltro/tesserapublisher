@@ -489,7 +489,7 @@ pub fn type_row(ui: &mut Ui, state: &mut TesseraApp) {
     let Some(frame) = state.active().document().frame(id).cloned() else {
         return;
     };
-    let tessera_document::nodes::FrameKind::Text { story } = frame.kind else {
+    let tessera_document::nodes::FrameKind::Text { story, .. } = frame.kind else {
         return;
     };
 
@@ -852,6 +852,73 @@ pub(crate) fn group_label_pub(ui: &mut Ui, text: &str) {
     group_label(ui, text);
 }
 
+/// Columns, gutter, inset: the frame's geometry rather than the text's.
+///
+/// Under Character and Paragraph because it is a third thing: those describe
+/// the words, this describes the box they are poured into.
+fn text_frame_controls(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::FrameId,
+    frame: &tessera_document::nodes::Frame,
+) {
+    use tessera_document::nodes::{FrameKind, TextLayout};
+
+    let FrameKind::Text { layout, .. } = frame.kind else {
+        return;
+    };
+    let mut wanted: TextLayout = layout;
+    let unit = state.prefs.unit;
+    let mut changed = false;
+
+    subheading(ui, crate::icons::Icon::TextFrame, "Frame");
+
+    let mut columns = f64::from(wanted.columns.max(1));
+    let (a, b) = pair(
+        ui,
+        ("Columns", |ui: &mut Ui| {
+            ui.add(
+                egui::DragValue::new(&mut columns)
+                    .speed(0.1)
+                    .range(1.0..=20.0),
+            )
+            .changed()
+        }),
+        ("Gutter", |ui: &mut Ui| {
+            measure_bare(ui, &mut wanted.gutter, unit)
+        }),
+    );
+    if a {
+        wanted.columns = columns.round().clamp(1.0, 20.0) as u8;
+    }
+    changed |= a || b;
+
+    group_label(ui, "Inset");
+    let (c, d) = pair(
+        ui,
+        ("Top", |ui: &mut Ui| {
+            measure_bare(ui, &mut wanted.inset.top, unit)
+        }),
+        ("Bottom", |ui: &mut Ui| {
+            measure_bare(ui, &mut wanted.inset.bottom, unit)
+        }),
+    );
+    let (e, f) = pair(
+        ui,
+        ("Left", |ui: &mut Ui| {
+            measure_bare(ui, &mut wanted.inset.left, unit)
+        }),
+        ("Right", |ui: &mut Ui| {
+            measure_bare(ui, &mut wanted.inset.right, unit)
+        }),
+    );
+    changed |= c || d || e || f;
+
+    if changed {
+        apply(state, Command::SetTextLayout { id, layout: wanted });
+    }
+}
+
 /// A quiet label naming a group of fields inside a section.
 ///
 /// Not a section heading: it does not collapse and it carries no icon. The
@@ -1209,7 +1276,7 @@ fn text_section(
 ) {
     // `id` identifies which frame's caret decides the target range; the story
     // is what everything here actually edits.
-    let tessera_document::nodes::FrameKind::Text { story } = &frame.kind else {
+    let tessera_document::nodes::FrameKind::Text { story, .. } = &frame.kind else {
         return;
     };
     let story = *story;
@@ -1432,6 +1499,8 @@ fn text_section(
     }
 
     // --- the paragraph half
+
+    text_frame_controls(ui, state, id, frame);
 
     subheading(ui, crate::icons::Icon::Pilcrow, "Paragraph");
 
@@ -2436,7 +2505,8 @@ mod tests {
                 text: text.to_string(),
             },
         );
-        let FrameKind::Text { story } = state.active().document().frame(id).expect("frame").kind
+        let FrameKind::Text { story, .. } =
+            state.active().document().frame(id).expect("frame").kind
         else {
             panic!("a text frame shows a story");
         };

@@ -781,8 +781,23 @@ full argument, with sources, is in `docs/superpowers/specs/`.
     watched it line up first.
   - Held off by Ctrl, and turned off for good from the View menu.
 - [ ] Baseline grid with a per-frame lock toggle.
-- [ ] Multi-column text frames with gutter control, **frame inset, and
-  vertical justification**.
+- [~] Multi-column text frames with gutter control and **frame inset**.
+  Vertical justification is modelled and stored but not yet honoured: the flow
+  puts every column's text against its top. Named here rather than ticked,
+  because a control that sets a value nothing reads is worse than one that is
+  absent.
+  - `TextLayout` lives on the **`Text` variant**, not on `Frame`: a column
+    count is a fact about a text frame and a nonsense about a rectangle, and
+    the kind is what decides which.
+  - The text is shaped **once**, at a column's width, and the lines are then
+    handed out. Every column of a frame is the same width, so columns cost a
+    cheap pass over a finished layout rather than a shaping each.
+  - `ShapedLine` gained an ascent and a descent. A `PositionedGlyph`'s `y`
+    **is** its baseline — the ink's extent is not in it — so a flow that
+    measured the glyphs found every line zero high and clipped the first line
+    of every column by exactly its own ascent. Found by a test, not by eye.
+  - The same routine will thread frames: filling a sequence of boxes in order
+    is one operation, which is why it takes `Column`s rather than columns.
 - [ ] **Text threading**: overflow flows to the next frame, and a resize
   reflows the whole chain.
 - [ ] **Thread connector lines drawn on selection.** (The previous

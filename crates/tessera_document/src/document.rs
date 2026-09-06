@@ -862,7 +862,7 @@ impl Document {
         let mut frame = self.frames.get(id)?.clone();
 
         match &mut frame.kind {
-            FrameKind::Text { story } => {
+            FrameKind::Text { story, .. } => {
                 // Its own copy of the words, so the two pages can diverge.
                 if let Some(text) = self.stories.get(*story).cloned() {
                     *story = self.stories.insert(text);
@@ -2506,7 +2506,7 @@ mod tests {
         let mut doc = Document::new();
         let layer = doc.default_layer().expect("layer");
         let story = doc.add_story(tessera_text::story::Story::default());
-        let id = doc.add_frame(layer, shape(FrameKind::Text { story }, square()));
+        let id = doc.add_frame(layer, shape(FrameKind::text(story), square()));
         assert_eq!(doc.hit_test(DocPoint { x: 50.0, y: 50.0 }, 0.0), Some(id));
     }
 
@@ -3017,11 +3017,12 @@ mod tests {
         let page = doc.add_page();
         let story = doc.add_story(Story::new("original"));
         let text = frame_on(&mut doc, page);
-        doc.frame_mut(text).expect("frame").kind = FrameKind::Text { story };
+        doc.frame_mut(text).expect("frame").kind = FrameKind::text(story);
 
         let copy = doc.duplicate_page(page).expect("a copy");
         let copied_frame = doc.frames_on_page(copy)[0];
-        let FrameKind::Text { story: copied } = doc.frame(copied_frame).expect("frame").kind else {
+        let FrameKind::Text { story: copied, .. } = doc.frame(copied_frame).expect("frame").kind
+        else {
             panic!("a text frame shows a story");
         };
 

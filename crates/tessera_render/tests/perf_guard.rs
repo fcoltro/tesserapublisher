@@ -139,7 +139,7 @@ fn wordy_document() -> Document {
                     height: 60.0,
                 },
                 transform: Transform::IDENTITY,
-                kind: FrameKind::Text { story: id },
+                kind: FrameKind::text(id),
                 fill: Color::BLACK,
                 stroke: None,
             },
