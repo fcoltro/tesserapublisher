@@ -140,7 +140,10 @@ impl OpenDocument {
 
     /// Select every frame. Reads the document; does not change it.
     pub fn select_all(&mut self) {
-        self.selection.replace_all(self.document.paint_order());
+        // Selectable, not paint order. Select-all reaching into a locked layer
+        // would undo the point of locking it with a single chord, and the very
+        // next drag would move a background somebody had deliberately pinned.
+        self.selection.replace_all(self.document.selectable_order());
     }
 
     /// Replace the document wholesale, as open and undo do. Stories travel

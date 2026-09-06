@@ -170,6 +170,116 @@ impl Document {
             .or_else(|| self.layer_order.first().copied())
     }
 
+    /// Choose the layer new objects go onto.
+    pub fn set_active_layer(&mut self, id: LayerId) {
+        if self.active_layer == Some(id) || !self.layers.contains_key(id) {
+            return;
+        }
+        self.active_layer = Some(id);
+        self.revision += 1;
+    }
+
+    /// Add a layer above the others and make it the active one.
+    ///
+    /// Above, because that is where a new layer is wanted: you add one to put
+    /// something in front of what is already there.
+    pub fn add_layer(&mut self, name: impl Into<String>) -> LayerId {
+        let id = self.layers.insert(Layer::named(name));
+        self.layer_order.push(id);
+        self.active_layer = Some(id);
+        self.revision += 1;
+        id
+    }
+
+    /// A name no existing layer has: "Layer 1", "Layer 2", and so on.
+    ///
+    /// Counted from the number of layers rather than kept as a running total,
+    /// then advanced past any collision — a document that has had layers
+    /// deleted must not offer a name one of the survivors already uses.
+    pub fn unused_layer_name(&self) -> String {
+        let taken: Vec<&str> = self
+            .layer_ids()
+            .filter_map(|l| self.layers.get(l))
+            .map(|l| l.name.as_str())
+            .collect();
+        let mut n = self.layer_order.len() + 1;
+        loop {
+            let name = format!("Layer {n}");
+            if !taken.contains(&name.as_str()) {
+                return name;
+            }
+            n += 1;
+        }
+    }
+
+    /// Remove a layer and everything on it.
+    ///
+    /// **The last layer is refused**, for the same reason the last page is: a
+    /// document with nowhere to put an object cannot be drawn in, and the way
+    /// back would be undo alone. Refused by the document rather than by the
+    /// caller, so no caller has to remember not to ask.
+    pub fn remove_layer(&mut self, id: LayerId) -> bool {
+        if self.layer_order.len() <= 1 || !self.layers.contains_key(id) {
+            return false;
+        }
+
+        let frames = self
+            .layers
+            .get(id)
+            .map(|l| l.frames.clone())
+            .unwrap_or_default();
+        for frame in frames {
+            self.remove_frame(frame);
+        }
+        self.layers.remove(id);
+        self.layer_order.retain(|l| *l != id);
+
+        if self.active_layer == Some(id) {
+            self.active_layer = self.layer_order.first().copied();
+        }
+        self.revision += 1;
+        true
+    }
+
+    /// Move a layer to another depth. Positions are into `layer_order`.
+    pub fn move_layer(&mut self, from: usize, to: usize) {
+        if from >= self.layer_order.len() || to >= self.layer_order.len() || from == to {
+            return;
+        }
+        let layer = self.layer_order.remove(from);
+        self.layer_order.insert(to, layer);
+        self.revision += 1;
+    }
+
+    /// Hand frames to another layer, keeping them where they are on the page.
+    ///
+    /// Moving between layers changes what is in front of what; it never moves
+    /// anything, which is why a frame's page is untouched by this.
+    pub fn move_frames_to_layer(&mut self, frames: &[FrameId], to: LayerId) {
+        if !self.layers.contains_key(to) {
+            return;
+        }
+        let mut moved = false;
+        for frame in frames {
+            let Some(from) = self.layer_of_frame(*frame) else {
+                continue;
+            };
+            if from == to {
+                continue;
+            }
+            if let Some(layer) = self.layers.get_mut(from) {
+                layer.frames.retain(|f| f != frame);
+            }
+            if let Some(layer) = self.layers.get_mut(to) {
+                layer.frames.push(*frame);
+            }
+            moved = true;
+        }
+        if moved {
+            self.revision += 1;
+        }
+    }
+
     /// Which layer holds this frame.
     pub fn layer_of_frame(&self, frame: FrameId) -> Option<LayerId> {
         self.layer_ids().find(|l| {
@@ -1207,10 +1317,24 @@ impl Document {
     pub fn hit_test(&self, point: DocPoint, tolerance: f64) -> Option<FrameId> {
         // Top level, not paint order: clicking a grouped object selects the
         // GROUP, which is what grouping is for.
-        self.top_level_order()
+        self.selectable_order()
             .into_iter()
             .rev()
             .find(|id| self.hits_anywhere(*id, point, tolerance))
+    }
+
+    /// The frames a click or a select-all may reach, back to front.
+    ///
+    /// [`top_level_order`](Self::top_level_order) minus the locked layers.
+    /// The two differ deliberately: a locked layer is **drawn** and not
+    /// **touched**, which is the entire use of locking one — you keep a
+    /// background visible while you work over it.
+    pub fn selectable_order(&self) -> Vec<FrameId> {
+        self.layer_ids()
+            .filter_map(|l| self.layers.get(l))
+            .filter(|l| l.visible && !l.locked)
+            .flat_map(|l| l.frames.iter().copied())
+            .collect()
     }
 
     fn hits_anywhere(&self, id: FrameId, point: DocPoint, tolerance: f64) -> bool {
@@ -3054,6 +3178,203 @@ mod tests {
             doc.paint_order(),
             vec![under, over],
             "layer order decides, not the order the frames were made"
+        );
+    }
+
+    // --- naming, adding and removing layers ---------------------------------
+
+    #[test]
+    fn a_new_layer_goes_on_top_and_becomes_active() {
+        let mut doc = Document::new();
+        let first = doc.default_layer().expect("a layer");
+
+        let added = doc.add_layer("Guides");
+
+        assert_eq!(
+            doc.layer_order,
+            vec![first, added],
+            "on top, because that is what a new layer is for"
+        );
+        assert_eq!(doc.active_layer, Some(added));
+    }
+
+    #[test]
+    fn a_new_layer_is_offered_a_name_no_other_layer_has() {
+        let mut doc = Document::new();
+        assert_eq!(doc.unused_layer_name(), "Layer 2");
+        doc.add_layer(doc.unused_layer_name());
+        assert_eq!(doc.unused_layer_name(), "Layer 3");
+    }
+
+    #[test]
+    fn a_name_freed_by_a_deletion_is_not_offered_over_a_survivor() {
+        // Counting layers is not enough. Delete "Layer 1" from a document of
+        // two and the count says the next name is "Layer 2" — which the
+        // survivor is already called.
+        let mut doc = Document::new();
+        let first = doc.default_layer().expect("a layer");
+        doc.add_layer("Layer 2");
+
+        assert!(doc.remove_layer(first));
+
+        assert_eq!(
+            doc.unused_layer_name(),
+            "Layer 3",
+            "not Layer 2, which still exists"
+        );
+    }
+
+    #[test]
+    fn the_last_layer_cannot_be_removed() {
+        let mut doc = Document::new();
+        let only = doc.default_layer().expect("a layer");
+
+        assert!(!doc.remove_layer(only), "refused");
+        assert_eq!(doc.layer_ids().count(), 1);
+    }
+
+    #[test]
+    fn removing_a_layer_takes_its_frames_and_leaves_the_others() {
+        let mut doc = Document::new();
+        let page = doc.page_ids().next().expect("a page");
+        let keeper = frame_on(&mut doc, page);
+        let doomed_layer = doc.add_layer("Layer 2");
+        let doomed = frame_on(&mut doc, page);
+        assert_eq!(doc.layer_of_frame(doomed), Some(doomed_layer));
+
+        assert!(doc.remove_layer(doomed_layer));
+
+        assert!(doc.frame(doomed).is_none(), "its frames went with it");
+        assert!(doc.frame(keeper).is_some(), "the other layer's did not");
+    }
+
+    #[test]
+    fn removing_the_active_layer_makes_another_one_active() {
+        // Otherwise the next object drawn has nowhere to go.
+        let mut doc = Document::new();
+        let first = doc.default_layer().expect("a layer");
+        let second = doc.add_layer("Layer 2");
+        assert_eq!(doc.active_layer, Some(second));
+
+        assert!(doc.remove_layer(second));
+
+        assert_eq!(doc.active_layer, Some(first));
+    }
+
+    // --- reordering and moving between them ---------------------------------
+
+    #[test]
+    fn reordering_layers_reorders_what_paints_over_what() {
+        let mut doc = Document::new();
+        let page = doc.page_ids().next().expect("a page");
+        let under = frame_on(&mut doc, page);
+        doc.add_layer("Layer 2");
+        let over = frame_on(&mut doc, page);
+        assert_eq!(doc.paint_order(), vec![under, over]);
+
+        doc.move_layer(1, 0);
+
+        assert_eq!(
+            doc.paint_order(),
+            vec![over, under],
+            "the layer that was on top is underneath"
+        );
+    }
+
+    #[test]
+    fn moving_a_frame_between_layers_leaves_it_where_it_is_on_the_page() {
+        let mut doc = Document::new();
+        let page = doc.page_ids().next().expect("a page");
+        let frame = frame_on(&mut doc, page);
+        let where_it_was = doc.frame(frame).expect("frame").bounds;
+        let up = doc.add_layer("Layer 2");
+
+        doc.move_frames_to_layer(&[frame], up);
+
+        assert_eq!(doc.layer_of_frame(frame), Some(up));
+        assert_eq!(doc.page_of_frame(frame), Some(page), "same page");
+        assert_eq!(
+            doc.frame(frame).expect("frame").bounds,
+            where_it_was,
+            "changing which layer holds it is not moving it"
+        );
+    }
+
+    #[test]
+    fn moving_a_frame_to_the_layer_it_is_already_on_changes_nothing() {
+        let mut doc = Document::new();
+        let page = doc.page_ids().next().expect("a page");
+        let frame = frame_on(&mut doc, page);
+        let layer = doc.layer_of_frame(frame).expect("a layer");
+        let before = doc.revision();
+
+        doc.move_frames_to_layer(&[frame], layer);
+
+        assert_eq!(doc.revision(), before);
+        assert_eq!(doc.layers[layer].frames, vec![frame], "listed once");
+    }
+
+    // --- hiding and locking --------------------------------------------------
+
+    #[test]
+    fn a_locked_layers_frames_are_still_drawn() {
+        // Locked is not hidden. Keeping a background visible while working over
+        // it is the whole use of locking one.
+        let mut doc = Document::new();
+        let page = doc.page_ids().next().expect("a page");
+        let frame = frame_on(&mut doc, page);
+        let layer = doc.layer_of_frame(frame).expect("a layer");
+
+        doc.layers[layer].locked = true;
+
+        assert_eq!(doc.paint_order(), vec![frame], "drawn");
+        assert!(doc.selectable_order().is_empty(), "and not touchable");
+    }
+
+    #[test]
+    fn a_click_cannot_reach_a_locked_layer() {
+        let mut doc = Document::new();
+        let page = doc.page_ids().next().expect("a page");
+        let frame = frame_on(&mut doc, page);
+        let at = doc.frame(frame).expect("frame").bounds.center();
+        assert_eq!(doc.hit_test(at, 0.0), Some(frame));
+
+        let layer = doc.layer_of_frame(frame).expect("a layer");
+        doc.layers[layer].locked = true;
+
+        assert_eq!(doc.hit_test(at, 0.0), None);
+    }
+
+    #[test]
+    fn a_click_passes_through_a_locked_layer_to_what_is_under_it() {
+        // The behaviour that makes locking useful rather than merely safe.
+        let mut doc = Document::new();
+        let page = doc.page_ids().next().expect("a page");
+        let under = frame_on(&mut doc, page);
+        let over_layer = doc.add_layer("Layer 2");
+        let over = frame_on(&mut doc, page);
+        let at = doc.frame(over).expect("frame").bounds.center();
+        assert_eq!(doc.hit_test(at, 0.0), Some(over), "the top one, unlocked");
+
+        doc.layers[over_layer].locked = true;
+
+        assert_eq!(doc.hit_test(at, 0.0), Some(under));
+    }
+
+    #[test]
+    fn a_click_cannot_reach_a_hidden_layer_either() {
+        let mut doc = Document::new();
+        let page = doc.page_ids().next().expect("a page");
+        let frame = frame_on(&mut doc, page);
+        let at = doc.frame(frame).expect("frame").bounds.center();
+        let layer = doc.layer_of_frame(frame).expect("a layer");
+
+        doc.layers[layer].visible = false;
+
+        assert_eq!(
+            doc.hit_test(at, 0.0),
+            None,
+            "a frame you cannot see but can still catch is worse than one you can"
         );
     }
 }

@@ -6,6 +6,7 @@
 //! `Ui`, so the whole window is one tree.
 
 pub mod canvas_toolbar;
+pub mod layers;
 pub mod pages;
 pub mod palette;
 pub mod panels;
@@ -34,6 +35,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     palette::show(ui, state);
     styles::show(ui, state);
     pages::show(ui, state);
+    layers::show(ui, state);
 
     Panel::bottom("status")
         .exact_size(24.0)
@@ -219,6 +221,9 @@ fn accelerators(ui: &Ui, state: &mut TesseraApp) {
     }
     if !state.active().editing.is_some() && pressed(egui::Modifiers::NONE, egui::Key::F12) {
         crate::actions::run(state, crate::actions::Run::TogglePages);
+    }
+    if !state.active().editing.is_some() && pressed(egui::Modifiers::NONE, egui::Key::F7) {
+        crate::actions::run(state, crate::actions::Run::ToggleLayers);
     }
 
     // Everything below is about objects, and while a caret is live the same

@@ -11,7 +11,7 @@
 
 use tessera_color::Color;
 use tessera_document::document::{Document, ZMove};
-use tessera_document::ids::{FrameId, PageId, StoryId};
+use tessera_document::ids::{FrameId, LayerId, PageId, StoryId};
 use tessera_document::nodes::{Frame, FrameKind};
 use tessera_geometry::{DocRect, Transform};
 use tessera_text::story::{
@@ -227,6 +227,34 @@ pub enum Command {
         to: usize,
     },
 
+    /// Add a layer above the others and make it active.
+    AddLayer,
+    /// Remove a layer and everything on it. The last layer is refused.
+    RemoveLayer {
+        id: LayerId,
+    },
+    RenameLayer {
+        id: LayerId,
+        name: String,
+    },
+    SetLayerVisible {
+        id: LayerId,
+        visible: bool,
+    },
+    SetLayerLocked {
+        id: LayerId,
+        locked: bool,
+    },
+    /// Move a layer to another depth. Positions are into `layer_order`.
+    MoveLayer {
+        from: usize,
+        to: usize,
+    },
+    /// Choose the layer new objects go onto.
+    SetActiveLayer(LayerId),
+    /// Hand the selection to another layer, without moving it on the page.
+    MoveSelectionToLayer(LayerId),
+
     /// Replace the whole page setup at once.
     ///
     /// One command for the whole struct rather than one per field, so that a
@@ -317,7 +345,15 @@ impl Command {
     fn mutates(&self) -> bool {
         // Copy reads the document without changing it, so it must not push an
         // undo entry: Ctrl+C should never need a Ctrl+Z to unwind.
-        !matches!(self, Self::Undo | Self::Redo | Self::CopySelection)
+        //
+        // Choosing a layer to work on is saved with the document but is not an
+        // edit to it, and InDesign does not offer it back on undo either.
+        // Undoing a rectangle should remove the rectangle, not first take back
+        // the click that chose where to draw it.
+        !matches!(
+            self,
+            Self::Undo | Self::Redo | Self::CopySelection | Self::SetActiveLayer(_)
+        )
     }
 }
 
@@ -897,6 +933,62 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             state.active_mut().document_mut().move_spread(from, to);
         }
 
+        Command::AddLayer => {
+            let name = state.active().document().unused_layer_name();
+            state.active_mut().document_mut().add_layer(name);
+        }
+
+        Command::RemoveLayer { id } => {
+            state.active_mut().document_mut().remove_layer(id);
+            // Whatever was on it is gone, so the selection cannot still name
+            // it. `restore` does this for undo; a removal has to do it here.
+            state.active_mut().retain_existing_selection();
+        }
+
+        Command::RenameLayer { id, name } => {
+            if let Some(layer) = state.active_mut().document_mut().layers.get_mut(id) {
+                layer.name = name;
+            }
+            state.active_mut().document_mut().touch();
+        }
+
+        Command::SetLayerVisible { id, visible } => {
+            if let Some(layer) = state.active_mut().document_mut().layers.get_mut(id) {
+                layer.visible = visible;
+            }
+            state.active_mut().document_mut().touch();
+            // A hidden layer's frames cannot be selected, so a selection that
+            // was standing on one has to let go — otherwise handles float over
+            // nothing and a drag moves what cannot be seen.
+            drop_the_untouchable(state);
+        }
+
+        Command::SetLayerLocked { id, locked } => {
+            if let Some(layer) = state.active_mut().document_mut().layers.get_mut(id) {
+                layer.locked = locked;
+            }
+            state.active_mut().document_mut().touch();
+            drop_the_untouchable(state);
+        }
+
+        Command::MoveLayer { from, to } => {
+            state.active_mut().document_mut().move_layer(from, to);
+        }
+
+        Command::SetActiveLayer(id) => {
+            if state.active().document().layers.contains_key(id) {
+                state.active_mut().document_mut().set_active_layer(id);
+            }
+        }
+
+        Command::MoveSelectionToLayer(id) => {
+            let frames = state.active().selection.as_slice().to_vec();
+            state
+                .active_mut()
+                .document_mut()
+                .move_frames_to_layer(&frames, id);
+        }
+
         Command::SetDocumentSetup(setup) => {
             state.active_mut().document_mut().set_setup(setup);
         }
@@ -1117,6 +1209,24 @@ fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
         },
     );
     state.active_mut().selection.set(id);
+}
+
+/// Let go of anything the selection can no longer touch.
+///
+/// Hiding or locking a layer does not remove its frames, so the selection
+/// would happily keep hold of them — leaving handles drawn over an invisible
+/// object, and a drag that moves what cannot be seen.
+fn drop_the_untouchable(state: &mut TesseraApp) {
+    let reachable = state.active().document().selectable_order();
+    let kept: Vec<_> = state
+        .active()
+        .selection
+        .as_slice()
+        .iter()
+        .copied()
+        .filter(|id| reachable.contains(id))
+        .collect();
+    state.active_mut().selection.replace_all(kept);
 }
 
 /// Restore a snapshot, keeping the selection honest.
@@ -4048,5 +4158,191 @@ mod tests {
         apply(&mut state, Command::TranslateSelection { dx: 1.0, dy: 1.0 });
 
         assert_eq!(state.active().document().spread_of_frame(id), before);
+    }
+
+    // --- layers -------------------------------------------------------------
+
+    /// A rectangle on the first page, selected.
+    fn a_rectangle(state: &mut TesseraApp) -> FrameId {
+        apply(state, Command::AddRectangle(bounds()));
+        state.active().selection.single().expect("selected")
+    }
+
+    #[test]
+    fn adding_a_layer_is_undoable() {
+        let mut state = TesseraApp::headless();
+        assert_eq!(state.active().document().layer_ids().count(), 1);
+
+        apply(&mut state, Command::AddLayer);
+        assert_eq!(state.active().document().layer_ids().count(), 2);
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().layer_ids().count(), 1);
+    }
+
+    #[test]
+    fn a_new_object_joins_the_active_layer_not_the_bottom_one() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddLayer);
+        let top = state.active().document().active_layer.expect("active");
+
+        let frame = a_rectangle(&mut state);
+
+        assert_eq!(state.active().document().layer_of_frame(frame), Some(top));
+    }
+
+    #[test]
+    fn undoing_a_layer_removal_brings_back_what_was_on_it() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddLayer);
+        let layer = state.active().document().active_layer.expect("active");
+        let frame = a_rectangle(&mut state);
+
+        apply(&mut state, Command::RemoveLayer { id: layer });
+        assert!(state.active().document().frame(frame).is_none());
+        assert!(
+            state.active().selection.is_empty(),
+            "and the selection let go of it"
+        );
+
+        apply(&mut state, Command::Undo);
+        assert!(state.active().document().frame(frame).is_some());
+    }
+
+    #[test]
+    fn choosing_a_layer_to_work_on_is_not_an_undo_step() {
+        // Undoing a rectangle should remove the rectangle, not first take back
+        // the click that chose where to draw it.
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddLayer);
+        let bottom = state.active().document().layer_order[0];
+        let frame = a_rectangle(&mut state);
+
+        apply(&mut state, Command::SetActiveLayer(bottom));
+        apply(&mut state, Command::Undo);
+
+        assert!(
+            state.active().document().frame(frame).is_none(),
+            "one undo reached the rectangle"
+        );
+    }
+
+    #[test]
+    fn hiding_a_layer_makes_the_selection_let_go() {
+        // Otherwise handles are drawn around something invisible, and the next
+        // drag moves what cannot be seen.
+        let mut state = TesseraApp::headless();
+        let frame = a_rectangle(&mut state);
+        let layer = state
+            .active()
+            .document()
+            .layer_of_frame(frame)
+            .expect("a layer");
+
+        apply(
+            &mut state,
+            Command::SetLayerVisible {
+                id: layer,
+                visible: false,
+            },
+        );
+
+        assert!(state.active().selection.is_empty());
+    }
+
+    #[test]
+    fn locking_a_layer_makes_the_selection_let_go_too() {
+        let mut state = TesseraApp::headless();
+        let frame = a_rectangle(&mut state);
+        let layer = state
+            .active()
+            .document()
+            .layer_of_frame(frame)
+            .expect("a layer");
+
+        apply(
+            &mut state,
+            Command::SetLayerLocked {
+                id: layer,
+                locked: true,
+            },
+        );
+
+        assert!(state.active().selection.is_empty());
+    }
+
+    #[test]
+    fn select_all_does_not_reach_into_a_locked_layer() {
+        let mut state = TesseraApp::headless();
+        let reachable = a_rectangle(&mut state);
+        apply(&mut state, Command::AddLayer);
+        let locked = state.active().document().active_layer.expect("active");
+        a_rectangle(&mut state);
+        apply(
+            &mut state,
+            Command::SetLayerLocked {
+                id: locked,
+                locked: true,
+            },
+        );
+
+        state.active_mut().select_all();
+
+        assert_eq!(
+            state.active().selection.as_slice(),
+            [reachable],
+            "a chord must not undo a deliberate lock"
+        );
+    }
+
+    #[test]
+    fn moving_the_selection_to_another_layer_is_undoable() {
+        let mut state = TesseraApp::headless();
+        let frame = a_rectangle(&mut state);
+        let was = state
+            .active()
+            .document()
+            .layer_of_frame(frame)
+            .expect("a layer");
+        apply(&mut state, Command::AddLayer);
+        let up = state.active().document().active_layer.expect("active");
+        state.active_mut().selection.set(frame);
+
+        apply(&mut state, Command::MoveSelectionToLayer(up));
+        assert_eq!(state.active().document().layer_of_frame(frame), Some(up));
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().layer_of_frame(frame), Some(was));
+    }
+
+    #[test]
+    fn renaming_a_layer_is_undoable() {
+        let mut state = TesseraApp::headless();
+        let layer = state.active().document().default_layer().expect("a layer");
+
+        apply(
+            &mut state,
+            Command::RenameLayer {
+                id: layer,
+                name: "Background".to_string(),
+            },
+        );
+        assert_eq!(state.active().document().layers[layer].name, "Background");
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().layers[layer].name, "Layer 1");
+    }
+
+    #[test]
+    fn reordering_layers_is_undoable() {
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddLayer);
+        let before = state.active().document().layer_order.clone();
+
+        apply(&mut state, Command::MoveLayer { from: 1, to: 0 });
+        assert_ne!(state.active().document().layer_order, before);
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().layer_order, before);
     }
 }

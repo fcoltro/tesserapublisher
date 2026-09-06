@@ -625,7 +625,7 @@ A master page is a page whose items appear on the pages it is applied to, and
 layer is settles that question; deciding it afterwards would mean building
 masters twice.
 
-- [ ] **Layers are document-wide.** Today a layer belongs to a page —
+- [x] **Layers are document-wide.** Today a layer belongs to a page —
   `Page.layers` — which makes a frame's page and its layer the *same fact*.
   That is why every frame drawn anywhere ended up on page one's layer, and why
   `layer_at` and `rehome_frame` had to exist to correct it. InDesign's model is
@@ -645,10 +645,23 @@ masters twice.
   - `layer_at` and `rehome_frame` are **deleted**. New frames go on the active
     layer wherever they are drawn, and moving a frame changes nothing about
     which layer it is on — which is correct, and is the InDesign behaviour.
-- [ ] Layers panel: named layers, reorder, visibility, lock, and an active
-  layer that new objects go onto. A locked layer's frames cannot be selected;
-  a hidden layer's are not drawn (already true) **and not selectable**, which
-  is the part that makes hiding useful for working.
+- [x] Layers panel: named layers, reorder, visibility, lock, and an active
+  layer that new objects go onto. Reads **top down**, which is the opposite of
+  `layer_order`, because the panel is a picture of a stack seen from the front.
+  The reversal lives only in the panel.
+  - `selectable_order` is `top_level_order` minus the locked layers, and the
+    two differ deliberately: a locked layer is **drawn** and not **touched**,
+    which is the whole use of locking one. A click passes through it to what is
+    underneath, and select-all does not reach it — a chord must not undo a
+    deliberate lock.
+  - Hiding or locking a layer makes the selection let go of what is on it.
+    Otherwise handles stay drawn around something invisible and the next drag
+    moves what cannot be seen.
+  - Choosing which layer to work on is saved but is **not an undo step**.
+    Undoing a rectangle should remove the rectangle, not first take back the
+    click that chose where to draw it.
+  - The last layer cannot be removed, refused by the document rather than by
+    the caller — the same rule the last page has, for the same reason.
 - [ ] Master pages, applied by drag, rendered behind page content. Applied by
   **reference, not by copy**: a master whose items were copied onto each page
   would not update the pages when it changed, which is the entire reason to

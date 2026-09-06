@@ -92,6 +92,7 @@ impl Group {
 pub enum Run {
     ToggleStyles,
     TogglePages,
+    ToggleLayers,
     NewDocument,
     Open,
     Save,
@@ -404,6 +405,7 @@ pub fn all() -> &'static [Action] {
         a("Delete page", None, Group::Layout, Command(RemovePage)),
         // The last menu milestone 1.5 named as absent for having no commands.
         a("Pages", Some("F12"), Group::Window, TogglePages),
+        a("Layers", Some("F7"), Group::Window, ToggleLayers),
         //
         a(
             "Selection tool",
@@ -469,6 +471,10 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         }
         Run::TogglePages => {
             let window = &mut state.pages_window;
+            window.open = !window.open;
+        }
+        Run::ToggleLayers => {
+            let window = &mut state.layers_window;
             window.open = !window.open;
         }
         Run::PickTool(tool) => state.active_tool = tool,

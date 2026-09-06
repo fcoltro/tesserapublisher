@@ -117,6 +117,14 @@ pub struct PagesWindow {
     pub open: bool,
 }
 
+/// The layers panel's own state.
+///
+/// Defaults to closed, so it cannot appear unasked.
+#[derive(Debug, Clone, Default)]
+pub struct LayersWindow {
+    pub open: bool,
+}
+
 /// The styles window's own state.
 ///
 /// Defaults to closed, so the window cannot appear unasked.
@@ -149,6 +157,7 @@ pub struct TesseraApp {
     /// View state, like the styles window. Which panels are open is not part
     /// of the document.
     pub pages_window: PagesWindow,
+    pub layers_window: LayersWindow,
 
     /// The styles window: open or not, and which style is being edited.
     ///
@@ -234,6 +243,7 @@ impl TesseraApp {
             active_tool: Tool::Select,
             styles_window: StylesWindow::default(),
             pages_window: PagesWindow::default(),
+            layers_window: LayersWindow::default(),
             screen_mode: ScreenMode::default(),
             anchor: tessera_geometry::Anchor::default(),
             constrain_proportions: false,

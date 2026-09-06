@@ -239,16 +239,18 @@ mod tests {
     }
 
     #[test]
-    fn the_window_menu_has_exactly_this_one_entry() {
+    fn the_window_menu_lists_the_panels_there_are() {
         // The menu bar is generated from the action list, so this is what
         // proves a Window menu appears at all — it was the last of the three
-        // milestone 1.5 named as absent for having no commands.
+        // milestone 1.5 named as absent for having no commands. Exact, so a
+        // panel cannot be added to the menu without being added here: an entry
+        // for an unbuilt panel is the lie the previous codebase told often.
         let named: Vec<&str> = actions::all()
             .iter()
             .filter(|a| a.group == Group::Window)
             .map(|a| a.name)
             .collect();
-        assert_eq!(named, vec!["Pages"]);
+        assert_eq!(named, vec!["Pages", "Layers"]);
         assert_eq!(Group::Window.menu(), Some("Window"));
     }
 
