@@ -894,8 +894,30 @@ full argument, with sources, is in `docs/superpowers/specs/`.
 - [ ] Effective-PPI reporting with a configurable warning threshold.
 - [ ] Disk-backed proxy cache, so downscaling survives a restart.
 - [ ] `lcms2` integration, **confirmed building on all three platforms.**
-- [ ] RGB, CMYK, Lab and spot colour throughout the model.
-- [ ] Swatches panel with global colours that cascade on edit.
+- [x] RGB, CMYK, Lab and spot colour throughout the model. RGB, CMYK and spot
+  were built in milestone 0 for exactly this moment; Lab and the swatch
+  reference landed here.
+  - Lab converts through **D50**, the illuminant a printing standard assumes,
+    and is the plain formula — a placeholder for the ICC transform in the same
+    documented way the CMYK conversion has been since milestone 0.
+- [~] Global colours that cascade on edit — **the model is done, the panel is
+  not.** Objects store the swatch's *name*, so editing it changes every one of
+  them without any being touched, and there is a test that does exactly that.
+  - `Color::Swatch` carries **no fallback**, deliberately. A fallback is a
+    second copy of the value, and the second copy is what a global colour
+    exists to avoid — so a swatch cannot resolve itself and a document must be
+    asked.
+  - An unresolved swatch draws in an alarming magenta rather than black.
+    Drawn in black it would look like a decision; drawn in that it looks like
+    what it is.
+  - Deleting a swatch **leaves the references unresolved** rather than baking
+    in its last value, which would silently keep a colour the user had just
+    deleted.
+  - A ring of swatches stops rather than hanging: somebody who points A at B
+    at A has made a mistake and should see an unresolved colour, not a frozen
+    application.
+  - `resolve` flattens every swatch, so the renderer and the PDF writer never
+    meet a name and stay ignorant of the document.
 - [ ] Document output intent with on-screen soft proofing.
 - [ ] Linear and radial gradients; drop shadow; multiply, screen and overlay
   blending.

@@ -182,6 +182,18 @@ fn resolve_pages(
     ResolvedDocument { items, pages }
 }
 
+/// A stroke with its colour resolved.
+///
+/// Every colour leaving `resolve` is a value rather than a name, so the
+/// renderer and the PDF writer never meet a swatch — which is what lets them
+/// stay ignorant of the document entirely.
+fn resolved_stroke(doc: &Document, stroke: Option<&Stroke>) -> Option<Stroke> {
+    stroke.map(|s| Stroke {
+        color: doc.resolve_colour(&s.color),
+        ..s.clone()
+    })
+}
+
 /// The objects a frame's text must run around, in the text's own space.
 ///
 /// Only the frames that say they wrap, only on the same spread, and never the
@@ -315,12 +327,12 @@ fn resolve_one(
 ) -> Option<ResolvedItem> {
     let kind = match &frame.kind {
         FrameKind::Rectangle => ResolvedKind::Rectangle {
-            fill: frame.fill.clone(),
-            stroke: frame.stroke.clone(),
+            fill: doc.resolve_colour(&frame.fill),
+            stroke: resolved_stroke(doc, frame.stroke.as_ref()),
         },
         FrameKind::Ellipse => ResolvedKind::Ellipse {
-            fill: frame.fill.clone(),
-            stroke: frame.stroke.clone(),
+            fill: doc.resolve_colour(&frame.fill),
+            stroke: resolved_stroke(doc, frame.stroke.as_ref()),
         },
         FrameKind::Path(path) => ResolvedKind::Path {
             path: fit_to_bounds(path, frame.bounds),
@@ -329,10 +341,8 @@ fn resolve_one(
             // has no stroke of its own.
             fill: None,
             stroke: Some(
-                frame
-                    .stroke
-                    .clone()
-                    .unwrap_or_else(|| Stroke::new(frame.fill.clone(), 1.0)),
+                resolved_stroke(doc, frame.stroke.as_ref())
+                    .unwrap_or_else(|| Stroke::new(doc.resolve_colour(&frame.fill), 1.0)),
             ),
         },
 
@@ -360,6 +370,7 @@ fn resolve_one(
                 .map(|run| story.resolve_run(run, doc))
                 .and_then(|f| f.colour)
                 .unwrap_or(tessera_color::Color::BLACK);
+            let colour = doc.resolve_colour(&colour);
             // Shaped at the width of a column, then flowed through them.
             // One shaping serves every column because they are all the same
             // width, which is what makes columns a cheap pass over a finished

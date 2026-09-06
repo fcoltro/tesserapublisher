@@ -588,9 +588,83 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_eleven() {
+fn the_format_version_is_twelve() {
     // If this changes, a migration step is owed.
-    assert_eq!(format::FORMAT_VERSION, 11);
+    assert_eq!(format::FORMAT_VERSION, 12);
+}
+
+#[test]
+fn swatches_and_the_objects_naming_them_round_trip() {
+    use tessera_document::nodes::Swatch;
+
+    let path = temp_path("swatches.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = Document::new();
+    doc.set_swatch(Swatch {
+        name: "Brand red".to_string(),
+        colour: Color::Cmyk {
+            c: 0.0,
+            m: 0.9,
+            y: 0.8,
+            k: 0.0,
+            a: 1.0,
+        },
+        spot: true,
+    });
+
+    let layer = doc.default_layer().expect("layer");
+    let id = doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 20.0,
+            },
+            kind: FrameKind::Rectangle,
+            transform: Transform::IDENTITY,
+            fill: Color::Swatch {
+                name: "Brand red".to_string(),
+                tint: 0.5,
+            },
+            stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
+        },
+    );
+
+    format::save(&doc, &path).expect("save");
+    let loaded = format::load(&path).expect("load");
+
+    assert_eq!(loaded.swatches.len(), 1);
+    assert!(loaded.swatch("Brand red").expect("a swatch").spot);
+    let fill = loaded.frame(id).expect("frame").fill.clone();
+    assert_eq!(
+        fill,
+        Color::Swatch {
+            name: "Brand red".to_string(),
+            tint: 0.5
+        },
+        "the object still holds the name, not the value"
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_version_eleven_document_opens_with_no_swatches() {
+    let path = temp_path("legacy_v11.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let doc = Document::new();
+    format::save(&doc, &path).expect("save");
+    format::rewrite_version_for_test(&path, 11).expect("stamp");
+
+    let loaded = format::load(&path).expect("a version 11 document must still open");
+    assert!(loaded.swatches.is_empty());
+
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]

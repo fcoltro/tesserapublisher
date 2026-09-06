@@ -261,6 +261,13 @@ pub enum Command {
         wrap: tessera_document::nodes::TextWrap,
     },
 
+    /// Define a named colour, or change the one of that name.
+    SetSwatch(tessera_document::nodes::Swatch),
+    /// Remove a named colour. Objects using it keep the reference.
+    RemoveSwatch {
+        name: String,
+    },
+
     /// Add a parent spread shaped like the document.
     AddMaster,
     /// Remove a master, unhooking every page that used it.
@@ -1027,6 +1034,14 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 frame.wrap = wrap;
             }
             state.active_mut().document_mut().touch();
+        }
+
+        Command::SetSwatch(swatch) => {
+            state.active_mut().document_mut().set_swatch(swatch);
+        }
+
+        Command::RemoveSwatch { name } => {
+            state.active_mut().document_mut().remove_swatch(&name);
         }
 
         Command::AddMaster => {

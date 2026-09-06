@@ -6,9 +6,11 @@ use tessera_geometry::{DocPoint, DocRect, Transform};
 
 use crate::ids::{FrameId, LayerId, MasterId, PageId, SpreadId, StoryId};
 use crate::masters::Master;
+use crate::nodes::Swatch;
 use crate::nodes::{
     DocumentSetup, Frame, FrameKind, Guide, Layer, Page, PageSide, Spread, TextLayout,
 };
+use tessera_color::Color;
 use tessera_text::story::{
     CharacterFormat, CharacterStyle, CharacterStyleId, ParagraphFormat, ParagraphStyle,
     ParagraphStyleId, Story, Styles, TextStyle,
@@ -97,6 +99,14 @@ pub struct Document {
     #[serde(default)]
     pub active_layer: Option<LayerId>,
 
+    /// The document's named colours, in the order the panel lists them.
+    ///
+    /// A `Vec` rather than a map: a swatches panel is an ordered list a person
+    /// arranges, and a map would have to be sorted by something — which would
+    /// then be the order, chosen by the machine.
+    #[serde(default)]
+    pub swatches: Vec<Swatch>,
+
     /// Named character styles.
     #[serde(default)]
     pub character_styles: SlotMap<CharacterStyleId, CharacterStyle>,
@@ -137,6 +147,7 @@ impl Document {
             masters: SlotMap::with_key(),
             master_order: Vec::new(),
             overrides: slotmap::SecondaryMap::new(),
+            swatches: Vec::new(),
             character_styles: SlotMap::with_key(),
             paragraph_styles: SlotMap::with_key(),
             text_default: TextStyle::default(),
@@ -897,6 +908,81 @@ impl Document {
         }
 
         Some(self.frames.insert(frame))
+    }
+
+    // --- named colours --------------------------------------------------
+
+    /// The swatch of that name, if the document has one.
+    pub fn swatch(&self, name: &str) -> Option<&Swatch> {
+        self.swatches.iter().find(|s| s.name == name)
+    }
+
+    /// Add a swatch, or replace the one of that name.
+    ///
+    /// Replacing rather than adding a second is what makes a swatch global:
+    /// two entries called "Brand red" would be two colours, and objects would
+    /// silently take whichever came first.
+    pub fn set_swatch(&mut self, swatch: Swatch) {
+        match self.swatches.iter_mut().find(|s| s.name == swatch.name) {
+            Some(existing) => *existing = swatch,
+            None => self.swatches.push(swatch),
+        }
+        self.revision += 1;
+    }
+
+    /// Remove a swatch.
+    ///
+    /// Objects using it keep the reference, and it resolves to nothing — which
+    /// is why an unresolved swatch draws in an alarming colour rather than a
+    /// plausible one. Rewriting every object to the swatch's last value would
+    /// be silently baking in a colour the user had just deleted.
+    pub fn remove_swatch(&mut self, name: &str) -> bool {
+        let before = self.swatches.len();
+        self.swatches.retain(|s| s.name != name);
+        if self.swatches.len() == before {
+            return false;
+        }
+        self.revision += 1;
+        true
+    }
+
+    /// How many objects use a swatch, so deleting one can say what it costs.
+    pub fn uses_of_swatch(&self, name: &str) -> usize {
+        self.frames
+            .values()
+            .filter(|f| {
+                uses_swatch(&f.fill, name)
+                    || f.stroke
+                        .as_ref()
+                        .is_some_and(|s| uses_swatch(&s.color, name))
+            })
+            .count()
+    }
+
+    /// A colour with every swatch reference replaced by what it stands for.
+    ///
+    /// The one place a name becomes a value. Everything that draws goes
+    /// through it, so editing a swatch changes every object using it without
+    /// any of them being touched — which is what a global colour *is*.
+    ///
+    /// A swatch that names another swatch is followed, and a cycle stops
+    /// rather than hanging: somebody who points A at B at A has made a mistake
+    /// and should see an unresolved colour, not a frozen application.
+    pub fn resolve_colour(&self, colour: &Color) -> Color {
+        const DEPTH: usize = 8;
+
+        let mut at = colour.clone();
+        for _ in 0..DEPTH {
+            let Color::Swatch { name, tint } = &at else {
+                return at;
+            };
+            let Some(swatch) = self.swatch(name) else {
+                // Deleted, or never defined. The alarming colour, on purpose.
+                return at;
+            };
+            at = swatch.colour.tinted(*tint);
+        }
+        at
     }
 
     // --- threaded text ------------------------------------------------
@@ -1886,6 +1972,15 @@ impl Document {
             })
         })
     }
+}
+
+/// Whether a colour names this swatch, following one level of reference.
+///
+/// One level, not all of them: a swatch defined in terms of another is counted
+/// against the one it names directly, which is what somebody looking at a use
+/// count expects to see.
+fn uses_swatch(colour: &Color, name: &str) -> bool {
+    matches!(colour, Color::Swatch { name: n, .. } if n == name)
 }
 
 /// Whether `point` lands on `frame`, accounting for its rotation.
@@ -4884,5 +4979,197 @@ mod tests {
         let inside = frame.columns_of(area);
 
         assert_eq!(guides, inside);
+    }
+
+    // --- named colours ------------------------------------------------------
+
+    fn red() -> Color {
+        Color::Rgb {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        }
+    }
+
+    fn blue() -> Color {
+        Color::Rgb {
+            r: 0.0,
+            g: 0.0,
+            b: 1.0,
+            a: 1.0,
+        }
+    }
+
+    #[test]
+    fn a_swatch_resolves_to_what_it_names() {
+        let mut doc = Document::new();
+        doc.set_swatch(Swatch::new("Brand", red()));
+
+        let named = Color::Swatch {
+            name: "Brand".to_string(),
+            tint: 1.0,
+        };
+        assert_eq!(doc.resolve_colour(&named), red());
+    }
+
+    #[test]
+    fn editing_a_swatch_changes_every_object_using_it() {
+        // **The whole reason a swatch exists.** Nothing about the objects is
+        // touched: they hold the name, and the name now stands for something
+        // else.
+        let mut doc = Document::new();
+        doc.set_swatch(Swatch::new("Brand", red()));
+        let named = Color::Swatch {
+            name: "Brand".to_string(),
+            tint: 1.0,
+        };
+
+        let page = doc.page_ids().next().expect("a page");
+        let ids: Vec<FrameId> = (0..3).map(|_| frame_on(&mut doc, page)).collect();
+        for id in &ids {
+            doc.frame_mut(*id).expect("frame").fill = named.clone();
+        }
+
+        doc.set_swatch(Swatch::new("Brand", blue()));
+
+        for id in &ids {
+            let fill = doc.frame(*id).expect("frame").fill.clone();
+            assert_eq!(doc.resolve_colour(&fill), blue());
+        }
+    }
+
+    #[test]
+    fn a_second_swatch_of_the_same_name_replaces_the_first() {
+        // Two entries called "Brand" would be two colours, and objects would
+        // silently take whichever came first.
+        let mut doc = Document::new();
+        doc.set_swatch(Swatch::new("Brand", red()));
+        doc.set_swatch(Swatch::new("Brand", blue()));
+
+        assert_eq!(doc.swatches.len(), 1);
+        assert_eq!(doc.swatch("Brand").expect("a swatch").colour, blue());
+    }
+
+    #[test]
+    fn a_tint_is_a_percentage_of_the_swatch() {
+        let mut doc = Document::new();
+        doc.set_swatch(Swatch::new(
+            "Brand",
+            Color::Spot {
+                name: "PANTONE 185 C".to_string(),
+                tint: 1.0,
+                fallback: Box::new(red()),
+            },
+        ));
+
+        let half = Color::Swatch {
+            name: "Brand".to_string(),
+            tint: 0.5,
+        };
+        let resolved = doc.resolve_colour(&half);
+        assert_eq!(resolved.to_rgb_f32()[3], 0.5);
+    }
+
+    #[test]
+    fn a_deleted_swatch_leaves_the_reference_unresolved_rather_than_baked_in() {
+        // Rewriting every object to the swatch's last value would silently
+        // bake in a colour the user had just deleted.
+        let mut doc = Document::new();
+        doc.set_swatch(Swatch::new("Brand", red()));
+        let named = Color::Swatch {
+            name: "Brand".to_string(),
+            tint: 1.0,
+        };
+
+        assert!(doc.remove_swatch("Brand"));
+
+        assert_eq!(doc.resolve_colour(&named), named, "still a name");
+        assert_eq!(
+            named.to_rgb_f32(),
+            [1.0, 0.0, 1.0, 1.0],
+            "and drawn alarmingly"
+        );
+    }
+
+    #[test]
+    fn removing_a_swatch_that_is_not_there_is_refused_rather_than_pretended() {
+        let mut doc = Document::new();
+        let before = doc.revision();
+        assert!(!doc.remove_swatch("Nothing"));
+        assert_eq!(doc.revision(), before);
+    }
+
+    #[test]
+    fn a_swatch_can_be_told_how_many_objects_use_it() {
+        // So deleting one can say what it costs.
+        let mut doc = Document::new();
+        doc.set_swatch(Swatch::new("Brand", red()));
+        let named = Color::Swatch {
+            name: "Brand".to_string(),
+            tint: 1.0,
+        };
+        let page = doc.page_ids().next().expect("a page");
+
+        let a = frame_on(&mut doc, page);
+        let b = frame_on(&mut doc, page);
+        frame_on(&mut doc, page);
+        doc.frame_mut(a).expect("frame").fill = named.clone();
+        doc.frame_mut(b).expect("frame").fill = named;
+
+        assert_eq!(doc.uses_of_swatch("Brand"), 2);
+    }
+
+    #[test]
+    fn a_swatch_naming_another_swatch_is_followed() {
+        let mut doc = Document::new();
+        doc.set_swatch(Swatch::new("Base", red()));
+        doc.set_swatch(Swatch::new(
+            "Alias",
+            Color::Swatch {
+                name: "Base".to_string(),
+                tint: 1.0,
+            },
+        ));
+
+        let named = Color::Swatch {
+            name: "Alias".to_string(),
+            tint: 1.0,
+        };
+        assert_eq!(doc.resolve_colour(&named), red());
+    }
+
+    #[test]
+    fn a_ring_of_swatches_stops_rather_than_hanging() {
+        // Somebody who points A at B at A has made a mistake and should see an
+        // unresolved colour, not a frozen application.
+        let mut doc = Document::new();
+        doc.set_swatch(Swatch::new(
+            "A",
+            Color::Swatch {
+                name: "B".to_string(),
+                tint: 1.0,
+            },
+        ));
+        doc.set_swatch(Swatch::new(
+            "B",
+            Color::Swatch {
+                name: "A".to_string(),
+                tint: 1.0,
+            },
+        ));
+
+        let named = Color::Swatch {
+            name: "A".to_string(),
+            tint: 1.0,
+        };
+        // The assertion is that this returns at all.
+        assert!(doc.resolve_colour(&named).is_reference());
+    }
+
+    #[test]
+    fn a_colour_that_is_not_a_swatch_resolves_to_itself() {
+        let doc = Document::new();
+        assert_eq!(doc.resolve_colour(&red()), red());
     }
 }

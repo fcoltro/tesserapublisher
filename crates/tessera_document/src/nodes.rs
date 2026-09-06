@@ -280,6 +280,35 @@ impl BaselineGrid {
     }
 }
 
+/// One of the document's named colours.
+///
+/// A swatch is a name and a value. Objects store the **name**, so editing the
+/// value here changes every one of them at once — which is the whole reason a
+/// swatch exists and the thing a copied colour cannot do.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Swatch {
+    pub name: String,
+    pub colour: Color,
+    /// Whether this names an ink of its own rather than a mix of the process
+    /// colours.
+    ///
+    /// A spot separates onto its own plate at the printer, so it is a fact
+    /// about the job and not only about the screen. Recorded here so preflight
+    /// and the PDF's separation list can report it in milestone 6.
+    #[serde(default)]
+    pub spot: bool,
+}
+
+impl Swatch {
+    pub fn new(name: impl Into<String>, colour: Color) -> Self {
+        Self {
+            name: name.into(),
+            colour,
+            spot: false,
+        }
+    }
+}
+
 /// How text runs around an object.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum TextWrap {

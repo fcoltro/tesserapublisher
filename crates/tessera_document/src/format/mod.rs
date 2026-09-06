@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 11;
+pub const FORMAT_VERSION: u32 = 12;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -170,6 +170,16 @@ fn migrate(value: &mut serde_json::Value, from: u32) {
     if from < 8 {
         layers_leave_the_page(value);
     }
+
+    // 11 -> 12: the document gained a table of named colours, and `Color`
+    // gained Lab and a reference to one of them.
+    //
+    // Nothing to rewrite: an absent table is an empty one, which is the truth
+    // about a document written before swatches existed, and no colour in it
+    // can be a reference because the variant did not exist to be written. The
+    // version moves so an older build refuses a document using swatches rather
+    // than opening it with every swatched object drawn in the unresolved
+    // colour.
 
     // 10 -> 11: the document gained a baseline grid and a text frame gained
     // the switch that locks its lines to it.
