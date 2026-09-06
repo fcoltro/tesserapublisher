@@ -718,6 +718,7 @@ mod tests {
             transform: Transform::IDENTITY,
             fill: tessera_color::Color::BLACK,
             stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
         };
         [
             doc.add_frame(layer, frame()),

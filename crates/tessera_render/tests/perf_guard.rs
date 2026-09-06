@@ -46,6 +46,7 @@ fn crowded_document() -> Document {
                 kind: FrameKind::Rectangle,
                 fill: Color::BLACK,
                 stroke: None,
+                wrap: tessera_document::nodes::TextWrap::None,
             },
         );
     }
@@ -142,6 +143,7 @@ fn wordy_document() -> Document {
                 kind: FrameKind::text(id),
                 fill: Color::BLACK,
                 stroke: None,
+                wrap: tessera_document::nodes::TextWrap::None,
             },
         );
     }

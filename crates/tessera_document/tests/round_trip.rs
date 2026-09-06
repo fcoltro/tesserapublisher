@@ -57,6 +57,7 @@ fn a_document_with_a_rectangle_round_trips_exactly() {
                 a: 1.0,
             },
             stroke: Some(Stroke::new(Color::BLACK, 2.0)),
+            wrap: tessera_document::nodes::TextWrap::None,
         },
     );
 
@@ -164,6 +165,7 @@ fn any_frame() -> impl Strategy<Value = Frame> {
             transform: Transform::IDENTITY,
             fill,
             stroke: stroke_width.map(|width| Stroke::new(Color::BLACK, width)),
+            wrap: tessera_document::nodes::TextWrap::None,
         })
 }
 
@@ -212,6 +214,7 @@ fn text_survives_a_save_and_load() {
             transform: Transform::IDENTITY,
             fill: Color::WHITE,
             stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
         },
     );
 
@@ -257,6 +260,7 @@ fn a_version_1_document_still_opens() {
             transform: Transform::IDENTITY,
             fill: Color::BLACK,
             stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
         },
     );
 
@@ -333,6 +337,7 @@ fn a_placement_survives_a_save_and_load() {
             transform: placed,
             fill: Color::BLACK,
             stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
         },
     );
 
@@ -367,6 +372,7 @@ fn a_version_2_rotation_becomes_the_placement_that_means_the_same_thing() {
             transform: Transform::IDENTITY,
             fill: Color::BLACK,
             stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
         },
     );
 
@@ -543,6 +549,7 @@ fn a_version_four_document_still_opens_and_gains_no_setup_it_never_had() {
             kind: FrameKind::Rectangle,
             fill: Color::BLACK,
             stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
         },
     );
 
@@ -655,6 +662,7 @@ fn a_version_nine_text_frame_opens_as_a_single_column() {
             transform: Transform::IDENTITY,
             fill: Color::BLACK,
             stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
         },
     );
 
@@ -712,6 +720,7 @@ fn a_columned_text_frame_round_trips() {
             transform: Transform::IDENTITY,
             fill: Color::BLACK,
             stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
         },
     );
 
@@ -751,6 +760,7 @@ fn a_version_eight_document_opens_with_no_masters_and_no_overrides() {
             transform: Transform::IDENTITY,
             fill: Color::BLACK,
             stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
         },
     );
 
@@ -794,6 +804,7 @@ fn a_master_and_its_overrides_survive_a_round_trip() {
             transform: Transform::IDENTITY,
             fill: Color::BLACK,
             stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
         },
     );
     let page = doc.page_ids().next().expect("a page");
@@ -855,6 +866,7 @@ fn version_7_archive(path: &std::path::Path) -> serde_json::Value {
                 transform: Transform::IDENTITY,
                 fill: Color::BLACK,
                 stroke: None,
+                wrap: tessera_document::nodes::TextWrap::None,
             },
         );
     }

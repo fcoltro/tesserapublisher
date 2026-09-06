@@ -158,6 +158,14 @@ pub struct Frame {
     pub kind: FrameKind,
     pub fill: Color,
     pub stroke: Option<Stroke>,
+    /// How text in other frames runs around this one.
+    ///
+    /// On the **obstacle**, not on the text: an object is given a wrap once
+    /// and every frame near it obeys, which is what a person means by "wrap
+    /// text around this picture". Putting it on the text frame would mean
+    /// telling each of them about each object.
+    #[serde(default)]
+    pub wrap: TextWrap,
 }
 
 impl Frame {
@@ -269,6 +277,32 @@ impl BaselineGrid {
         let first = origin + self.start;
         let steps = ((y - first) / step).ceil().max(0.0);
         first + steps * step
+    }
+}
+
+/// How text runs around an object.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum TextWrap {
+    /// Text runs straight over it, which is what every object did before this
+    /// existed and what most objects should keep doing.
+    #[default]
+    None,
+    /// Text keeps clear of the object's box, plus a standoff on each side.
+    ///
+    /// The box rather than the shape. Wrapping to a contour needs the outline
+    /// and a way to intersect it with each line, which is a different piece of
+    /// work; this is InDesign's "wrap around bounding box" and is what most
+    /// wraps actually are.
+    Bounds { standoff: Insets },
+}
+
+impl TextWrap {
+    /// The standoff, or nothing when the object does not wrap.
+    pub fn standoff(&self) -> Option<Insets> {
+        match self {
+            TextWrap::None => None,
+            TextWrap::Bounds { standoff } => Some(*standoff),
+        }
     }
 }
 

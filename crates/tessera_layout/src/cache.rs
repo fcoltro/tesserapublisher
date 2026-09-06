@@ -126,6 +126,7 @@ mod tests {
                 transform: Transform::IDENTITY,
                 fill: Color::BLACK,
                 stroke: None,
+                wrap: tessera_document::nodes::TextWrap::None,
             },
         );
         (doc, id)

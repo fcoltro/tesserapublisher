@@ -383,29 +383,81 @@ fn paragraphs_of(text: &str) -> Vec<(usize, &str)> {
 /// own maximum advance. The assertion inside `break_next` allows a per-line
 /// advance to differ from the layout's only while the layout's is infinite,
 /// which `break_lines` does not start as — so it is said rather than assumed.
-fn break_lines_with_room(
-    layout: &mut parley::Layout<Brush>,
-    measure: f64,
+/// Everything that narrows a line other than the measure itself.
+struct Room<'a> {
+    /// Extra indent on the first line.
     first: f64,
+    /// How much a drop cap takes, and from how many lines.
     cap: f64,
     cap_lines: usize,
-) {
-    if first == 0.0 && cap == 0.0 {
+    /// Objects the text must run around, in the text's own space.
+    obstacles: &'a [crate::wrap::Obstacle],
+    /// Where this paragraph starts, so an obstacle lands on the right lines.
+    from_y: f64,
+    /// How tall to assume the first line is, until a real one is known.
+    line_hint: f64,
+}
+
+fn break_lines_with_room(layout: &mut parley::Layout<Brush>, measure: f64, room: Room<'_>) {
+    let Room {
+        first,
+        cap,
+        cap_lines,
+        obstacles,
+        from_y,
+        line_hint,
+    } = room;
+    if first == 0.0 && cap == 0.0 && obstacles.is_empty() {
         layout.break_all_lines(Some(measure as f32));
         return;
     }
 
     let mut breaker = layout.break_lines();
     breaker.state_mut().set_layout_max_advance(f32::INFINITY);
+
     let mut line = 0usize;
+    // The top of the line about to be broken, in the layout's own space, and
+    // how tall to assume it is.
+    //
+    // A guess, and it has to be one: a line's height depends on what ends up
+    // on it, which is not known until it has been broken. The line before is
+    // the best answer available and is exactly right whenever the leading does
+    // not change, which is nearly always. The first line has no line before
+    // it, so the caller passes the paragraph's leading.
+    let mut top = 0.0f64;
+    let mut height = line_hint.max(1.0);
+
     loop {
         let indent = if line == 0 { first } else { 0.0 } + if line < cap_lines { cap } else { 0.0 };
-        breaker.state_mut().set_line_x(indent as f32);
+
+        // What is in this line's way. `set_line_x` and `set_line_max_advance`
+        // are per line, which is why a wrap gives one run rather than several:
+        // a line split either side of an object is a different line-breaking
+        // problem, not a narrower measure.
+        let (offset, room) = if obstacles.is_empty() {
+            (0.0, measure)
+        } else {
+            crate::wrap::available_run(measure, from_y + top, from_y + top + height, obstacles)
+        };
+
+        let x = indent.max(offset);
+        breaker.state_mut().set_line_x(x as f32);
         breaker
             .state_mut()
-            .set_line_max_advance((measure - indent).max(1.0) as f32);
-        if breaker.break_next().is_none() {
-            break;
+            .set_line_max_advance(((offset + room) - x).max(1.0) as f32);
+
+        match breaker.break_next() {
+            None => break,
+            Some(parley::YieldData::LineBreak(broken)) => {
+                top = broken.line_y_end;
+                if broken.line_height > 0.0 {
+                    height = f64::from(broken.line_height);
+                }
+            }
+            // A max-height break and an out-of-flow inline box are yields this
+            // layout never asks for: no max height is set and there are no
+            // boxes. Ignoring them keeps the loop honest if that changes.
+            Some(_) => {}
         }
         line += 1;
     }
@@ -1037,6 +1089,22 @@ impl Shaper {
         width: f64,
         from: usize,
     ) -> Vec<Placed> {
+        self.layout_paragraphs_around(story, styles, width, from, &[])
+    }
+
+    /// The same, with objects the text must run around.
+    ///
+    /// The obstacles are in the text's own space, `y` measured from the top of
+    /// the first paragraph — the caller converts, because this crate has no
+    /// notion of a frame.
+    pub(crate) fn layout_paragraphs_around(
+        &mut self,
+        story: &Story,
+        styles: &dyn Styles,
+        width: f64,
+        from: usize,
+        obstacles: &[crate::wrap::Obstacle],
+    ) -> Vec<Placed> {
         let floor = styles.document_default();
         let mut placed = Vec::new();
         let mut y = 0.0;
@@ -1294,9 +1362,20 @@ impl Shaper {
             break_lines_with_room(
                 &mut layout,
                 measure - reserve,
-                indent_first,
-                cap_width,
-                cap_lines,
+                Room {
+                    first: indent_first,
+                    cap: cap_width,
+                    cap_lines,
+                    obstacles,
+                    // The paragraph's own origin, so an obstacle given in the
+                    // text's space lands on the right lines of it.
+                    from_y: y,
+                    // The leading, as the first line's height until a real one
+                    // is known.
+                    line_hint: f64::from(
+                        floor.size.unwrap_or(12.0) * floor.line_height.unwrap_or(1.2),
+                    ),
+                },
             );
 
             // Alignment is per layout, which is now per paragraph — so two
@@ -1415,6 +1494,28 @@ impl Shaper {
             return ShapedText::default();
         }
         let placed = self.layout_paragraphs_from(story, styles, width, from);
+        Self::assemble(story, styles, &placed)
+    }
+
+    /// Shape the story from `from`, running the text around `obstacles`.
+    ///
+    /// Uncached, like `shape_from`: the cache is keyed on a story and a
+    /// measure, and the objects near a frame are neither.
+    pub fn shape_around(
+        &mut self,
+        story: &Story,
+        styles: &dyn Styles,
+        width: f64,
+        from: usize,
+        obstacles: &[crate::wrap::Obstacle],
+    ) -> ShapedText {
+        if obstacles.is_empty() {
+            return self.shape_from(story, styles, width, from);
+        }
+        if from >= story.text.len() && from > 0 {
+            return ShapedText::default();
+        }
+        let placed = self.layout_paragraphs_around(story, styles, width, from, obstacles);
         Self::assemble(story, styles, &placed)
     }
 
@@ -3595,6 +3696,115 @@ mod tests {
             "coarse grid, fewer lines: {} against {}",
             locked.text.lines.len(),
             loose.text.lines.len()
+        );
+    }
+
+    // --- running around an object -------------------------------------------
+
+    use crate::wrap::Obstacle;
+
+    /// The left edge of the first line's first glyph.
+    fn first_glyph_x(text: &ShapedText) -> f64 {
+        text.lines
+            .first()
+            .and_then(|l| l.glyphs().next())
+            .map(|g| g.x)
+            .unwrap_or(0.0)
+    }
+
+    #[test]
+    fn no_obstacle_shapes_exactly_as_before() {
+        let story = Story::new("the quick brown fox jumps over the lazy dog");
+        let mut shaper = Shaper::new();
+        let plain = shaper.shape(&story, &NoStyles::default(), 200.0);
+        let around = shaper.shape_around(&story, &NoStyles::default(), 200.0, 0, &[]);
+        assert_eq!(around.glyph_count(), plain.glyph_count());
+        assert_eq!(around.lines.len(), plain.lines.len());
+    }
+
+    #[test]
+    fn an_object_on_the_left_pushes_the_text_across() {
+        let story = Story::new("the quick brown fox jumps over the lazy dog");
+        let mut shaper = Shaper::new();
+        let obstacle = Obstacle {
+            x: 0.0,
+            y: 0.0,
+            width: 80.0,
+            height: 1000.0,
+        };
+        let around = shaper.shape_around(&story, &NoStyles::default(), 300.0, 0, &[obstacle]);
+
+        assert!(
+            first_glyph_x(&around) >= 80.0,
+            "the first line starts past the object, at {}",
+            first_glyph_x(&around)
+        );
+    }
+
+    #[test]
+    fn an_object_makes_the_text_take_more_lines() {
+        // The measure is narrower where the object is, so the same words need
+        // more lines. That is what wrapping *is*.
+        let story = Story::new("the quick brown fox jumps over the lazy dog and keeps going");
+        let mut shaper = Shaper::new();
+        let plain = shaper.shape_around(&story, &NoStyles::default(), 300.0, 0, &[]);
+        let around = shaper.shape_around(
+            &story,
+            &NoStyles::default(),
+            300.0,
+            0,
+            &[Obstacle {
+                x: 0.0,
+                y: 0.0,
+                width: 180.0,
+                height: 1000.0,
+            }],
+        );
+
+        assert!(
+            around.lines.len() > plain.lines.len(),
+            "{} lines against {}",
+            around.lines.len(),
+            plain.lines.len()
+        );
+    }
+
+    #[test]
+    fn an_object_only_affects_the_lines_it_reaches() {
+        // A shallow object at the top leaves the lines below it alone, which
+        // is the difference between a wrap and a narrower frame.
+        let story = Story::new(
+            "the quick brown fox jumps over the lazy dog and then keeps on running \
+             far past where anyone expected it to stop",
+        );
+        let mut shaper = Shaper::new();
+        let around = shaper.shape_around(
+            &story,
+            &NoStyles::default(),
+            300.0,
+            0,
+            &[Obstacle {
+                x: 0.0,
+                y: 0.0,
+                // Two lines deep at most.
+                width: 120.0,
+                height: 20.0,
+            }],
+        );
+
+        assert!(around.lines.len() > 2, "enough lines to see the difference");
+        let first = around.lines[0].glyphs().next().expect("a glyph").x;
+        let last = around
+            .lines
+            .last()
+            .expect("a line")
+            .glyphs()
+            .next()
+            .expect("a glyph")
+            .x;
+        assert!(
+            first > last,
+            "the top line is pushed across and the last is not"
         );
     }
 }

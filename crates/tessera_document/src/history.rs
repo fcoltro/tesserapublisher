@@ -129,6 +129,7 @@ mod tests {
             transform: Transform::IDENTITY,
             fill: tessera_color::Color::BLACK,
             stroke: None,
+            wrap: crate::nodes::TextWrap::None,
         }
     }
 

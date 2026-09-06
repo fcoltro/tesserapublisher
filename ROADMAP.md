@@ -852,7 +852,27 @@ full argument, with sources, is in `docs/superpowers/specs/`.
   frame and into the head of the next, so the line says which way the text
   runs. A blob at each end, so a connector running off the edge of the canvas
   still says which frames it joins.
-- [ ] Text wrap around objects.
+- [x] Text wrap around objects.
+  - **parley can already do this.** `set_line_x` and `set_line_max_advance`
+    are per line and `break_next` reports each line's top and bottom, which is
+    everything a shaped region needs. This codebase was already using the same
+    breaker for drop caps. Nothing had to be added upstream.
+  - The setting lives on the **obstacle**, not on the text: an object is given
+    a wrap once and every frame near it obeys, which is what "wrap text around
+    this picture" means. On the text it would mean telling each frame about
+    each object.
+  - **One run per line**, the widest gap. A line split either side of an
+    object is a different line-breaking problem rather than a narrower
+    measure, because parley sets one `x` and one advance per line. This is
+    InDesign's "largest area", and it is what a designer wants nine times
+    in ten.
+  - A line's height is a **guess** until it has been broken — it depends on
+    what ends up on it — so the band is taken from the line before, which is
+    exactly right whenever the leading does not change.
+  - The bounding box, not the contour. Wrapping to an outline needs the shape
+    intersected with each line, which is a separate piece of work; this is
+    InDesign's "wrap around bounding box" and is what most wraps are.
+    **Not built: contour wrap, and text on both sides of an object.**
 
 ---
 

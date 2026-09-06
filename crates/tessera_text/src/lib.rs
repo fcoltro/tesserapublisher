@@ -13,6 +13,7 @@ pub mod caret;
 pub mod edit;
 pub mod shape;
 pub mod story;
+pub mod wrap;
 
 pub use caret::{CaretGeometry, TextRect};
 pub use edit::{EditBuffer, TextCursor};

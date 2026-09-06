@@ -1731,6 +1731,7 @@ impl Document {
             transform: Transform::IDENTITY,
             fill: tessera_color::Color::BLACK,
             stroke: None,
+            wrap: crate::nodes::TextWrap::None,
         });
 
         let layer = self.layers.get_mut(layer_id)?;
@@ -2288,6 +2289,7 @@ mod tests {
             transform: Transform::IDENTITY,
             fill: Color::BLACK,
             stroke: None,
+            wrap: crate::nodes::TextWrap::None,
         }
     }
 
@@ -2442,6 +2444,7 @@ mod tests {
             transform: Transform::IDENTITY,
             fill: tessera_color::Color::BLACK,
             stroke: None,
+            wrap: crate::nodes::TextWrap::None,
         }
     }
 
@@ -2506,6 +2509,7 @@ mod tests {
             transform: Transform::IDENTITY,
             fill: tessera_color::Color::BLACK,
             stroke: None,
+            wrap: crate::nodes::TextWrap::None,
         }
     }
 
@@ -2527,6 +2531,7 @@ mod tests {
             transform: Transform::IDENTITY,
             fill: tessera_color::Color::BLACK,
             stroke: None,
+            wrap: crate::nodes::TextWrap::None,
         }
     }
 

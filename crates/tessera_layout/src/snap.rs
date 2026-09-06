@@ -297,6 +297,7 @@ mod tests {
                 kind: FrameKind::Rectangle,
                 fill: tessera_color::Color::BLACK,
                 stroke: None,
+                wrap: tessera_document::nodes::TextWrap::None,
             },
         );
         let spread = doc.spread_of(page).expect("a spread");

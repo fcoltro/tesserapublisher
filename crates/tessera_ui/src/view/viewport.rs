@@ -2182,6 +2182,7 @@ mod tests {
                 transform: Transform::IDENTITY,
                 fill: tessera_color::Color::BLACK,
                 stroke: None,
+                wrap: tessera_document::nodes::TextWrap::None,
             },
         );
         state.active_mut().selection.set(id);

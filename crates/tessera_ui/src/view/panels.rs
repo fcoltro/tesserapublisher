@@ -72,14 +72,19 @@ pub enum Section {
     Stroke,
     Text,
     Frame,
+    Wrap,
 }
 
 impl Section {
     /// Display order. Universal sections first; see the type's note.
-    pub const ALL: [Section; 5] = [
+    pub const ALL: [Section; 6] = [
         Section::Transform,
         Section::Fill,
         Section::Stroke,
+        // Wrap applies to every object, so it belongs with the sections that
+        // are always there. The ones that can be absent come last, or hiding
+        // one would move a section above it.
+        Section::Wrap,
         Section::Text,
         Section::Frame,
     ];
@@ -91,6 +96,7 @@ impl Section {
             Section::Stroke => "Stroke",
             Section::Text => "Text",
             Section::Frame => "Frame",
+            Section::Wrap => "Text wrap",
         }
     }
 
@@ -104,6 +110,7 @@ impl Section {
             Section::Stroke => Icon::Line,
             Section::Text => Icon::CaseSensitive,
             Section::Frame => Icon::TextFrame,
+            Section::Wrap => Icon::AlignJustify,
         }
     }
 
@@ -116,6 +123,9 @@ impl Section {
             Section::Transform | Section::Fill | Section::Stroke => true,
             Section::Text => matches!(frame.kind, FrameKind::Text { .. }),
             Section::Frame => matches!(frame.kind, FrameKind::Group(_)),
+            // Every kind of object. A picture is the thing most often
+            // wrapped, and it is the obstacle that carries the setting.
+            Section::Wrap => true,
         }
     }
 }
@@ -169,6 +179,7 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
                     Section::Stroke => stroke_section(ui, state, id, &frame),
                     Section::Text => text_section(ui, state, id, &frame),
                     Section::Frame => frame_section(ui, &frame),
+                    Section::Wrap => wrap_controls(ui, state, id, &frame),
                 });
         });
     }
@@ -850,6 +861,59 @@ pub(crate) fn icon_button(
 /// [`group_label`], for another module in the view.
 pub(crate) fn group_label_pub(ui: &mut Ui, text: &str) {
     group_label(ui, text);
+}
+
+/// How text in other frames runs around this one.
+///
+/// On every kind of object, not only text frames: a picture is the thing most
+/// often wrapped, and it is the obstacle that carries the setting.
+fn wrap_controls(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::FrameId,
+    frame: &tessera_document::nodes::Frame,
+) {
+    use tessera_document::nodes::TextWrap;
+
+    let mut on = frame.wrap != TextWrap::None;
+    let mut standoff = frame.wrap.standoff().unwrap_or_default();
+    let mut changed = false;
+
+    if ui.checkbox(&mut on, "Text runs around this").changed() {
+        changed = true;
+    }
+    if on {
+        let unit = state.prefs.unit;
+        group_label(ui, "Standoff");
+        let (a, b) = pair(
+            ui,
+            ("Top", |ui: &mut Ui| {
+                measure_bare(ui, &mut standoff.top, unit)
+            }),
+            ("Bottom", |ui: &mut Ui| {
+                measure_bare(ui, &mut standoff.bottom, unit)
+            }),
+        );
+        let (c, d) = pair(
+            ui,
+            ("Left", |ui: &mut Ui| {
+                measure_bare(ui, &mut standoff.left, unit)
+            }),
+            ("Right", |ui: &mut Ui| {
+                measure_bare(ui, &mut standoff.right, unit)
+            }),
+        );
+        changed |= a || b || c || d;
+    }
+
+    if changed {
+        let wrap = if on {
+            TextWrap::Bounds { standoff }
+        } else {
+            TextWrap::None
+        };
+        apply(state, Command::SetTextWrap { id, wrap });
+    }
 }
 
 /// Columns, gutter, inset: the frame's geometry rather than the text's.
@@ -2465,6 +2529,7 @@ mod tests {
             kind: FrameKind::Rectangle,
             fill: Color::BLACK,
             stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
         }
     }
 

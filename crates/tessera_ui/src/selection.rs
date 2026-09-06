@@ -121,6 +121,7 @@ mod tests {
             transform: Transform::IDENTITY,
             fill: tessera_color::Color::BLACK,
             stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
         };
         let a = doc.add_frame(layer, frame());
         let b = doc.add_frame(layer, frame());

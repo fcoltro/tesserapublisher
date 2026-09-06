@@ -182,6 +182,66 @@ fn resolve_pages(
     ResolvedDocument { items, pages }
 }
 
+/// The objects a frame's text must run around, in the text's own space.
+///
+/// Only the frames that say they wrap, only on the same spread, and never the
+/// frame itself — an object cannot push its own text aside. Frames without a
+/// wrap are invisible to the text, which is what makes the default free.
+///
+/// A rotated obstacle is taken by its upright bounding box. A wrap is a
+/// horizontal run per line, so an angled outline has to be reduced to a
+/// rectangle somewhere; doing it here keeps the shaper honest about what it
+/// was given.
+fn obstacles_for(
+    doc: &Document,
+    id: FrameId,
+    frame: &tessera_document::nodes::Frame,
+    measure: f64,
+) -> Vec<tessera_text::wrap::Obstacle> {
+    let Some(spread) = doc.spread_of_frame(id) else {
+        return Vec::new();
+    };
+    let Some(mine) = doc.visual_bounds(id) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for page in doc.pages_of(spread) {
+        for other in doc.frames_on_page(page) {
+            if other == id {
+                continue;
+            }
+            let Some(standoff) = doc.frame(other).map(|f| f.wrap).and_then(|w| w.standoff()) else {
+                continue;
+            };
+            let Some(bounds) = doc.visual_bounds(other) else {
+                continue;
+            };
+
+            // Grown by the standoff, then expressed relative to this frame's
+            // own origin — the space the text is laid out in.
+            let x = bounds.x - standoff.left - mine.x;
+            let y = bounds.y - standoff.top - mine.y;
+            let width = bounds.width + standoff.left + standoff.right;
+            let height = bounds.height + standoff.top + standoff.bottom;
+
+            // Nowhere near this frame's measure: skip it rather than hand the
+            // breaker a rectangle it will only ignore.
+            if x > measure || x + width < 0.0 || y + height < 0.0 {
+                continue;
+            }
+            out.push(tessera_text::wrap::Obstacle {
+                x,
+                y,
+                width,
+                height,
+            });
+        }
+    }
+    let _ = frame;
+    out
+}
+
 /// How far into its story a threaded frame begins.
 ///
 /// Walks the chain from its first frame, laying each one out to find where it
@@ -363,7 +423,12 @@ fn resolve_one(
                 })
             });
 
-            let shaped = shaper.shape_from(story, doc, measure, from);
+            // Objects on the same spread that this text must run around,
+            // in the text's own space. Gathered per frame rather than once,
+            // because "near" is relative to the frame doing the reading.
+            let obstacles = obstacles_for(doc, id, frame, measure);
+
+            let shaped = shaper.shape_around(story, doc, measure, from, &obstacles);
             let flowed = tessera_text::shape::flow_on_grid(shaped, &boxes, vertical, grid);
 
             ResolvedKind::Text {
@@ -400,6 +465,7 @@ mod tests {
             transform: Transform::IDENTITY,
             fill: Color::BLACK,
             stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
         }
     }
 
@@ -508,6 +574,7 @@ mod tests {
             transform: Transform::IDENTITY,
             fill: Color::BLACK,
             stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
         }
     }
 

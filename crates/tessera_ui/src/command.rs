@@ -255,6 +255,12 @@ pub enum Command {
         id: FrameId,
     },
 
+    /// Set how text runs around an object.
+    SetTextWrap {
+        id: FrameId,
+        wrap: tessera_document::nodes::TextWrap,
+    },
+
     /// Add a parent spread shaped like the document.
     AddMaster,
     /// Remove a master, unhooking every page that used it.
@@ -1016,6 +1022,13 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             state.active_mut().document_mut().unthread(id);
         }
 
+        Command::SetTextWrap { id, wrap } => {
+            if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
+                frame.wrap = wrap;
+            }
+            state.active_mut().document_mut().touch();
+        }
+
         Command::AddMaster => {
             let name = state.active().document().unused_master_name();
             state.active_mut().document_mut().add_master(name);
@@ -1338,6 +1351,7 @@ fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
             fill,
             stroke: None,
             transform: Transform::IDENTITY,
+            wrap: tessera_document::nodes::TextWrap::None,
         },
     );
     state.active_mut().selection.set(id);
@@ -2638,6 +2652,7 @@ mod tests {
             transform: Transform::IDENTITY,
             fill: Color::BLACK,
             stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
         };
         let a = state
             .active_mut()
@@ -4171,6 +4186,7 @@ mod tests {
                 kind: FrameKind::Rectangle,
                 fill: Color::BLACK,
                 stroke: None,
+                wrap: tessera_document::nodes::TextWrap::None,
             },
         );
 
@@ -4517,6 +4533,7 @@ mod tests {
                 kind: FrameKind::Rectangle,
                 fill: Color::BLACK,
                 stroke: None,
+                wrap: tessera_document::nodes::TextWrap::None,
             },
         );
         (master, item)
@@ -4873,5 +4890,50 @@ mod tests {
             _ => None,
         };
         assert_eq!(story_of(a), story_of(b), "one story between them");
+    }
+
+    // --- text wrap -----------------------------------------------------------
+
+    #[test]
+    fn setting_a_wrap_is_undoable() {
+        use tessera_document::nodes::{Insets, TextWrap};
+
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let id = state.active().selection.single().expect("selected");
+
+        let wrap = TextWrap::Bounds {
+            standoff: Insets {
+                top: 6.0,
+                bottom: 6.0,
+                left: 6.0,
+                right: 6.0,
+            },
+        };
+        apply(&mut state, Command::SetTextWrap { id, wrap });
+        assert_eq!(
+            state.active().document().frame(id).expect("frame").wrap,
+            wrap
+        );
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(
+            state.active().document().frame(id).expect("frame").wrap,
+            TextWrap::None
+        );
+    }
+
+    #[test]
+    fn an_object_wraps_nothing_until_it_is_asked_to() {
+        // The default has to be free: every object in every document written
+        // before this one has no wrap, and turning one on for them all would
+        // reflow every page.
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let id = state.active().selection.single().expect("selected");
+        assert_eq!(
+            state.active().document().frame(id).expect("frame").wrap,
+            tessera_document::nodes::TextWrap::None
+        );
     }
 }
