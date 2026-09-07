@@ -18,6 +18,38 @@ use crate::tools::Tool;
 
 // --- tool strip --------------------------------------------------------
 
+/// The tools, floating over the page.
+///
+/// The same arrangement as the rail on the other side, and for the same reason:
+/// with glass on, the page runs the full width of the window and the chrome sits
+/// over it. Two floating panes at the two edges is what makes the interface read
+/// as glass rather than as one glass panel beside some solid ones.
+pub fn floating_tool_strip(ui: &mut Ui, state: &mut TesseraApp, canvas: egui::Rect) {
+    let width = Theme::TOOL_SIZE + Theme::SPACING_LG;
+    let rect = egui::Rect::from_min_max(canvas.min, egui::pos2(canvas.min.x + width, canvas.max.y));
+
+    let mut panel = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layer_id(egui::LayerId::new(
+                egui::Order::Middle,
+                ui.id().with("tools-float"),
+            ))
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+
+    let edge = crate::view::glass::Edge::Right;
+    if !crate::view::glass::surface(&panel, state, rect, edge) {
+        panel
+            .painter()
+            .rect_filled(rect, 0.0, Theme::PANEL_BG_SOLID);
+        crate::view::glass::hairline(&panel, rect, edge);
+    }
+
+    panel.set_clip_rect(rect);
+    tool_strip(&mut panel, state);
+}
+
 pub fn tool_strip(ui: &mut Ui, state: &mut TesseraApp) {
     ui.vertical(|ui| {
         ui.add_space(Theme::SPACING_SM);
@@ -263,6 +295,10 @@ fn fill_stroke_proxy(
 
     // One colour on a 26-point button. The section below draws the real
     // ramp, where there is room for it.
+    // Opaque behind both swatches: a fill with alpha is judged against a known
+    // ground, not against whatever the page happens to be showing.
+    painter.rect_filled(stroke_rect, 2.0, Theme::PANEL_BG_SOLID);
+    painter.rect_filled(fill_rect, 2.0, Theme::PANEL_BG_SOLID);
     painter.rect_filled(fill_rect, 2.0, to_colour(&frame.fill.representative()));
     painter.rect_stroke(
         fill_rect,
@@ -890,6 +926,11 @@ fn ramp_preview(ui: &mut Ui, stops: &[tessera_document::paint::Stop]) {
         Vec2::new(ui.available_width().max(60.0), HEIGHT),
         Sense::hover(),
     );
+    // Opaque behind the whole strip, before any band is drawn. A ramp is judged
+    // by eye, and stops carrying alpha would otherwise be judged against a page
+    // that moves.
+    crate::view::glass::opaque_well(ui, rect, 2.0);
+
     let painter = ui.painter();
     let width = rect.width() / BANDS as f32;
 
@@ -2867,7 +2908,7 @@ fn profile_picker(ui: &mut Ui, state: &mut TesseraApp, current: Option<&str>) {
     }
 }
 
-fn unit_name(unit: Unit) -> &'static str {
+pub(crate) fn unit_name(unit: Unit) -> &'static str {
     match unit {
         Unit::Millimetres => "millimetres",
         Unit::Points => "points",

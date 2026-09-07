@@ -7,12 +7,14 @@
 
 pub mod canvas_toolbar;
 pub mod control;
+pub mod glass;
 pub mod layers;
 pub mod pages;
 pub mod palette;
 pub mod panels;
 pub mod rail;
 pub mod rulers;
+pub mod settings;
 pub mod styles;
 pub mod swatches;
 pub mod text_edit;
@@ -45,31 +47,48 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // Above everything, so it can be reached from anywhere.
     palette::show(ui, state);
 
+    // A window rather than a panel: preferences are visited, decided and left,
+    // and everything in them is judged against the document behind.
+    settings::show(ui.ctx(), state);
+
     Panel::bottom("status")
         .exact_size(24.0)
         .resizable(false)
         .show(ui, |ui| panels::status_bar(ui, state));
 
-    Panel::left("tools")
-        .exact_size(Theme::TOOL_SIZE + Theme::SPACING_LG)
-        .resizable(false)
-        .show(ui, |ui| panels::tool_strip(ui, state));
-
-    // The rail. Every panel docks here — nothing floats over the canvas any
-    // more. Collapsed, it is a strip of icons rather than nothing at all: a
-    // panel you cannot see should still be somewhere you can find.
-    if state.rail_open {
-        Panel::right("rail")
-            .default_size(292.0)
-            .min_size(232.0)
-            .show(ui, |ui| rail::show(ui, state));
-    } else {
-        // The rail *collapsed*, not a second thing beside it. Showing both at
-        // once put a column of icons hard against the rail's own scrollbar.
-        Panel::right("rail-strip")
-            .exact_size(rail::STRIP)
+    // The tools. Beside the page when panels are solid, over it when they are
+    // glass — the same question the rail asks, asked once in `glass::floating`.
+    let floating = glass::floating(state);
+    if !floating {
+        Panel::left("tools")
+            .exact_size(Theme::TOOL_SIZE + Theme::SPACING_LG)
             .resizable(false)
-            .show(ui, |ui| rail::strip(ui, state));
+            .show(ui, |ui| panels::tool_strip(ui, state));
+    }
+
+    // The rail. Every panel docks here; nothing floats *loose*. Collapsed, it is
+    // a strip of icons rather than nothing at all: a panel you cannot see should
+    // still be somewhere you can find.
+    //
+    // Solid or glass decides whether it takes room from the canvas or sits over
+    // it, and that is the same question in both places — which is why it is
+    // asked once, of `glass::floating`. Two places deciding independently is how
+    // a rail ends up floating while the canvas still leaves a gap for it.
+    if !floating {
+        if state.rail_open {
+            Panel::right("rail")
+                .default_size(rail::WIDTH)
+                .min_size(232.0)
+                .show(ui, |ui| rail::show(ui, state));
+        } else {
+            // The rail *collapsed*, not a second thing beside it. Showing both
+            // at once put a column of icons hard against the rail's own
+            // scrollbar.
+            Panel::right("rail-strip")
+                .exact_size(rail::STRIP)
+                .resizable(false)
+                .show(ui, |ui| rail::strip(ui, state));
+        }
     }
 
     // A mode you cannot see is a mode you get stuck in. InDesign shows the
@@ -146,6 +165,20 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
                 rulers::paint(ui, state, canvas, across, down);
                 rulers::drag_out(ui, state, canvas, across, down);
                 rulers::resolve_zero_drag(ui, state, canvas);
+            }
+
+            // The rail over the page, when it is glass. Inside the central
+            // panel, so it is bounded by the same rectangle the canvas is and
+            // cannot stray over the rulers or the status bar; and *after* the
+            // viewport, so the backdrop it paints was rendered this frame rather
+            // than last.
+            if floating {
+                // The tools first, then the rail: they cannot overlap, so the
+                // order is only about which is on top if a window is ever
+                // narrow enough that they meet — and the rail is the one being
+                // read.
+                panels::floating_tool_strip(ui, state, canvas);
+                rail::floating(ui, state, canvas);
             }
         });
 }

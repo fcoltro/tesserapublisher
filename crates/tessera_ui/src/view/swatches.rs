@@ -85,6 +85,10 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, swatch: &Swatch) {
             ui.allocate_exact_size(egui::Vec2::new(BLOCK, BLOCK), egui::Sense::click());
         let resolved = state.active().document().resolve_colour(&swatch.colour);
         let [r, g, b, a] = resolved.to_rgb_f32();
+        // Opaque behind it, always. A swatch is the answer to "what colour is
+        // this", and a colour with alpha shown over a blurred page is a
+        // different colour — one that changes as the page moves underneath.
+        crate::view::glass::opaque_well(ui, spot, 2.0);
         ui.painter().rect_filled(
             spot,
             2.0,

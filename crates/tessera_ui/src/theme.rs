@@ -173,6 +173,22 @@ impl Theme {
     pub const PANEL_BG: Color32 = Palette::DARK.step(2);
     /// Raised: the control bar and section headings. Step 3.
     pub const PANEL_BG_ALT: Color32 = Palette::DARK.step(3);
+
+    /// The panel colour when it must not be seen through.
+    ///
+    /// The same value as [`Self::PANEL_BG`] and named separately on purpose: a
+    /// glass panel tints with the first at partial alpha, and the surfaces where
+    /// colour is *judged* paint with this at full. Two names for one colour so
+    /// that changing how glass is tinted cannot accidentally make a swatch
+    /// translucent.
+    pub const PANEL_BG_SOLID: Color32 = Palette::DARK.step(2);
+
+    /// The hairline along a glass panel's leading edge.
+    ///
+    /// Lighter than [`Self::RULE`], because it is read against a page rather
+    /// than against another panel, and a rule that works on grey disappears on
+    /// white.
+    pub const GLASS_EDGE: Color32 = Palette::DARK.step(8);
     /// The pasteboard behind the page.
     pub const CANVAS_BG: Color32 = Palette::DARK.canvas_bg;
     /// A field's border. Step 7.

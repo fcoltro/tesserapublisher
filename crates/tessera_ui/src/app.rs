@@ -191,6 +191,15 @@ pub struct SwatchesWindow {
     pub chosen: Option<String>,
 }
 
+/// The blurred document behind the panels.
+#[derive(Debug, Clone, Copy)]
+pub struct Backdrop {
+    pub texture: egui::TextureId,
+    /// Where the canvas sits on screen, so a panel can work out which part of
+    /// the backdrop is behind it.
+    pub canvas: egui::Rect,
+}
+
 /// Everything the application holds.
 ///
 /// Constructed with [`TesseraApp::headless`] in tests, so the command layer,
@@ -237,7 +246,18 @@ pub struct TesseraApp {
     /// machine, not about the document.
     pub profiles: crate::catalogue::Catalogue,
 
-    pub snapping: bool,
+    /// The preferences window.
+    pub settings: crate::view::settings::SettingsWindow,
+
+    /// The blurred document, and where on screen it corresponds to.
+    ///
+    /// Written by the viewport, which is the only place both are known, and read
+    /// by whatever paints a glass panel. `None` before the first frame and
+    /// whenever glass is off, and a panel that finds `None` paints itself solid
+    /// rather than transparent — a missing backdrop must give a working
+    /// interface, not an invisible one.
+    pub backdrop: Option<Backdrop>,
+
     /// The lines the object being dragged is currently settled on, for the
     /// indicator. Cleared when the gesture ends.
     pub snapped_to: Option<(Option<f64>, Option<f64>)>,
@@ -352,7 +372,8 @@ impl TesseraApp {
             images: tessera_render::images::Images::new(),
             soft_proof: crate::softproof::SoftProof::default(),
             profiles: crate::catalogue::Catalogue::default(),
-            snapping: true,
+            settings: crate::view::settings::SettingsWindow::default(),
+            backdrop: None,
             snapped_to: None,
             editing_master: None,
             rail_open: true,
@@ -647,7 +668,7 @@ mod tests {
     fn snapping_is_on_to_begin_with() {
         // It is what makes a layout line up. A tool that has to be switched on
         // before it helps is a tool most people never find.
-        assert!(TesseraApp::headless().snapping);
+        assert!(TesseraApp::headless().prefs.snapping);
     }
 
     #[test]
@@ -659,9 +680,9 @@ mod tests {
     fn the_view_menu_turns_snapping_off_and_on() {
         let mut state = TesseraApp::headless();
         crate::actions::run(&mut state, crate::actions::Run::ToggleSnapping);
-        assert!(!state.snapping);
+        assert!(!state.prefs.snapping);
         crate::actions::run(&mut state, crate::actions::Run::ToggleSnapping);
-        assert!(state.snapping);
+        assert!(state.prefs.snapping);
     }
 
     #[test]

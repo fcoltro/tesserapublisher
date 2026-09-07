@@ -343,13 +343,7 @@ pub fn unit_selector(ui: &mut Ui, state: &mut TesseraApp) {
 
     if chosen != current {
         state.prefs.unit = chosen;
-        if let Some(path) = crate::prefs::Preferences::path()
-            && let Err(error) = state.prefs.save_to(&path)
-        {
-            state.status = Some(crate::app::Status::error(format!(
-                "Could not save preferences: {error}"
-            )));
-        }
+        crate::prefs::remember(state);
     }
 }
 

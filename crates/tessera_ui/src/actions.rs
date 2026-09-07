@@ -90,6 +90,7 @@ impl Group {
 /// What an action does, named rather than performed.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Run {
+    OpenSettings,
     ToggleStyles,
     ChooseOutputIntent,
     ToggleSoftProof,
@@ -439,6 +440,10 @@ pub fn all() -> &'static [Action] {
         // a property of text, and putting it beside the paragraph styles would
         // say it was one.
         a("Swatches", Some("F6"), Group::Window, ToggleSwatches),
+        // Under Edit, where every application that is not macOS puts it, and
+        // last in that menu because it is the one entry there that is not an
+        // edit to the document.
+        a("Preferences...", Some("Ctrl+,"), Group::Edit, OpenSettings),
         // Under View, because a soft proof is a way of *looking* at the document.
         // Choosing the press is under View too rather than under File: the
         // decision is inseparable from seeing its effect, and separating them
@@ -517,6 +522,7 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         Run::SaveAs => crate::file_ops::save_as(state),
         Run::ExportPdf => crate::file_ops::export_pdf(state),
         Run::Place => crate::file_ops::place(state),
+        Run::OpenSettings => state.settings.open = true,
         Run::ChooseOutputIntent => crate::file_ops::choose_output_intent(state),
         Run::ToggleSoftProof => {
             // Refused rather than silently ignored when there is no press to
@@ -546,7 +552,16 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             let window = &mut state.layers_window;
             window.open = !window.open;
         }
-        Run::ToggleSnapping => state.snapping = !state.snapping,
+        Run::ToggleSnapping => {
+            // **The preference is the only place this lives.** It was held on
+            // the application as well, and two descriptions of one fact drift:
+            // the menu turned one off and the preferences window showed the
+            // other still on. Toggling it here writes the file, because
+            // somebody who turns snapping off is not turning it off for a
+            // minute and would not expect to find it back tomorrow.
+            state.prefs.snapping = !state.prefs.snapping;
+            crate::prefs::remember(state);
+        }
         Run::PickTool(tool) => state.active_tool = tool,
         Run::ScreenMode(mode) => state.screen_mode = mode,
         Run::ZoomToFit => state.active_mut().fitted = false,
