@@ -11,6 +11,7 @@
 //! hand, on Windows — see the roadmap.
 
 use tessera_color::Color;
+use tessera_document::paint::Paint;
 use tessera_geometry::DocRect;
 use tessera_ui::app::TesseraApp;
 use tessera_ui::command::{Command, apply};
@@ -64,7 +65,7 @@ fn the_milestone_0_sentence_holds() {
         &mut state,
         Command::SetFill {
             id: rect_id,
-            color: teal.clone(),
+            paint: Paint::Solid(teal.clone()),
         },
     );
 
@@ -131,7 +132,7 @@ fn the_milestone_0_sentence_holds() {
         .expect("the rectangle survived, under its original id");
     assert_eq!(rect.bounds.width, 200.0);
     assert_eq!(rect.bounds.height, 100.0);
-    assert_eq!(rect.fill, teal, "including its CMYK fill");
+    assert_eq!(rect.fill, Paint::Solid(teal), "including its CMYK fill");
 
     assert_eq!(
         reopened

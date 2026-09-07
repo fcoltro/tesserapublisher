@@ -963,12 +963,46 @@ full argument, with sources, is in `docs/superpowers/specs/`.
     meet a name and stay ignorant of the document.
 - [ ] Document output intent with on-screen soft proofing.
 - [~] Linear and radial gradients; drop shadow; multiply, screen and overlay
-  blending — **the blending is done; the gradients and the shadow are not.**
+  blending — **the gradients and the blending are done; the shadow is not.**
   - Only the **separable** modes, deliberately. A non-separable mode cannot be
     reproduced identically on screen and in the PDF, and a mode that looks one
     way in Tessera and another in the file is worse than no mode at all — so
     neither converter has a catch-all arm quietly exporting something as
     Normal.
+  - **A gradient is not a colour**, so a fill is now a *paint*. A colour answers
+    "what is your value" — every consumer asks it — and a gradient has no single
+    answer; a `Color::Gradient` variant returning its first stop, or an average,
+    would be a lie told once and believed everywhere. `Paint::solid()` returns
+    `None` for a gradient rather than a plausible stand-in, so every caller has
+    to say what it does about one.
+  - The ramp is an **angle**, not two points, and it is built in the frame’s own
+    space. Points would have to be in *some* space: in the document they slide
+    out of the object the moment it moves, and in the frame they have to be
+    rewritten every time it is resized. A test pins that two frames of the same
+    size at different places on the page produce the same ramp, moved.
+  - `Gradient::axis` is the **one place the angle becomes geometry**, so the
+    renderer and the PDF writer cannot disagree about which way a ramp runs. A
+    test asserts the PDF’s coordinates are that same axis, flipped.
+  - Stops are held **sorted, and always at least two**. A renderer, a PDF writer
+    and a panel each sorting the same list is three chances to sort it
+    differently, and a one-stop ramp is a solid colour described the hard way
+    that every consumer would have to guard for.
+  - Stops hold **colours, not values**, so a gradient can be built out of the
+    document’s swatches and editing one changes every gradient using it.
+    `uses_of_swatch` looks inside the stops, so deleting a swatch reports what it
+    really costs.
+  - Vello takes a gradient as a *brush*. PDF has none for the fill operator, so
+    the shape becomes the **clip** and `sh` paints it — and because a PDF ramp
+    interpolates between two colours per function, an N-stop gradient is N-1
+    exponential functions joined by a stitching function. The model’s
+    two-stop floor is what stops that arithmetic underflowing.
+  - Both ends are **extended**, so the first and last colours run to the edge of
+    the shape rather than leaving a corner the flat colour of a ramp that ran
+    out.
+  - Gradient **strokes** are not modelled. A stroke carries one colour, and the
+    two places that have to stand one in for a fill — an open path drawing
+    itself, and the fill/stroke swap — take one colour from the ramp and say so
+    rather than pretending to draw it along the line.
 - [x] **Object opacity** as a field distinct from blend mode, and distinct
   again from a fill colour's alpha.
   - The distinction is the whole point. A fill at half alpha leaves the stroke

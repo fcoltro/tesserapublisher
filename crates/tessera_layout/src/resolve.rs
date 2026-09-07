@@ -8,6 +8,7 @@ use tessera_color::Color;
 use tessera_document::document::Document;
 use tessera_document::ids::FrameId;
 use tessera_document::nodes::{FrameKind, Stroke};
+use tessera_document::paint::Paint;
 use tessera_document::path::fit_to_bounds;
 use tessera_geometry::{DocRect, Transform};
 use tessera_text::shape::{ShapedText, Shaper};
@@ -17,11 +18,11 @@ pub use tessera_document::document::StoryMap;
 #[derive(Debug, Clone)]
 pub enum ResolvedKind {
     Rectangle {
-        fill: Color,
+        fill: Paint,
         stroke: Option<Stroke>,
     },
     Ellipse {
-        fill: Color,
+        fill: Paint,
         stroke: Option<Stroke>,
     },
     Text {
@@ -32,7 +33,7 @@ pub enum ResolvedKind {
     /// [`ResolvedItem::bounds`]'s origin.
     Path {
         path: kurbo::BezPath,
-        fill: Option<Color>,
+        fill: Option<Paint>,
         stroke: Option<Stroke>,
     },
     /// A container showing artwork, or waiting for some.
@@ -354,11 +355,11 @@ fn resolve_one(
 ) -> Option<ResolvedItem> {
     let kind = match &frame.kind {
         FrameKind::Rectangle => ResolvedKind::Rectangle {
-            fill: doc.resolve_colour(&frame.fill),
+            fill: doc.resolve_paint(&frame.fill),
             stroke: resolved_stroke(doc, frame.stroke.as_ref()),
         },
         FrameKind::Ellipse => ResolvedKind::Ellipse {
-            fill: doc.resolve_colour(&frame.fill),
+            fill: doc.resolve_paint(&frame.fill),
             stroke: resolved_stroke(doc, frame.stroke.as_ref()),
         },
         FrameKind::Path(path) => ResolvedKind::Path {
@@ -368,8 +369,13 @@ fn resolve_one(
             // has no stroke of its own.
             fill: None,
             stroke: Some(
-                resolved_stroke(doc, frame.stroke.as_ref())
-                    .unwrap_or_else(|| Stroke::new(doc.resolve_colour(&frame.fill), 1.0)),
+                resolved_stroke(doc, frame.stroke.as_ref()).unwrap_or_else(|| {
+                    // A stroke is a single colour, so a gradient-filled path
+                    // standing in for its own stroke takes one colour from the
+                    // ramp rather than pretending to draw the ramp along it.
+                    // Gradient strokes are not modelled.
+                    Stroke::new(doc.resolve_colour(&frame.fill.representative()), 1.0)
+                }),
             ),
         },
 
@@ -522,7 +528,7 @@ mod tests {
             },
             kind: FrameKind::Rectangle,
             transform: Transform::IDENTITY,
-            fill: Color::BLACK,
+            fill: Paint::Solid(Color::BLACK),
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
@@ -632,7 +638,7 @@ mod tests {
             bounds,
             kind: FrameKind::Path(path),
             transform: Transform::IDENTITY,
-            fill: Color::BLACK,
+            fill: Paint::Solid(Color::BLACK),
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,

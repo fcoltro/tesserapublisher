@@ -4,6 +4,7 @@ use egui::{Sense, Ui, Vec2};
 use tessera_color::Color;
 use tessera_document::ids::StoryId;
 use tessera_document::nodes::{Orientation, PagePreset};
+use tessera_document::paint::Paint;
 use tessera_geometry::{Anchor, Unit};
 use tessera_text::story::{
     Alignment, Case, CharacterFormat, CharacterStyle, CharacterStyleId, ParagraphFormat,
@@ -248,7 +249,9 @@ fn fill_stroke_proxy(
         egui::StrokeKind::Inside,
     );
 
-    painter.rect_filled(fill_rect, 2.0, to_colour(&frame.fill));
+    // One colour on a 26-point button. The section below draws the real
+    // ramp, where there is room for it.
+    painter.rect_filled(fill_rect, 2.0, to_colour(&frame.fill.representative()));
     painter.rect_stroke(
         fill_rect,
         2.0,
@@ -681,25 +684,255 @@ fn fill_section(
     id: tessera_document::ids::FrameId,
     frame: &tessera_document::nodes::Frame,
 ) {
+    use tessera_document::paint::Ramp;
+
     // Every frame has a fill, a text frame included — its background. The
     // previous arrangement showed this only for non-text frames, so a text
     // frame's own fill was unreachable.
-    let [r, g, b, a] = frame.fill.to_rgb_f32();
-    let mut rgba = [r, g, b, a];
-    if fill_picker(ui, &mut rgba) {
-        apply(
-            state,
-            Command::SetFill {
-                id,
-                color: Color::Rgb {
+    //
+    // What *kind* of fill comes first, because it decides which controls below
+    // it mean anything. The two gradients are named separately rather than
+    // offering "gradient" and then a second control for its shape: there are
+    // only two, and a person picking a fill is choosing between three things,
+    // not between two and then a sub-question.
+    let chosen = match &frame.fill {
+        Paint::Solid(_) => 0,
+        Paint::Gradient(g) => match g.ramp {
+            Ramp::Linear { .. } => 1,
+            Ramp::Radial => 2,
+        },
+    };
+    let mut want = chosen;
+    segmented(
+        ui,
+        "Kind",
+        &mut want,
+        &[("Solid", 0), ("Linear", 1), ("Radial", 2)],
+    );
+    if want != chosen {
+        // Switching keeps whatever the other kind can carry: a gradient turned
+        // solid takes a colour from its ramp, and a solid turned gradient ramps
+        // from the colour it already was rather than from an unrelated black.
+        let paint = match want {
+            0 => Paint::Solid(frame.fill.representative()),
+            other => {
+                let ramp = if other == 1 {
+                    Ramp::Linear { angle: 90.0 }
+                } else {
+                    Ramp::Radial
+                };
+                match frame.fill.gradient() {
+                    // Only the shape changed, so the stops are kept.
+                    Some(g) => Paint::Gradient(tessera_document::paint::Gradient::new(
+                        ramp,
+                        g.stops().to_vec(),
+                    )),
+                    None => Paint::Gradient(tessera_document::paint::Gradient::new(
+                        ramp,
+                        vec![
+                            tessera_document::paint::Stop {
+                                at: 0.0,
+                                colour: frame.fill.representative(),
+                            },
+                            tessera_document::paint::Stop {
+                                at: 1.0,
+                                colour: Color::WHITE,
+                            },
+                        ],
+                    )),
+                }
+            }
+        };
+        apply(state, Command::SetFill { id, paint });
+        return;
+    }
+
+    match &frame.fill {
+        Paint::Solid(colour) => {
+            let [r, g, b, a] = colour.to_rgb_f32();
+            let mut rgba = [r, g, b, a];
+            if fill_picker(ui, &mut rgba) {
+                apply(
+                    state,
+                    Command::SetFill {
+                        id,
+                        paint: Paint::Solid(Color::Rgb {
+                            r: rgba[0],
+                            g: rgba[1],
+                            b: rgba[2],
+                            a: rgba[3],
+                        }),
+                    },
+                );
+            }
+        }
+        Paint::Gradient(gradient) => gradient_controls(ui, state, id, gradient),
+    }
+}
+
+/// The ramp itself: which way it runs, and the colours along it.
+fn gradient_controls(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::FrameId,
+    gradient: &tessera_document::paint::Gradient,
+) {
+    use tessera_document::paint::{Gradient, Ramp, Stop};
+
+    let mut ramp = gradient.ramp;
+    let mut stops = gradient.stops().to_vec();
+    let mut changed = false;
+
+    // The angle, for a ramp that has one. It runs either way round rather than
+    // stopping at zero, because 350 and -10 are the same direction and a
+    // control that stopped would refuse the shorter way there.
+    if let Ramp::Linear { angle } = &mut ramp {
+        changed |= field(ui, "Angle", |ui| {
+            ui.add(
+                egui::DragValue::new(angle)
+                    .speed(1.0)
+                    .range(-360.0..=360.0)
+                    .suffix("\u{b0}"),
+            )
+            .changed()
+        });
+    }
+
+    // The ramp, drawn. A list of colours and numbers is not a gradient a person
+    // can judge, and this is the control they actually read.
+    ramp_preview(ui, &stops);
+
+    group_label(ui, "Stops");
+    let mut remove: Option<usize> = None;
+    for (index, stop) in stops.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            let [r, g, b, a] = stop.colour.to_rgb_f32();
+            let mut rgba = [r, g, b, a];
+            if fill_picker(ui, &mut rgba) {
+                stop.colour = Color::Rgb {
                     r: rgba[0],
                     g: rgba[1],
                     b: rgba[2],
                     a: rgba[3],
-                },
-            },
+                };
+                changed = true;
+            }
+            // The position as a percentage along the ramp, which is how a
+            // person reads it. The model holds the fraction.
+            let mut percent = stop.at * 100.0;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut percent)
+                        .speed(0.5)
+                        .range(0.0..=100.0)
+                        .suffix("%"),
+                )
+                .changed()
+            {
+                stop.at = percent / 100.0;
+                changed = true;
+            }
+            // A ramp needs two ends, so the first two carry no remove button.
+            // Offering one and then refusing it would be worse than not
+            // offering it.
+            if index >= 2 && ui.small_button("\u{2715}").clicked() {
+                remove = Some(index);
+            }
+        });
+    }
+
+    if let Some(at) = remove {
+        stops.remove(at);
+        changed = true;
+    }
+
+    if ui.button("Add a stop").clicked() {
+        // Halfway between the last two, taking the colour already there, so
+        // adding a stop changes nothing until it is moved or recoloured.
+        let (a, b) = (stops[stops.len() - 2].at, stops[stops.len() - 1].at);
+        let colour = stops[stops.len() - 1].colour.clone();
+        stops.push(Stop {
+            at: (a + b) / 2.0,
+            colour,
+        });
+        changed = true;
+    }
+
+    if changed {
+        let paint = Paint::Gradient(Gradient::new(ramp, stops));
+        apply(state, Command::SetFill { id, paint });
+    }
+}
+
+/// The ramp, painted as it will appear.
+///
+/// A list of colours and numbers is not something a person can judge a gradient
+/// from. Drawn as a strip of bands rather than through a real gradient shader,
+/// because egui paints solid rectangles and fifty bands across a panel is
+/// already smooth to the eye.
+fn ramp_preview(ui: &mut Ui, stops: &[tessera_document::paint::Stop]) {
+    const BANDS: usize = 48;
+    const HEIGHT: f32 = 18.0;
+
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width().max(60.0), HEIGHT),
+        Sense::hover(),
+    );
+    let painter = ui.painter();
+    let width = rect.width() / BANDS as f32;
+
+    for band in 0..BANDS {
+        let at = (band as f32 + 0.5) / BANDS as f32;
+        let [r, g, b, a] = sample(stops, at).to_rgb_f32();
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(rect.left() + band as f32 * width, rect.top()),
+                Vec2::new(width.ceil(), HEIGHT),
+            ),
+            0.0,
+            egui::Color32::from_rgba_unmultiplied(
+                (r * 255.0) as u8,
+                (g * 255.0) as u8,
+                (b * 255.0) as u8,
+                (a * 255.0) as u8,
+            ),
         );
     }
+    painter.rect_stroke(
+        rect,
+        2.0,
+        egui::Stroke::new(1.0, Theme::BORDER),
+        egui::StrokeKind::Inside,
+    );
+}
+
+/// The colour a ramp shows at `at`, for the preview only.
+///
+/// Straight interpolation in sRGB, which is what the renderer and the PDF both
+/// do, so the strip agrees with the page. Before the first stop and after the
+/// last it holds that stop, which is the same extension both of them apply.
+fn sample(stops: &[tessera_document::paint::Stop], at: f32) -> Color {
+    let first = &stops[0];
+    if at <= first.at {
+        return first.colour.clone();
+    }
+    for pair in stops.windows(2) {
+        let (a, b) = (&pair[0], &pair[1]);
+        if at <= b.at {
+            let span = b.at - a.at;
+            let t = if span <= 0.0 { 0.0 } else { (at - a.at) / span };
+            let [r0, g0, b0, a0] = a.colour.to_rgb_f32();
+            let [r1, g1, b1, a1] = b.colour.to_rgb_f32();
+            let mix = |x: f32, y: f32| x + (y - x) * t;
+            return Color::Rgb {
+                r: mix(r0, r1),
+                g: mix(g0, g1),
+                b: mix(b0, b1),
+                a: mix(a0, a1),
+            };
+        }
+    }
+    stops[stops.len() - 1].colour.clone()
 }
 
 /// Common dash patterns, in multiples of the stroke's own width.
@@ -2715,7 +2948,7 @@ mod tests {
             },
             transform: Transform::IDENTITY,
             kind: FrameKind::Rectangle,
-            fill: Color::BLACK,
+            fill: Paint::Solid(Color::BLACK),
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,

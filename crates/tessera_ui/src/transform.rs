@@ -394,6 +394,7 @@ pub fn rotation_from_drag(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tessera_document::paint::Paint;
 
     fn rect() -> DocRect {
         DocRect {
@@ -716,7 +717,7 @@ mod tests {
             bounds: group_box(),
             kind: tessera_document::nodes::FrameKind::Rectangle,
             transform: Transform::IDENTITY,
-            fill: tessera_color::Color::BLACK,
+            fill: Paint::Solid(tessera_color::Color::BLACK),
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,

@@ -14,6 +14,7 @@
 //! No GPU: `build_scene` is CPU work, so this runs in the ordinary suite.
 
 use std::time::Instant;
+use tessera_document::paint::Paint;
 
 use tessera_color::Color;
 use tessera_document::document::Document;
@@ -44,7 +45,7 @@ fn crowded_document() -> Document {
                 },
                 transform: Transform::IDENTITY,
                 kind: FrameKind::Rectangle,
-                fill: Color::BLACK,
+                fill: Paint::Solid(Color::BLACK),
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,
@@ -142,7 +143,7 @@ fn wordy_document() -> Document {
                 },
                 transform: Transform::IDENTITY,
                 kind: FrameKind::text(id),
-                fill: Color::BLACK,
+                fill: Paint::Solid(Color::BLACK),
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,

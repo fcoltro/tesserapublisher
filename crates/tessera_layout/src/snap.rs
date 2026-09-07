@@ -177,6 +177,7 @@ pub fn solve(rect: DocRect, lines: &Lines, threshold: f64) -> Snap {
 mod tests {
     use super::*;
     use tessera_document::nodes::{Frame, FrameKind, Guide};
+    use tessera_document::paint::Paint;
     use tessera_geometry::Transform;
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> DocRect {
@@ -295,7 +296,7 @@ mod tests {
                 bounds: rect(bounds.x + 100.0, bounds.y + 100.0, 50.0, 40.0),
                 transform: Transform::IDENTITY,
                 kind: FrameKind::Rectangle,
-                fill: tessera_color::Color::BLACK,
+                fill: Paint::Solid(tessera_color::Color::BLACK),
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,

@@ -105,6 +105,7 @@ mod tests {
     use super::*;
     use tessera_document::document::Document;
     use tessera_document::nodes::{Frame, FrameKind};
+    use tessera_document::paint::Paint;
     use tessera_geometry::{DocRect, Transform};
 
     fn doc_with_two() -> (Document, FrameId, FrameId) {
@@ -119,7 +120,7 @@ mod tests {
             },
             kind: FrameKind::Rectangle,
             transform: Transform::IDENTITY,
-            fill: tessera_color::Color::BLACK,
+            fill: Paint::Solid(tessera_color::Color::BLACK),
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,

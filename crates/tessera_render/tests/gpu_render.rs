@@ -65,7 +65,10 @@ fn rect_doc(bounds: DocRect, fill: Color) -> ResolvedDocument {
             transform: Transform::IDENTITY,
             spread_area: None,
             blend: tessera_document::blending::Blending::PLAIN,
-            kind: ResolvedKind::Rectangle { fill, stroke: None },
+            kind: ResolvedKind::Rectangle {
+                fill: tessera_document::paint::Paint::Solid(fill),
+                stroke: None,
+            },
         }],
         pages: vec![resolved_page()],
     }

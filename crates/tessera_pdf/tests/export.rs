@@ -7,6 +7,7 @@
 
 use tessera_color::Color;
 use tessera_document::ids::FrameId;
+use tessera_document::paint::Paint;
 use tessera_geometry::{DocRect, Transform};
 use tessera_layout::resolve::{ResolvedDocument, ResolvedItem, ResolvedKind};
 use tessera_text::shape::Shaper;
@@ -65,7 +66,7 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> DocRect {
 fn black_rect(bounds: DocRect) -> ResolvedDocument {
     one(
         ResolvedKind::Rectangle {
-            fill: Color::BLACK,
+            fill: Paint::Solid(Color::BLACK),
             stroke: None,
         },
         bounds,
@@ -209,7 +210,7 @@ fn several_items_all_reach_the_content_stream() {
                 blend: tessera_document::blending::Blending::PLAIN,
                 bounds: rect(10.0, 10.0, 50.0, 50.0),
                 kind: ResolvedKind::Rectangle {
-                    fill: Color::BLACK,
+                    fill: Paint::Solid(Color::BLACK),
                     stroke: None,
                 },
             },
@@ -220,7 +221,7 @@ fn several_items_all_reach_the_content_stream() {
                 blend: tessera_document::blending::Blending::PLAIN,
                 bounds: rect(100.0, 100.0, 80.0, 40.0),
                 kind: ResolvedKind::Ellipse {
-                    fill: Color::BLACK,
+                    fill: Paint::Solid(Color::BLACK),
                     stroke: None,
                 },
             },
@@ -512,4 +513,154 @@ fn two_different_compositings_get_two_graphics_states() {
     assert!(text.contains("/ca 0.25"));
     assert!(text.contains("/BM /Screen"));
     assert!(text.contains("/GS0 gs") && text.contains("/GS1 gs"));
+}
+
+// --- gradients --------------------------------------------------------------
+
+/// A rectangle filled with `paint`.
+fn painted_rect(paint: tessera_document::paint::Paint) -> ResolvedDocument {
+    one(
+        ResolvedKind::Rectangle {
+            fill: paint,
+            stroke: None,
+        },
+        rect(10.0, 10.0, 50.0, 50.0),
+    )
+}
+
+fn two_stop(ramp: tessera_document::paint::Ramp) -> tessera_document::paint::Paint {
+    tessera_document::paint::Paint::Gradient(tessera_document::paint::Gradient::black_to_white(
+        ramp,
+    ))
+}
+
+#[test]
+fn a_linear_gradient_is_written_as_an_axial_shading() {
+    use tessera_document::paint::Ramp;
+
+    let bytes =
+        tessera_pdf::export(&painted_rect(two_stop(Ramp::Linear { angle: 0.0 }))).expect("export");
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+
+    assert!(text.contains("/ShadingType 2"), "axial is shading type 2");
+    assert!(text.contains("/Shading"), "no shading resource dictionary");
+    assert!(text.contains(" sh"), "the content stream never painted it");
+    // `W` then `n`, each its own operator: intersect the clip with the path,
+    // then end the path without painting it.
+    let ops: Vec<&str> = text.lines().map(str::trim).collect();
+    let clipped = ops
+        .windows(2)
+        .any(|pair| pair[0].ends_with("W") && pair[1] == "n");
+    assert!(
+        clipped,
+        "a gradient must be clipped to its shape: `sh` fills the whole clip"
+    );
+}
+
+#[test]
+fn a_radial_gradient_is_written_as_a_radial_shading_between_two_circles() {
+    use tessera_document::paint::Ramp;
+
+    let bytes = tessera_pdf::export(&painted_rect(two_stop(Ramp::Radial))).expect("export");
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+
+    assert!(text.contains("/ShadingType 3"), "radial is shading type 3");
+    // Six coordinates: two centres and two radii. A plain radial ramp is the
+    // degenerate case where the inner circle is a point.
+    assert!(text.contains("/Coords"), "no coordinates");
+}
+
+#[test]
+fn a_two_stop_ramp_needs_no_stitching_function() {
+    // One interval is one exponential function, and wrapping it would be a
+    // dictionary describing nothing.
+    use tessera_document::paint::Ramp;
+
+    let bytes = tessera_pdf::export(&painted_rect(two_stop(Ramp::Radial))).expect("export");
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+
+    assert!(text.contains("/FunctionType 2"), "no exponential function");
+    assert!(
+        !text.contains("/FunctionType 3"),
+        "a two-stop ramp was stitched"
+    );
+}
+
+#[test]
+fn a_three_stop_ramp_is_two_functions_stitched() {
+    // A PDF ramp interpolates between *two* colours per function, so N stops
+    // are N-1 functions joined.
+    use tessera_document::paint::{Gradient, Paint, Ramp, Stop};
+
+    let ramp = Paint::Gradient(Gradient::new(
+        Ramp::Linear { angle: 45.0 },
+        vec![
+            Stop {
+                at: 0.0,
+                colour: Color::BLACK,
+            },
+            Stop {
+                at: 0.5,
+                colour: Color::WHITE,
+            },
+            Stop {
+                at: 1.0,
+                colour: Color::BLACK,
+            },
+        ],
+    ));
+    let text = String::from_utf8_lossy(&tessera_pdf::export(&painted_rect(ramp)).expect("export"))
+        .into_owned();
+
+    assert!(text.contains("/FunctionType 3"), "no stitching function");
+    assert_eq!(
+        text.matches("/FunctionType 2").count(),
+        2,
+        "three stops are two intervals"
+    );
+    assert!(text.contains("/Bounds"), "no interval boundaries");
+}
+
+#[test]
+fn a_solid_fill_writes_no_shading() {
+    let text = String::from_utf8_lossy(
+        &tessera_pdf::export(&black_rect(rect(10.0, 10.0, 50.0, 50.0))).expect("export"),
+    )
+    .into_owned();
+    assert!(!text.contains("/ShadingType"));
+    assert!(!text.contains(" sh\n"));
+}
+
+#[test]
+fn a_gradient_ramp_is_extended_so_no_corner_is_left_unpainted() {
+    use tessera_document::paint::Ramp;
+
+    let text = String::from_utf8_lossy(
+        &tessera_pdf::export(&painted_rect(two_stop(Ramp::Radial))).expect("export"),
+    )
+    .into_owned();
+    assert!(
+        text.contains("/Extend [true true]"),
+        "the ramp stopped short"
+    );
+}
+
+#[test]
+fn a_gradient_runs_the_same_way_in_the_file_as_on_the_page() {
+    // Both go through `Gradient::axis`, so this pins the flip into PDF space
+    // rather than the angle itself. A ramp at 0 degrees on a rect from y=10 to
+    // y=60 on a 792pt page is level, so both ends share one flipped y: 732.
+    use tessera_document::paint::Ramp;
+
+    let text = String::from_utf8_lossy(
+        &tessera_pdf::export(&painted_rect(two_stop(Ramp::Linear { angle: 0.0 }))).expect("export"),
+    )
+    .into_owned();
+    assert!(
+        text.contains("/Coords [10 757 60 757]"),
+        "the axis was not flipped into PDF space: {}",
+        text.lines()
+            .find(|l| l.contains("/Coords"))
+            .unwrap_or("no coords line")
+    );
 }

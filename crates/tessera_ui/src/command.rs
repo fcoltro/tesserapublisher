@@ -13,6 +13,7 @@ use tessera_color::Color;
 use tessera_document::document::{Document, ZMove};
 use tessera_document::ids::{FrameId, LayerId, MasterId, PageId, StoryId};
 use tessera_document::nodes::{Frame, FrameKind};
+use tessera_document::paint::Paint;
 use tessera_geometry::{DocRect, Transform};
 use tessera_text::story::{
     CharacterFormat, CharacterStyle, CharacterStyleId, ParagraphFormat, ParagraphStyle,
@@ -54,9 +55,14 @@ pub enum Command {
         id: FrameId,
         degrees: f64,
     },
+    /// Fill a shape with a colour, or with a gradient.
+    ///
+    /// A [`Paint`] rather than a `Color`, because a gradient is not a colour —
+    /// and one command rather than two, so that a person changing a red panel
+    /// into a ramp undoes it in one step.
     SetFill {
         id: FrameId,
-        color: Color,
+        paint: Paint,
     },
     SetText {
         id: FrameId,
@@ -641,9 +647,9 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             retarget(state, id, bounds, was.then(turn));
         }
 
-        Command::SetFill { id, color } => {
+        Command::SetFill { id, paint } => {
             if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
-                frame.fill = color;
+                frame.fill = paint;
             }
         }
 
@@ -1277,18 +1283,22 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             let Some(frame) = state.active().document().frame(id).cloned() else {
                 return;
             };
-            let fill = frame.fill.clone();
+            // A stroke carries one colour, so a gradient fill swapped onto a
+            // stroke becomes one colour from the ramp. Gradient strokes are not
+            // modelled, and quietly refusing the swap would be worse than doing
+            // the part of it that can be done.
+            let fill = frame.fill.representative();
             let (new_fill, new_stroke) = match frame.stroke {
                 Some(mut stroke) => {
                     let was = stroke.color.clone();
                     stroke.color = fill;
-                    (was, Some(stroke))
+                    (Paint::Solid(was), Some(stroke))
                 }
                 // With no stroke to swap with, the fill becomes one rather
                 // than being discarded — a swap that silently deleted a
                 // colour would be worse than one that had no effect.
                 None => (
-                    Color::BLACK,
+                    Paint::Solid(Color::BLACK),
                     Some(tessera_document::nodes::Stroke::new(fill, 1.0)),
                 ),
             };
@@ -1300,15 +1310,20 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::DefaultFillAndStroke(id) => {
             if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
-                f.fill = Color::BLACK;
+                f.fill = Paint::Solid(Color::BLACK);
                 f.stroke = None;
             }
         }
 
         Command::ClearFill(id) => {
             if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
-                let [r, g, b, _] = f.fill.to_rgb_f32();
-                f.fill = Color::Rgb { r, g, b, a: 0.0 };
+                // "No fill" is the colour the object had, at no alpha, so that
+                // turning the fill back on gets the colour back rather than
+                // black. A gradient keeps one colour from its ramp: there is no
+                // transparent gradient to hold, and the ramp is what the person
+                // would have to rebuild either way.
+                let [r, g, b, _] = f.fill.representative().to_rgb_f32();
+                f.fill = Paint::Solid(Color::Rgb { r, g, b, a: 0.0 });
             }
         }
 
@@ -1436,7 +1451,7 @@ fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
         Frame {
             bounds,
             kind,
-            fill,
+            fill: Paint::Solid(fill),
             stroke: None,
             transform: Transform::IDENTITY,
             wrap: tessera_document::nodes::TextWrap::None,
@@ -1796,7 +1811,7 @@ mod tests {
             &mut state,
             Command::SetFill {
                 id,
-                color: Color::WHITE,
+                paint: Paint::Solid(Color::WHITE),
             },
         );
         apply(
@@ -1810,7 +1825,7 @@ mod tests {
         apply(&mut state, Command::SwapFillAndStroke(id));
 
         let frame = state.active().document().frame(id).expect("frame").clone();
-        assert_eq!(frame.fill, Color::BLACK);
+        assert_eq!(frame.fill, Paint::Solid(Color::BLACK));
         let stroke = frame.stroke.expect("still stroked");
         assert_eq!(stroke.color, Color::WHITE);
         assert_eq!(stroke.width, 2.0, "the stroke keeps its width");
@@ -1825,7 +1840,7 @@ mod tests {
             &mut state,
             Command::SetFill {
                 id,
-                color: Color::WHITE,
+                paint: Paint::Solid(Color::WHITE),
             },
         );
 
@@ -1851,7 +1866,7 @@ mod tests {
         apply(&mut state, Command::DefaultFillAndStroke(id));
 
         let frame = state.active().document().frame(id).expect("frame").clone();
-        assert_eq!(frame.fill, Color::BLACK);
+        assert_eq!(frame.fill, Paint::Solid(Color::BLACK));
         assert!(frame.stroke.is_none());
     }
 
@@ -1864,12 +1879,12 @@ mod tests {
             &mut state,
             Command::SetFill {
                 id,
-                color: Color::Rgb {
+                paint: Paint::Solid(Color::Rgb {
                     r: 0.2,
                     g: 0.4,
                     b: 0.6,
                     a: 1.0,
-                },
+                }),
             },
         );
 
@@ -1881,6 +1896,7 @@ mod tests {
             .frame(id)
             .expect("frame")
             .fill
+            .representative()
             .to_rgb_f32();
         assert_eq!(a, 0.0, "invisible");
         assert!((r - 0.2).abs() < 1e-6 && (g - 0.4).abs() < 1e-6 && (b - 0.6).abs() < 1e-6);
@@ -2507,14 +2523,17 @@ mod tests {
             &mut state,
             Command::SetFill {
                 id: a,
-                color: red.clone(),
+                paint: Paint::Solid(red.clone()),
             },
         );
 
-        assert_eq!(state.active().document().frame(a).expect("frame").fill, red);
+        assert_eq!(
+            state.active().document().frame(a).expect("frame").fill,
+            Paint::Solid(red)
+        );
         assert_eq!(
             state.active().document().frame(b).expect("frame").fill,
-            Color::BLACK
+            Paint::Solid(Color::BLACK)
         );
     }
 
@@ -2739,7 +2758,7 @@ mod tests {
             },
             kind: tessera_document::nodes::FrameKind::Rectangle,
             transform: Transform::IDENTITY,
-            fill: Color::BLACK,
+            fill: Paint::Solid(Color::BLACK),
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
@@ -4274,7 +4293,7 @@ mod tests {
                 },
                 transform: Transform::default(),
                 kind: FrameKind::Rectangle,
-                fill: Color::BLACK,
+                fill: Paint::Solid(Color::BLACK),
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,
@@ -4622,7 +4641,7 @@ mod tests {
                 },
                 transform: Transform::default(),
                 kind: FrameKind::Rectangle,
-                fill: Color::BLACK,
+                fill: Paint::Solid(Color::BLACK),
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,

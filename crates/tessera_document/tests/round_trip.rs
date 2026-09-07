@@ -12,6 +12,7 @@ use tessera_document::format;
 use tessera_document::nodes::{
     Axis, DocumentSetup, Frame, FrameKind, Guide, Insets, Margins, Stroke,
 };
+use tessera_document::paint::Paint;
 use tessera_geometry::{DocPoint, DocRect, Transform};
 
 fn temp_path(name: &str) -> std::path::PathBuf {
@@ -49,13 +50,13 @@ fn a_document_with_a_rectangle_round_trips_exactly() {
             },
             kind: FrameKind::Rectangle,
             transform: Transform::IDENTITY,
-            fill: Color::Cmyk {
+            fill: Paint::Solid(Color::Cmyk {
                 c: 0.1,
                 m: 0.2,
                 y: 0.3,
                 k: 0.4,
                 a: 1.0,
-            },
+            }),
             stroke: Some(Stroke::new(Color::BLACK, 2.0)),
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
@@ -164,7 +165,7 @@ fn any_frame() -> impl Strategy<Value = Frame> {
             },
             kind: FrameKind::Rectangle,
             transform: Transform::IDENTITY,
-            fill,
+            fill: Paint::Solid(fill),
             stroke: stroke_width.map(|width| Stroke::new(Color::BLACK, width)),
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
@@ -214,7 +215,7 @@ fn text_survives_a_save_and_load() {
             },
             kind: FrameKind::text(story),
             transform: Transform::IDENTITY,
-            fill: Color::WHITE,
+            fill: Paint::Solid(Color::WHITE),
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
@@ -261,7 +262,7 @@ fn a_version_1_document_still_opens() {
             },
             kind: FrameKind::Rectangle,
             transform: Transform::IDENTITY,
-            fill: Color::BLACK,
+            fill: Paint::Solid(Color::BLACK),
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
@@ -339,7 +340,7 @@ fn a_placement_survives_a_save_and_load() {
             },
             kind: FrameKind::Rectangle,
             transform: placed,
-            fill: Color::BLACK,
+            fill: Paint::Solid(Color::BLACK),
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
@@ -375,7 +376,7 @@ fn a_version_2_rotation_becomes_the_placement_that_means_the_same_thing() {
             bounds,
             kind: FrameKind::Rectangle,
             transform: Transform::IDENTITY,
-            fill: Color::BLACK,
+            fill: Paint::Solid(Color::BLACK),
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
@@ -553,7 +554,7 @@ fn a_version_four_document_still_opens_and_gains_no_setup_it_never_had() {
             },
             transform: Transform::IDENTITY,
             kind: FrameKind::Rectangle,
-            fill: Color::BLACK,
+            fill: Paint::Solid(Color::BLACK),
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
@@ -595,9 +596,118 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_fourteen() {
+fn the_format_version_is_fifteen() {
     // If this changes, a migration step is owed.
-    assert_eq!(format::FORMAT_VERSION, 14);
+    assert_eq!(format::FORMAT_VERSION, 15);
+}
+
+#[test]
+fn a_gradient_fill_round_trips() {
+    use tessera_document::paint::{Gradient, Paint, Ramp, Stop};
+
+    let path = temp_path("gradient.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let ramp = Gradient::new(
+        Ramp::Linear { angle: 30.0 },
+        vec![
+            Stop {
+                at: 0.0,
+                colour: Color::BLACK,
+            },
+            Stop {
+                at: 0.4,
+                colour: Color::WHITE,
+            },
+            Stop {
+                at: 1.0,
+                colour: Color::BLACK,
+            },
+        ],
+    );
+
+    let mut doc = Document::new();
+    let layer = doc.default_layer().expect("layer");
+    let id = doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 40.0,
+                height: 40.0,
+            },
+            transform: Default::default(),
+            kind: FrameKind::Rectangle,
+            fill: Paint::Gradient(ramp.clone()),
+            stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
+        },
+    );
+
+    format::save(&doc, &path).expect("save");
+    let back = format::load(&path).expect("load");
+    assert_eq!(
+        back.frame(id).expect("frame").fill,
+        Paint::Gradient(ramp),
+        "the whole ramp, its angle and every stop"
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_document_written_before_gradients_opens_with_its_colour_intact() {
+    // **The migration that has to rewrite.** A colour and a paint are different
+    // shapes on disk, so without this step serde refuses the document and every
+    // file written before gradients stops opening.
+    use tessera_document::paint::Paint;
+
+    let teal = Color::Cmyk {
+        c: 0.8,
+        m: 0.2,
+        y: 0.3,
+        k: 0.0,
+        a: 1.0,
+    };
+    let path = temp_path("legacy_v14.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = Document::new();
+    let layer = doc.default_layer().expect("layer");
+    let id = doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: 3.0,
+                y: 4.0,
+                width: 20.0,
+                height: 10.0,
+            },
+            transform: Default::default(),
+            kind: FrameKind::Rectangle,
+            fill: Paint::Solid(teal.clone()),
+            stroke: Some(tessera_document::nodes::Stroke::new(Color::BLACK, 2.0)),
+            wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
+        },
+    );
+    format::save(&doc, &path).expect("save");
+
+    // Put the fill back into the shape version 14 wrote, and say it was 14.
+    format::unwrap_fills_and_stamp_for_test(&path, 14).expect("downgrade");
+
+    let back = format::load(&path).expect("an older document must still open");
+    let frame = back.frame(id).expect("frame");
+    assert_eq!(frame.fill, Paint::Solid(teal), "the colour, not a default");
+    assert_eq!(
+        frame.stroke.as_ref().expect("stroke").color,
+        Color::BLACK,
+        "and a stroke colour was not wrapped: a stroke is still a colour"
+    );
+
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -620,7 +730,7 @@ fn an_objects_opacity_and_blend_mode_round_trip() {
             },
             transform: Default::default(),
             kind: FrameKind::Rectangle,
-            fill: Color::default(),
+            fill: Paint::Solid(Color::default()),
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: Blending {
@@ -652,7 +762,7 @@ fn a_document_written_before_opacity_existed_opens_fully_opaque() {
     let json = serde_json::json!({
         "bounds": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
         "kind": "Rectangle",
-        "fill": { "Rgb": { "r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0 } },
+        "fill": { "Solid": { "Rgb": { "r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0 } } },
         "stroke": null
     });
     let frame: Frame = serde_json::from_value(json).expect("an older frame");
@@ -682,7 +792,7 @@ fn placed_artwork_round_trips_as_a_link_rather_than_as_pixels() {
             },
             kind: FrameKind::Graphic { placed: None },
             transform: Transform::IDENTITY,
-            fill: Color::BLACK,
+            fill: Paint::Solid(Color::BLACK),
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
@@ -755,10 +865,10 @@ fn swatches_and_the_objects_naming_them_round_trip() {
             },
             kind: FrameKind::Rectangle,
             transform: Transform::IDENTITY,
-            fill: Color::Swatch {
+            fill: Paint::Solid(Color::Swatch {
                 name: "Brand red".to_string(),
                 tint: 0.5,
-            },
+            }),
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
@@ -773,10 +883,10 @@ fn swatches_and_the_objects_naming_them_round_trip() {
     let fill = loaded.frame(id).expect("frame").fill.clone();
     assert_eq!(
         fill,
-        Color::Swatch {
+        Paint::Solid(Color::Swatch {
             name: "Brand red".to_string(),
             tint: 0.5
-        },
+        }),
         "the object still holds the name, not the value"
     );
 
@@ -865,7 +975,7 @@ fn a_version_nine_text_frame_opens_as_a_single_column() {
             },
             kind: FrameKind::text(story),
             transform: Transform::IDENTITY,
-            fill: Color::BLACK,
+            fill: Paint::Solid(Color::BLACK),
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
@@ -924,7 +1034,7 @@ fn a_columned_text_frame_round_trips() {
                 layout: wanted,
             },
             transform: Transform::IDENTITY,
-            fill: Color::BLACK,
+            fill: Paint::Solid(Color::BLACK),
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
@@ -965,7 +1075,7 @@ fn a_version_eight_document_opens_with_no_masters_and_no_overrides() {
             },
             kind: FrameKind::Rectangle,
             transform: Transform::IDENTITY,
-            fill: Color::BLACK,
+            fill: Paint::Solid(Color::BLACK),
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
@@ -1010,7 +1120,7 @@ fn a_master_and_its_overrides_survive_a_round_trip() {
             },
             kind: FrameKind::Rectangle,
             transform: Transform::IDENTITY,
-            fill: Color::BLACK,
+            fill: Paint::Solid(Color::BLACK),
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
@@ -1073,7 +1183,7 @@ fn version_7_archive(path: &std::path::Path) -> serde_json::Value {
                 },
                 kind: FrameKind::Rectangle,
                 transform: Transform::IDENTITY,
-                fill: Color::BLACK,
+                fill: Paint::Solid(Color::BLACK),
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,

@@ -170,7 +170,14 @@ pub struct Frame {
     #[serde(default)]
     pub transform: Transform,
     pub kind: FrameKind,
-    pub fill: Color,
+    /// What the shape is filled with.
+    ///
+    /// A [`Paint`](crate::paint::Paint) rather than a `Color`, because a
+    /// gradient is not a colour: a colour answers "what is your value" and a
+    /// gradient has no single answer. Documents written before gradients existed
+    /// carry a bare colour here and are brought forward by the format's
+    /// migration chain, which wraps it as a solid paint.
+    pub fill: crate::paint::Paint,
     pub stroke: Option<Stroke>,
     /// How text in other frames runs around this one.
     ///

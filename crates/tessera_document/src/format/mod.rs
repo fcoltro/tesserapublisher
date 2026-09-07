@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 14;
+pub const FORMAT_VERSION: u32 = 15;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -169,6 +169,18 @@ fn migrate(value: &mut serde_json::Value, from: u32) {
     // truth about a document written when layers could not be chosen.
     if from < 8 {
         layers_leave_the_page(value);
+    }
+
+    // 14 -> 15: a frame's fill became a *paint*, so that it can be a gradient.
+    //
+    // **This one rewrites, and it has to.** A colour and a paint are different
+    // shapes on disk: the old file says `"fill": {"Rgb": ...}` and the new one
+    // says `"fill": {"Solid": {"Rgb": ...}}`. There is no default that could
+    // stand in, because the field is present and holds the wrong shape —
+    // serde would refuse the document outright, and every existing file would
+    // stop opening.
+    if from < 15 {
+        fills_become_paints(value);
     }
 
     // 13 -> 14: a frame gained its compositing — an opacity and a blend mode
@@ -461,6 +473,47 @@ fn stories_gain_runs(value: &mut serde_json::Value) {
 /// Walks the whole tree rather than reaching for a known path, because how
 /// `SlotMap` chooses to encode its slots is its business and not something the
 /// migration should depend on. A frame is recognised by carrying both keys.
+/// Wrap every frame's `fill` colour as a solid paint.
+///
+/// Recursive over the whole document rather than walking to the frame table,
+/// for the same reason [`rotation_to_transform`] is: the migration then does not
+/// have to know how the document is laid out, and it keeps working when
+/// something else grows a frame list.
+///
+/// A value that is already a paint is left alone, so running this twice cannot
+/// bury a fill inside two `Solid` wrappers. That matters because the recursion
+/// visits stroke colours too, and a stroke is still a bare colour: only the key
+/// called `fill` on an object that also has `bounds` and `kind` is a frame's
+/// fill, and that is what identifies one here.
+fn fills_become_paints(value: &mut serde_json::Value) {
+    use serde_json::{Map, Value};
+
+    match value {
+        Value::Object(map) => {
+            let is_frame = map.contains_key("bounds") && map.contains_key("kind");
+            if is_frame
+                && let Some(fill) = map.get("fill").cloned()
+                && !fill
+                    .as_object()
+                    .is_some_and(|o| o.contains_key("Solid") || o.contains_key("Gradient"))
+            {
+                let mut wrapped = Map::new();
+                wrapped.insert("Solid".to_string(), fill);
+                map.insert("fill".to_string(), Value::Object(wrapped));
+            }
+            for child in map.values_mut() {
+                fills_become_paints(child);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                fills_become_paints(item);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn rotation_to_transform(value: &mut serde_json::Value) {
     use serde_json::Value;
 
@@ -544,6 +597,78 @@ fn read_json<T: serde::de::DeserializeOwned>(
     file.read_to_string(&mut text)
         .map_err(|_| FormatError::MissingEntry(entry))?;
     serde_json::from_str(&text).map_err(|source| FormatError::Parse { entry, source })
+}
+
+/// Puts a document back into the shape version 14 wrote and stamps it as 14,
+/// so the migration that has to rewrite can be tested against a real file.
+///
+/// Works on the raw JSON rather than through the model, because the point is to
+/// produce a shape the model *cannot* hold: once a fill is a paint, there is no
+/// way to ask `Document` for the colour-shaped version of itself.
+#[doc(hidden)]
+pub fn unwrap_fills_and_stamp_for_test(path: &Path, version: u32) -> Result<(), FormatError> {
+    use serde_json::Value;
+
+    let bytes = std::fs::read(path).map_err(|_| FormatError::Read(path.to_path_buf()))?;
+    let mut zip = zip::ZipArchive::new(Cursor::new(bytes))
+        .map_err(|e| FormatError::Archive(e.to_string()))?;
+    let mut document: Value = read_json(&mut zip, DOCUMENT_ENTRY)?;
+    unwrap_fills(&mut document);
+
+    let mut meta = Meta::current();
+    meta.format_version = version;
+
+    let mut buffer = Cursor::new(Vec::new());
+    {
+        let mut out = zip::ZipWriter::new(&mut buffer);
+        let options = zip::write::SimpleFileOptions::default();
+        for (entry, value) in [
+            (META_ENTRY, serde_json::to_value(&meta)),
+            (DOCUMENT_ENTRY, Ok(document)),
+        ] {
+            let value = value.map_err(|source| FormatError::Parse { entry, source })?;
+            let text = serde_json::to_vec_pretty(&value)
+                .map_err(|source| FormatError::Parse { entry, source })?;
+            out.start_file(entry, options)
+                .map_err(|e| FormatError::Write(e.to_string()))?;
+            out.write_all(&text)
+                .map_err(|e| FormatError::Write(e.to_string()))?;
+        }
+        out.finish()
+            .map_err(|e| FormatError::Write(e.to_string()))?;
+    }
+    tessera_io::atomic::write_atomic(path, &buffer.into_inner())?;
+    Ok(())
+}
+
+/// The inverse of [`fills_become_paints`], for that one test.
+fn unwrap_fills(value: &mut serde_json::Value) {
+    use serde_json::Value;
+
+    match value {
+        Value::Object(map) => {
+            let is_frame = map.contains_key("bounds") && map.contains_key("kind");
+            if is_frame {
+                let inner = map
+                    .get("fill")
+                    .and_then(|f| f.as_object())
+                    .and_then(|o| o.get("Solid"))
+                    .cloned();
+                if let Some(inner) = inner {
+                    map.insert("fill".to_string(), inner);
+                }
+            }
+            for child in map.values_mut() {
+                unwrap_fills(child);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                unwrap_fills(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Rewrites only the version field, so the refusal path can be tested without

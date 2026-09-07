@@ -115,6 +115,7 @@ mod tests {
     use super::*;
     use crate::document::Document;
     use crate::nodes::{Frame, FrameKind};
+    use crate::paint::Paint;
     use tessera_geometry::{DocRect, Transform};
 
     fn frame() -> Frame {
@@ -127,7 +128,7 @@ mod tests {
             },
             kind: FrameKind::Rectangle,
             transform: Transform::IDENTITY,
-            fill: tessera_color::Color::BLACK,
+            fill: Paint::Solid(tessera_color::Color::BLACK),
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,

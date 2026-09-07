@@ -2025,7 +2025,7 @@ fn draw_overlays(
             // over the page. A text frame's fill is clear by default, so the
             // usual answer is the white page — and a caret in a black box has
             // to be the other one, which is the case this exists for.
-            let [r, g, b, a] = frame.fill.to_rgb_f32();
+            let [r, g, b, a] = frame.fill.representative().to_rgb_f32();
             let behind = crate::theme::composite(
                 egui::Color32::from_rgba_unmultiplied(
                     (r * 255.0) as u8,
@@ -2050,6 +2050,7 @@ fn draw_overlays(
 #[cfg(test)]
 mod tests {
     use tessera_document::nodes::Axis;
+    use tessera_document::paint::Paint;
 
     #[test]
     fn a_pointer_on_a_guide_grabs_it() {
@@ -2192,7 +2193,7 @@ mod tests {
                 },
                 kind: tessera_document::nodes::FrameKind::Rectangle,
                 transform: Transform::IDENTITY,
-                fill: tessera_color::Color::BLACK,
+                fill: Paint::Solid(tessera_color::Color::BLACK),
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,

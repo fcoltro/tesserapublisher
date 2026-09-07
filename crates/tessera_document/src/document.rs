@@ -1,5 +1,6 @@
 //! The document: arenas of nodes, addressed by typed key.
 
+use crate::paint::Paint;
 use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 use tessera_geometry::{DocPoint, DocRect, Transform};
@@ -1079,7 +1080,7 @@ impl Document {
         self.frames
             .values()
             .filter(|f| {
-                uses_swatch(&f.fill, name)
+                paint_uses_swatch(&f.fill, name)
                     || f.stroke
                         .as_ref()
                         .is_some_and(|s| uses_swatch(&s.color, name))
@@ -1111,6 +1112,33 @@ impl Document {
             at = swatch.colour.tinted(*tint);
         }
         at
+    }
+
+    /// A paint with every swatch reference in it replaced by what it stands
+    /// for — **including in a gradient's stops**.
+    ///
+    /// The paint-shaped half of [`Self::resolve_colour`], and it exists so that
+    /// a gradient built out of the document's swatches behaves like everything
+    /// else built out of them: editing the swatch changes it, and the renderer
+    /// and the PDF writer never meet a name.
+    pub fn resolve_paint(&self, paint: &crate::paint::Paint) -> crate::paint::Paint {
+        use crate::paint::Paint;
+        match paint {
+            Paint::Solid(colour) => Paint::Solid(self.resolve_colour(colour)),
+            Paint::Gradient(gradient) => {
+                let mut flattened = gradient.clone();
+                let stops = gradient
+                    .stops()
+                    .iter()
+                    .map(|stop| crate::paint::Stop {
+                        at: stop.at,
+                        colour: self.resolve_colour(&stop.colour),
+                    })
+                    .collect();
+                flattened.set_stops(stops);
+                Paint::Gradient(flattened)
+            }
+        }
     }
 
     // --- threaded text ------------------------------------------------
@@ -1943,7 +1971,7 @@ impl Document {
             bounds,
             kind: FrameKind::Group(std::mem::take(&mut members)),
             transform: Transform::IDENTITY,
-            fill: tessera_color::Color::BLACK,
+            fill: Paint::Solid(tessera_color::Color::BLACK),
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
@@ -2114,6 +2142,20 @@ impl Document {
 /// count expects to see.
 fn uses_swatch(colour: &Color, name: &str) -> bool {
     matches!(colour, Color::Swatch { name: n, .. } if n == name)
+}
+
+/// Whether a paint names a swatch — **including inside a gradient's stops**.
+///
+/// A gradient built out of the document's swatches is one of the reasons stops
+/// hold colours rather than values, and a count that looked only at the solid
+/// case would tell somebody that deleting a swatch costs nothing when it would
+/// break every gradient using it.
+fn paint_uses_swatch(paint: &crate::paint::Paint, name: &str) -> bool {
+    use crate::paint::Paint;
+    match paint {
+        Paint::Solid(colour) => uses_swatch(colour, name),
+        Paint::Gradient(g) => g.stops().iter().any(|s| uses_swatch(&s.colour, name)),
+    }
 }
 
 /// Whether `point` lands on `frame`, accounting for its rotation.
@@ -2519,7 +2561,7 @@ mod tests {
             },
             kind: FrameKind::Rectangle,
             transform: Transform::IDENTITY,
-            fill: Color::BLACK,
+            fill: Paint::Solid(Color::BLACK),
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
@@ -2675,7 +2717,7 @@ mod tests {
             },
             kind: FrameKind::Rectangle,
             transform: Transform::IDENTITY,
-            fill: tessera_color::Color::BLACK,
+            fill: Paint::Solid(tessera_color::Color::BLACK),
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
@@ -2741,7 +2783,7 @@ mod tests {
             },
             kind: FrameKind::Rectangle,
             transform: Transform::IDENTITY,
-            fill: tessera_color::Color::BLACK,
+            fill: Paint::Solid(tessera_color::Color::BLACK),
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
@@ -2764,7 +2806,7 @@ mod tests {
             bounds,
             kind,
             transform: Transform::IDENTITY,
-            fill: tessera_color::Color::BLACK,
+            fill: Paint::Solid(tessera_color::Color::BLACK),
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
@@ -4644,23 +4686,23 @@ mod tests {
         let frames_before = doc.frames.len();
 
         // Edit the master item.
-        doc.frame_mut(item).expect("frame").fill = Color::Rgb {
+        doc.frame_mut(item).expect("frame").fill = Paint::Solid(Color::Rgb {
             r: 1.0,
             g: 0.0,
             b: 0.0,
             a: 1.0,
-        };
+        });
 
         assert_eq!(doc.frames.len(), frames_before, "no copy was ever made");
         let (id, _, _) = doc.inherited_by(page)[0];
         assert_eq!(
             doc.frame(id).expect("frame").fill,
-            Color::Rgb {
+            Paint::Solid(Color::Rgb {
                 r: 1.0,
                 g: 0.0,
                 b: 0.0,
                 a: 1.0
-            },
+            }),
             "so the page shows the change"
         );
     }
@@ -4822,21 +4864,21 @@ mod tests {
         doc.apply_master(page, Some(master));
         let local = doc.override_master_item(page, item).expect("a copy");
 
-        doc.frame_mut(local).expect("frame").fill = Color::Rgb {
+        doc.frame_mut(local).expect("frame").fill = Paint::Solid(Color::Rgb {
             r: 0.0,
             g: 1.0,
             b: 0.0,
             a: 1.0,
-        };
+        });
 
         assert_ne!(
             doc.frame(item).expect("frame").fill,
-            Color::Rgb {
+            Paint::Solid(Color::Rgb {
                 r: 0.0,
                 g: 1.0,
                 b: 0.0,
                 a: 1.0
-            },
+            }),
             "the master is not the copy"
         );
     }
@@ -5169,14 +5211,14 @@ mod tests {
         let page = doc.page_ids().next().expect("a page");
         let ids: Vec<FrameId> = (0..3).map(|_| frame_on(&mut doc, page)).collect();
         for id in &ids {
-            doc.frame_mut(*id).expect("frame").fill = named.clone();
+            doc.frame_mut(*id).expect("frame").fill = Paint::Solid(named.clone());
         }
 
         doc.set_swatch(Swatch::new("Brand", blue()));
 
         for id in &ids {
             let fill = doc.frame(*id).expect("frame").fill.clone();
-            assert_eq!(doc.resolve_colour(&fill), blue());
+            assert_eq!(doc.resolve_paint(&fill), Paint::Solid(blue()));
         }
     }
 
@@ -5255,8 +5297,8 @@ mod tests {
         let a = frame_on(&mut doc, page);
         let b = frame_on(&mut doc, page);
         frame_on(&mut doc, page);
-        doc.frame_mut(a).expect("frame").fill = named.clone();
-        doc.frame_mut(b).expect("frame").fill = named;
+        doc.frame_mut(a).expect("frame").fill = Paint::Solid(named.clone());
+        doc.frame_mut(b).expect("frame").fill = Paint::Solid(named);
 
         assert_eq!(doc.uses_of_swatch("Brand"), 2);
     }

@@ -8,6 +8,7 @@
 
 use tessera_color::Color;
 use tessera_document::nodes::{LineCap, LineJoin, Stroke};
+use tessera_document::paint::Paint;
 use tessera_geometry::{DocRect, ViewTransform};
 use tessera_layout::resolve::{ResolvedDocument, ResolvedKind};
 use vello::kurbo::{Affine, Ellipse, Line, Rect, Stroke as KurboStroke};
@@ -34,6 +35,42 @@ fn to_join(join: LineJoin) -> vello::kurbo::Join {
 fn to_peniko(color: &Color) -> AlphaColor<Srgb> {
     let [r, g, b, a] = color.to_rgb_f32();
     AlphaColor::new([r, g, b, a])
+}
+
+/// What vello paints a shape with.
+///
+/// The gradient is built in the **frame's own space**, which is the space the
+/// shape is given in, so the ramp is carried by the same transform that carries
+/// the object: a rotated frame rotates its gradient, and a resized one restretches
+/// it, without either being rewritten.
+fn brush_of(paint: &Paint, bounds: DocRect) -> vello::peniko::Brush {
+    use tessera_document::paint::Ramp;
+    use vello::peniko::{Brush, Gradient};
+
+    let gradient = match paint {
+        Paint::Solid(colour) => return Brush::Solid(to_peniko(colour)),
+        Paint::Gradient(g) => g,
+    };
+
+    let (from, to) = gradient.axis(bounds);
+    let mut built = match gradient.ramp {
+        Ramp::Linear { .. } => Gradient::new_linear((from.x, from.y), (to.x, to.y)),
+        // A radial ramp has no direction, so `axis` hands back the centre and a
+        // point one radius away; only the distance is used.
+        Ramp::Radial => Gradient::new_radial((from.x, from.y), gradient.radius(bounds) as f32),
+    };
+    built = built.with_stops(
+        gradient
+            .stops()
+            .iter()
+            .map(|stop| vello::peniko::ColorStop {
+                offset: stop.at,
+                color: to_peniko(&stop.colour).into(),
+            })
+            .collect::<Vec<_>>()
+            .as_slice(),
+    );
+    Brush::Gradient(built)
 }
 
 /// The narrowest a stroke may be drawn, in **document** units at `view`.
@@ -416,7 +453,13 @@ fn build_inner(
             }
 
             ResolvedKind::Rectangle { fill, stroke } => {
-                scene.fill(Fill::NonZero, transform, to_peniko(fill), None, &rect);
+                scene.fill(
+                    Fill::NonZero,
+                    transform,
+                    &brush_of(fill, item.bounds),
+                    None,
+                    &rect,
+                );
                 if let Some(s) = stroke {
                     scene.stroke(
                         &stroke_of(s),
@@ -429,7 +472,13 @@ fn build_inner(
             }
             ResolvedKind::Ellipse { fill, stroke } => {
                 let ellipse = Ellipse::from_rect(rect);
-                scene.fill(Fill::NonZero, transform, to_peniko(fill), None, &ellipse);
+                scene.fill(
+                    Fill::NonZero,
+                    transform,
+                    &brush_of(fill, item.bounds),
+                    None,
+                    &ellipse,
+                );
                 if let Some(s) = stroke {
                     scene.stroke(
                         &stroke_of(s),
@@ -445,7 +494,16 @@ fn build_inner(
                 // the frame's origin before the camera transform applies.
                 let placed = transform * Affine::translate((item.bounds.x, item.bounds.y));
                 if let Some(f) = fill {
-                    scene.fill(Fill::NonZero, placed, to_peniko(f), None, path);
+                    // The path is drawn in a translated space, so the gradient
+                    // is built about the origin rather than about the frame's
+                    // place on the page.
+                    let local = DocRect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: item.bounds.width,
+                        height: item.bounds.height,
+                    };
+                    scene.fill(Fill::NonZero, placed, &brush_of(f, local), None, path);
                 }
                 if let Some(s) = stroke {
                     // A path's alignment is not applied: offsetting an
@@ -637,7 +695,7 @@ mod tests {
 
         let plain = one_item(
             ResolvedKind::Rectangle {
-                fill: Color::BLACK,
+                fill: Paint::Solid(Color::BLACK),
                 stroke: None,
             },
             DocRect {
@@ -669,7 +727,7 @@ mod tests {
 
         let plain = one_item(
             ResolvedKind::Rectangle {
-                fill: Color::BLACK,
+                fill: Paint::Solid(Color::BLACK),
                 stroke: None,
             },
             DocRect {
@@ -701,7 +759,7 @@ mod tests {
 
         let mut doc = one_item(
             ResolvedKind::Rectangle {
-                fill: Color::BLACK,
+                fill: Paint::Solid(Color::BLACK),
                 stroke: None,
             },
             DocRect {
@@ -731,7 +789,7 @@ mod tests {
         let empty = empty_scene();
         let one = one_item(
             ResolvedKind::Rectangle {
-                fill: Color::BLACK,
+                fill: Paint::Solid(Color::BLACK),
                 stroke: None,
             },
             DocRect {
@@ -751,13 +809,124 @@ mod tests {
     }
 
     #[test]
+    fn a_gradient_fill_reaches_the_encoding_as_a_ramp() {
+        // A gradient drawn as a flat colour is the failure that would go
+        // unnoticed, so this asks the encoding whether a ramp is really there.
+        use tessera_document::paint::{Gradient, Ramp};
+
+        let bounds = DocRect {
+            x: 10.0,
+            y: 10.0,
+            width: 50.0,
+            height: 50.0,
+        };
+        let solid = one_item(
+            ResolvedKind::Rectangle {
+                fill: Paint::Solid(Color::BLACK),
+                stroke: None,
+            },
+            bounds,
+        );
+        let ramped = one_item(
+            ResolvedKind::Rectangle {
+                fill: Paint::Gradient(Gradient::black_to_white(Ramp::Linear { angle: 0.0 })),
+                stroke: None,
+            },
+            bounds,
+        );
+
+        let flat = build_scene(&solid, ViewTransform::default());
+        let gradient = build_scene(&ramped, ViewTransform::default());
+        assert!(
+            gradient.encoding().resources.color_stops.len()
+                > flat.encoding().resources.color_stops.len(),
+            "no colour ramp reached the encoding"
+        );
+    }
+
+    #[test]
+    fn a_radial_gradient_reaches_the_encoding_too() {
+        use tessera_document::paint::{Gradient, Ramp};
+
+        let doc = one_item(
+            ResolvedKind::Ellipse {
+                fill: Paint::Gradient(Gradient::black_to_white(Ramp::Radial)),
+                stroke: None,
+            },
+            DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 40.0,
+                height: 40.0,
+            },
+        );
+        assert!(
+            !build_scene(&doc, ViewTransform::default())
+                .encoding()
+                .resources
+                .color_stops
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_gradient_runs_across_the_object_it_fills_rather_than_across_the_page() {
+        // The reason the ramp is expressed as an angle and built in the frame’s
+        // own space: two frames of the same size at different places on the page
+        // must produce the same ramp, moved.
+        use tessera_document::paint::{Gradient, Ramp};
+
+        let ramp = Paint::Gradient(Gradient::black_to_white(Ramp::Linear { angle: 0.0 }));
+        let near = brush_of(
+            &ramp,
+            DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 50.0,
+                height: 50.0,
+            },
+        );
+        let far = brush_of(
+            &ramp,
+            DocRect {
+                x: 300.0,
+                y: 400.0,
+                width: 50.0,
+                height: 50.0,
+            },
+        );
+
+        let ends = |brush: &vello::peniko::Brush| match brush {
+            vello::peniko::Brush::Gradient(g) => match g.kind {
+                vello::peniko::GradientKind::Linear(line) => (line.start, line.end),
+                _ => panic!("a linear ramp"),
+            },
+            _ => panic!("a gradient"),
+        };
+        let (a0, a1) = ends(&near);
+        let (b0, b1) = ends(&far);
+        assert!(
+            (a1.x - a0.x - 50.0).abs() < 1e-9,
+            "the near ramp spans its box"
+        );
+        assert!(
+            ((b1.x - b0.x) - (a1.x - a0.x)).abs() < 1e-9,
+            "the far one spans the same distance"
+        );
+        assert!(
+            (b0.x - a0.x - 300.0).abs() < 1e-9,
+            "and it moved with the object rather than staying put"
+        );
+    }
+
+    #[test]
     fn a_clip_really_reaches_the_encoding() {
         // Preview must show the trim as it will print, not merely hide the
         // furniture around it — so the clip has to be in the scene, not just
         // in the options struct.
         let doc = one_item(
             ResolvedKind::Rectangle {
-                fill: Color::BLACK,
+                fill: Paint::Solid(Color::BLACK),
                 stroke: None,
             },
             DocRect {
@@ -786,7 +955,7 @@ mod tests {
     fn leaving_the_rules_out_draws_less() {
         let mut doc = one_item(
             ResolvedKind::Rectangle {
-                fill: Color::BLACK,
+                fill: Paint::Solid(Color::BLACK),
                 stroke: None,
             },
             DocRect {
@@ -886,7 +1055,7 @@ mod tests {
         let with_rect = build_scene(
             &one_item(
                 ResolvedKind::Rectangle {
-                    fill: Color::BLACK,
+                    fill: Paint::Solid(Color::BLACK),
                     stroke: None,
                 },
                 DocRect {
@@ -916,7 +1085,7 @@ mod tests {
         let filled = build_scene(
             &one_item(
                 ResolvedKind::Rectangle {
-                    fill: Color::BLACK,
+                    fill: Paint::Solid(Color::BLACK),
                     stroke: None,
                 },
                 bounds,
@@ -926,7 +1095,7 @@ mod tests {
         let stroked = build_scene(
             &one_item(
                 ResolvedKind::Rectangle {
-                    fill: Color::BLACK,
+                    fill: Paint::Solid(Color::BLACK),
                     stroke: Some(Stroke::new(Color::BLACK, 2.0)),
                 },
                 bounds,
@@ -951,7 +1120,7 @@ mod tests {
         let rect = build_scene(
             &one_item(
                 ResolvedKind::Rectangle {
-                    fill: Color::BLACK,
+                    fill: Paint::Solid(Color::BLACK),
                     stroke: None,
                 },
                 bounds,
@@ -961,7 +1130,7 @@ mod tests {
         let ellipse = build_scene(
             &one_item(
                 ResolvedKind::Ellipse {
-                    fill: Color::BLACK,
+                    fill: Paint::Solid(Color::BLACK),
                     stroke: None,
                 },
                 bounds,

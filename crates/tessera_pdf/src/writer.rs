@@ -98,7 +98,8 @@ pub fn export(resolved: &ResolvedDocument) -> Result<Vec<u8>, PdfError> {
 
     let fonts = collect_fonts(resolved, &mut alloc)?;
     let states = collect_states(resolved, &mut alloc);
-    let content = build_content(resolved, page, &fonts, &states)?;
+    let shadings = collect_shadings(resolved, page, &mut alloc);
+    let content = build_content(resolved, page, &fonts, &states, &shadings)?;
 
     pdf.catalog(catalog_id).pages(page_tree_id);
     pdf.pages(page_tree_id).kids([page_id]).count(1);
@@ -142,6 +143,14 @@ pub fn export(resolved: &ResolvedDocument) -> Result<Vec<u8>, PdfError> {
             }
             state_dict.finish();
         }
+        let used: Vec<&Shading> = shadings.iter().flatten().collect();
+        if !used.is_empty() {
+            let mut shading_dict = resources.shadings();
+            for shading in &used {
+                shading_dict.pair(Name(shading.resource.as_bytes()), shading.id);
+            }
+            shading_dict.finish();
+        }
         resources.finish();
         page_obj.finish();
     }
@@ -156,6 +165,9 @@ pub fn export(resolved: &ResolvedDocument) -> Result<Vec<u8>, PdfError> {
     }
     for state in &states {
         write_state(&mut pdf, state);
+    }
+    for shading in shadings.iter().flatten() {
+        write_shading(&mut pdf, shading);
     }
 
     Ok(pdf.finish())
@@ -228,6 +240,159 @@ fn to_pdf_blend(mode: tessera_document::blending::BlendMode) -> BlendMode {
         Ours::Screen => BlendMode::Screen,
         Ours::Overlay => BlendMode::Overlay,
     }
+}
+
+/// One `/Shading` the page will refer to by name, and the function objects it
+/// needs.
+struct Shading {
+    resource: String,
+    id: Ref,
+    /// The stops, as the exponential functions a PDF ramp is made of, plus the
+    /// stitching function that joins them. One `Ref` per interval and one for
+    /// the join — a PDF shading interpolates between *two* colours per
+    /// function, so a three-stop ramp is two functions stitched.
+    pieces: Vec<Ref>,
+    join: Option<Ref>,
+    kind: ShadingKind,
+}
+
+/// The geometry of one shading, already in PDF space.
+struct ShadingKind {
+    axial: bool,
+    coords: Vec<f32>,
+    stops: Vec<([f32; 3], f32)>,
+}
+
+/// The distinct shadings the document needs, one per gradient-filled object.
+///
+/// Not deduplicated, because a shading carries its object's geometry: the same
+/// ramp on two differently sized frames is two different sets of coordinates.
+fn collect_shadings(
+    resolved: &ResolvedDocument,
+    page: DocRect,
+    alloc: &mut impl FnMut() -> Ref,
+) -> Vec<Option<Shading>> {
+    let mut out = Vec::with_capacity(resolved.items.len());
+
+    for item in &resolved.items {
+        let fill = match &item.kind {
+            ResolvedKind::Rectangle { fill, .. } | ResolvedKind::Ellipse { fill, .. } => Some(fill),
+            ResolvedKind::Path { fill, .. } => fill.as_ref(),
+            _ => None,
+        };
+        let Some(gradient) = fill.and_then(|f| f.gradient()) else {
+            out.push(None);
+            continue;
+        };
+
+        let (from, to) = gradient.axis(item.bounds);
+        let axial = matches!(gradient.ramp, tessera_document::paint::Ramp::Linear { .. });
+        // Into PDF space, where the origin is at the bottom. The same flip the
+        // shapes get, so the ramp cannot end up running the other way from the
+        // object it fills.
+        let flip = |y: f64| to_pdf_y(page, y, 0.0) as f32;
+        let coords = if axial {
+            vec![from.x as f32, flip(from.y), to.x as f32, flip(to.y)]
+        } else {
+            // Centre, inner radius, centre, outer radius: a PDF radial shading
+            // is between two circles, and a plain radial ramp is the degenerate
+            // case where the inner one is a point.
+            vec![
+                from.x as f32,
+                flip(from.y),
+                0.0,
+                from.x as f32,
+                flip(from.y),
+                gradient.radius(item.bounds) as f32,
+            ]
+        };
+
+        let stops: Vec<([f32; 3], f32)> = gradient
+            .stops()
+            .iter()
+            .map(|stop| {
+                let [r, g, b, _] = stop.colour.to_rgb_f32();
+                ([r, g, b], stop.at)
+            })
+            .collect();
+
+        let pieces: Vec<Ref> = (0..stops.len().saturating_sub(1))
+            .map(|_| alloc())
+            .collect();
+        // A single interval needs no stitching: the one exponential function
+        // *is* the ramp, and wrapping it would be a dictionary describing
+        // nothing.
+        let join = if pieces.len() > 1 {
+            Some(alloc())
+        } else {
+            None
+        };
+
+        let next = out
+            .iter()
+            .filter(|s: &&Option<Shading>| s.is_some())
+            .count();
+        out.push(Some(Shading {
+            resource: format!("Sh{next}"),
+            id: alloc(),
+            pieces,
+            join,
+            kind: ShadingKind {
+                axial,
+                coords,
+                stops,
+            },
+        }));
+    }
+
+    out
+}
+
+fn write_shading(pdf: &mut Pdf, shading: &Shading) {
+    use pdf_writer::types::FunctionShadingType;
+
+    // One exponential function per interval, each interpolating between the two
+    // colours at its ends. `N = 1` is a straight ramp; anything else would be a
+    // curve nobody asked for.
+    for (i, piece) in shading.pieces.iter().enumerate() {
+        let (from, _) = shading.kind.stops[i];
+        let (to, _) = shading.kind.stops[i + 1];
+        let mut function = pdf.exponential_function(*piece);
+        function.domain([0.0, 1.0]).c0(from).c1(to).n(1.0);
+        function.finish();
+    }
+
+    if let Some(join) = shading.join {
+        // Where each interval starts, in the ramp's own 0..1 domain. The first
+        // and last stop positions are the domain's ends and so are not bounds.
+        let bounds: Vec<f32> = shading.kind.stops[1..shading.kind.stops.len() - 1]
+            .iter()
+            .map(|(_, at)| *at)
+            .collect();
+        let encode: Vec<f32> = shading.pieces.iter().flat_map(|_| [0.0f32, 1.0]).collect();
+        let mut function = pdf.stitching_function(join);
+        function
+            .domain([0.0, 1.0])
+            .functions(shading.pieces.iter().copied())
+            .bounds(bounds)
+            .encode(encode);
+        function.finish();
+    }
+
+    let mut written = pdf.function_shading(shading.id);
+    written.shading_type(if shading.kind.axial {
+        FunctionShadingType::Axial
+    } else {
+        FunctionShadingType::Radial
+    });
+    written.color_space().device_rgb();
+    written
+        .coords(shading.kind.coords.iter().copied())
+        // Extended at both ends, so the first and last colours run to the edge
+        // of the shape rather than leaving it unpainted where the ramp stops.
+        .extend([true, true])
+        .function(shading.join.unwrap_or(shading.pieces[0]));
+    written.finish();
 }
 
 fn collect_fonts(
@@ -311,10 +476,12 @@ fn build_content(
     page: DocRect,
     fonts: &[EmbeddedFont],
     states: &[GraphicsState],
+    shadings: &[Option<Shading>],
 ) -> Result<Vec<u8>, PdfError> {
     let mut content = Content::new();
 
-    for item in &resolved.items {
+    for (index, item) in resolved.items.iter().enumerate() {
+        let shading = shadings.get(index).and_then(|s| s.as_ref());
         // An object at no opacity is not written, exactly as it is not drawn.
         // Writing it at `/ca 0` would put ink-free paint in the file for a
         // press to process and a viewer to composite, for no visible result.
@@ -353,8 +520,6 @@ fn build_content(
 
             ResolvedKind::Rectangle { fill, stroke } => {
                 content.save_state();
-                let [r, g, b, _] = fill.to_rgb_f32();
-                content.set_fill_rgb(r, g, b);
                 let rect = |c: &mut Content, b: DocRect| {
                     c.rect(
                         b.x as f32,
@@ -364,31 +529,53 @@ fn build_content(
                     );
                 };
 
-                match stroke {
+                match shading {
+                    // A gradient is painted by clipping to the shape and
+                    // running the shading over it, which is what `sh` does: it
+                    // fills the current clip, so the clip *is* the shape.
+                    Some(sh) => {
+                        content.save_state();
+                        rect(&mut content, item.bounds);
+                        content.clip_nonzero();
+                        content.end_path();
+                        content.shading(Name(sh.resource.as_bytes()));
+                        content.restore_state();
+                    }
+                    None => {
+                        set_solid_fill(&mut content, fill);
+                        rect(&mut content, item.bounds);
+                        content.fill_nonzero();
+                    }
+                }
+
+                if let Some(s) = stroke {
                     // The fill and the stroke follow different rectangles once
                     // the stroke is aligned inside or outside, so they cannot
                     // share one path.
-                    Some(s) => {
-                        rect(&mut content, item.bounds);
-                        content.fill_nonzero();
-                        apply_stroke(&mut content, s);
-                        rect(&mut content, offset_rect(item.bounds, s.offset()));
-                        content.stroke();
-                    }
-                    None => {
-                        rect(&mut content, item.bounds);
-                        content.fill_nonzero();
-                    }
+                    apply_stroke(&mut content, s);
+                    rect(&mut content, offset_rect(item.bounds, s.offset()));
+                    content.stroke();
                 }
                 content.restore_state();
             }
 
             ResolvedKind::Ellipse { fill, stroke } => {
                 content.save_state();
-                let [r, g, b, _] = fill.to_rgb_f32();
-                content.set_fill_rgb(r, g, b);
-                ellipse_path(&mut content, page, item.bounds);
-                content.fill_nonzero();
+                match shading {
+                    Some(sh) => {
+                        content.save_state();
+                        ellipse_path(&mut content, page, item.bounds);
+                        content.clip_nonzero();
+                        content.end_path();
+                        content.shading(Name(sh.resource.as_bytes()));
+                        content.restore_state();
+                    }
+                    None => {
+                        set_solid_fill(&mut content, fill);
+                        ellipse_path(&mut content, page, item.bounds);
+                        content.fill_nonzero();
+                    }
+                }
                 if let Some(s) = stroke {
                     apply_stroke(&mut content, s);
                     ellipse_path(&mut content, page, offset_rect(item.bounds, s.offset()));
@@ -401,9 +588,14 @@ fn build_content(
                 content.save_state();
                 emit_path(&mut content, page, item.bounds, path);
                 match (fill, stroke) {
+                    (Some(_), _) if shading.is_some() => {
+                        let sh = shading.expect("just checked");
+                        content.clip_nonzero();
+                        content.end_path();
+                        content.shading(Name(sh.resource.as_bytes()));
+                    }
                     (Some(f), _) => {
-                        let [r, g, b, _] = f.to_rgb_f32();
-                        content.set_fill_rgb(r, g, b);
+                        set_solid_fill(&mut content, f);
                         content.fill_nonzero();
                     }
                     (None, Some(s)) => {
@@ -467,6 +659,22 @@ fn apply_stroke(content: &mut Content, stroke: &Stroke) {
 ///
 /// Held at the point where an inside stroke would turn the rectangle inside
 /// out, exactly as the screen renderer holds it.
+/// Set the fill colour from a paint that is a solid one.
+///
+/// A gradient never reaches here — the arms that paint one take the shading
+/// path instead — so this is only for a paint that says it is solid. It falls
+/// back to the ramp’s representative colour rather than to black, so that if a
+/// gradient ever did arrive the page would be wrong in a way somebody notices
+/// rather than silently black.
+fn set_solid_fill(content: &mut Content, paint: &tessera_document::paint::Paint) {
+    let colour = paint
+        .solid()
+        .cloned()
+        .unwrap_or_else(|| paint.representative());
+    let [r, g, b, _] = colour.to_rgb_f32();
+    content.set_fill_rgb(r, g, b);
+}
+
 fn offset_rect(bounds: DocRect, offset: f64) -> DocRect {
     let limit = (bounds.width.min(bounds.height) / 2.0).max(0.0);
     let o = offset.max(-limit);

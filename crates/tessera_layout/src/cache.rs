@@ -74,6 +74,7 @@ impl ResolveCache {
 
 #[cfg(test)]
 mod tests {
+    use tessera_document::paint::Paint;
     /// The regression this cache once caused.
     ///
     /// The page rectangles travel inside the resolved document, so a change
@@ -124,7 +125,7 @@ mod tests {
                 },
                 kind: FrameKind::Rectangle,
                 transform: Transform::IDENTITY,
-                fill: Color::BLACK,
+                fill: Paint::Solid(Color::BLACK),
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,

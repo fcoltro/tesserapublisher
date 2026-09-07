@@ -16,6 +16,7 @@ pub mod ids;
 pub mod links;
 pub mod masters;
 pub mod nodes;
+pub mod paint;
 pub mod path;
 
 pub use document::{Document, StoryMap, ZMove};
