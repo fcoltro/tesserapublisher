@@ -45,6 +45,13 @@ pub struct Palette {
     pub accent_hover: Color32,
     pub error: Color32,
     pub frame_edge: Color32,
+    /// The one colour that says which theme is on, used by the theme switch.
+    ///
+    /// Deliberately **not** the accent, and deliberately different in each
+    /// theme: a switch drawn in the accent looks like every other active
+    /// control, and the whole job of this one is to be recognisable at a
+    /// glance across a menu bar. Violet for night, amber for day.
+    pub mode_signal: Color32,
 }
 
 /// Which palette everything is drawn from at the moment.
@@ -84,57 +91,59 @@ impl Palette {
 
     pub const DARK: Self = Self {
         steps: [
-            Color32::from_rgb(0x10, 0x0F, 0x0F),
-            Color32::from_rgb(0x16, 0x15, 0x14),
-            Color32::from_rgb(0x1C, 0x1B, 0x1A),
-            Color32::from_rgb(0x23, 0x21, 0x20),
-            Color32::from_rgb(0x2A, 0x28, 0x27),
-            Color32::from_rgb(0x33, 0x30, 0x30),
-            Color32::from_rgb(0x3E, 0x3B, 0x3A),
-            Color32::from_rgb(0x6A, 0x65, 0x64),
+            Color32::from_rgb(0x08, 0x0B, 0x14),
+            Color32::from_rgb(0x0D, 0x11, 0x1B),
+            Color32::from_rgb(0x12, 0x16, 0x21),
+            Color32::from_rgb(0x18, 0x1D, 0x29),
+            Color32::from_rgb(0x1F, 0x24, 0x31),
+            Color32::from_rgb(0x27, 0x2D, 0x3B),
+            Color32::from_rgb(0x32, 0x39, 0x48),
+            Color32::from_rgb(0x5C, 0x65, 0x78),
             Color32::from_rgb(0x5B, 0x8D, 0xEF),
             Color32::from_rgb(0x7A, 0xA3, 0xF4),
-            Color32::from_rgb(0x96, 0x90, 0x8E),
-            Color32::from_rgb(0xED, 0xEA, 0xE8),
+            Color32::from_rgb(0x8B, 0x93, 0xA3),
+            Color32::from_rgb(0xE8, 0xEB, 0xF2),
         ],
-        canvas_bg: Color32::from_rgb(0x10, 0x0F, 0x0F),
+        canvas_bg: Color32::from_rgb(0x12, 0x12, 0x12),
         // Desaturated from the blue this used to be. A saturated blue on a
         // near-black ground vibrates at small sizes, and step 9 is what a
         // one-pixel selection edge is drawn in.
         accent: Color32::from_rgb(0x5B, 0x8D, 0xEF),
         accent_hover: Color32::from_rgb(0x7A, 0xA3, 0xF4),
         error: Color32::from_rgb(0xF0, 0x8C, 0x82),
-        frame_edge: Color32::from_rgb(0x6A, 0x65, 0x64),
+        frame_edge: Color32::from_rgb(0x5C, 0x65, 0x78),
+        mode_signal: Color32::from_rgb(0xA7, 0x8B, 0xFA),
     };
 
     pub const LIGHT: Self = Self {
         steps: [
-            Color32::from_rgb(0xFC, 0xFB, 0xFB),
-            Color32::from_rgb(0xF6, 0xF4, 0xF3),
-            Color32::from_rgb(0xEE, 0xEB, 0xEA),
-            Color32::from_rgb(0xE6, 0xE2, 0xE1),
-            Color32::from_rgb(0xDD, 0xD9, 0xD7),
-            Color32::from_rgb(0xD1, 0xCC, 0xCA),
-            Color32::from_rgb(0xBD, 0xB7, 0xB5),
-            Color32::from_rgb(0x8B, 0x85, 0x83),
+            Color32::from_rgb(0xFB, 0xFC, 0xFE),
+            Color32::from_rgb(0xF4, 0xF6, 0xFA),
+            Color32::from_rgb(0xEE, 0xF0, 0xF5),
+            Color32::from_rgb(0xE4, 0xE7, 0xEE),
+            Color32::from_rgb(0xDA, 0xDE, 0xE7),
+            Color32::from_rgb(0xCD, 0xD2, 0xDD),
+            Color32::from_rgb(0xB8, 0xBE, 0xCC),
+            Color32::from_rgb(0x86, 0x8D, 0x9E),
             Color32::from_rgb(0x2C, 0x5F, 0xC4),
             Color32::from_rgb(0x23, 0x4E, 0xA6),
-            Color32::from_rgb(0x5F, 0x58, 0x56),
-            Color32::from_rgb(0x1B, 0x18, 0x18),
+            Color32::from_rgb(0x5A, 0x60, 0x6E),
+            Color32::from_rgb(0x16, 0x19, 0x21),
         ],
         // A light grey, the shade every layout tool has used for a
         // pasteboard. Dark enough to separate from paper, light enough that a
         // blue selection edge still reads on it — a mid grey satisfies the
         // first and fails the second, because a saturated hue sits at about
         // the luminance of a mid grey by definition.
-        canvas_bg: Color32::from_rgb(0xC9, 0xC4, 0xC2),
+        canvas_bg: Color32::from_rgb(0xC6, 0xC6, 0xC6),
         accent: Color32::from_rgb(0x2C, 0x5F, 0xC4),
         accent_hover: Color32::from_rgb(0x23, 0x4E, 0xA6),
         error: Color32::from_rgb(0xA8, 0x24, 0x18),
         // Dark enough to read on the pasteboard as well as on paper: an
         // empty text frame is invisible without its edge, and it can sit in
         // either place.
-        frame_edge: Color32::from_rgb(0x6E, 0x68, 0x66),
+        frame_edge: Color32::from_rgb(0x5F, 0x65, 0x75),
+        mode_signal: Color32::from_rgb(0xD9, 0x7A, 0x06),
     };
 }
 
@@ -262,6 +271,11 @@ impl Theme {
     /// Labels and units. Step 11.
     pub fn text_muted() -> Color32 {
         palette().step(11)
+    }
+
+    /// The colour that says which theme is on. See `view::identity`.
+    pub fn mode_signal() -> Color32 {
+        palette().mode_signal
     }
 
     pub fn accent() -> Color32 {
@@ -700,20 +714,43 @@ mod tests {
     }
 
     #[test]
-    fn the_neutral_is_warm_in_both_palettes() {
-        // A cool grey beside a page proof makes warm paper look yellow, which
-        // is a judgement the interface must not make for the user.
+    fn the_chrome_is_cool_in_both_palettes() {
+        // The blue bias is the design, not a rounding of it: it is what stops
+        // the accent reading as a stain on grey, and a neutral near-black with
+        // the same accent is a different and worse interface. See
+        // `docs/LAYOUTPRO.md`.
         for (name, p) in [("dark", Palette::DARK), ("light", Palette::LIGHT)] {
             for n in 1..=8 {
                 let c = p.step(n);
                 assert!(
-                    c.r() >= c.b(),
-                    "{name}: step {n} is cool ({}, {}, {})",
+                    c.b() > c.r(),
+                    "{name}: step {n} is warm ({}, {}, {})",
                     c.r(),
                     c.g(),
                     c.b()
                 );
             }
+        }
+    }
+
+    #[test]
+    fn the_pasteboard_is_neutral_in_both_palettes() {
+        // **The one surface that does not follow the chrome.** A cool surround
+        // makes warm paper look yellow and a warm one makes it look blue, and
+        // judging the paper is the user’s job. ISO 3664 asks for a neutral
+        // grey around a proof for exactly this reason, so the pasteboard is
+        // neutral in both themes while everything further from the page is
+        // free to be the blue the design asks for.
+        for (name, p) in [("dark", Palette::DARK), ("light", Palette::LIGHT)] {
+            let c = p.canvas_bg;
+            let spread = c.r().max(c.g()).max(c.b()) - c.r().min(c.g()).min(c.b());
+            assert!(
+                spread <= 2,
+                "{name}: the pasteboard is tinted ({}, {}, {})",
+                c.r(),
+                c.g(),
+                c.b()
+            );
         }
     }
 

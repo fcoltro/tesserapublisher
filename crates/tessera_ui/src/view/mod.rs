@@ -11,6 +11,7 @@ pub mod control;
 pub mod document_tabs;
 pub mod export_dialog;
 pub mod glass;
+pub mod identity;
 pub mod layers;
 pub mod pages;
 pub mod palette;
@@ -65,7 +66,10 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
 
     accelerators(ui, state);
 
-    Panel::top("menu").show(ui, |ui| menu_bar(ui, state));
+    let menu = Panel::top("menu").show(ui, |ui| menu_bar(ui, state));
+    // Over the panel rather than inside it: the hairline runs the full width of
+    // the window, and anything drawn inside stops at the panel's padding.
+    identity::hairline(ui, menu.response.rect);
 
     // The control bar, directly under the menu and always in the same place.
     // It describes whatever is selected, which is why the geometry fields no
@@ -316,6 +320,13 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
                 }
             });
         }
+
+        // Right-aligned, past the menus. The theme switch belongs on the bar
+        // rather than buried in the preferences: it is changed by daylight and
+        // by which room somebody is in, not once when the software is set up.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            identity::theme_switch(ui, state);
+        });
     });
 
     if let Some(run) = chosen {
