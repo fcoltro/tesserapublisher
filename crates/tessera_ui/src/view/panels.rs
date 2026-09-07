@@ -301,22 +301,37 @@ fn glyph_button(ui: &mut Ui, icon: crate::icons::Icon, tip: &str) -> egui::Respo
     response.on_hover_text(tip)
 }
 
-/// The nine-point reference proxy.
+/// How big the proxy is where there is room for it.
 ///
 /// Bigger than InDesign's, which is a grid of targets a few pixels across —
-/// small enough that hitting the wrong one is easy and noticing that you did
-/// is not. Returns whether the anchor changed.
+/// small enough that hitting the wrong one is easy and noticing that you did is
+/// not.
+pub const PROXY: f32 = 45.0;
+
+/// The nine-point reference proxy, at [`PROXY`].
 pub fn reference_proxy(ui: &mut Ui, anchor: &mut Anchor) -> bool {
-    const CELL: f32 = 15.0;
-    let side = CELL * 3.0;
+    reference_proxy_sized(ui, anchor, PROXY)
+}
+
+/// The nine-point reference proxy, at a size the caller has room for.
+///
+/// **The size is asked for rather than assumed**, because the one caller
+/// without room for the full proxy is the control bar, and a widget that draws
+/// past the panel holding it does not overflow visibly — it is clipped. The
+/// bottom row of points simply was not there, which reads as the proxy being
+/// stuck rather than as the proxy being cut.
+///
+/// Returns whether the anchor changed.
+pub fn reference_proxy_sized(ui: &mut Ui, anchor: &mut Anchor, side: f32) -> bool {
+    let step = side / 3.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
     let mut changed = false;
 
     for (i, candidate) in Anchor::ALL.iter().enumerate() {
         let (col, row) = ((i % 3) as f32, (i / 3) as f32);
         let cell = egui::Rect::from_min_size(
-            rect.min + Vec2::new(col * CELL, row * CELL),
-            Vec2::splat(CELL),
+            rect.min + Vec2::new(col * step, row * step),
+            Vec2::splat(step),
         );
         let response = ui.interact(cell, ui.id().with(("anchor", i)), Sense::click());
         if response.clicked() {
@@ -332,8 +347,10 @@ pub fn reference_proxy(ui: &mut Ui, anchor: &mut Anchor) -> bool {
         } else {
             Theme::text_muted()
         };
-        ui.painter()
-            .circle_filled(cell.center(), if selected { 4.0 } else { 2.0 }, colour);
+        // Scaled with the grid: a fixed 4-point dot in a small proxy is a
+        // blob that touches its neighbours.
+        let dot = step / if selected { 3.75 } else { 7.5 };
+        ui.painter().circle_filled(cell.center(), dot, colour);
     }
 
     ui.painter().rect_stroke(
@@ -358,7 +375,7 @@ pub fn transform_row(
     frame: &tessera_document::nodes::Frame,
 ) {
     let mut anchor = state.anchor;
-    if reference_proxy(ui, &mut anchor) {
+    if reference_proxy_sized(ui, &mut anchor, crate::view::control::PROXY) {
         state.anchor = anchor;
     }
     crate::view::control::separator(ui);

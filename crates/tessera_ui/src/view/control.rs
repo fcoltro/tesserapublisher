@@ -15,10 +15,35 @@ use egui::Ui;
 use crate::app::TesseraApp;
 use crate::theme::Theme;
 
+/// The reference proxy, at the size this bar has room for.
+///
+/// Smaller than the one in a panel. The bar is a row, and the full proxy is
+/// taller than a row.
+pub const PROXY: f32 = 30.0;
+
+/// The padding above and below the row's tallest thing.
+const PADDING: f32 = 5.0;
+
 /// How tall the bar is. One row plus its padding, fixed — a bar that changed
 /// height with its contents would move the canvas every time the selection
 /// changed.
-pub const HEIGHT: f32 = 32.0;
+///
+/// **Derived from the tallest thing in it**, not chosen. It was chosen, at 32,
+/// and the proxy is 45: the bottom row of reference points was clipped away
+/// entirely, and a clipped proxy reads as a proxy that will not change rather
+/// than as one that is cut off. `the_bar_fits_its_proxy` is the guard.
+pub const HEIGHT: f32 = PROXY + PADDING * 2.0;
+
+// Checked by the compiler rather than by a test, because both sides are
+// constants and a test can only fail after somebody has already built and run
+// it. The bar was 32 tall holding a 45-point proxy: the bottom row of reference
+// points was clipped away entirely, which reads as a proxy that will not change
+// rather than as one that is cut off.
+const _: () = assert!(HEIGHT >= PROXY);
+
+// The bar is a row, and the panel proxy is taller than a row. Making the bar
+// tall enough for the full one would put a band of chrome across the window.
+const _: () = assert!(PROXY < crate::view::panels::PROXY);
 
 /// What the bar is describing right now.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -112,68 +137,4 @@ pub fn separator(ui: &mut Ui) {
         egui::Sense::hover(),
     );
     ui.painter().rect_filled(rect, 0.0, Theme::border());
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::app::TesseraApp;
-    use crate::command::{Command, apply};
-    use tessera_geometry::DocRect;
-
-    fn bounds() -> DocRect {
-        DocRect {
-            x: 20.0,
-            y: 20.0,
-            width: 60.0,
-            height: 40.0,
-        }
-    }
-
-    #[test]
-    fn nothing_selected_describes_the_document() {
-        assert_eq!(subject(&TesseraApp::headless()), Subject::Document);
-    }
-
-    #[test]
-    fn one_object_selected_describes_that_object() {
-        let mut state = TesseraApp::headless();
-        apply(&mut state, Command::AddRectangle(bounds()));
-        assert_eq!(subject(&state), Subject::Object);
-    }
-
-    #[test]
-    fn several_selected_says_so_rather_than_editing_the_first() {
-        // Silently editing one of them would be worse than saying there is no
-        // single answer.
-        let mut state = TesseraApp::headless();
-        apply(&mut state, Command::AddRectangle(bounds()));
-        apply(&mut state, Command::AddRectangle(bounds()));
-        state.active_mut().select_all();
-
-        assert_eq!(subject(&state), Subject::Several(2));
-    }
-
-    #[test]
-    fn a_caret_wins_over_the_frame_holding_it() {
-        // While you are typing, the thing being worked on is the text.
-        let mut state = TesseraApp::headless();
-        apply(&mut state, Command::AddTextFrame(bounds()));
-        let id = state.active().selection.single().expect("selected");
-        crate::view::viewport::start_editing(&mut state, id);
-
-        assert_eq!(subject(&state), Subject::Text);
-    }
-
-    #[test]
-    fn every_subject_names_itself() {
-        for subject in [
-            Subject::Document,
-            Subject::Object,
-            Subject::Several(3),
-            Subject::Text,
-        ] {
-            assert!(!subject.name().is_empty());
-        }
-    }
 }

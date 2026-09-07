@@ -284,8 +284,20 @@ impl Theme {
     pub fn accent_hover() -> Color32 {
         palette().accent_hover
     }
+    /// The wash behind selected text.
+    ///
+    /// **The accent at part strength, not the accent.** A solid accent behind
+    /// text puts near-white on a mid blue at about 2.6:1, which is under the
+    /// 4.5:1 that body text needs — and where the field itself is already
+    /// drawn in the accent, because it is the active widget, the selection and
+    /// the field become one flat blue rectangle with the value invisible
+    /// inside it. Selecting a number to retype it made the number vanish.
+    ///
+    /// Part strength means the text keeps its own colour and the highlight
+    /// reads as a highlight over it, which is what a form field wants.
     pub fn selection() -> Color32 {
-        palette().accent
+        let accent = palette().accent;
+        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 96)
     }
     pub fn error() -> Color32 {
         palette().error
@@ -503,7 +515,11 @@ pub fn apply(ctx: &Context) {
         style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, Theme::rule());
         style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, Theme::border());
         style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, Theme::border());
-        style.visuals.selection.stroke = egui::Stroke::new(1.0, Theme::accent());
+        // The text cursor and the outline of selected items, in the text
+        // colour rather than the accent: the accent is what the selection wash
+        // is made of, so a caret drawn in it disappears exactly where somebody
+        // is looking for it.
+        style.visuals.selection.stroke = egui::Stroke::new(1.0, Theme::text_primary());
         style.visuals.window_stroke = egui::Stroke::new(1.0, Theme::rule());
 
         // One radius. Rounded enough to soften a rule, not enough to read as
@@ -553,6 +569,49 @@ pub fn apply(ctx: &Context) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn selected_text_stays_readable() {
+        // The bug this replaces: the selection wash and the active widget's
+        // background were both the solid accent, so selecting a value to retype
+        // it turned the field into one flat blue rectangle with the number
+        // invisible inside. A translucent wash keeps the text its own colour.
+        for (name, p) in [("dark", Palette::DARK), ("light", Palette::LIGHT)] {
+            let wash = {
+                crate::theme::use_palette(match name {
+                    "light" => crate::prefs::ThemeChoice::Light,
+                    _ => crate::prefs::ThemeChoice::Dark,
+                });
+                Theme::selection()
+            };
+            assert!(
+                wash.a() < 255,
+                "{name}: the selection wash is opaque, so it hides the text"
+            );
+
+            // Over the field it sits on, the text must still clear body-text
+            // contrast.
+            let field = p.step(5);
+            let over = blend(wash, field);
+            let ratio = contrast_ratio(p.step(12), over);
+            assert!(
+                ratio >= 4.5,
+                "{name}: selected text reads at {ratio:.2}:1 against its own highlight"
+            );
+        }
+        crate::theme::use_palette(crate::prefs::ThemeChoice::Dark);
+    }
+
+    /// `over` composited on `under`, which is what the screen actually shows.
+    fn blend(over: Color32, under: Color32) -> Color32 {
+        let a = f32::from(over.a()) / 255.0;
+        let mix = |o: u8, u: u8| (f32::from(o) * a + f32::from(u) * (1.0 - a)) as u8;
+        Color32::from_rgb(
+            mix(over.r(), under.r()),
+            mix(over.g(), under.g()),
+            mix(over.b(), under.b()),
+        )
+    }
     use super::*;
 
     /// WCAG AA for body text.
