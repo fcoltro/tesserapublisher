@@ -132,6 +132,7 @@ mod tests {
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
+            shadow: None,
         }
     }
 

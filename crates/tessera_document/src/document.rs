@@ -1975,6 +1975,7 @@ impl Document {
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
+            shadow: None,
         });
 
         let layer = self.layers.get_mut(layer_id)?;
@@ -2565,6 +2566,7 @@ mod tests {
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
+            shadow: None,
         }
     }
 
@@ -2721,6 +2723,7 @@ mod tests {
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
+            shadow: None,
         }
     }
 
@@ -2787,6 +2790,7 @@ mod tests {
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
+            shadow: None,
         }
     }
 
@@ -2810,6 +2814,7 @@ mod tests {
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
+            shadow: None,
         }
     }
 

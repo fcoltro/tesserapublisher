@@ -721,6 +721,7 @@ mod tests {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         };
         [
             doc.add_frame(layer, frame()),

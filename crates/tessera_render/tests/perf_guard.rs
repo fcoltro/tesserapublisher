@@ -49,6 +49,7 @@ fn crowded_document() -> Document {
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,
+                shadow: None,
             },
         );
     }
@@ -147,6 +148,7 @@ fn wordy_document() -> Document {
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,
+                shadow: None,
             },
         );
     }

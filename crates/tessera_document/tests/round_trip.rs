@@ -60,6 +60,7 @@ fn a_document_with_a_rectangle_round_trips_exactly() {
             stroke: Some(Stroke::new(Color::BLACK, 2.0)),
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         },
     );
 
@@ -169,6 +170,7 @@ fn any_frame() -> impl Strategy<Value = Frame> {
             stroke: stroke_width.map(|width| Stroke::new(Color::BLACK, width)),
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         })
 }
 
@@ -219,6 +221,7 @@ fn text_survives_a_save_and_load() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         },
     );
 
@@ -266,6 +269,7 @@ fn a_version_1_document_still_opens() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         },
     );
 
@@ -344,6 +348,7 @@ fn a_placement_survives_a_save_and_load() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         },
     );
 
@@ -380,6 +385,7 @@ fn a_version_2_rotation_becomes_the_placement_that_means_the_same_thing() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         },
     );
 
@@ -558,6 +564,7 @@ fn a_version_four_document_still_opens_and_gains_no_setup_it_never_had() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         },
     );
 
@@ -596,9 +603,55 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_fifteen() {
+fn the_format_version_is_sixteen() {
     // If this changes, a migration step is owed.
-    assert_eq!(format::FORMAT_VERSION, 15);
+    assert_eq!(format::FORMAT_VERSION, 16);
+}
+
+#[test]
+fn a_drop_shadow_round_trips() {
+    use tessera_document::shadow::Shadow;
+
+    let path = temp_path("shadowed.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let shadow = Shadow {
+        offset: (-3.5, 6.25),
+        blur: 8.0,
+        colour: Color::Rgb {
+            r: 0.1,
+            g: 0.1,
+            b: 0.2,
+            a: 0.4,
+        },
+    };
+
+    let mut doc = Document::new();
+    let layer = doc.default_layer().expect("layer");
+    let id = doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 30.0,
+                height: 30.0,
+            },
+            transform: Default::default(),
+            kind: FrameKind::Rectangle,
+            fill: Paint::Solid(Color::default()),
+            stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
+            shadow: Some(shadow.clone()),
+        },
+    );
+
+    format::save(&doc, &path).expect("save");
+    let back = format::load(&path).expect("load");
+    assert_eq!(back.frame(id).expect("frame").shadow, Some(shadow));
+
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -643,6 +696,7 @@ fn a_gradient_fill_round_trips() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         },
     );
 
@@ -691,6 +745,7 @@ fn a_document_written_before_gradients_opens_with_its_colour_intact() {
             stroke: Some(tessera_document::nodes::Stroke::new(Color::BLACK, 2.0)),
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         },
     );
     format::save(&doc, &path).expect("save");
@@ -737,6 +792,7 @@ fn an_objects_opacity_and_blend_mode_round_trip() {
                 opacity: 0.375,
                 mode: BlendMode::Multiply,
             },
+            shadow: None,
         },
     );
 
@@ -796,6 +852,7 @@ fn placed_artwork_round_trips_as_a_link_rather_than_as_pixels() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         },
     );
     let link = doc.add_link(Link::new("C:/art/photo.png", (640.0, 480.0)));
@@ -872,6 +929,7 @@ fn swatches_and_the_objects_naming_them_round_trip() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         },
     );
 
@@ -979,6 +1037,7 @@ fn a_version_nine_text_frame_opens_as_a_single_column() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         },
     );
 
@@ -1038,6 +1097,7 @@ fn a_columned_text_frame_round_trips() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         },
     );
 
@@ -1079,6 +1139,7 @@ fn a_version_eight_document_opens_with_no_masters_and_no_overrides() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         },
     );
 
@@ -1124,6 +1185,7 @@ fn a_master_and_its_overrides_survive_a_round_trip() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         },
     );
     let page = doc.page_ids().next().expect("a page");
@@ -1187,6 +1249,7 @@ fn version_7_archive(path: &std::path::Path) -> serde_json::Value {
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,
+                shadow: None,
             },
         );
     }

@@ -196,6 +196,14 @@ pub struct Frame {
     /// they are different facts about different things.
     #[serde(default)]
     pub blend: crate::blending::Blending,
+    /// The shadow this object casts, if any.
+    ///
+    /// `Option` rather than a shadow at no alpha, because "no shadow" and "a
+    /// shadow turned all the way down" are different things to say: the second
+    /// remembers an offset and a blur somebody chose, and switching a shadow off
+    /// should not throw those away.
+    #[serde(default)]
+    pub shadow: Option<crate::shadow::Shadow>,
 }
 
 impl Frame {

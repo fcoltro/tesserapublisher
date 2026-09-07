@@ -18,6 +18,7 @@ pub mod masters;
 pub mod nodes;
 pub mod paint;
 pub mod path;
+pub mod shadow;
 
 pub use document::{Document, StoryMap, ZMove};
 pub use history::History;

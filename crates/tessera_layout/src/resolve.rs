@@ -79,6 +79,12 @@ pub struct ResolvedItem {
     /// different fact from a fill colour's alpha. Putting it on each kind would
     /// be four copies of one property and an invitation to forget one.
     pub blend: tessera_document::blending::Blending,
+    /// The shadow this object casts, if any.
+    ///
+    /// On the item beside `blend` rather than inside `kind`, for the same
+    /// reason: every kind of object can cast one, and four copies of the field
+    /// would be an invitation to forget one.
+    pub shadow: Option<tessera_document::shadow::Shadow>,
     pub kind: ResolvedKind,
 }
 
@@ -508,6 +514,15 @@ fn resolve_one(
         transform: frame.transform,
         spread_area: doc.spread_of_frame(id).and_then(|s| doc.spread_area(s)),
         blend: frame.blend,
+        // The shadow's colour goes through the swatch table like every other,
+        // so a shadow tinted with a named colour follows it.
+        shadow: frame
+            .shadow
+            .as_ref()
+            .map(|s| tessera_document::shadow::Shadow {
+                colour: doc.resolve_colour(&s.colour),
+                ..s.clone()
+            }),
         kind,
     })
 }
@@ -532,6 +547,7 @@ mod tests {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         }
     }
 
@@ -642,6 +658,7 @@ mod tests {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         }
     }
 

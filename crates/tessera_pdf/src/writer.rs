@@ -497,6 +497,15 @@ fn build_content(
             content.transform(to_pdf_matrix(item.transform, page).map(|v| v as f32));
         }
 
+        // **The shadow is not written, on purpose.** A blurred shadow in a PDF
+        // is a luminosity soft mask, and a gaussian blur of a rectangle is not
+        // any gradient PDF can express — it has to be a rasterised grey image,
+        // which means embedding images, which this writer does not do yet
+        // either. Writing a *hard* offset duplicate instead would be worse than
+        // writing nothing: a missing shadow is obviously missing, and a hard one
+        // looks like somebody meant it. Both wait for milestone 6, which owns
+        // export quality.
+        //
         // The object's compositing, named from the page's resources. Set
         // outside the per-kind save/restore so that the fill and the stroke it
         // brackets both inherit it.

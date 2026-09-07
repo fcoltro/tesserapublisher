@@ -300,6 +300,7 @@ mod tests {
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,
+                shadow: None,
             },
         );
         let spread = doc.spread_of(page).expect("a spread");

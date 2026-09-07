@@ -48,6 +48,7 @@ fn one(kind: ResolvedKind, bounds: DocRect) -> ResolvedDocument {
             transform: Transform::IDENTITY,
             spread_area: None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
             bounds,
             kind,
         }],
@@ -208,6 +209,7 @@ fn several_items_all_reach_the_content_stream() {
                 transform: Transform::IDENTITY,
                 spread_area: None,
                 blend: tessera_document::blending::Blending::PLAIN,
+                shadow: None,
                 bounds: rect(10.0, 10.0, 50.0, 50.0),
                 kind: ResolvedKind::Rectangle {
                     fill: Paint::Solid(Color::BLACK),
@@ -219,6 +221,7 @@ fn several_items_all_reach_the_content_stream() {
                 transform: Transform::IDENTITY,
                 spread_area: None,
                 blend: tessera_document::blending::Blending::PLAIN,
+                shadow: None,
                 bounds: rect(100.0, 100.0, 80.0, 40.0),
                 kind: ResolvedKind::Ellipse {
                     fill: Paint::Solid(Color::BLACK),
@@ -230,6 +233,7 @@ fn several_items_all_reach_the_content_stream() {
                 transform: Transform::IDENTITY,
                 spread_area: None,
                 blend: tessera_document::blending::Blending::PLAIN,
+                shadow: None,
                 bounds: rect(20.0, 300.0, 400.0, 40.0),
                 kind: ResolvedKind::Text {
                     shaped,

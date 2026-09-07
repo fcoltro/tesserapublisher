@@ -37,6 +37,49 @@ fn to_peniko(color: &Color) -> AlphaColor<Srgb> {
     AlphaColor::new([r, g, b, a])
 }
 
+/// The object's shadow, painted before the object itself.
+///
+/// **Behind, not under**: it is drawn first and the object covers it, which is
+/// why a translucent object shows its own shadow through itself exactly as it
+/// would show the page.
+///
+/// Vello can blur a rounded rectangle and nothing else, and that decides how
+/// honest each shape's shadow is:
+///
+/// - a rectangle, a picture box and a text frame are rectangles, so their
+///   shadows are exact;
+/// - an ellipse takes a corner radius of half its shorter side, which for a
+///   **circle is the circle exactly** and for a long ellipse is a capsule — a
+///   close enough shape that the blur hides the difference;
+/// - a path gets its bounding box, which is the one case that is visibly not the
+///   object. Blurring an arbitrary curve needs an offscreen pass, and that is
+///   milestone 6's business.
+fn draw_shadow(
+    scene: &mut Scene,
+    transform: Affine,
+    rect: Rect,
+    kind: &ResolvedKind,
+    shadow: &tessera_document::shadow::Shadow,
+) {
+    if shadow.is_invisible() {
+        return;
+    }
+
+    let radius = match kind {
+        ResolvedKind::Ellipse { .. } => rect.width().min(rect.height()) / 2.0,
+        _ => 0.0,
+    };
+    let offset = rect + vello::kurbo::Vec2::new(shadow.offset.0, shadow.offset.1);
+
+    scene.draw_blurred_rounded_rect(
+        transform,
+        offset,
+        to_peniko(&shadow.colour),
+        radius,
+        shadow.std_dev(),
+    );
+}
+
 /// What vello paints a shape with.
 ///
 /// The gradient is built in the **frame's own space**, which is the space the
@@ -328,6 +371,14 @@ fn build_inner(
         // that own space, so the item transform has to be applied to it
         // before the view is.
         let transform = transform * item.transform.to_affine();
+
+        // The shadow, behind everything the object paints and **outside** its
+        // composite group: a shadow inside the group would be faded by the
+        // object's own opacity, and a 50% object would cast a 25% shadow. It is
+        // the object that is translucent, not the light.
+        if let Some(shadow) = &item.shadow {
+            draw_shadow(&mut scene, transform, rect, &item.kind, shadow);
+        }
 
         // **The object's own composite group**, and the reason object opacity
         // is not a fill colour's alpha: everything belonging to the object —
@@ -920,6 +971,114 @@ mod tests {
     }
 
     #[test]
+    fn a_shadow_paints_behind_the_object_that_casts_it() {
+        use tessera_document::shadow::Shadow;
+
+        let bounds = DocRect {
+            x: 20.0,
+            y: 20.0,
+            width: 40.0,
+            height: 40.0,
+        };
+        let plain = one_item(
+            ResolvedKind::Rectangle {
+                fill: Paint::Solid(Color::BLACK),
+                stroke: None,
+            },
+            bounds,
+        );
+        let mut shadowed = plain.clone();
+        shadowed.items[0].shadow = Some(Shadow::TYPICAL);
+
+        let without = build_scene(&plain, ViewTransform::default());
+        let with = build_scene(&shadowed, ViewTransform::default());
+        assert!(
+            with.encoding().stream_offsets().path_data
+                > without.encoding().stream_offsets().path_data,
+            "no shadow reached the scene"
+        );
+    }
+
+    #[test]
+    fn a_shadow_at_no_alpha_paints_nothing() {
+        use tessera_document::shadow::Shadow;
+
+        let bounds = DocRect {
+            x: 0.0,
+            y: 0.0,
+            width: 30.0,
+            height: 30.0,
+        };
+        let mut doc = one_item(
+            ResolvedKind::Rectangle {
+                fill: Paint::Solid(Color::BLACK),
+                stroke: None,
+            },
+            bounds,
+        );
+        let plain = build_scene(&doc, ViewTransform::default());
+        doc.items[0].shadow = Some(Shadow {
+            colour: Color::Rgb {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 0.0,
+            },
+            ..Shadow::TYPICAL
+        });
+        let invisible = build_scene(&doc, ViewTransform::default());
+
+        assert_eq!(
+            invisible.encoding().stream_offsets().path_data,
+            plain.encoding().stream_offsets().path_data,
+            "a shadow nobody can see was still painted"
+        );
+    }
+
+    #[test]
+    fn a_translucent_object_does_not_fade_its_own_shadow() {
+        // The shadow is drawn outside the object’s composite group. Inside it, a
+        // 50% object would cast a 25% shadow: it is the object that is
+        // translucent, not the light.
+        use tessera_document::blending::{BlendMode, Blending};
+        use tessera_document::shadow::Shadow;
+
+        let bounds = DocRect {
+            x: 10.0,
+            y: 10.0,
+            width: 40.0,
+            height: 40.0,
+        };
+        let mut doc = one_item(
+            ResolvedKind::Rectangle {
+                fill: Paint::Solid(Color::BLACK),
+                stroke: None,
+            },
+            bounds,
+        );
+        doc.items[0].shadow = Some(Shadow::TYPICAL);
+        doc.items[0].blend = Blending {
+            opacity: 0.5,
+            mode: BlendMode::Normal,
+        };
+
+        // One layer for the object, and the shadow outside it. If the shadow
+        // were drawn inside, the blurred rect would be encoded after the layer
+        // was pushed — which is exactly what this pins by counting clips: the
+        // object opens one, and the shadow opens none.
+        let scene = build_scene(&doc, ViewTransform::default());
+        let mut without_shadow = doc.clone();
+        without_shadow.items[0].shadow = None;
+        assert_eq!(
+            scene.encoding().n_clips,
+            build_scene(&without_shadow, ViewTransform::default())
+                .encoding()
+                .n_clips,
+            "the shadow opened a layer of its own"
+        );
+    }
+
+    #[test]
     fn a_clip_really_reaches_the_encoding() {
         // Preview must show the trim as it will print, not merely hide the
         // furniture around it — so the clip has to be in the scene, not just
@@ -1036,6 +1195,7 @@ mod tests {
                 transform: Transform::IDENTITY,
                 spread_area: None,
                 blend: tessera_document::blending::Blending::PLAIN,
+                shadow: None,
                 bounds,
                 kind,
             }],

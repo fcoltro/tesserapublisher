@@ -288,6 +288,16 @@ pub enum Command {
         blend: tessera_document::blending::Blending,
     },
 
+    /// Turn an object's shadow on, off, or change it.
+    ///
+    /// `None` is off. One command for the whole shadow rather than one per
+    /// field, so that nudging an offset and softening a blur in the same gesture
+    /// is not two undo steps.
+    SetShadow {
+        id: FrameId,
+        shadow: Option<tessera_document::shadow::Shadow>,
+    },
+
     /// Set how text runs around an object.
     SetTextWrap {
         id: FrameId,
@@ -1108,6 +1118,13 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             state.active_mut().document_mut().touch();
         }
 
+        Command::SetShadow { id, shadow } => {
+            if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
+                frame.shadow = shadow;
+            }
+            state.active_mut().document_mut().touch();
+        }
+
         Command::SetTextWrap { id, wrap } => {
             if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
                 frame.wrap = wrap;
@@ -1456,6 +1473,7 @@ fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
             transform: Transform::IDENTITY,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         },
     );
     state.active_mut().selection.set(id);
@@ -2762,6 +2780,7 @@ mod tests {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         };
         let a = state
             .active_mut()
@@ -4297,6 +4316,7 @@ mod tests {
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,
+                shadow: None,
             },
         );
 
@@ -4645,6 +4665,7 @@ mod tests {
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,
+                shadow: None,
             },
         );
         (master, item)
@@ -5080,6 +5101,106 @@ mod tests {
             before,
             "the fill colour was touched"
         );
+    }
+
+    // --- drop shadow ---------------------------------------------------------
+
+    #[test]
+    fn turning_a_shadow_on_and_changing_it_are_each_one_undo_step() {
+        use tessera_document::shadow::Shadow;
+
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let id = state.active().selection.single().expect("selected");
+        assert!(
+            state
+                .active()
+                .document()
+                .frame(id)
+                .expect("frame")
+                .shadow
+                .is_none(),
+            "an object casts no shadow until it is asked to"
+        );
+
+        apply(
+            &mut state,
+            Command::SetShadow {
+                id,
+                shadow: Some(Shadow::TYPICAL),
+            },
+        );
+        let softer = Shadow {
+            blur: 20.0,
+            ..Shadow::TYPICAL
+        };
+        apply(
+            &mut state,
+            Command::SetShadow {
+                id,
+                shadow: Some(softer.clone()),
+            },
+        );
+        assert_eq!(
+            state.active().document().frame(id).expect("frame").shadow,
+            Some(softer)
+        );
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(
+            state.active().document().frame(id).expect("frame").shadow,
+            Some(Shadow::TYPICAL),
+            "one undo takes back the change, not the shadow"
+        );
+        apply(&mut state, Command::Undo);
+        assert!(
+            state
+                .active()
+                .document()
+                .frame(id)
+                .expect("frame")
+                .shadow
+                .is_none(),
+            "and the next one takes back the shadow"
+        );
+    }
+
+    #[test]
+    fn a_shadow_is_not_the_objects_opacity() {
+        // Two settings, two facts, and neither should touch the other: an object
+        // faded to a watermark still casts whatever shadow it was given.
+        use tessera_document::blending::{BlendMode, Blending};
+        use tessera_document::shadow::Shadow;
+
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let id = state.active().selection.single().expect("selected");
+
+        apply(
+            &mut state,
+            Command::SetShadow {
+                id,
+                shadow: Some(Shadow::TYPICAL),
+            },
+        );
+        apply(
+            &mut state,
+            Command::SetBlending {
+                id,
+                blend: Blending {
+                    opacity: 0.2,
+                    mode: BlendMode::Normal,
+                },
+            },
+        );
+
+        let frame = state.active().document().frame(id).expect("frame");
+        assert_eq!(
+            frame.shadow,
+            Some(Shadow::TYPICAL),
+            "the shadow was touched"
+        );
+        assert!((frame.blend.opacity - 0.2).abs() < 1e-6);
     }
 
     // --- text wrap -----------------------------------------------------------

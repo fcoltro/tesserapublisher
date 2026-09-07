@@ -963,7 +963,35 @@ full argument, with sources, is in `docs/superpowers/specs/`.
     meet a name and stay ignorant of the document.
 - [ ] Document output intent with on-screen soft proofing.
 - [~] Linear and radial gradients; drop shadow; multiply, screen and overlay
-  blending — **the gradients and the blending are done; the shadow is not.**
+  blending — **all three are on screen; the shadow is not in the PDF.**
+  - The shadow is drawn **behind the object and outside its composite group**. A
+    shadow inside the group would be faded by the object’s own opacity, so a 50%
+    object would cast a 25% shadow — and it is the object that is translucent,
+    not the light. A test pins that the shadow opens no layer of its own.
+  - One colour and **no separate opacity field**. Everywhere else an alpha and an
+    opacity are different facts, but a shadow has no fill and no stroke to tell
+    apart: its colour *is* how much of it shows, and a second number would be two
+    descriptions of one fact.
+  - `Option<Shadow>` rather than a shadow at no alpha, because "no shadow" and "a
+    shadow turned all the way down" are different things to say.
+  - The blur is **capped**, and that is a cost limit rather than a matter of
+    taste: a gaussian is evaluated over two and a half deviations either side, so
+    a stray value dragged in by accident would stall a redraw rather than merely
+    look wrong. Clamped on the way out, so the file still says what it said.
+  - Vello can blur a rounded rectangle and nothing else, so how honest a shadow
+    is depends on the shape: a rectangle, a picture box and a text frame are
+    exact; an **ellipse** takes a corner radius of half its shorter side, which
+    for a circle *is* the circle and for a long ellipse is a capsule the blur
+    hides the difference in; a **path** gets its bounding box, which is the one
+    case visibly not the object.
+  - **Not written to the PDF, and the panel says so.** A blurred shadow in a PDF
+    is a luminosity soft mask, and a gaussian blur of a rectangle is no gradient
+    PDF can express — it has to be a rasterised grey image, which means
+    embedding images, which the writer does not do yet either. A *hard* offset
+    duplicate would be worse than nothing: a missing shadow is obviously
+    missing, and a hard one looks like somebody meant it. A shadow that appears
+    on screen and not in the export is exactly the surprise that reaches a
+    printer, so it is stated in the interface rather than only here.
   - Only the **separable** modes, deliberately. A non-separable mode cannot be
     reproduced identically on screen and in the PDF, and a mode that looks one
     way in Tessera and another in the file is worse than no mode at all — so

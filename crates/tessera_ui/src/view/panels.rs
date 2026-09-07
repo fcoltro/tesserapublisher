@@ -1282,6 +1282,113 @@ fn effects_section(
     if changed && blend != frame.blend {
         apply(state, Command::SetBlending { id, blend });
     }
+
+    shadow_controls(ui, state, id, frame);
+}
+
+/// The shadow an object casts: whether, how far, how soft, and what colour.
+fn shadow_controls(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::FrameId,
+    frame: &tessera_document::nodes::Frame,
+) {
+    use tessera_document::shadow::{MOST_BLUR, Shadow};
+
+    group_label(ui, "Drop shadow");
+
+    let mut on = frame.shadow.is_some();
+    if ui.checkbox(&mut on, "Casts a shadow").changed() {
+        // Switching off keeps nothing, because the model says nothing: a
+        // shadow either exists or it does not. Switching on gets the shadow
+        // that reads as depth rather than as an effect.
+        let shadow = if on { Some(Shadow::TYPICAL) } else { None };
+        apply(state, Command::SetShadow { id, shadow });
+        return;
+    }
+
+    let Some(existing) = &frame.shadow else {
+        return;
+    };
+    let mut shadow = existing.clone();
+    let mut changed = false;
+    let unit = state.prefs.unit;
+
+    let (x, y) = pair(
+        ui,
+        ("Offset X", |ui: &mut Ui| {
+            measure_bare(ui, &mut shadow.offset.0, unit)
+        }),
+        ("Y", |ui: &mut Ui| {
+            measure_bare(ui, &mut shadow.offset.1, unit)
+        }),
+    );
+    changed |= x || y;
+
+    // In points rather than in the document's unit: a blur is not a measurement
+    // on the page, it is how soft an edge is, and reading it in millimetres
+    // invites somebody to try to line it up with something.
+    changed |= field(ui, "Blur", |ui| {
+        ui.add(
+            egui::Slider::new(&mut shadow.blur, 0.0..=MOST_BLUR)
+                .suffix(" pt")
+                .fixed_decimals(1),
+        )
+        .changed()
+    });
+
+    // The colour carries how much of the shadow shows, in its alpha, so the
+    // picker offers alpha here where the fill's does not.
+    let [r, g, b, a] = shadow.colour.to_rgb_f32();
+    let mut rgba = [r, g, b, a];
+    if field(ui, "Colour", |ui| shadow_picker(ui, &mut rgba)) {
+        shadow.colour = Color::Rgb {
+            r: rgba[0],
+            g: rgba[1],
+            b: rgba[2],
+            a: rgba[3],
+        };
+        changed = true;
+    }
+
+    // Said where a person can read it, because a shadow that appears on screen
+    // and not in the export is exactly the kind of surprise that reaches a
+    // printer.
+    ui.colored_label(Theme::TEXT_MUTED, "Not written to PDF yet.")
+        .on_hover_text(
+            "A blurred shadow in a PDF needs a rasterised soft mask. \
+             Milestone 6 owns export quality and adds it.",
+        );
+
+    if changed {
+        apply(
+            state,
+            Command::SetShadow {
+                id,
+                shadow: Some(shadow),
+            },
+        );
+    }
+}
+
+/// A colour picker that offers alpha.
+///
+/// Separate from [`fill_picker`], which deliberately does not: a fill's alpha
+/// and its object's opacity are different facts and offering both in one place
+/// is how a person comes to believe they are the same control. A shadow has no
+/// such pair — its alpha *is* how much of it shows.
+fn shadow_picker(ui: &mut Ui, rgba: &mut [f32; 4]) -> bool {
+    let mut colour = egui::Rgba::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+    let changed = egui::widgets::color_picker::color_edit_button_rgba(
+        ui,
+        &mut colour,
+        egui::widgets::color_picker::Alpha::OnlyBlend,
+    )
+    .changed();
+    if changed {
+        *rgba = [colour.r(), colour.g(), colour.b(), colour.a()];
+    }
+    changed
 }
 
 /// How text in other frames runs around this one.
@@ -2952,6 +3059,7 @@ mod tests {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
         }
     }
 

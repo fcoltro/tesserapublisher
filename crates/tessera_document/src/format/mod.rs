@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 15;
+pub const FORMAT_VERSION: u32 = 16;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -170,6 +170,14 @@ fn migrate(value: &mut serde_json::Value, from: u32) {
     if from < 8 {
         layers_leave_the_page(value);
     }
+
+    // 15 -> 16: a frame gained the shadow it casts.
+    //
+    // Nothing to rewrite. `None` — no shadow — is the truth about every object
+    // written before this, and it is what the field defaults to. The version
+    // moves so an older build refuses a document with shadows in it rather than
+    // opening it with every one of them silently absent, which would look like
+    // the document rather than like the build.
 
     // 14 -> 15: a frame's fill became a *paint*, so that it can be a gradient.
     //
