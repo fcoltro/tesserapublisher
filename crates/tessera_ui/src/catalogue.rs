@@ -6,13 +6,15 @@
 //! and is kept, and there is a way to ask again for somebody who has just
 //! installed a profile.
 
-use tessera_color::profiles::{Installed, Standard};
+use tessera_color::profiles::{Bundled, Installed, Standard};
 
 /// One thing a person can choose.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Choice {
     /// Built here from published numbers.
     Standard(Standard),
+    /// Shipped with Tessera, under terms that allow it.
+    Bundled(Bundled),
     /// Found on this machine.
     Installed(Installed),
 }
@@ -22,6 +24,7 @@ impl Choice {
     pub fn label(&self) -> String {
         match self {
             Choice::Standard(standard) => standard.label().to_string(),
+            Choice::Bundled(shipped) => shipped.name.clone(),
             Choice::Installed(found) => found.description.clone(),
         }
     }
@@ -36,6 +39,7 @@ impl Choice {
                     "RGB"
                 }
             }
+            Choice::Bundled(shipped) => shipped.space,
             Choice::Installed(found) => found.space,
         }
     }
@@ -48,6 +52,7 @@ impl Choice {
     pub fn bytes(&self) -> Option<Vec<u8>> {
         match self {
             Choice::Standard(standard) => standard.build(),
+            Choice::Bundled(shipped) => std::fs::read(&shipped.path).ok(),
             Choice::Installed(found) => std::fs::read(&found.path).ok(),
         }
     }
@@ -57,15 +62,20 @@ impl Choice {
 #[derive(Default)]
 pub struct Catalogue {
     installed: Option<Vec<Installed>>,
+    bundled: Option<Vec<Bundled>>,
 }
 
 impl Catalogue {
-    /// Everything on offer: the built-in spaces first, then what the machine has.
+    /// Everything on offer, in the order of how certain it is to be there.
     ///
-    /// Built-ins first because they are always there and are what somebody with
-    /// no profiles installed needs; the machine’s own after, because that is
-    /// where the CMYK presses are and where the list gets long.
+    /// The spaces built from published numbers first: they are always available
+    /// and are what somebody on a bare machine needs. Then what Tessera ships,
+    /// which is there if the profiles were vendored. Then what the machine has,
+    /// which is where the CMYK presses live and where the list gets long.
     pub fn choices(&mut self) -> Vec<Choice> {
+        let bundled = self
+            .bundled
+            .get_or_insert_with(tessera_color::profiles::bundled);
         let installed = self
             .installed
             .get_or_insert_with(tessera_color::profiles::installed);
@@ -75,6 +85,7 @@ impl Catalogue {
             .copied()
             .map(Choice::Standard)
             .collect();
+        out.extend(bundled.iter().cloned().map(Choice::Bundled));
         out.extend(installed.iter().cloned().map(Choice::Installed));
         out
     }
@@ -82,6 +93,7 @@ impl Catalogue {
     /// Look again, for somebody who has just installed a profile.
     pub fn refresh(&mut self) {
         self.installed = None;
+        self.bundled = None;
     }
 
     /// How many profiles the machine turned out to have.
@@ -104,6 +116,42 @@ mod tests {
         let choices = catalogue.choices();
         assert!(choices.len() >= Standard::ALL.len());
         assert_eq!(choices[0], Choice::Standard(Standard::Srgb));
+    }
+
+    #[test]
+    fn the_certain_things_are_offered_before_the_uncertain_ones() {
+        // Built spaces are always there; bundled ones depend on the vendoring
+        // script having run; installed ones depend on the machine. A list that
+        // opened with something that might be absent would look different on
+        // every machine for no reason a person could see.
+        let mut catalogue = Catalogue::default();
+        let choices = catalogue.choices();
+        let first_uncertain = choices
+            .iter()
+            .position(|c| !matches!(c, Choice::Standard(_)))
+            .unwrap_or(choices.len());
+        assert_eq!(
+            first_uncertain,
+            Standard::ALL.len(),
+            "the built spaces are not all at the front"
+        );
+    }
+
+    #[test]
+    fn a_bundled_profile_is_not_offered_unless_its_file_is_really_there() {
+        // An entry that cannot be chosen is worse than no entry, and the manifest
+        // lists what *should* be shipped rather than what is.
+        let mut catalogue = Catalogue::default();
+        for choice in catalogue.choices() {
+            if let Choice::Bundled(shipped) = &choice {
+                assert!(
+                    shipped.path.is_file(),
+                    "{} is listed but absent",
+                    shipped.name
+                );
+                assert!(choice.bytes().is_some());
+            }
+        }
     }
 
     #[test]

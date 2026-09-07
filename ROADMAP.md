@@ -1085,6 +1085,29 @@ What is owed, stated rather than ticked:
     - Discovery beats bundling twice over: it is legally clean, and a document
       proofed here against "Coated FOGRA39" is proofed against **the same bytes**
       the next application will use.
+    - **Some presses *are* freely licensed, and there is a vendoring step for
+      them.** `tools/vendor-profiles.py` fetches what
+      `assets/profiles/manifest.tsv` names, and the application offers whichever
+      of those files is actually present — so an un-vendored checkout has a
+      shorter list rather than a broken one. The script **verifies rather than
+      trusts**: a download rotted into an error page, truncated, or of the wrong
+      colour space is reported and discarded, because an application that proofs
+      against nonsense is believed. It also refuses any profile whose licence has
+      no entry in `LICENCES.md`, and the same rule is held from the Rust side by a
+      test — so a profile cannot be added without its terms.
+    - `CANDIDATES.md` records which presses are free and which are not, and the
+      distinction that matters: FOGRA39 is a *printing condition*, its
+      characterisation data is published, and Adobe’s `CoatedFOGRA39.icc` is
+      Adobe’s *build* of it. The strongest candidate to bundle is basICColor’s
+      `ISOcoated_v2_bas.ICC` — the same FOGRA39L condition, permissively licensed,
+      and already reviewed as DFSG-free by Debian, which is a second party having
+      read the terms.
+    - **ACES and OpenColorIO are the answer to a different question.** Blender’s
+      colour management is OCIO, which is scene-linear working spaces and view
+      transforms for rendering and film. It is freely licensed and would be
+      legitimate to adopt — and it has **no CMYK output**, so it cannot answer
+      "what will this look like on that press". It would earn its place for HDR
+      and wide-gamut imagery, alongside ICC rather than instead of it.
   - "Adobe RGB (1998) **compatible**", deliberately. The primaries and gamma are
     published and are what it is built from, so it behaves identically — but
     Adobe’s profile is Adobe’s, and claiming to *be* it is a claim nobody here is

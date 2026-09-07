@@ -199,6 +199,104 @@ fn rec709_curve() -> Option<ToneCurve> {
     .ok()
 }
 
+/// A profile shipped with Tessera.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Bundled {
+    pub path: PathBuf,
+    /// What the manifest calls it, which is a shorter and steadier name than the
+    /// profile’s own description.
+    pub name: String,
+    pub space: &'static str,
+    /// The licence tag, so the interface can point at the terms.
+    pub licence: String,
+}
+
+/// Where the bundled profiles are, if they can be found.
+///
+/// Two places, tried in order: beside the executable, which is where an
+/// installed Tessera keeps them, and then up from the executable to the
+/// repository root, which is where they are during development. Neither is
+/// guaranteed — a build run from an odd directory finds nothing, and finding
+/// nothing is not a fault, because these are an *addition* to the spaces built
+/// from published numbers rather than a replacement for them.
+pub fn bundled_directory() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let beside = executable.parent()?;
+
+    let candidates = [
+        beside.join("profiles"),
+        beside.join("assets").join("profiles"),
+        // `target/debug/tessera_app` and `target/debug/deps/test-binary` during
+        // development, so up three is the repository root either way.
+        beside
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("assets")
+            .join("profiles"),
+        beside.join("..").join("..").join("assets").join("profiles"),
+    ];
+    candidates
+        .into_iter()
+        .find(|at| at.join(MANIFEST).is_file())
+}
+
+/// The manifest’s file name, in one place because two readers use it.
+const MANIFEST: &str = "manifest.tsv";
+
+/// The profiles that were shipped and are actually present.
+///
+/// Driven by the manifest rather than by whatever files are in the directory, so
+/// that a name and a licence tag come with each one. A row whose file is absent
+/// is skipped in silence: an un-vendored checkout should have a shorter list, not
+/// a list of things that cannot be chosen.
+pub fn bundled() -> Vec<Bundled> {
+    let Some(directory) = bundled_directory() else {
+        return Vec::new();
+    };
+    let Ok(text) = std::fs::read_to_string(directory.join(MANIFEST)) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let line = line.trim_end();
+        if line.trim().is_empty() || line.trim_start().starts_with('#') {
+            continue;
+        }
+        // file, space, licence, name, source. The source is the vendoring
+        // script’s business, not the application’s.
+        let mut fields = line.split('\t').map(str::trim);
+        let (Some(file), Some(space), Some(licence), Some(name)) =
+            (fields.next(), fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+
+        let path = directory.join(file);
+        if !path.is_file() {
+            continue;
+        }
+        // The space the manifest claims is not taken on trust: the file is read
+        // and asked. A row that disagrees with its file is a row to skip, and the
+        // vendoring script is where that gets reported.
+        let Some(found) = describe(&path) else {
+            continue;
+        };
+        if found.space != space {
+            continue;
+        }
+
+        out.push(Bundled {
+            path,
+            name: name.to_string(),
+            space: found.space,
+            licence: licence.to_string(),
+        });
+    }
+    out
+}
+
 /// A profile found on this machine.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Installed {
@@ -475,6 +573,97 @@ mod tests {
         println!("---");
         for profile in installed() {
             println!("{:6}  {}", profile.space, profile.description);
+        }
+    }
+
+    #[test]
+    fn an_unvendored_checkout_has_a_shorter_list_rather_than_a_broken_one() {
+        // The bundled profiles are an addition to the spaces built from published
+        // numbers, not a replacement, so finding none of them is not a fault.
+        for profile in bundled() {
+            assert!(
+                profile.path.is_file(),
+                "{} was listed but is not there",
+                profile.name
+            );
+            assert!(!profile.name.is_empty());
+            assert!(
+                !profile.licence.is_empty(),
+                "{} has no licence tag",
+                profile.name
+            );
+        }
+    }
+
+    #[test]
+    fn the_manifest_is_found_during_development() {
+        // Not an assertion about the profiles being vendored — only that the
+        // directory containing the manifest can be located from a test binary. If
+        // this fails, `bundled()` can never return anything however well the
+        // vendoring went.
+        let at = bundled_directory();
+        assert!(
+            at.is_some(),
+            "the manifest was not found from {:?}",
+            std::env::current_exe()
+        );
+    }
+
+    #[test]
+    fn every_manifest_row_has_five_fields_and_a_known_space() {
+        // The manifest is read by a Rust function and a Python script, and a row
+        // either of them cannot parse is a row that silently does nothing.
+        let Some(directory) = bundled_directory() else {
+            return;
+        };
+        let text = std::fs::read_to_string(directory.join("manifest.tsv")).expect("the manifest");
+        for (number, line) in text.lines().enumerate() {
+            if line.trim().is_empty() || line.trim_start().starts_with('#') {
+                continue;
+            }
+            let fields: Vec<&str> = line.split('\t').collect();
+            assert_eq!(
+                fields.len(),
+                5,
+                "manifest line {} has {} fields: {line:?}",
+                number + 1,
+                fields.len()
+            );
+            assert!(
+                ["CMYK", "RGB", "Grey"].contains(&fields[1].trim()),
+                "manifest line {} names an unknown space {:?}",
+                number + 1,
+                fields[1]
+            );
+        }
+    }
+
+    #[test]
+    fn every_licence_tag_in_the_manifest_has_terms_written_down() {
+        // A profile is somebody else’s work. The vendoring script refuses a row
+        // with no terms; this is the same rule held from the other side, so a row
+        // cannot be added to the manifest without them either.
+        let Some(directory) = bundled_directory() else {
+            return;
+        };
+        let manifest =
+            std::fs::read_to_string(directory.join("manifest.tsv")).expect("the manifest");
+        let licences =
+            std::fs::read_to_string(directory.join("LICENCES.md")).expect("the licences");
+
+        for line in manifest.lines() {
+            if line.trim().is_empty() || line.trim_start().starts_with('#') {
+                continue;
+            }
+            let fields: Vec<&str> = line.split('\t').collect();
+            if fields.len() < 3 {
+                continue;
+            }
+            let tag = fields[2].trim();
+            assert!(
+                licences.contains(&format!("## `{tag}`")),
+                "licence tag {tag:?} has no section in LICENCES.md"
+            );
         }
     }
 

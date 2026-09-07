@@ -2802,6 +2802,7 @@ fn profile_picker(ui: &mut Ui, state: &mut TesseraApp, current: Option<&str>) {
                     // the other depends on what is installed.
                     let group = match choice {
                         crate::catalogue::Choice::Standard(_) => "Standard spaces",
+                        crate::catalogue::Choice::Bundled(_) => "Shipped with Tessera",
                         crate::catalogue::Choice::Installed(_) => "On this machine",
                     };
                     if group != heading {

@@ -45,11 +45,46 @@ There is no webview and no TypeScript.
 
 ## Building
 
-Nothing to build yet. Once milestone 0 lands:
-
 ```bash
 cargo run -p tessera_app
 ```
+
+Little CMS is built from vendored source, so a C compiler is needed; nothing has
+to be installed system-wide.
+
+### Colour profiles, once
+
+```bash
+python tools/vendor-profiles.py
+```
+
+Optional, and Tessera runs without it — the list of output intents is simply
+shorter. What it fetches, and why the list is assembled from three places rather
+than one, is worth a paragraph:
+
+- **The RGB working spaces are built, not shipped.** sRGB, Adobe RGB (1998)
+  compatible, Display P3, ProPhoto RGB and Rec. 2020 are each defined by three
+  primaries, a white point and a transfer curve, all published in standards. They
+  are constructed at runtime from those numbers, so they are always available and
+  are colorimetrically exact.
+- **The CMYK presses cannot be.** A CMYK profile is *measured* — thousands of
+  printed and read patches, with no formula behind it. `Coated FOGRA39` and
+  `U.S. Web Coated (SWOP) v2` are Adobe’s builds of public characterisation data:
+  the data is public, the files are not ours to redistribute. So Tessera **reads
+  the profiles already installed on the machine**, which on any machine with a
+  creative suite on it is the whole standard set — and means a document proofed
+  here is proofed against the same bytes the next application will use.
+- **A few are freely licensed and are vendored.** That is what the script is for.
+  See [assets/profiles/CANDIDATES.md](assets/profiles/CANDIDATES.md) for which
+  presses are free, which are not, and what has to be confirmed before one can be
+  added. Every bundled profile needs its terms quoted in
+  [LICENCES.md](assets/profiles/LICENCES.md); the script refuses a profile whose
+  licence is not written down.
+
+The script verifies rather than trusts: a download that has rotted into an error
+page, been truncated, or turns out to be a different colour space than expected is
+reported and discarded rather than bundled. A colour-managed application that
+proofs against nonsense will be believed, which is why.
 
 ## Licence
 

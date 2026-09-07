@@ -1,0 +1,27 @@
+# Profiles Tessera bundles, and where each one comes from.
+#
+# Tab-separated with `#` comments, because both the vendoring script and the
+# application read this file and neither should need a parser library to do it.
+# One description of the fact: what is expected here, what it is called, and
+# under what terms it may be shipped.
+#
+# Columns, tab-separated:
+#   file      the name it is saved under in this directory
+#   space     CMYK, RGB or Grey. Checked after downloading, so a URL that has
+#             rotted into an HTML error page is caught rather than bundled
+#   licence   a tag; the full terms are in LICENCES.md, which must have an entry
+#   name      what to call it in the interface
+#   source    where to fetch it
+#
+# NOTHING IS BUNDLED UNTIL `tools/vendor-profiles.py` HAS BEEN RUN. The
+# application offers whichever of these files is actually present, so a fresh
+# checkout has a shorter list rather than a broken one.
+#
+# URLs rot. The script reports a fetch that fails and carries on with the rest;
+# pass `--url` to give a moved file its new address, and please correct the row.
+#
+# See CANDIDATES.md for the CMYK presses that are freely licensed but are not
+# listed here yet, and what has to be confirmed before they can be.
+
+sRGB2014.icc	RGB	icc	sRGB (ICC 2014)	https://www.color.org/profiles/sRGB2014.icc
+sRGB_v4_ICC_preference.icc	RGB	icc	sRGB v4 preference	https://www.color.org/profiles/sRGB_v4_ICC_preference.icc
