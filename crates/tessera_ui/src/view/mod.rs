@@ -13,6 +13,7 @@ pub mod layers;
 pub mod pages;
 pub mod palette;
 pub mod panels;
+pub mod preflight_panel;
 pub mod rail;
 pub mod rulers;
 pub mod settings;

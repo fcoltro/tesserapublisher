@@ -8,6 +8,7 @@ members = [
     "crates/tessera_document",
     "crates/tessera_layout",
     "crates/tessera_render",
+    "crates/tessera_preflight",
     "crates/tessera_pdf",
     "crates/tessera_ui",
     "apps/tessera_app",
@@ -33,6 +34,7 @@ tessera_document = { path = "crates/tessera_document" }
 tessera_layout   = { path = "crates/tessera_layout" }
 tessera_render   = { path = "crates/tessera_render" }
 tessera_pdf      = { path = "crates/tessera_pdf" }
+tessera_preflight = { path = "crates/tessera_preflight" }
 tessera_ui       = { path = "crates/tessera_ui" }
 
 # Interface. Pinned to 0.35 to match oxiDRAFT, the reference implementation.

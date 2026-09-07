@@ -79,6 +79,11 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
 
     handle_input(ui, &response, rect, state);
 
+    // An object somebody asked to be shown — from the preflight panel, and one
+    // day from a search. Served here because centring needs the size of the
+    // canvas, and this is the only place that knows it.
+    serve_reveal(state, rect);
+
     // --- the document, drawn by Vello into a texture egui composites
     let ppp = ui.ctx().pixels_per_point();
     // `round`, not a truncating cast: at 150% scaling a half-pixel of width
@@ -172,6 +177,31 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
 
     // Last, so the pointer is painted over everything it points at.
     show_cursor(ui, &response, rect, state);
+}
+
+/// Bring a requested object into the middle of the canvas.
+///
+/// The pan is the document point at the screen origin, so centring a rectangle
+/// means putting its middle half a canvas back from there. The zoom is left
+/// alone on purpose: somebody working at 400% asked to *see* the object, not to
+/// have their magnification changed underneath them.
+fn serve_reveal(state: &mut TesseraApp, rect: Rect) {
+    let Some(id) = state.reveal.take() else {
+        return;
+    };
+    let Some(bounds) = state.active().document().visual_bounds(id) else {
+        return;
+    };
+    let zoom = state.active().view.zoom;
+    if zoom <= 0.0 {
+        return;
+    }
+
+    let middle = bounds.center();
+    state.active_mut().view.pan = tessera_geometry::DocPoint {
+        x: middle.x - f64::from(rect.width()) / 2.0 / zoom,
+        y: middle.y - f64::from(rect.height()) / 2.0 / zoom,
+    };
 }
 
 /// `rect` with every edge moved to the nearest whole physical pixel.

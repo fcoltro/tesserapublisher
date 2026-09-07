@@ -91,6 +91,7 @@ impl Group {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Run {
     OpenSettings,
+    TogglePreflight,
     ToggleStyles,
     ChooseOutputIntent,
     ToggleSoftProof,
@@ -440,6 +441,7 @@ pub fn all() -> &'static [Action] {
         // a property of text, and putting it beside the paragraph styles would
         // say it was one.
         a("Swatches", Some("F6"), Group::Window, ToggleSwatches),
+        a("Preflight", Some("F8"), Group::Window, TogglePreflight),
         // Under Edit, where every application that is not macOS puts it, and
         // last in that menu because it is the one entry there that is not an
         // edit to the document.
@@ -523,6 +525,14 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         Run::ExportPdf => crate::file_ops::export_pdf(state),
         Run::Place => crate::file_ops::place(state),
         Run::OpenSettings => state.settings.open = true,
+        Run::TogglePreflight => {
+            state.preflight.open = !state.preflight.open;
+            // Opening a panel in a collapsed rail would open nothing a person
+            // can see.
+            if state.preflight.open {
+                state.rail_open = true;
+            }
+        }
         Run::ChooseOutputIntent => crate::file_ops::choose_output_intent(state),
         Run::ToggleSoftProof => {
             // Refused rather than silently ignored when there is no press to

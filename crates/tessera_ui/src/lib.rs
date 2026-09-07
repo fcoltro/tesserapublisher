@@ -15,6 +15,7 @@ pub mod file_ops;
 pub mod icons;
 pub mod open_document;
 pub mod pen;
+pub mod preflight;
 pub mod prefs;
 pub mod recovery;
 pub mod selection;

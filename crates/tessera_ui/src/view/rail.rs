@@ -36,15 +36,19 @@ pub enum Dock {
     Layers,
     Styles,
     Swatches,
+    Preflight,
 }
 
 impl Dock {
-    pub const ALL: [Dock; 5] = [
+    pub const ALL: [Dock; 6] = [
         Dock::Properties,
         Dock::Pages,
         Dock::Layers,
         Dock::Styles,
         Dock::Swatches,
+        // Last, because it is the one you go to when you have finished rather
+        // than while you are working.
+        Dock::Preflight,
     ];
 
     pub fn title(self) -> &'static str {
@@ -54,6 +58,7 @@ impl Dock {
             Dock::Layers => "Layers",
             Dock::Styles => "Styles",
             Dock::Swatches => "Swatches",
+            Dock::Preflight => "Preflight",
         }
     }
 
@@ -64,6 +69,7 @@ impl Dock {
             Dock::Layers => Icon::Layers,
             Dock::Styles => Icon::Pilcrow,
             Dock::Swatches => Icon::Palette,
+            Dock::Preflight => Icon::Crosshair,
         }
     }
 
@@ -79,6 +85,7 @@ impl Dock {
             Dock::Layers => state.layers_window.open,
             Dock::Styles => state.styles_window.open,
             Dock::Swatches => state.swatches_window.open,
+            Dock::Preflight => state.preflight.open,
         }
     }
 
@@ -89,6 +96,7 @@ impl Dock {
             Dock::Layers => state.layers_window.open = open,
             Dock::Styles => state.styles_window.open = open,
             Dock::Swatches => state.swatches_window.open = open,
+            Dock::Preflight => state.preflight.open = open,
         }
     }
 }
@@ -165,6 +173,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp, dock: Dock) {
         Dock::Layers => crate::view::layers::docked(ui, state),
         Dock::Styles => crate::view::styles::docked(ui, state),
         Dock::Swatches => crate::view::swatches::docked(ui, state),
+        Dock::Preflight => crate::view::preflight_panel::docked(ui, state),
     }
 }
 
@@ -179,7 +188,13 @@ mod tests {
         // nothing would be a blank column.
         let state = TesseraApp::headless();
         assert!(Dock::Properties.is_open(&state));
-        for dock in [Dock::Pages, Dock::Layers, Dock::Styles, Dock::Swatches] {
+        for dock in [
+            Dock::Pages,
+            Dock::Layers,
+            Dock::Styles,
+            Dock::Swatches,
+            Dock::Preflight,
+        ] {
             assert!(!dock.is_open(&state), "{} starts shut", dock.title());
         }
     }

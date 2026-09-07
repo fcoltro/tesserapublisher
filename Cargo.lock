@@ -3674,6 +3674,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tessera_preflight"
+version = "0.1.0"
+dependencies = [
+ "tessera_color",
+ "tessera_document",
+ "tessera_geometry",
+ "tessera_text",
+]
+
+[[package]]
 name = "tessera_render"
 version = "0.1.0"
 dependencies = [
@@ -3724,6 +3734,7 @@ dependencies = [
  "tessera_io",
  "tessera_layout",
  "tessera_pdf",
+ "tessera_preflight",
  "tessera_render",
  "tessera_text",
  "thiserror 2.0.20",

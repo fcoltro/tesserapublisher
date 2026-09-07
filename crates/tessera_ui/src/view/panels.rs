@@ -2956,6 +2956,12 @@ pub fn status_bar(ui: &mut Ui, state: &mut TesseraApp) {
         };
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // The document’s state, always visible. Somebody who has to open a
+            // panel to find out whether their document is sendable will open it
+            // once, at the beginning, and never again.
+            crate::view::preflight_panel::indicator(ui, state);
+            ui.separator();
+
             let mut percent = state.active().view.zoom * 100.0;
             if ui
                 .add(

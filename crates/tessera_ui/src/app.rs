@@ -1,7 +1,7 @@
 //! Application state.
 
 use tessera_document::document::Document;
-use tessera_document::ids::LayerId;
+use tessera_document::ids::{FrameId, LayerId};
 use tessera_geometry::DocRect;
 
 use tessera_text::shape::Shaper;
@@ -240,6 +240,21 @@ pub struct TesseraApp {
     /// The preferences window.
     pub settings: crate::view::settings::SettingsWindow,
 
+    /// What is wrong with the document, and whether the panel showing it is
+    /// open.
+    ///
+    /// Re-run when the document’ revision moves, which is the only time the
+    /// answer can have changed — apart from a linked file vanishing behind the
+    /// application’s back, which is what the panel’s re-check is for.
+    pub preflight: crate::preflight::Preflight,
+
+    /// An object to bring into view on the next frame.
+    ///
+    /// A request rather than an action, because centring needs the size of the
+    /// canvas and the canvas is the one place that knows it. Whatever asks sets
+    /// this; the viewport serves it and clears it.
+    pub reveal: Option<FrameId>,
+
     /// The interface's own ground, and the frosted copy the glass shows.
     ///
     /// **Not the document.** Panels frost the ground Tessera draws behind its
@@ -369,6 +384,8 @@ impl TesseraApp {
             soft_proof: crate::softproof::SoftProof::default(),
             profiles: crate::catalogue::Catalogue::default(),
             settings: crate::view::settings::SettingsWindow::default(),
+            preflight: crate::preflight::Preflight::default(),
+            reveal: None,
             ambient: crate::view::ambient::Ambient::default(),
             ground: None,
             snapped_to: None,

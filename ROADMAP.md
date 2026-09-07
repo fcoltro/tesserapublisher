@@ -1318,13 +1318,63 @@ application.
 > have it RIP correctly. Package the document and get one folder holding the
 > file, its links and its fonts.
 
-- [ ] Preflight engine, independent of the GPU, live as the document changes.
-- [ ] Preflight rules: overset text (tail-of-thread only), missing and
-  modified links, low resolution, colour-space mismatch, missing fonts,
-  objects outside the bleed.
-- [ ] Preflight panel with click-to-jump, errors sorted above warnings.
-- [ ] **A live preflight indicator in the status bar**, so the document's
-  state is visible without opening the panel.
+- [x] Preflight engine, independent of the GPU, live as the document changes.
+  - **A crate, and the boundary is the proof.** `tessera_preflight` cannot reach
+    `vello` or `wgpu`, so "independent of the GPU" is enforced by the dependency
+    list rather than asserted in a comment. Moving `effective_ppi` out of the
+    renderer was the first thing it asked for, and it was right to ask.
+  - Keyed on the document’s **revision**, not a timer and not every frame. Shaping
+    every story to find the overset ones is the same work laying the document
+    out is; doing it sixty times a second for a document nobody is touching
+    would be the most expensive thing in the application.
+  - Link status is the one thing a revision cannot see — a file can vanish while
+    the document sits untouched — which is why the panel has a re-check button
+    and not only a list.
+- [~] Preflight rules — **seven of eight; missing fonts is not built.**
+  - **Errors and warnings are a real distinction**, and the line is not taste:
+    it is whether a printer following the file exactly produces something the
+    customer did not intend. Overset text, a missing link and an unresolved
+    swatch come back wrong, so they are errors. A modified link might be the
+    newer artwork somebody meant; 200ppi is fine on newsprint; an RGB object
+    might be going to a digital press. Those need a person, so they are
+    warnings. The severity is stated on the rule, so one rule cannot be an
+    error in one place and a warning in another.
+  - Overset is reported for the **tail of a thread only**. A story running
+    through four frames overflows the first three by design — that is what
+    threading *is* — and reporting each would turn a working chain into four
+    errors.
+  - The colour-space rule is **only asked when a press has been chosen**, and a
+    CMYK press is told from an RGB one by the profile’s header rather than its
+    name. Without an intent it reports that fact once, about the document,
+    rather than reporting every RGB object in a layout nobody has said is for
+    print — which is the noise that gets preflight switched off.
+  - The bleed rule is **off entirely for a document with no bleed**, for the
+    same reason.
+  - **Missing fonts is absent rather than approximate.** "Is this font really
+    missing, or is the fallback fine?" has no definite answer today, and a rule
+    that guesses is a rule people learn to ignore.
+- [x] Preflight panel with click-to-jump, errors sorted above warnings.
+  - **Click-to-jump is the whole feature.** Forty problems with no locations is
+    a list somebody reads and then has to find everything in twice, and that is
+    how preflight comes to be skipped.
+  - A row selects the object **and** brings it into view. Selecting alone leaves
+    the offender off screen, which is very often why it was not noticed;
+    scrolling alone puts somebody in the right place with no idea which object
+    was meant.
+  - Grouped by rule, because ten low-resolution images are one decision about
+    resolution rather than ten discoveries.
+  - The sort is **stable**, so an unchanged document gives the same list in the
+    same order. Rows that moved between frames would be unclickable.
+- [x] **A live preflight indicator in the status bar**, so the document’s state
+  is visible without opening the panel.
+  - The point of the whole feature. Somebody who has to open a panel to find out
+    whether their document is sendable opens it once, at the beginning, and
+    never again.
+  - **Not green when clear.** A green light invites somebody to stop reading,
+    and "no problems" here means "no problems this checks for" — the hand check
+    is still owed.
+  - Severity is a **shape as well as a colour**: roughly one man in twelve
+    cannot tell the red from the amber.
 - [ ] PDF/X-1a and PDF/X-4 export.
 - [ ] CMYK conversion through the document's output intent.
 - [ ] `MediaBox`, `TrimBox`, `BleedBox`; crop, bleed and registration marks,

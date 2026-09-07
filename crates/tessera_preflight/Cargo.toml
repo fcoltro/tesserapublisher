@@ -1,0 +1,21 @@
+[package]
+name = "tessera_preflight"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# Deliberately no `tessera_render`, and therefore no `vello` and no `wgpu`.
+# Preflight runs while the document changes, on a machine with no adapter, and
+# one day in a packager with no window. This list is the proof of that.
+[dependencies]
+tessera_document.workspace = true
+tessera_text.workspace = true
+tessera_color.workspace = true
+tessera_geometry.workspace = true
+
+[dev-dependencies]
+tessera_color.workspace = true
