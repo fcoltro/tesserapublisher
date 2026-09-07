@@ -1102,6 +1102,23 @@ What is owed, stated rather than ticked:
       `ISOcoated_v2_bas.ICC` — the same FOGRA39L condition, permissively licensed,
       and already reviewed as DFSG-free by Debian, which is a second party having
       read the terms.
+    - **The scan recurses, and that was a bug rather than a nicety.** Debian’s
+      `icc-profiles-free` installs into `/usr/share/color/icc/basICColor/` and
+      `.../OpenICC/`, so reading one level found nothing on exactly the platform
+      where the freely licensed presses live. Three levels, symlinks not
+      followed, and a cap on files looked at.
+    - The search paths include **Krita, Scribus, GIMP, Inkscape and darktable**,
+      each of which keeps profiles inside its own installation. Looking there
+      costs a `read_dir` that usually fails and gains their whole answer on a
+      machine that has any of them.
+    - `HOW-OTHERS-SOLVE-IT.md` records how each of those projects handles this.
+      They all split it the same way, and the split is forced rather than
+      preferred: RGB spaces are shipped or synthesised because arithmetic needs
+      no permission, and CMYK presses come from outside the application because
+      measured data has an owner. **Scribus** — the closest analogue, open-source
+      DTP on littleCMS with real soft proofing — discovers rather than bundles, and
+      has for twenty years.
+
     - **ACES and OpenColorIO are the answer to a different question.** Blender’s
       colour management is OCIO, which is scene-linear working spaces and view
       transforms for rendering and film. It is freely licensed and would be

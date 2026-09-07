@@ -55,6 +55,18 @@ part to check.
 `PSOcoated_v3` is FOGRA51, which is the current European coated standard and is
 what FOGRA39 is being superseded by. Worth having for that reason alone.
 
+### Elle Stone’s profiles — public domain, and already shipped by others
+
+A complete set of RGB working spaces released into the **public domain**: sRGB,
+an Adobe RGB-compatible build, ProPhoto, Rec. 2020, ACES, each in normal and
+linear-gamma versions. **Krita, darktable and RawTherapee all ship them**, which
+is three projects having satisfied themselves about the terms.
+
+Tessera builds its RGB spaces from published numbers instead, so these add less
+here than they would elsewhere. What they *would* add is the **linear-gamma
+variants**, which matter for compositing and which are a deliberate offering
+rather than something that falls out of the same primaries.
+
 ### ICC, at color.org
 
 The sRGB profiles carry an explicit and unusually generous grant — copy,
@@ -73,6 +85,10 @@ body that defines the format.
   `Common Files/Adobe/Color/Profiles`. Tessera reads these where they are
   already installed and never copies them.
 - Anything from a printer's own supplied set without asking that printer.
+
+See [HOW-OTHERS-SOLVE-IT.md](HOW-OTHERS-SOLVE-IT.md) for how Krita, Scribus,
+GIMP, darktable and Inkscape each handle this, and what looking at them changed
+here.
 
 ## ACES and OpenColorIO — a different question
 

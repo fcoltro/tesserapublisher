@@ -310,10 +310,23 @@ pub struct Installed {
 
 /// The directories this platform keeps ICC profiles in.
 ///
-/// The system's own first, then the places the major creative suites install
-/// theirs. That second group is the point: a machine with InDesign on it already
-/// has the whole industry-standard CMYK set, and reading it from there means a
-/// document proofed in Tessera is proofed against the same bytes.
+/// Three groups, and each is there for its own reason.
+///
+/// **The system's own.** Every platform has one, and on Linux it is where the
+/// distribution's profile packages land — `icc-profiles-free` and friends, which
+/// is how the freely licensed presses reach most machines.
+///
+/// **The creative suites.** A machine with InDesign or Affinity on it already
+/// has the whole industry-standard CMYK set. Reading it from there means a
+/// document proofed in Tessera is proofed against the same bytes the next
+/// application will use, which matters more than matching a name.
+///
+/// **The other open-source tools.** Krita, Scribus, GIMP, darktable and
+/// RawTherapee each ship profiles, and between them they have solved this
+/// problem already: the RGB working spaces are Elle Stone's public-domain set,
+/// and the CMYK presses come from the distribution rather than from the
+/// application. Looking where they put them costs one `read_dir` that usually
+/// fails, and gains their whole answer on a machine that has any of them.
 pub fn search_paths() -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
 
@@ -338,6 +351,51 @@ pub fn search_paths() -> Vec<PathBuf> {
                 roots.push(adobe);
             }
         }
+        for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
+            let Some(programs) = std::env::var_os(variable) else {
+                continue;
+            };
+            let programs = PathBuf::from(&programs);
+            // The open-source tools, which put theirs inside their own install.
+            roots.push(
+                programs
+                    .join("Krita (x64)")
+                    .join("share")
+                    .join("color")
+                    .join("icc"),
+            );
+            roots.push(
+                programs
+                    .join("Scribus")
+                    .join("share")
+                    .join("color")
+                    .join("icc"),
+            );
+            roots.push(
+                programs
+                    .join("GIMP 2")
+                    .join("share")
+                    .join("color")
+                    .join("icc"),
+            );
+            roots.push(
+                programs
+                    .join("Inkscape")
+                    .join("share")
+                    .join("color")
+                    .join("icc"),
+            );
+            roots.push(
+                programs
+                    .join("darktable")
+                    .join("share")
+                    .join("darktable")
+                    .join("color-in"),
+            );
+        }
+        if let Some(home) = std::env::var_os("USERPROFILE") {
+            roots.push(PathBuf::from(&home).join(".color").join("icc"));
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -347,18 +405,42 @@ pub fn search_paths() -> Vec<PathBuf> {
         roots.push(PathBuf::from(
             "/Library/Application Support/Adobe/Color/Profiles/Recommended",
         ));
+        roots.push(PathBuf::from(
+            "/Library/Application Support/Adobe/Color/Profiles",
+        ));
+        // The open-source tools, inside their bundles.
+        roots.push(PathBuf::from(
+            "/Applications/krita.app/Contents/Resources/color/icc",
+        ));
+        roots.push(PathBuf::from(
+            "/Applications/Scribus.app/Contents/share/color/icc",
+        ));
         if let Some(home) = std::env::var_os("HOME") {
-            roots.push(PathBuf::from(home).join("Library/ColorSync/Profiles"));
+            let home = PathBuf::from(&home);
+            roots.push(home.join("Library/ColorSync/Profiles"));
+            roots.push(home.join(".color/icc"));
         }
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
+        // The distribution's own. `icc-profiles-free` and `icc-profiles-openicc`
+        // land under here — in *subdirectories*, which is why the walk below
+        // recurses rather than reading one level.
         roots.push(PathBuf::from("/usr/share/color/icc"));
         roots.push(PathBuf::from("/usr/local/share/color/icc"));
+        roots.push(PathBuf::from("/var/lib/color/icc"));
+        // The open-source tools, which ship their own inside their data
+        // directories.
+        roots.push(PathBuf::from("/usr/share/krita/color/icc"));
+        roots.push(PathBuf::from("/usr/share/scribus/profiles"));
+        roots.push(PathBuf::from("/usr/share/gimp/2.0/profiles"));
+        roots.push(PathBuf::from("/usr/share/darktable/color/in"));
         if let Some(home) = std::env::var_os("HOME") {
-            roots.push(PathBuf::from(&home).join(".local/share/icc"));
-            roots.push(PathBuf::from(&home).join(".color/icc"));
+            let home = PathBuf::from(&home);
+            roots.push(home.join(".local/share/icc"));
+            roots.push(home.join(".color/icc"));
+            roots.push(home.join(".local/share/color/icc"));
         }
     }
 
@@ -373,6 +455,17 @@ pub fn search_paths() -> Vec<PathBuf> {
 /// remains there for.
 const MOST_FILES: usize = 400;
 
+/// How far into a colour directory the walk goes.
+///
+/// **It has to recurse at all**, which the first version of this did not:
+/// `icc-profiles-free` installs into `/usr/share/color/icc/basICColor/` and
+/// `.../OpenICC/`, so reading one level finds nothing on exactly the platform
+/// where the freely licensed presses live.
+///
+/// Three levels, not unlimited. A colour directory is two or three deep; a walk
+/// with no floor would follow a symlink into a home directory and read it.
+const DEEPEST: usize = 3;
+
 /// Every profile this machine has, that Tessera can use.
 ///
 /// Sorted by description and deduplicated by it, because the same profile is
@@ -384,29 +477,53 @@ pub fn installed() -> Vec<Installed> {
     let mut looked_at = 0;
 
     for root in search_paths() {
-        let Ok(entries) = std::fs::read_dir(&root) else {
-            // A directory that is not there is the ordinary case, not a fault:
-            // no machine has all of them.
-            continue;
-        };
-        for entry in entries.flatten() {
-            if looked_at >= MOST_FILES {
-                break;
-            }
-            let path = entry.path();
-            if !is_profile_name(&path) {
-                continue;
-            }
-            looked_at += 1;
-            if let Some(profile) = describe(&path) {
-                found.push(profile);
-            }
-        }
+        walk(&root, 0, &mut looked_at, &mut found);
     }
 
     found.sort_by(|a, b| a.description.cmp(&b.description));
+    // By description, because the same profile installed in two places is one
+    // profile to a person. The path is kept from whichever was found first.
     found.dedup_by(|a, b| a.description == b.description);
     found
+}
+
+/// Read one directory and its subdirectories, up to [`DEEPEST`].
+///
+/// A directory that is not there is the ordinary case rather than a fault: no
+/// machine has all of them, and most machines have very few.
+fn walk(at: &Path, depth: usize, looked_at: &mut usize, found: &mut Vec<Installed>) {
+    if depth > DEEPEST || *looked_at >= MOST_FILES {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(at) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        if *looked_at >= MOST_FILES {
+            return;
+        }
+        let path = entry.path();
+
+        // `file_type` rather than `path.is_dir()`, so a symlink is seen as a
+        // symlink and not followed. A colour directory that links to a home
+        // directory would otherwise be walked as one.
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_dir() {
+            walk(&path, depth + 1, looked_at, found);
+            continue;
+        }
+        if !kind.is_file() || !is_profile_name(&path) {
+            continue;
+        }
+
+        *looked_at += 1;
+        if let Some(profile) = describe(&path) {
+            found.push(profile);
+        }
+    }
 }
 
 fn is_profile_name(path: &Path) -> bool {
@@ -672,6 +789,77 @@ mod tests {
         // A machine with no colour directory at all is possible; a *platform*
         // with none is not, and would mean the list can never be populated.
         assert!(!search_paths().is_empty());
+    }
+
+    #[test]
+    fn the_walk_reaches_a_profile_in_a_subdirectory() {
+        // **The bug this exists for.** `icc-profiles-free` installs into
+        // `/usr/share/color/icc/basICColor/` and `.../OpenICC/`, so a scan that
+        // read one level found nothing on exactly the platform where the freely
+        // licensed presses live.
+        let root = std::env::temp_dir().join("tessera-walk-deep");
+        let _ = std::fs::remove_dir_all(&root);
+        let nested = root.join("basICColor").join("more");
+        std::fs::create_dir_all(&nested).expect("a nested directory");
+        std::fs::write(
+            nested.join("buried.icc"),
+            Standard::Srgb.build().expect("built"),
+        )
+        .expect("write");
+
+        let mut found = Vec::new();
+        let mut looked_at = 0;
+        walk(&root, 0, &mut looked_at, &mut found);
+
+        assert_eq!(found.len(), 1, "a profile two levels down was not reached");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_walk_stops_before_it_reads_the_whole_disk() {
+        // A colour directory is two or three deep. A walk with no floor would
+        // follow whatever it found into a home directory and read that.
+        let root = std::env::temp_dir().join("tessera-walk-floor");
+        let _ = std::fs::remove_dir_all(&root);
+        let mut at = root.clone();
+        for step in 0..(DEEPEST + 3) {
+            at = at.join(format!("level{step}"));
+        }
+        std::fs::create_dir_all(&at).expect("a deep directory");
+        std::fs::write(
+            at.join("too-deep.icc"),
+            Standard::Srgb.build().expect("built"),
+        )
+        .expect("write");
+
+        let mut found = Vec::new();
+        let mut looked_at = 0;
+        walk(&root, 0, &mut looked_at, &mut found);
+
+        assert!(found.is_empty(), "the walk went deeper than {DEEPEST}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_walk_stops_after_enough_files() {
+        // A machine that has collected several thousand profiles should not make
+        // opening a menu take a second.
+        let root = std::env::temp_dir().join("tessera-walk-cap");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("a directory");
+
+        // Not profiles, so nothing is parsed: the cap counts files *looked at*,
+        // which is what costs the time.
+        for n in 0..(MOST_FILES + 20) {
+            std::fs::write(root.join(format!("{n}.icc")), b"not a profile").expect("write");
+        }
+
+        let mut found = Vec::new();
+        let mut looked_at = 0;
+        walk(&root, 0, &mut looked_at, &mut found);
+
+        assert_eq!(looked_at, MOST_FILES, "the cap did not hold");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
