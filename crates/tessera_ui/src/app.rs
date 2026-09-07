@@ -191,15 +191,6 @@ pub struct SwatchesWindow {
     pub chosen: Option<String>,
 }
 
-/// The blurred document behind the panels.
-#[derive(Debug, Clone, Copy)]
-pub struct Backdrop {
-    pub texture: egui::TextureId,
-    /// Where the canvas sits on screen, so a panel can work out which part of
-    /// the backdrop is behind it.
-    pub canvas: egui::Rect,
-}
-
 /// Everything the application holds.
 ///
 /// Constructed with [`TesseraApp::headless`] in tests, so the command layer,
@@ -249,14 +240,19 @@ pub struct TesseraApp {
     /// The preferences window.
     pub settings: crate::view::settings::SettingsWindow,
 
-    /// The blurred document, and where on screen it corresponds to.
+    /// The interface's own ground, and the frosted copy the glass shows.
     ///
-    /// Written by the viewport, which is the only place both are known, and read
-    /// by whatever paints a glass panel. `None` before the first frame and
-    /// whenever glass is off, and a panel that finds `None` paints itself solid
-    /// rather than transparent — a missing backdrop must give a working
-    /// interface, not an invisible one.
-    pub backdrop: Option<Backdrop>,
+    /// **Not the document.** Panels frost the ground Tessera draws behind its
+    /// own chrome; the page stays opaque and is never seen through, because
+    /// colour is judged against it.
+    pub ambient: crate::view::ambient::Ambient,
+
+    /// The two ambient textures for this frame, once they exist.
+    ///
+    /// `None` before the first frame, and a panel that finds `None` paints
+    /// itself solid — a missing ground must give a working interface, not a
+    /// transparent one.
+    pub ground: Option<(egui::TextureId, egui::TextureId)>,
 
     /// The lines the object being dragged is currently settled on, for the
     /// indicator. Cleared when the gesture ends.
@@ -373,7 +369,8 @@ impl TesseraApp {
             soft_proof: crate::softproof::SoftProof::default(),
             profiles: crate::catalogue::Catalogue::default(),
             settings: crate::view::settings::SettingsWindow::default(),
-            backdrop: None,
+            ambient: crate::view::ambient::Ambient::default(),
+            ground: None,
             snapped_to: None,
             editing_master: None,
             rail_open: true,

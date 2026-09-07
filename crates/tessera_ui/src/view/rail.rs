@@ -22,61 +22,11 @@ use crate::theme::Theme;
 /// How wide the rail is when collapsed to icons.
 pub const STRIP: f32 = 30.0;
 
-/// How wide the rail is when it is open.
+/// How wide the rail is to begin with.
 ///
-/// A constant rather than a remembered drag, for the floating case only: an
-/// overlay that could be dragged wider would need a splitter drawn over the
-/// page, and a splitter over the page is a thing to hit by accident while
-/// working. Docked, it stays resizable as it was.
+/// A starting width rather than a fixed one: the rail sits beside the page and
+/// is resizable, so this is what it opens at and not what it stays at.
 pub const WIDTH: f32 = 292.0;
-
-/// The rail as an overlay, floating over the page.
-///
-/// Painted into `canvas` rather than the whole window, so it is bounded by the
-/// same rectangle the document is and cannot stray over the rulers or the status
-/// bar. Those are chrome; putting glass over chrome would be blurring the
-/// furniture, which shows nothing and reads as a smear.
-pub fn floating(ui: &mut Ui, state: &mut TesseraApp, canvas: egui::Rect) {
-    let width = if state.rail_open { WIDTH } else { STRIP };
-    let rect = egui::Rect::from_min_max(egui::pos2(canvas.max.x - width, canvas.min.y), canvas.max);
-
-    // A new `Ui` in a layer of its own, so the rail's widgets are hit before the
-    // canvas underneath them. Without a layer above, a click on a rail button
-    // would also be a click on the page it happens to sit over.
-    let mut panel = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(rect)
-            .layer_id(egui::LayerId::new(
-                egui::Order::Middle,
-                ui.id().with("rail-float"),
-            ))
-            .layout(egui::Layout::top_down(egui::Align::Min)),
-    );
-
-    // The surface first, under everything the rail draws. `false` means there is
-    // no backdrop yet — the first frame — and then it is painted solid, because a
-    // transparent panel with live controls in it is a fault rather than a look.
-    let edge = crate::view::glass::Edge::Left;
-    if !crate::view::glass::surface(&panel, state, rect, edge) {
-        panel
-            .painter()
-            .rect_filled(rect, 0.0, Theme::panel_bg_solid());
-        crate::view::glass::hairline(&panel, rect, edge);
-    }
-
-    // The pointer belongs to the rail wherever the rail is, or a drag begun on a
-    // slider would pan the page behind it.
-    panel.set_clip_rect(rect);
-    egui::Frame::NONE
-        .inner_margin(egui::Margin::symmetric(Theme::SPACE_2 as i8, 0))
-        .show(&mut panel, |ui| {
-            if state.rail_open {
-                show(ui, state);
-            } else {
-                strip(ui, state);
-            }
-        });
-}
 
 /// What the rail can show, in the order it shows it.
 #[derive(Clone, Copy, PartialEq, Eq)]

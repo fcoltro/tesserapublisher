@@ -5,6 +5,7 @@
 //! attaching to a `Context`. That matches eframe 0.35 handing the app a root
 //! `Ui`, so the whole window is one tree.
 
+pub mod ambient;
 pub mod canvas_toolbar;
 pub mod control;
 pub mod glass;
@@ -36,6 +37,29 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // takes effect on the frame it was changed in rather than the one after.
     crate::theme::follow(ui.ctx(), state.prefs.theme);
 
+    // The interface’s own ground, painted under everything. The document is drawn
+    // over the middle of it and is opaque; what shows through the chrome is
+    // this, which is what the glass frosts.
+    let window = ui.max_rect();
+    state.ground = state
+        .prefs
+        .panel_surface
+        .is_glass()
+        .then(|| {
+            state
+                .ambient
+                .textures(ui.ctx(), window.size(), &state.prefs)
+        })
+        .flatten();
+    if let Some((sharp, _)) = state.ground {
+        ui.painter().image(
+            sharp,
+            window,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+    }
+
     accelerators(ui, state);
 
     Panel::top("menu").show(ui, |ui| menu_bar(ui, state));
@@ -60,15 +84,17 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
         .resizable(false)
         .show(ui, |ui| panels::status_bar(ui, state));
 
-    // The tools. Beside the page when panels are solid, over it when they are
-    // glass — the same question the rail asks, asked once in `glass::floating`.
-    let floating = glass::floating(state);
-    if !floating {
-        Panel::left("tools")
-            .exact_size(Theme::TOOL_SIZE + Theme::SPACING_LG)
-            .resizable(false)
-            .show(ui, |ui| panels::tool_strip(ui, state));
-    }
+    // The tools, beside the page. **Not over it.** Chrome that floats over the
+    // document is chrome that covers the thing being worked on, and the glass is
+    // for showing the interface’s own ground through — not the page.
+    Panel::left("tools")
+        .exact_size(Theme::TOOL_SIZE + Theme::SPACING_LG)
+        .frame(glass::panel_frame(state))
+        .resizable(false)
+        .show(ui, |ui| {
+            glass::behind(ui, state, glass::Edge::Right);
+            panels::tool_strip(ui, state);
+        });
 
     // The rail. Every panel docks here; nothing floats *loose*. Collapsed, it is
     // a strip of icons rather than nothing at all: a panel you cannot see should
@@ -78,21 +104,26 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // it, and that is the same question in both places — which is why it is
     // asked once, of `glass::floating`. Two places deciding independently is how
     // a rail ends up floating while the canvas still leaves a gap for it.
-    if !floating {
-        if state.rail_open {
-            Panel::right("rail")
-                .default_size(rail::WIDTH)
-                .min_size(232.0)
-                .show(ui, |ui| rail::show(ui, state));
-        } else {
-            // The rail *collapsed*, not a second thing beside it. Showing both
-            // at once put a column of icons hard against the rail's own
-            // scrollbar.
-            Panel::right("rail-strip")
-                .exact_size(rail::STRIP)
-                .resizable(false)
-                .show(ui, |ui| rail::strip(ui, state));
-        }
+    if state.rail_open {
+        Panel::right("rail")
+            .default_size(rail::WIDTH)
+            .min_size(232.0)
+            .frame(glass::panel_frame(state))
+            .show(ui, |ui| {
+                glass::behind(ui, state, glass::Edge::Left);
+                rail::show(ui, state);
+            });
+    } else {
+        // The rail *collapsed*, not a second thing beside it. Showing both at
+        // once put a column of icons hard against the rail's own scrollbar.
+        Panel::right("rail-strip")
+            .exact_size(rail::STRIP)
+            .resizable(false)
+            .frame(glass::panel_frame(state))
+            .show(ui, |ui| {
+                glass::behind(ui, state, glass::Edge::Left);
+                rail::strip(ui, state);
+            });
     }
 
     // A mode you cannot see is a mode you get stuck in. InDesign shows the
@@ -176,14 +207,6 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
             // cannot stray over the rulers or the status bar; and *after* the
             // viewport, so the backdrop it paints was rendered this frame rather
             // than last.
-            if floating {
-                // The tools first, then the rail: they cannot overlap, so the
-                // order is only about which is on top if a window is ever
-                // narrow enough that they meet — and the rail is the one being
-                // read.
-                panels::floating_tool_strip(ui, state, canvas);
-                rail::floating(ui, state, canvas);
-            }
         });
 }
 

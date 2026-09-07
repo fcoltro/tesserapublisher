@@ -1,38 +1,33 @@
-//! Panels you can see the page through.
+//! Panels you can see a soft ground through.
 //!
-//! ## The blur, and why there is no blur shader
+//! ## What is behind the glass, and what is not
 //!
-//! A backdrop blur normally means: render the scene, copy the region behind the
-//! panel, run a separable gaussian over it, composite. That is three or four
-//! passes and a pile of WGSL, and every one of those passes is a thing to get
-//! wrong on a driver nobody here owns.
+//! **Not the document.** A first attempt had panels blurring the page behind
+//! them, which is a different effect wearing the same name and wrong twice over:
+//! it is not what glassmorphism looks like, and in a tool where colour is judged
+//! it means reading a swatch against a page that moves.
 //!
-//! Tessera does something simpler that reaches the same place. The document is a
-//! **vector** scene, so it can be rendered a second time at a fraction of the
-//! size — Vello antialiasing it properly at that size — and then stretched back
-//! up by the linear filter egui already samples textures with. A bilinear
-//! magnification of an n-times reduction *is* a blur of radius n, and because
-//! the small render was antialiased rather than point-sampled, it is a smoother
-//! one than box-blurring the full-size image would give.
+//! What is behind the glass is a ground Tessera draws for itself — see
+//! [`super::ambient`] — a few soft lights in the theme’s own accent. The document
+//! stays opaque, beside the chrome, never seen through.
 //!
-//! Three things follow, and they are the reason this is the right trick rather
-//! than a cheap one:
+//! ## The blur is generated, not filtered
 //!
-//! - **No shader.** Nothing to write, nothing to debug on somebody else's GPU.
-//! - **A stronger blur is cheaper.** The backdrop is smaller. At a divisor of
-//!   six it is one thirty-sixth of the pixels; at sixteen, one two-hundred-and-
-//!   fifty-sixth. Every other implementation of this gets slower as it blurs
-//!   harder.
-//! - **The radius is one integer**, which a preferences slider can hold directly
-//!   rather than through a calibration nobody can explain.
+//! Because the ground is ours, there is nothing to sample and blur: a blurrier
+//! version is the same function evaluated more coarsely. Two small images come
+//! out of one generator — about a hundred pixels across for the open ground, a
+//! dozen for behind the glass — and the linear filter egui already samples
+//! textures with does the stretching.
 //!
-//! ## What glass costs, and where it is refused
+//! No shader, no second render pass, nothing that behaves differently on
+//! somebody else’s GPU, and the blur strength is one integer a slider holds.
 //!
-//! This is a tool where colour is *judged*. A swatch, a gradient ramp and a soft
-//! proof are answers to "what colour is this", and an answer shown over a moving
-//! translucent background is not an answer. Those surfaces stay **opaque** even
-//! inside a glass panel — see [`opaque_well`] — and that is not a compromise on
-//! the look, it is the difference between decoration and a lie.
+//! ## Where glass is still refused
+//!
+//! A swatch, a gradient ramp and a fill proxy are answers to "what colour is
+//! this". Even over a still ground, a colour carrying alpha shown over a
+//! coloured one is a different colour. Those paint an opaque well first — see
+//! [`opaque_well`] — which is the difference between decoration and a lie.
 
 use egui::{Rect, Ui};
 
@@ -57,40 +52,28 @@ pub enum Edge {
 /// switched off — and the caller should paint itself solid. A panel that
 /// silently drew nothing would be a transparent panel with live controls in it.
 pub fn surface(ui: &Ui, state: &TesseraApp, rect: Rect, edge: Edge) -> bool {
-    let Some(backdrop) = state.backdrop else {
+    let Some((_, frosted)) = state.ground else {
         return false;
     };
     if !state.prefs.panel_surface.is_glass() {
         return false;
     }
 
-    // Which part of the canvas is behind this panel, as a fraction of it. The
-    // canvas extends *under* the panel when glass is on, which is the whole
-    // reason there is anything to see: a panel beside the canvas has nothing
-    // behind it but the window.
-    let canvas = backdrop.canvas;
-    if canvas.width() <= 0.0 || canvas.height() <= 0.0 {
-        return false;
-    }
-    let uv = Rect::from_min_max(
-        egui::pos2(
-            (rect.min.x - canvas.min.x) / canvas.width(),
-            (rect.min.y - canvas.min.y) / canvas.height(),
-        ),
-        egui::pos2(
-            (rect.max.x - canvas.min.x) / canvas.width(),
-            (rect.max.y - canvas.min.y) / canvas.height(),
-        ),
-    );
-
     let painter = ui.painter();
 
-    // The blurred page.
-    painter.image(backdrop.texture, rect, uv, egui::Color32::WHITE);
+    // The frosted ground, stretched to the panel. The whole texture, not a
+    // window onto it: the ground is a composition rather than a scene, so a
+    // panel showing all of it reads better than one showing the corner of it.
+    painter.image(
+        frosted,
+        rect,
+        Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        egui::Color32::WHITE,
+    );
 
-    // The tint over it. Without this the panel is a window, not a surface: text
-    // has nothing to sit on and every control fights the page for attention.
-    // Its opacity is the preference that actually decides legibility.
+    // The tint over it. Without this the panel is a coloured picture, not a
+    // surface: text has nothing to sit on. Its opacity is the preference that
+    // actually decides legibility.
     let alpha = (state.prefs.glass_opacity() * 255.0)
         .round()
         .clamp(0.0, 255.0) as u8;
@@ -98,9 +81,7 @@ pub fn surface(ui: &Ui, state: &TesseraApp, rect: Rect, edge: Edge) -> bool {
 
     // A hairline along the edge that faces the document. **Not a border on all
     // four sides** — the other three meet the window, where a line would be
-    // drawing a box around the screen. This one edge is where the panel begins,
-    // and an edge you can see is what makes it read as a pane rather than as a
-    // stain on the canvas.
+    // drawing a box around the screen.
     hairline(ui, rect, edge);
 
     true
@@ -129,13 +110,32 @@ pub fn opaque_well(ui: &Ui, rect: Rect, rounding: f32) {
         .rect_filled(rect, rounding, Theme::panel_bg_solid());
 }
 
-/// Whether panels should float over the canvas this frame.
+/// The frame a panel is built with.
 ///
-/// One question with one answer, asked by the shell when it lays out and by
-/// every panel when it paints. Two places deciding this independently is how a
-/// rail ends up floating while the canvas still leaves room for it.
-pub fn floating(state: &TesseraApp) -> bool {
-    state.prefs.panel_surface.is_glass()
+/// Transparent when the panel is going to paint its own glass, and the theme’s
+/// solid ground otherwise. Without this egui fills the panel first and the glass
+/// would be frosting an opaque rectangle.
+pub fn panel_frame(state: &TesseraApp) -> egui::Frame {
+    let base = egui::Frame::side_top_panel(&egui::Style::default());
+    if state.prefs.panel_surface.is_glass() {
+        base.fill(egui::Color32::TRANSPARENT)
+    } else {
+        base.fill(Theme::panel_bg_solid())
+    }
+}
+
+/// Paint the glass behind a panel’s contents.
+///
+/// Called at the top of a panel’s closure, where the rectangle is known and
+/// before any widget has drawn. Falls back to the solid ground when there is no
+/// ambient texture yet — the first frame — because a transparent panel with live
+/// controls in it is a fault rather than a look.
+pub fn behind(ui: &Ui, state: &TesseraApp, edge: Edge) {
+    let rect = ui.max_rect().expand(ui.spacing().item_spacing.x);
+    if !surface(ui, state, rect, edge) && state.prefs.panel_surface.is_glass() {
+        ui.painter().rect_filled(rect, 0.0, Theme::panel_bg_solid());
+        hairline(ui, rect, edge);
+    }
 }
 
 #[cfg(test)]
@@ -144,24 +144,31 @@ mod tests {
     use crate::prefs::PanelSurface;
 
     #[test]
-    fn glass_is_off_when_the_preference_says_solid() {
+    fn a_solid_panel_gets_an_opaque_frame_and_a_glass_one_does_not() {
+        // egui fills a panel before its closure runs, so a glass panel has to
+        // ask for no fill — otherwise the frost would be over an opaque
+        // rectangle and nothing would show through.
         let mut state = TesseraApp::headless();
+
         state.prefs.panel_surface = PanelSurface::Solid;
-        assert!(!floating(&state));
+        assert_ne!(panel_frame(&state).fill, egui::Color32::TRANSPARENT);
+
+        state.prefs.panel_surface = PanelSurface::Glass;
+        assert_eq!(panel_frame(&state).fill, egui::Color32::TRANSPARENT);
     }
 
     #[test]
     fn glass_is_on_by_default() {
         let state = TesseraApp::headless();
-        assert!(floating(&state));
+        assert!(state.prefs.panel_surface.is_glass());
     }
 
     #[test]
-    fn there_is_no_backdrop_before_the_first_frame() {
+    fn there_is_no_ground_before_the_first_frame() {
         // A panel that finds none paints itself solid. An interface that is
         // briefly transparent on startup would look broken in exactly the
         // moment somebody is deciding whether it is.
         let state = TesseraApp::headless();
-        assert!(state.backdrop.is_none());
+        assert!(state.ground.is_none());
     }
 }

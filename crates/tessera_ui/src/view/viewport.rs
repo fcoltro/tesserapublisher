@@ -128,30 +128,12 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
         let scene =
             tessera_render::scene::build_scene_proofed(resolved, view, proofed, &mut state.images);
 
-        // The backdrop, when panels are glass. Rendered from the same scene at a
-        // fraction of the size; stretching it back up is what makes it a blur.
-        let divisor = state
-            .prefs
-            .panel_surface
-            .is_glass()
-            .then(|| state.prefs.blur_divisor());
-        let backdrop = divisor
-            .and_then(|divisor| vello_host::prepare_backdrop(render_state, width, height, divisor));
-        state.backdrop = backdrop.map(|texture| crate::app::Backdrop {
-            texture,
-            canvas: rect,
-        });
-
         ui.painter().add(egui_wgpu::Callback::new_paint_callback(
             rect,
             VelloCallback {
                 scene,
                 width,
                 height,
-                // Only when there is somewhere to put it: asking for the second
-                // render and then not painting it would be a third of a frame
-                // spent on nothing.
-                backdrop_divisor: backdrop.and(divisor),
                 background: pasteboard(),
             },
         ));
