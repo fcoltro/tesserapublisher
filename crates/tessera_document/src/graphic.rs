@@ -102,6 +102,23 @@ pub fn frame_to_content(frame: DocRect, natural: (f64, f64)) -> DocRect {
     }
 }
 
+/// The resolution artwork is actually reproduced at, in pixels per inch.
+///
+/// **Effective**, not natural: a 300ppi photograph scaled to twice its size is
+/// a 150ppi photograph, and it is the effective figure a printer cares about.
+/// Returns `None` for artwork drawn at no size, which has no resolution rather
+/// than an infinite one.
+pub fn effective_ppi(pixels: (u32, u32), drawn: (f64, f64)) -> Option<(f64, f64)> {
+    if drawn.0 <= 0.0 || drawn.1 <= 0.0 {
+        return None;
+    }
+    // 72 points to the inch.
+    Some((
+        f64::from(pixels.0) / (drawn.0 / 72.0),
+        f64::from(pixels.1) / (drawn.1 / 72.0),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,6 +149,45 @@ mod tests {
         }
     }
 
+    // --- effective resolution ------------------------------------------------
+
+    #[test]
+    fn artwork_at_its_natural_size_reports_seventy_two_ppi() {
+        // A point is a 72nd of an inch, so one pixel per point is 72ppi.
+        let at = effective_ppi((100, 100), (100.0, 100.0)).expect("a resolution");
+        assert!((at.0 - 72.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn scaling_artwork_up_halves_its_resolution() {
+        // **The number a printer cares about**: a 300ppi photograph at twice
+        // its size is a 150ppi photograph.
+        let small = effective_ppi((600, 600), (144.0, 144.0)).expect("a resolution");
+        let large = effective_ppi((600, 600), (288.0, 288.0)).expect("a resolution");
+        assert!((small.0 - 2.0 * large.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_three_hundred_ppi_placement_reports_three_hundred() {
+        // 300ppi means 300 pixels to the inch, and an inch is 72 points.
+        let at = effective_ppi((300, 300), (72.0, 72.0)).expect("a resolution");
+        assert!((at.0 - 300.0).abs() < 1e-9, "got {}", at.0);
+    }
+
+    #[test]
+    fn a_stretched_placement_reports_two_different_resolutions() {
+        // Stretching is not proportional, so the two axes really do differ and
+        // a single figure would hide it.
+        let at = effective_ppi((300, 300), (72.0, 144.0)).expect("a resolution");
+        assert!((at.0 - 300.0).abs() < 1e-9);
+        assert!((at.1 - 150.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn artwork_drawn_at_no_size_has_no_resolution_rather_than_an_infinite_one() {
+        assert!(effective_ppi((300, 300), (0.0, 72.0)).is_none());
+        assert!(effective_ppi((300, 300), (72.0, 0.0)).is_none());
+    }
     #[test]
     fn stretching_fills_the_frame_exactly() {
         let at = placed((50.0, 50.0), Fit::Stretch);

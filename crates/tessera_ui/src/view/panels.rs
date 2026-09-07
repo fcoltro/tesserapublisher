@@ -1233,7 +1233,7 @@ fn graphic_section(
         ((b.x - a.x).abs(), (b.y - a.y).abs())
     };
     let pixels = (link.natural.0 as u32, link.natural.1 as u32);
-    if let Some((x, y)) = tessera_render::images::effective_ppi(pixels, drawn) {
+    if let Some((x, y)) = tessera_document::graphic::effective_ppi(pixels, drawn) {
         let worst = x.min(y);
         let colour = if worst < state.prefs.minimum_ppi {
             Theme::error()
