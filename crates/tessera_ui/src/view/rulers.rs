@@ -59,7 +59,7 @@ pub fn paint(ui: &Ui, state: &TesseraApp, canvas: Rect, horizontal: Rect, vertic
 
     for (strip, is_horizontal) in [(horizontal, true), (vertical, false)] {
         let painter = ui.painter_at(strip);
-        painter.rect_filled(strip, 0.0, Theme::PANEL_BG_ALT);
+        painter.rect_filled(strip, 0.0, Theme::panel_bg_alt());
 
         let (from, to) = if is_horizontal {
             (canvas.min.x, canvas.max.x)
@@ -110,7 +110,7 @@ pub fn paint(ui: &Ui, state: &TesseraApp, canvas: Rect, horizontal: Rect, vertic
                 continue;
             }
 
-            let hair = egui::Stroke::new(1.0, Theme::TEXT_MUTED);
+            let hair = egui::Stroke::new(1.0, Theme::text_muted());
             if is_horizontal {
                 painter.line_segment(
                     [
@@ -124,7 +124,7 @@ pub fn paint(ui: &Ui, state: &TesseraApp, canvas: Rect, horizontal: Rect, vertic
                     egui::Align2::LEFT_TOP,
                     format!("{:.0}", unit.from_points(doc - zero)),
                     egui::FontId::proportional(9.0),
-                    Theme::TEXT_MUTED,
+                    Theme::text_muted(),
                 );
             } else {
                 painter.line_segment(
@@ -139,7 +139,7 @@ pub fn paint(ui: &Ui, state: &TesseraApp, canvas: Rect, horizontal: Rect, vertic
                     egui::Align2::LEFT_TOP,
                     format!("{:.0}", unit.from_points(doc - zero)),
                     egui::FontId::proportional(9.0),
-                    Theme::TEXT_MUTED,
+                    Theme::text_muted(),
                 );
             }
         }
@@ -253,14 +253,14 @@ pub fn zero_point(ui: &mut Ui, state: &mut TesseraApp) {
 
     let moved = state.ruler_origin.is_some();
     let painter = ui.painter();
-    painter.rect_filled(rect, 2.0, Theme::PANEL_BG_ALT);
+    painter.rect_filled(rect, 2.0, Theme::panel_bg_alt());
     // Two short rules meeting at the corner: the shape of an origin.
     let hair = egui::Stroke::new(
         1.0,
         if moved {
-            Theme::ACCENT
+            Theme::accent()
         } else {
-            Theme::TEXT_MUTED
+            Theme::text_muted()
         },
     );
     painter.line_segment(

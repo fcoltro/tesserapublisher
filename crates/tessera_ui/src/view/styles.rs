@@ -50,9 +50,9 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
                 spot,
                 icon,
                 if selected {
-                    Theme::TEXT_PRIMARY
+                    Theme::text_primary()
                 } else {
-                    Theme::TEXT_MUTED
+                    Theme::text_muted()
                 },
             );
             if ui.selectable_label(selected, label).clicked() {
@@ -95,7 +95,7 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp) {
         .collect();
 
     if listed.is_empty() {
-        ui.colored_label(Theme::TEXT_MUTED, "No object styles yet.");
+        ui.colored_label(Theme::text_muted(), "No object styles yet.");
     }
     for (id, name) in &listed {
         let chosen = state.styles_window.object == Some(*id);
@@ -105,7 +105,7 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp) {
             }
             // How many objects follow it, so removing one is not a guess.
             let following = state.active().document().frames_following_object_style(*id);
-            ui.colored_label(Theme::TEXT_MUTED, format!("{following}"))
+            ui.colored_label(Theme::text_muted(), format!("{following}"))
                 .on_hover_text("Objects following this style");
         });
     }
@@ -339,7 +339,7 @@ fn paragraph_side(ui: &mut Ui, state: &mut TesseraApp) {
                 }
             }
             if styles.is_empty() {
-                ui.colored_label(Theme::TEXT_MUTED, "No paragraph styles yet.");
+                ui.colored_label(Theme::text_muted(), "No paragraph styles yet.");
             }
 
             ui.add_space(Theme::SPACING_SM);
@@ -401,7 +401,7 @@ fn paragraph_side(ui: &mut Ui, state: &mut TesseraApp) {
 
         ui.vertical(|ui| {
             let Some(id) = state.styles_window.paragraph else {
-                ui.colored_label(Theme::TEXT_MUTED, "Select a style to edit it.");
+                ui.colored_label(Theme::text_muted(), "Select a style to edit it.");
                 return;
             };
             let Some(existing) = state.active().document().paragraph_styles.get(id).cloned() else {
@@ -423,7 +423,7 @@ fn paragraph_fields(
     let mut edited = existing.clone();
 
     ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, "Name");
+        ui.colored_label(Theme::text_muted(), "Name");
         ui.text_edit_singleline(&mut edited.name);
     });
 
@@ -431,7 +431,7 @@ fn paragraph_fields(
     // answer is "not available" rather than "rejected after the fact".
     let mut chosen_parent = None;
     ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, "Based on");
+        ui.colored_label(Theme::text_muted(), "Based on");
         let label = existing
             .based_on
             .and_then(|p| styles.iter().find(|(s, _)| *s == p))
@@ -466,11 +466,11 @@ fn paragraph_fields(
     });
 
     ui.separator();
-    ui.colored_label(Theme::TEXT_MUTED, "Character formatting");
+    ui.colored_label(Theme::text_muted(), "Character formatting");
     character_format_fields(ui, state, &mut edited.format.character);
 
     ui.separator();
-    ui.colored_label(Theme::TEXT_MUTED, "Paragraph formatting");
+    ui.colored_label(Theme::text_muted(), "Paragraph formatting");
     optional_choice(
         ui,
         "Alignment",
@@ -554,7 +554,7 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp) {
                 }
             }
             if styles.is_empty() {
-                ui.colored_label(Theme::TEXT_MUTED, "No character styles yet.");
+                ui.colored_label(Theme::text_muted(), "No character styles yet.");
             }
 
             ui.add_space(Theme::SPACING_SM);
@@ -612,7 +612,7 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp) {
 
         ui.vertical(|ui| {
             let Some(id) = state.styles_window.character else {
-                ui.colored_label(Theme::TEXT_MUTED, "Select a style to edit it.");
+                ui.colored_label(Theme::text_muted(), "Select a style to edit it.");
                 return;
             };
             let Some(existing) = state.active().document().character_styles.get(id).cloned() else {
@@ -622,13 +622,13 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp) {
             let mut edited = existing.clone();
 
             ui.horizontal(|ui| {
-                ui.colored_label(Theme::TEXT_MUTED, "Name");
+                ui.colored_label(Theme::text_muted(), "Name");
                 ui.text_edit_singleline(&mut edited.name);
             });
 
             let mut chosen_parent = None;
             ui.horizontal(|ui| {
-                ui.colored_label(Theme::TEXT_MUTED, "Based on");
+                ui.colored_label(Theme::text_muted(), "Based on");
                 let label = existing
                     .based_on
                     .and_then(|p| styles.iter().find(|(s, _)| *s == p))
@@ -687,7 +687,7 @@ fn character_format_fields(ui: &mut Ui, state: &mut TesseraApp, format: &mut Cha
             .checkbox(&mut on, "")
             .on_hover_text(INHERIT_HINT)
             .changed();
-        ui.colored_label(Theme::TEXT_MUTED, "Family");
+        ui.colored_label(Theme::text_muted(), "Family");
         ui.add_enabled_ui(set, |ui| {
             let label = format.family.clone().unwrap_or_else(|| "—".to_string());
             egui::ComboBox::from_id_salt("style-family")
@@ -807,7 +807,7 @@ fn optional_number(
         {
             *value = if on { Some(default) } else { None };
         }
-        ui.colored_label(Theme::TEXT_MUTED, label);
+        ui.colored_label(Theme::text_muted(), label);
         ui.add_enabled_ui(value.is_some(), |ui| match value {
             Some(v) => {
                 let mut edited = f64::from(*v);
@@ -848,7 +848,7 @@ fn optional_choice<T: PartialEq + Copy>(
         {
             *value = if on { Some(default) } else { None };
         }
-        ui.colored_label(Theme::TEXT_MUTED, label);
+        ui.colored_label(Theme::text_muted(), label);
         ui.add_enabled_ui(value.is_some(), |ui| {
             for (text, candidate) in options {
                 if ui
@@ -873,7 +873,7 @@ fn optional_count(ui: &mut Ui, label: &str, value: &mut Option<u8>, default: u8)
         {
             *value = if on { Some(default) } else { None };
         }
-        ui.colored_label(Theme::TEXT_MUTED, label);
+        ui.colored_label(Theme::text_muted(), label);
         ui.add_enabled_ui(value.is_some(), |ui| match value {
             Some(v) => {
                 let mut edited = i32::from(*v);
@@ -906,7 +906,7 @@ fn optional_flag(ui: &mut Ui, label: &str, value: &mut Option<bool>) {
         {
             *value = if on { Some(true) } else { None };
         }
-        ui.colored_label(Theme::TEXT_MUTED, label);
+        ui.colored_label(Theme::text_muted(), label);
         ui.add_enabled_ui(value.is_some(), |ui| {
             let mut state = value.unwrap_or(false);
             if ui.checkbox(&mut state, "").changed() {

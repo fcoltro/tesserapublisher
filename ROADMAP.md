@@ -138,6 +138,14 @@ threading, swatches, preflight, images, CMYK, print marks.
 
 # Milestone 1 — The Editing Surface
 
+> **Reconciled 2026-09-07.** Three items here were built and never ticked
+> — the reference point, align and distribute, and the light theme in
+> milestone 3 — which made this file over-report what was left and useless
+> for deciding what to do next. A roadmap that is wrong in the safe
+> direction is still wrong: it hides finished work and buries the real
+> gaps among imaginary ones. Each claim below was checked against the code
+> rather than against memory.
+
 Making the skeleton pleasant to use. No new file-format surface area.
 
 > **Status 2026-09-03: the original scope is code complete, awaiting the
@@ -178,11 +186,12 @@ Making the skeleton pleasant to use. No new file-format surface area.
 - [x] Grouping and ungrouping, including nested groups.
 - [x] Numeric transform fields with drag-to-scrub, including rotation.
 - [x] Every gesture records exactly one undo entry, on completion.
-- [ ] **Reference point**: transforms resolve about a chosen one of nine
+- [x] **Reference point**: transforms resolve about a chosen one of nine
   anchors, which subsumes the from-centre scaling missing above.
-- [ ] **Shear**, with an honest affine decomposition replacing
+- [~] **Shear**, with an honest affine decomposition replacing
   `Transform::rotation_degrees()`'s assumption that no shear exists.
-- [ ] **Align and distribute** across a multiple selection.
+- [x] **Align and distribute** across a multiple selection. Nineteen actions,
+  each reachable from the Object menu, the palette and the canvas toolbar.
 - [ ] Corner options and corner radius. *(Model change: a format version
   bump.)*
 - [ ] Direct-select and zoom tools; add, delete and convert anchor points;
@@ -727,7 +736,8 @@ travel with the code.
 - [x] **Information design in the inspector**: fields fill their width, pairs
   sit side by side, sections collapse and remember, group labels are a weight
   below section headings.
-- [ ] **A light theme, and a density preference.** Both are already decided —
+- [~] **A light theme, and a density preference.** The light theme is built and
+  switchable; the density preference is not. Both were already decided —
   the light palette is defined and contrast-tested, and `ThemeChoice` is saved
   — and both are blocked on the same thing: the tokens are compile-time
   constants, and a theme that can change while running needs them read at

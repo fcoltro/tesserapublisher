@@ -104,7 +104,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
         ui.painter().rect_filled(
             egui::Rect::from_min_size(egui::pos2(left, y - 1.0), Vec2::new(width, 2.0)),
             1.0,
-            Theme::ACCENT,
+            Theme::accent(),
         );
     }
 
@@ -245,9 +245,9 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
     // The active layer is the one being drawn on, so it is marked the way a
     // chosen tool is.
     if active {
-        painter.rect_filled(rect, 3.0, Theme::HOVER_BG);
+        painter.rect_filled(rect, 3.0, Theme::hover_bg());
     } else if response.hovered() {
-        painter.rect_filled(rect, 3.0, Theme::PANEL_BG_ALT);
+        painter.rect_filled(rect, 3.0, Theme::panel_bg_alt());
     }
 
     // While a row is being dragged, an outline on it. Without one a drag is a
@@ -257,7 +257,7 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
         painter.rect_stroke(
             rect,
             3.0,
-            egui::Stroke::new(1.0, Theme::ACCENT),
+            egui::Stroke::new(1.0, Theme::accent()),
             egui::StrokeKind::Inside,
         );
     }
@@ -280,14 +280,14 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
         ),
     ] {
         if over(zone) {
-            painter.rect_filled(zone.shrink(2.0), 3.0, Theme::HOVER_BG);
+            painter.rect_filled(zone.shrink(2.0), 3.0, Theme::hover_bg());
         }
         let tint = if lit {
-            Theme::ACCENT
+            Theme::accent()
         } else if on {
-            Theme::TEXT_PRIMARY
+            Theme::text_primary()
         } else {
-            Theme::TEXT_MUTED
+            Theme::text_muted()
         };
         crate::icons::paint(&painter, zone.shrink(4.0), icon, tint);
     }
@@ -299,9 +299,9 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
             &name,
             egui::TextStyle::Body.resolve(ui.style()),
             if visible {
-                Theme::TEXT_PRIMARY
+                Theme::text_primary()
             } else {
-                Theme::TEXT_MUTED
+                Theme::text_muted()
             },
         );
     }
@@ -317,7 +317,7 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
             format!("{count} objects")
         },
         egui::TextStyle::Small.resolve(ui.style()),
-        Theme::TEXT_MUTED,
+        Theme::text_muted(),
     );
 
     // The field exists only while renaming, which is what leaves the row

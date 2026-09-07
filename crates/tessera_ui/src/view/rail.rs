@@ -60,7 +60,7 @@ pub fn floating(ui: &mut Ui, state: &mut TesseraApp, canvas: egui::Rect) {
     if !crate::view::glass::surface(&panel, state, rect, edge) {
         panel
             .painter()
-            .rect_filled(rect, 0.0, Theme::PANEL_BG_SOLID);
+            .rect_filled(rect, 0.0, Theme::panel_bg_solid());
         crate::view::glass::hairline(&panel, rect, edge);
     }
 
@@ -161,7 +161,7 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
                 ui.painter().hline(
                     bar.x_range(),
                     ui.min_rect().bottom(),
-                    egui::Stroke::new(1.0, Theme::RULE),
+                    egui::Stroke::new(1.0, Theme::rule()),
                 );
                 dock.set_open(state, open);
 

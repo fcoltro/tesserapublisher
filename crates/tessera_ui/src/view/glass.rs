@@ -94,7 +94,7 @@ pub fn surface(ui: &Ui, state: &TesseraApp, rect: Rect, edge: Edge) -> bool {
     let alpha = (state.prefs.glass_opacity() * 255.0)
         .round()
         .clamp(0.0, 255.0) as u8;
-    painter.rect_filled(rect, 0.0, Theme::PANEL_BG.gamma_multiply_u8(alpha));
+    painter.rect_filled(rect, 0.0, Theme::panel_bg().gamma_multiply_u8(alpha));
 
     // A hairline along the edge that faces the document. **Not a border on all
     // four sides** — the other three meet the window, where a line would be
@@ -112,8 +112,11 @@ pub fn hairline(ui: &Ui, rect: Rect, edge: Edge) {
         Edge::Left => rect.min.x,
         Edge::Right => rect.max.x,
     };
-    ui.painter()
-        .vline(x, rect.y_range(), egui::Stroke::new(1.0, Theme::GLASS_EDGE));
+    ui.painter().vline(
+        x,
+        rect.y_range(),
+        egui::Stroke::new(1.0, Theme::glass_edge()),
+    );
 }
 
 /// A patch inside a glass panel that must not be translucent.
@@ -123,7 +126,7 @@ pub fn hairline(ui: &Ui, rect: Rect, edge: Edge) {
 /// answer to that question is a wrong answer rather than a stylish one.
 pub fn opaque_well(ui: &Ui, rect: Rect, rounding: f32) {
     ui.painter()
-        .rect_filled(rect, rounding, Theme::PANEL_BG_SOLID);
+        .rect_filled(rect, rounding, Theme::panel_bg_solid());
 }
 
 /// Whether panels should float over the canvas this frame.

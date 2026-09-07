@@ -31,7 +31,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
     let swatches = state.active().document().swatches.clone();
 
     if swatches.is_empty() {
-        ui.colored_label(Theme::TEXT_MUTED, "No named colours yet.");
+        ui.colored_label(Theme::text_muted(), "No named colours yet.");
     }
 
     for swatch in &swatches {
@@ -104,7 +104,11 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, swatch: &Swatch) {
             2.0,
             egui::Stroke::new(
                 if chosen { 2.0 } else { 1.0 },
-                if chosen { Theme::ACCENT } else { Theme::BORDER },
+                if chosen {
+                    Theme::accent()
+                } else {
+                    Theme::border()
+                },
             ),
             egui::StrokeKind::Inside,
         );
@@ -184,7 +188,7 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, swatch: &Swatch) {
                 changed = true;
             }
             let uses = state.active().document().uses_of_swatch(&swatch.name);
-            ui.colored_label(Theme::TEXT_MUTED, format!("{uses} in use"));
+            ui.colored_label(Theme::text_muted(), format!("{uses} in use"));
         });
     }
 

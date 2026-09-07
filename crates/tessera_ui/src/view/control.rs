@@ -74,7 +74,7 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
             Subject::Text => crate::view::panels::type_row(ui, state),
             Subject::Several(n) => {
                 ui.colored_label(
-                    Theme::TEXT_MUTED,
+                    Theme::text_muted(),
                     format!("{n} selected — no single geometry between them"),
                 );
             }
@@ -99,7 +99,7 @@ pub fn label(ui: &mut Ui, text: &str) {
         egui::Label::new(
             egui::RichText::new(text)
                 .size(Theme::TYPE_SM)
-                .color(Theme::TEXT_MUTED),
+                .color(Theme::text_muted()),
         )
         .selectable(false),
     );
@@ -111,7 +111,7 @@ pub fn separator(ui: &mut Ui) {
         egui::vec2(1.0, HEIGHT - Theme::SPACE_3),
         egui::Sense::hover(),
     );
-    ui.painter().rect_filled(rect, 0.0, Theme::BORDER);
+    ui.painter().rect_filled(rect, 0.0, Theme::border());
 }
 
 #[cfg(test)]

@@ -103,16 +103,16 @@ fn masters(ui: &mut Ui, state: &mut TesseraApp) {
         );
         let painter = ui.painter_at(rect);
         if applied.is_none() {
-            painter.rect_filled(rect, Theme::RADIUS, Theme::SELECTED_BG);
+            painter.rect_filled(rect, Theme::RADIUS, Theme::selected_bg());
         } else if response.hovered() {
-            painter.rect_filled(rect, Theme::RADIUS, Theme::HOVER_BG);
+            painter.rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
         }
         painter.text(
             egui::pos2(rect.left() + Theme::SPACE_2, rect.center().y),
             egui::Align2::LEFT_CENTER,
             "None",
             egui::TextStyle::Body.resolve(ui.style()),
-            Theme::TEXT_MUTED,
+            Theme::text_muted(),
         );
         if response
             .on_hover_text("Build this page on no parent")
@@ -141,24 +141,24 @@ fn masters(ui: &mut Ui, state: &mut TesseraApp) {
         if editing == Some(id) {
             // Being edited beats being applied: it is where you are, not what
             // this page happens to use.
-            painter.rect_filled(rect, Theme::RADIUS, Theme::HOVER_BG);
+            painter.rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
             painter.rect_stroke(
                 rect,
                 Theme::RADIUS,
-                egui::Stroke::new(1.0, Theme::ACCENT),
+                egui::Stroke::new(1.0, Theme::accent()),
                 egui::StrokeKind::Inside,
             );
         } else if on_this_page {
-            painter.rect_filled(rect, Theme::RADIUS, Theme::SELECTED_BG);
+            painter.rect_filled(rect, Theme::RADIUS, Theme::selected_bg());
         } else if response.hovered() {
-            painter.rect_filled(rect, Theme::RADIUS, Theme::HOVER_BG);
+            painter.rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
         }
         painter.text(
             egui::pos2(rect.left() + Theme::SPACE_2, rect.center().y),
             egui::Align2::LEFT_CENTER,
             &master.name,
             egui::TextStyle::Body.resolve(ui.style()),
-            Theme::TEXT_PRIMARY,
+            Theme::text_primary(),
         );
         painter.text(
             egui::pos2(rect.right() - Theme::SPACE_2, rect.center().y),
@@ -169,7 +169,7 @@ fn masters(ui: &mut Ui, state: &mut TesseraApp) {
                 format!("{holds} items")
             },
             egui::TextStyle::Small.resolve(ui.style()),
-            Theme::TEXT_MUTED,
+            Theme::text_muted(),
         );
 
         let response = response
@@ -276,9 +276,9 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
             numbers,
             egui::TextStyle::Small.resolve(ui.style()),
             if index == current {
-                Theme::TEXT_PRIMARY
+                Theme::text_primary()
             } else {
-                Theme::TEXT_MUTED
+                Theme::text_muted()
             },
         );
     }
@@ -292,7 +292,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
     if let Some(at) = landing
         && let Some(marker) = marker(at, &slots)
     {
-        ui.painter().rect_filled(marker, 1.0, Theme::ACCENT);
+        ui.painter().rect_filled(marker, 1.0, Theme::accent());
     }
 
     if let Some(at) = turn_to {
@@ -416,9 +416,9 @@ fn thumbnail(ui: &Ui, state: &TesseraApp, page: PageId, at: egui::Rect, current:
         egui::Stroke::new(
             if current { 2.0 } else { 1.0 },
             if current {
-                Theme::ACCENT
+                Theme::accent()
             } else {
-                Theme::BORDER
+                Theme::border()
             },
         ),
         egui::StrokeKind::Inside,

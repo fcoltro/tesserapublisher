@@ -127,9 +127,9 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
                         spot,
                         page.icon(),
                         if selected {
-                            Theme::TEXT_PRIMARY
+                            Theme::text_primary()
                         } else {
-                            Theme::TEXT_MUTED
+                            Theme::text_muted()
                         },
                     );
                     if ui.selectable_label(selected, page.title()).clicked() {
@@ -315,7 +315,7 @@ fn colour(ui: &mut Ui, state: &mut TesseraApp) {
     heading(ui, "Profiles");
     let installed = state.profiles.installed_count();
     ui.colored_label(
-        Theme::TEXT_MUTED,
+        Theme::text_muted(),
         format!("{installed} profiles found on this machine"),
     );
     if ui
@@ -364,7 +364,7 @@ fn files(ui: &mut Ui, state: &mut TesseraApp) {
         }
         None => {
             ui.colored_label(
-                Theme::TEXT_MUTED,
+                Theme::text_muted(),
                 "This platform will not say, so preferences last only for this run.",
             );
         }
@@ -379,7 +379,7 @@ fn heading(ui: &mut Ui, text: &str) {
         egui::Label::new(
             egui::RichText::new(text)
                 .size(Theme::TYPE_SM)
-                .color(Theme::TEXT_MUTED),
+                .color(Theme::text_muted()),
         )
         .selectable(false),
     );
@@ -397,7 +397,7 @@ fn note(ui: &mut Ui, text: &str) {
         egui::Label::new(
             egui::RichText::new(text)
                 .size(Theme::TYPE_SM)
-                .color(Theme::TEXT_MUTED),
+                .color(Theme::text_muted()),
         )
         .wrap()
         .selectable(false),

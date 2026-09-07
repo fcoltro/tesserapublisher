@@ -47,6 +47,35 @@ pub struct Palette {
     pub frame_edge: Color32,
 }
 
+/// Which palette everything is drawn from at the moment.
+///
+/// A process-wide value, and the honest place for it: a theme is a property of
+/// the *screen*, not of a document or of a widget, and threading it through
+/// every painter would be carrying one unchanging answer down a hundred call
+/// stacks. Held as an atomic rather than behind a lock because it is written
+/// once when the preference changes and read a few hundred times a frame.
+static ACTIVE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Draw from the palette this choice names, from now on.
+///
+/// Called when the preference changes rather than every frame: the constants
+/// below read the value, so nothing has to be rebuilt.
+pub fn use_palette(choice: crate::prefs::ThemeChoice) {
+    let which = match choice {
+        crate::prefs::ThemeChoice::Dark => 0,
+        crate::prefs::ThemeChoice::Light => 1,
+    };
+    ACTIVE.store(which, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The palette in force.
+pub fn palette() -> Palette {
+    match ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => Palette::LIGHT,
+        _ => Palette::DARK,
+    }
+}
+
 impl Palette {
     /// One step of the scale, numbered 1 to 12 as the scale is written.
     pub const fn step(&self, n: usize) -> Color32 {
@@ -170,9 +199,13 @@ pub struct Theme;
 
 impl Theme {
     /// Panels: the rail, the tool strip, the status bar. Step 2.
-    pub const PANEL_BG: Color32 = Palette::DARK.step(2);
+    pub fn panel_bg() -> Color32 {
+        palette().step(2)
+    }
     /// Raised: the control bar and section headings. Step 3.
-    pub const PANEL_BG_ALT: Color32 = Palette::DARK.step(3);
+    pub fn panel_bg_alt() -> Color32 {
+        palette().step(3)
+    }
 
     /// The panel colour when it must not be seen through.
     ///
@@ -181,40 +214,68 @@ impl Theme {
     /// colour is *judged* paint with this at full. Two names for one colour so
     /// that changing how glass is tinted cannot accidentally make a swatch
     /// translucent.
-    pub const PANEL_BG_SOLID: Color32 = Palette::DARK.step(2);
+    pub fn panel_bg_solid() -> Color32 {
+        palette().step(2)
+    }
 
     /// The hairline along a glass panel's leading edge.
     ///
     /// Lighter than [`Self::RULE`], because it is read against a page rather
     /// than against another panel, and a rule that works on grey disappears on
     /// white.
-    pub const GLASS_EDGE: Color32 = Palette::DARK.step(8);
+    pub fn glass_edge() -> Color32 {
+        palette().step(8)
+    }
     /// The pasteboard behind the page.
-    pub const CANVAS_BG: Color32 = Palette::DARK.canvas_bg;
+    pub fn canvas_bg() -> Color32 {
+        palette().canvas_bg
+    }
     /// A field's border. Step 7.
-    pub const BORDER: Color32 = Palette::DARK.step(7);
+    pub fn border() -> Color32 {
+        palette().step(7)
+    }
     /// A rule inside a surface — between rows, under a heading. Step 6.
     ///
     /// Separate from [`Self::BORDER`], and the distinction is the whole of
     /// "structure should be felt, not seen": a line that groups is quieter
     /// than a line that bounds a control.
-    pub const RULE: Color32 = Palette::DARK.step(6);
+    pub fn rule() -> Color32 {
+        palette().step(6)
+    }
     /// Hovered. Step 4.
-    pub const HOVER_BG: Color32 = Palette::DARK.step(4);
+    pub fn hover_bg() -> Color32 {
+        palette().step(4)
+    }
     /// Pressed, or a selected row. Step 5.
-    pub const SELECTED_BG: Color32 = Palette::DARK.step(5);
+    pub fn selected_bg() -> Color32 {
+        palette().step(5)
+    }
     /// A focus ring. Step 8.
-    pub const FOCUS: Color32 = Palette::DARK.step(8);
+    pub fn focus() -> Color32 {
+        palette().step(8)
+    }
 
     /// Values and names. Step 12.
-    pub const TEXT_PRIMARY: Color32 = Palette::DARK.step(12);
+    pub fn text_primary() -> Color32 {
+        palette().step(12)
+    }
     /// Labels and units. Step 11.
-    pub const TEXT_MUTED: Color32 = Palette::DARK.step(11);
+    pub fn text_muted() -> Color32 {
+        palette().step(11)
+    }
 
-    pub const ACCENT: Color32 = Palette::DARK.accent;
-    pub const ACCENT_HOVER: Color32 = Palette::DARK.accent_hover;
-    pub const SELECTION: Color32 = Palette::DARK.accent;
-    pub const ERROR: Color32 = Palette::DARK.error;
+    pub fn accent() -> Color32 {
+        palette().accent
+    }
+    pub fn accent_hover() -> Color32 {
+        palette().accent_hover
+    }
+    pub fn selection() -> Color32 {
+        palette().accent
+    }
+    pub fn error() -> Color32 {
+        palette().error
+    }
 
     // --- surfaces ------------------------------------------------------
     //
@@ -223,11 +284,17 @@ impl Theme {
     // and it was why the window read as one undifferentiated field.
 
     /// The pasteboard. The darkest thing in the window.
-    pub const SURFACE_CANVAS: Color32 = Palette::DARK.canvas_bg;
+    pub fn surface_canvas() -> Color32 {
+        palette().canvas_bg
+    }
     /// Rail, tool strip, status bar.
-    pub const SURFACE_PANEL: Color32 = Palette::DARK.step(2);
+    pub fn surface_panel() -> Color32 {
+        palette().step(2)
+    }
     /// Control bar and section headings — the only surface above panel.
-    pub const SURFACE_RAISED: Color32 = Palette::DARK.step(3);
+    pub fn surface_raised() -> Color32 {
+        palette().step(3)
+    }
 
     // --- spacing -------------------------------------------------------
     //
@@ -279,7 +346,9 @@ impl Theme {
 
     /// A text frame's non-printing edge, shown whether or not it is selected —
     /// an empty text frame is otherwise invisible.
-    pub const FRAME_EDGE: Color32 = Palette::DARK.frame_edge;
+    pub fn frame_edge() -> Color32 {
+        palette().frame_edge
+    }
     /// The reference point a rotation turns about.
     pub const REFERENCE_MARK: f32 = 4.0;
 
@@ -311,32 +380,117 @@ impl Theme {
     pub const PREVIEW_SURROUND: Color32 = Color32::from_rgb(0x80, 0x80, 0x80);
 }
 
+/// Keep egui's styles in step with the chosen theme.
+///
+/// Called every frame and does nothing on almost all of them: restyling costs a
+/// walk of the whole style struct, and the theme changes about once a year. The
+/// comparison is against what is *in force* rather than against a remembered
+/// copy, so there is one description of which theme is showing.
+pub fn follow(ctx: &Context, choice: crate::prefs::ThemeChoice) {
+    let already = match ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => crate::prefs::ThemeChoice::Light,
+        _ => crate::prefs::ThemeChoice::Dark,
+    };
+    if already == choice {
+        return;
+    }
+    use_palette(choice);
+    apply(ctx);
+}
+
+#[cfg(test)]
+mod palette_tests {
+    use super::*;
+    use crate::prefs::ThemeChoice;
+
+    /// The theme is process-wide, so these run one after another rather than
+    /// beside each other. One test, several assertions, and the palette put
+    /// back at the end — a test that left the process in the light theme would
+    /// change the answer for whatever ran next.
+    #[test]
+    fn choosing_a_theme_really_changes_what_is_drawn() {
+        // **The defect this exists for.** The preference was stored, saved and
+        // shown in a switch, and every colour was hard-wired to the dark
+        // palette — so the switch did nothing. A stored preference that draws
+        // nothing is worse than no preference: it is a control that lies.
+        use_palette(ThemeChoice::Dark);
+        let dark = (Theme::panel_bg(), Theme::text_primary(), Theme::canvas_bg());
+
+        use_palette(ThemeChoice::Light);
+        let light = (Theme::panel_bg(), Theme::text_primary(), Theme::canvas_bg());
+
+        assert_ne!(dark.0, light.0, "the panel ground did not change");
+        assert_ne!(dark.1, light.1, "the text colour did not change");
+        assert_ne!(dark.2, light.2, "the pasteboard did not change");
+
+        // A light theme has to actually be lighter, or it is only a different
+        // dark one.
+        assert!(
+            light.0.r() > dark.0.r(),
+            "the light panel ground is not lighter"
+        );
+
+        use_palette(ThemeChoice::Dark);
+    }
+
+    #[test]
+    fn the_colours_that_are_deliberately_not_themed_stay_put() {
+        // A few are documented as fixed and must not follow the palette: the
+        // cursor pair is chosen by contrast against the canvas, the snap green
+        // is deliberately not the accent, and the preview surround is held
+        // constant so an ink is judged against one ground in both themes.
+        use_palette(ThemeChoice::Dark);
+        let fixed = (
+            Theme::CURSOR_ON_DARK,
+            Theme::CURSOR_ON_LIGHT,
+            Theme::SNAP,
+            Theme::GUIDE,
+            Theme::PREVIEW_SURROUND,
+        );
+
+        use_palette(ThemeChoice::Light);
+        assert_eq!(
+            fixed,
+            (
+                Theme::CURSOR_ON_DARK,
+                Theme::CURSOR_ON_LIGHT,
+                Theme::SNAP,
+                Theme::GUIDE,
+                Theme::PREVIEW_SURROUND,
+            ),
+            "a colour that is fixed by design followed the theme"
+        );
+
+        use_palette(ThemeChoice::Dark);
+    }
+}
+
 pub fn apply(ctx: &Context) {
     // egui 0.35 keeps a style per theme; `all_styles_mut` applies to both, so
     // the tokens hold whether the OS reports light or dark.
     ctx.all_styles_mut(|style| {
-        style.visuals.panel_fill = Theme::PANEL_BG;
-        style.visuals.window_fill = Theme::PANEL_BG;
-        style.visuals.extreme_bg_color = Theme::CANVAS_BG;
-        style.visuals.override_text_color = Some(Theme::TEXT_PRIMARY);
-        style.visuals.selection.bg_fill = Theme::SELECTION;
+        style.visuals.panel_fill = Theme::panel_bg();
+        style.visuals.window_fill = Theme::panel_bg();
+        style.visuals.extreme_bg_color = Theme::canvas_bg();
+        style.visuals.override_text_color = Some(Theme::text_primary());
+        style.visuals.selection.bg_fill = Theme::selection();
         // Steps 4 and 5 are the component states, and using them is what
         // makes a field read as a field. A control the same value as the
         // panel behind it is identified only by its border, and a border
         // loud enough to do that alone is a border you notice all day.
-        style.visuals.widgets.noninteractive.bg_fill = Theme::PANEL_BG;
-        style.visuals.widgets.inactive.bg_fill = Theme::HOVER_BG;
-        style.visuals.widgets.hovered.bg_fill = Theme::SELECTED_BG;
-        style.visuals.widgets.active.bg_fill = Theme::ACCENT;
+        style.visuals.widgets.noninteractive.bg_fill = Theme::panel_bg();
+        style.visuals.widgets.inactive.bg_fill = Theme::hover_bg();
+        style.visuals.widgets.hovered.bg_fill = Theme::selected_bg();
+        style.visuals.widgets.active.bg_fill = Theme::accent();
 
         // Lines: quiet, and one weight. Step 7 bounds a control; step 6 is
         // for grouping inside a surface and is drawn by hand where it is
         // wanted rather than by every widget.
-        style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, Theme::RULE);
-        style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, Theme::BORDER);
-        style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, Theme::BORDER);
-        style.visuals.selection.stroke = egui::Stroke::new(1.0, Theme::ACCENT);
-        style.visuals.window_stroke = egui::Stroke::new(1.0, Theme::RULE);
+        style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, Theme::rule());
+        style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, Theme::border());
+        style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, Theme::border());
+        style.visuals.selection.stroke = egui::Stroke::new(1.0, Theme::accent());
+        style.visuals.window_stroke = egui::Stroke::new(1.0, Theme::rule());
 
         // One radius. Rounded enough to soften a rule, not enough to read as
         // a card in a dense panel.
@@ -448,23 +602,23 @@ mod tests {
     fn the_existing_constants_still_name_the_dark_palette() {
         // The named roles are the scale, and this is what says which is which.
         // Described in a doc comment it would drift; asserted, it cannot.
-        assert_eq!(Theme::CANVAS_BG, Palette::DARK.canvas_bg);
-        assert_eq!(Theme::PANEL_BG, Palette::DARK.step(2));
-        assert_eq!(Theme::PANEL_BG_ALT, Palette::DARK.step(3));
-        assert_eq!(Theme::HOVER_BG, Palette::DARK.step(4));
-        assert_eq!(Theme::SELECTED_BG, Palette::DARK.step(5));
-        assert_eq!(Theme::RULE, Palette::DARK.step(6));
-        assert_eq!(Theme::BORDER, Palette::DARK.step(7));
-        assert_eq!(Theme::FOCUS, Palette::DARK.step(8));
-        assert_eq!(Theme::TEXT_MUTED, Palette::DARK.step(11));
-        assert_eq!(Theme::TEXT_PRIMARY, Palette::DARK.step(12));
+        assert_eq!(Theme::canvas_bg(), Palette::DARK.canvas_bg);
+        assert_eq!(Theme::panel_bg(), Palette::DARK.step(2));
+        assert_eq!(Theme::panel_bg_alt(), Palette::DARK.step(3));
+        assert_eq!(Theme::hover_bg(), Palette::DARK.step(4));
+        assert_eq!(Theme::selected_bg(), Palette::DARK.step(5));
+        assert_eq!(Theme::rule(), Palette::DARK.step(6));
+        assert_eq!(Theme::border(), Palette::DARK.step(7));
+        assert_eq!(Theme::focus(), Palette::DARK.step(8));
+        assert_eq!(Theme::text_muted(), Palette::DARK.step(11));
+        assert_eq!(Theme::text_primary(), Palette::DARK.step(12));
     }
 
     #[test]
     fn applying_the_theme_sets_the_panel_background() {
         let ctx = Context::default();
         apply(&ctx);
-        assert_eq!(ctx.global_style().visuals.panel_fill, Theme::PANEL_BG);
+        assert_eq!(ctx.global_style().visuals.panel_fill, Theme::panel_bg());
     }
 
     #[test]
@@ -473,7 +627,7 @@ mod tests {
         apply(&ctx);
         assert_eq!(
             ctx.global_style().visuals.override_text_color,
-            Some(Theme::TEXT_PRIMARY)
+            Some(Theme::text_primary())
         );
     }
 
@@ -497,8 +651,8 @@ mod tests {
             Color32::WHITE,
             Color32::BLACK,
             Color32::from_rgb(0x80, 0x80, 0x80),
-            Theme::CANVAS_BG,
-            Theme::ACCENT,
+            Theme::canvas_bg(),
+            Theme::accent(),
         ] {
             let ratio = contrast_ratio(readable_on(behind), behind);
             assert!(ratio >= 3.0, "{behind:?} got a ratio of only {ratio:.2}");

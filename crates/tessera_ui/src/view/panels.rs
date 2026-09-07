@@ -42,7 +42,7 @@ pub fn floating_tool_strip(ui: &mut Ui, state: &mut TesseraApp, canvas: egui::Re
     if !crate::view::glass::surface(&panel, state, rect, edge) {
         panel
             .painter()
-            .rect_filled(rect, 0.0, Theme::PANEL_BG_SOLID);
+            .rect_filled(rect, 0.0, Theme::panel_bg_solid());
         crate::view::glass::hairline(&panel, rect, edge);
     }
 
@@ -69,16 +69,16 @@ fn tool_button(ui: &mut Ui, tool: Tool, active: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
 
     let bg = if active {
-        Theme::ACCENT
+        Theme::accent()
     } else if response.hovered() {
-        Theme::BORDER
+        Theme::border()
     } else {
-        Theme::PANEL_BG_ALT
+        Theme::panel_bg_alt()
     };
     let fg = if active {
-        Theme::PANEL_BG
+        Theme::panel_bg()
     } else {
-        Theme::TEXT_PRIMARY
+        Theme::text_primary()
     };
 
     ui.painter().rect_filled(rect, Theme::RADIUS, bg);
@@ -199,13 +199,13 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
     // saying so.
     let Some(id) = state.active().selection.single() else {
         ui.colored_label(
-            Theme::TEXT_MUTED,
+            Theme::text_muted(),
             format!("{} objects selected", state.active().selection.len()),
         );
         return;
     };
     let Some(frame) = state.active().document().frame(id).cloned() else {
-        ui.colored_label(Theme::TEXT_MUTED, "No selection");
+        ui.colored_label(Theme::text_muted(), "No selection");
         return;
     };
 
@@ -283,13 +283,13 @@ fn fill_stroke_proxy(
     let stroke_colour = frame
         .stroke
         .as_ref()
-        .map_or(Theme::PANEL_BG, |s| to_colour(&s.color));
+        .map_or(Theme::panel_bg(), |s| to_colour(&s.color));
     painter.rect_filled(stroke_rect, 2.0, stroke_colour);
-    painter.rect_filled(stroke_rect.shrink(6.0), 1.0, Theme::PANEL_BG);
+    painter.rect_filled(stroke_rect.shrink(6.0), 1.0, Theme::panel_bg());
     painter.rect_stroke(
         stroke_rect,
         2.0,
-        egui::Stroke::new(1.0, Theme::BORDER),
+        egui::Stroke::new(1.0, Theme::border()),
         egui::StrokeKind::Inside,
     );
 
@@ -297,13 +297,13 @@ fn fill_stroke_proxy(
     // ramp, where there is room for it.
     // Opaque behind both swatches: a fill with alpha is judged against a known
     // ground, not against whatever the page happens to be showing.
-    painter.rect_filled(stroke_rect, 2.0, Theme::PANEL_BG_SOLID);
-    painter.rect_filled(fill_rect, 2.0, Theme::PANEL_BG_SOLID);
+    painter.rect_filled(stroke_rect, 2.0, Theme::panel_bg_solid());
+    painter.rect_filled(fill_rect, 2.0, Theme::panel_bg_solid());
     painter.rect_filled(fill_rect, 2.0, to_colour(&frame.fill.representative()));
     painter.rect_stroke(
         fill_rect,
         2.0,
-        egui::Stroke::new(1.0, Theme::BORDER),
+        egui::Stroke::new(1.0, Theme::border()),
         egui::StrokeKind::Inside,
     );
 
@@ -327,9 +327,9 @@ fn glyph_button(ui: &mut Ui, icon: crate::icons::Icon, tip: &str) -> egui::Respo
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(SIZE), Sense::click());
     if response.hovered() {
         ui.painter()
-            .rect_filled(rect, Theme::RADIUS, Theme::HOVER_BG);
+            .rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
     }
-    crate::icons::paint(ui.painter(), rect.shrink(3.0), icon, Theme::TEXT_PRIMARY);
+    crate::icons::paint(ui.painter(), rect.shrink(3.0), icon, Theme::text_primary());
     response.on_hover_text(tip)
 }
 
@@ -358,11 +358,11 @@ pub fn reference_proxy(ui: &mut Ui, anchor: &mut Anchor) -> bool {
 
         let selected = *candidate == *anchor;
         let colour = if selected {
-            Theme::ACCENT
+            Theme::accent()
         } else if response.hovered() {
-            Theme::TEXT_PRIMARY
+            Theme::text_primary()
         } else {
-            Theme::TEXT_MUTED
+            Theme::text_muted()
         };
         ui.painter()
             .circle_filled(cell.center(), if selected { 4.0 } else { 2.0 }, colour);
@@ -371,7 +371,7 @@ pub fn reference_proxy(ui: &mut Ui, anchor: &mut Anchor) -> bool {
     ui.painter().rect_stroke(
         rect,
         2.0,
-        egui::Stroke::new(1.0, Theme::BORDER),
+        egui::Stroke::new(1.0, Theme::border()),
         egui::StrokeKind::Inside,
     );
     changed
@@ -954,7 +954,7 @@ fn ramp_preview(ui: &mut Ui, stops: &[tessera_document::paint::Stop]) {
     painter.rect_stroke(
         rect,
         2.0,
-        egui::Stroke::new(1.0, Theme::BORDER),
+        egui::Stroke::new(1.0, Theme::border()),
         egui::StrokeKind::Inside,
     );
 }
@@ -1031,9 +1031,9 @@ fn stroke_section(
             ui.painter(),
             spot,
             crate::icons::Icon::Palette,
-            Theme::TEXT_MUTED,
+            Theme::text_muted(),
         );
-        ui.colored_label(Theme::TEXT_MUTED, "Colour");
+        ui.colored_label(Theme::text_muted(), "Colour");
         if fill_picker(ui, &mut rgba) {
             stroke.color = Color::Rgb {
                 r: rgba[0],
@@ -1083,7 +1083,7 @@ fn stroke_section(
     // a control that does nothing, which is worse than one that is absent.
     if stroke.join == LineJoin::Miter {
         ui.horizontal(|ui| {
-            ui.colored_label(Theme::TEXT_MUTED, "Miter limit");
+            ui.colored_label(Theme::text_muted(), "Miter limit");
             ui.add(
                 egui::DragValue::new(&mut stroke.miter_limit)
                     .speed(0.1)
@@ -1093,7 +1093,7 @@ fn stroke_section(
     }
 
     ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, "Dashes");
+        ui.colored_label(Theme::text_muted(), "Dashes");
         for (label, pattern) in DASH_PRESETS {
             let scaled: Vec<f64> = pattern.iter().map(|d| d * stroke.width.max(0.1)).collect();
             let selected = dashes_match(&stroke.dashes, &scaled);
@@ -1142,16 +1142,16 @@ pub(crate) fn icon_button(
             rect,
             3.0,
             if active {
-                Theme::ACCENT
+                Theme::accent()
             } else {
-                Theme::HOVER_BG
+                Theme::hover_bg()
             },
         );
     }
     let tint = if active {
-        Theme::TEXT_PRIMARY
+        Theme::text_primary()
     } else {
-        Theme::TEXT_MUTED
+        Theme::text_muted()
     };
     crate::icons::paint(ui.painter(), rect.shrink(4.0), icon, tint);
 
@@ -1179,7 +1179,7 @@ fn graphic_section(
     };
 
     let Some(placement) = placed else {
-        ui.colored_label(Theme::TEXT_MUTED, "Empty");
+        ui.colored_label(Theme::text_muted(), "Empty");
         if ui.button("Place artwork...").clicked() {
             crate::file_ops::place(state);
         }
@@ -1188,7 +1188,7 @@ fn graphic_section(
 
     let link = state.active().document().links.get(placement.link).cloned();
     let Some(link) = link else {
-        ui.colored_label(Theme::ERROR, "The link is missing from the document");
+        ui.colored_label(Theme::error(), "The link is missing from the document");
         return;
     };
 
@@ -1207,9 +1207,9 @@ fn graphic_section(
     // somebody could send a printer last week's photograph.
     let status = link.status();
     let (word, colour) = match status {
-        Status::Fine => ("Up to date", Theme::TEXT_MUTED),
-        Status::Modified => ("Modified on disk", Theme::ACCENT),
-        Status::Missing => ("Missing", Theme::ERROR),
+        Status::Fine => ("Up to date", Theme::text_muted()),
+        Status::Modified => ("Modified on disk", Theme::accent()),
+        Status::Missing => ("Missing", Theme::error()),
     };
     ui.colored_label(colour, word);
 
@@ -1236,9 +1236,9 @@ fn graphic_section(
     if let Some((x, y)) = tessera_render::images::effective_ppi(pixels, drawn) {
         let worst = x.min(y);
         let colour = if worst < state.prefs.minimum_ppi {
-            Theme::ERROR
+            Theme::error()
         } else {
-            Theme::TEXT_MUTED
+            Theme::text_muted()
         };
         // Two figures when they differ, because a stretched placement really
         // does have two and one would hide it.
@@ -1299,7 +1299,7 @@ fn object_style_section(
         .collect();
 
     if listed.is_empty() {
-        ui.colored_label(Theme::TEXT_MUTED, "No object styles yet.")
+        ui.colored_label(Theme::text_muted(), "No object styles yet.")
             .on_hover_text("Make one in the Styles panel, under Object");
         return;
     }
@@ -1341,7 +1341,7 @@ fn object_style_section(
         return;
     };
     if overrides.is_empty() {
-        ui.colored_label(Theme::TEXT_MUTED, "Following its style");
+        ui.colored_label(Theme::text_muted(), "Following its style");
         return;
     }
 
@@ -1362,7 +1362,7 @@ fn object_style_section(
         departed.push("text wrap");
     }
 
-    ui.colored_label(Theme::ACCENT, format!("Own {}", departed.join(", ")))
+    ui.colored_label(Theme::accent(), format!("Own {}", departed.join(", ")))
         .on_hover_text("These stay as they are when the style changes");
     if ui
         .button("Follow the style again")
@@ -1429,7 +1429,7 @@ fn effects_section(
     // will otherwise think it has gone.
     if blend.is_invisible() {
         ui.colored_label(
-            Theme::TEXT_MUTED,
+            Theme::text_muted(),
             "Invisible. Still selectable, and still on its layer.",
         );
     }
@@ -1509,7 +1509,7 @@ fn shadow_controls(
     // Said where a person can read it, because a shadow that appears on screen
     // and not in the export is exactly the kind of surprise that reaches a
     // printer.
-    ui.colored_label(Theme::TEXT_MUTED, "Not written to PDF yet.")
+    ui.colored_label(Theme::text_muted(), "Not written to PDF yet.")
         .on_hover_text(
             "A blurred shadow in a PDF needs a rasterised soft mask. \
              Milestone 6 owns export quality and adds it.",
@@ -1712,7 +1712,7 @@ fn group_label(ui: &mut Ui, text: &str) {
         egui::Label::new(
             egui::RichText::new(text)
                 .size(Theme::TYPE_SM)
-                .color(Theme::TEXT_MUTED),
+                .color(Theme::text_muted()),
         )
         .selectable(false),
     );
@@ -1724,15 +1724,15 @@ fn subheading(ui: &mut Ui, icon: crate::icons::Icon, label: &str) {
     ui.horizontal(|ui| {
         let size = Vec2::splat(12.0);
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-        crate::icons::paint(ui.painter(), rect, icon, Theme::TEXT_MUTED);
-        ui.colored_label(Theme::TEXT_MUTED, label);
+        crate::icons::paint(ui.painter(), rect, icon, Theme::text_muted());
+        ui.colored_label(Theme::text_muted(), label);
     });
 }
 
 /// A row of mutually exclusive choices, the shape a three-way property wants.
 fn segmented<T: PartialEq + Copy>(ui: &mut Ui, label: &str, value: &mut T, options: &[(&str, T)]) {
     ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, label);
+        ui.colored_label(Theme::text_muted(), label);
         for (text, candidate) in options {
             if ui.selectable_label(*value == *candidate, *text).clicked() {
                 *value = *candidate;
@@ -1839,7 +1839,7 @@ fn labelled<R>(ui: &mut Ui, label: &str, width: f32, add: impl FnOnce(&mut Ui) -
             egui::Align2::LEFT_CENTER,
             label,
             egui::TextStyle::Body.resolve(ui.style()),
-            Theme::TEXT_MUTED,
+            Theme::text_muted(),
         );
         ui.style_mut().spacing.slider_width = ui.available_width();
         ui.scope(|ui| {
@@ -1924,7 +1924,7 @@ pub(crate) fn section_heading_with(
     let painter = ui.painter_at(rect);
 
     if response.hovered() {
-        painter.rect_filled(rect, Theme::RADIUS, Theme::HOVER_BG);
+        painter.rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
     }
 
     let caret = egui::Rect::from_min_size(
@@ -1935,7 +1935,7 @@ pub(crate) fn section_heading_with(
         &painter,
         caret,
         crate::icons::Icon::ChevronRight,
-        Theme::TEXT_MUTED,
+        Theme::text_muted(),
         if open { 90.0 } else { 0.0 },
         1.0,
     );
@@ -1944,14 +1944,14 @@ pub(crate) fn section_heading_with(
         egui::pos2(caret.right() + Theme::SPACE_1, rect.center().y - 6.0),
         Vec2::splat(12.0),
     );
-    crate::icons::paint(&painter, glyph, icon, Theme::TEXT_MUTED);
+    crate::icons::paint(&painter, glyph, icon, Theme::text_muted());
 
     painter.text(
         egui::pos2(glyph.right() + Theme::SPACE_2, rect.center().y),
         egui::Align2::LEFT_CENTER,
         title,
         egui::FontId::proportional(Theme::TYPE_MD),
-        Theme::TEXT_PRIMARY,
+        Theme::text_primary(),
     );
 
     if response.clicked() { !open } else { open }
@@ -2116,7 +2116,7 @@ fn text_section(
     // reported here, because that is a fault to be seen rather than a control
     // to be used.
     if !missing.is_empty() {
-        ui.colored_label(Theme::ERROR, format!("Missing: {}", missing.join(", ")));
+        ui.colored_label(Theme::error(), format!("Missing: {}", missing.join(", ")));
     }
 
     // Tracking in thousandths of an em, the unit every type specimen uses.
@@ -2144,7 +2144,7 @@ fn text_section(
     // sentence that has forgotten where they were.
     let mut case_change = None;
     ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, "Case");
+        ui.colored_label(Theme::text_muted(), "Case");
         for (label, case, hint) in [
             ("aa", Case::Normal, "As typed"),
             ("AA", Case::Upper, "All capitals"),
@@ -2205,9 +2205,9 @@ fn text_section(
             ui.painter(),
             spot,
             crate::icons::Icon::Palette,
-            Theme::TEXT_MUTED,
+            Theme::text_muted(),
         );
-        ui.colored_label(Theme::TEXT_MUTED, "Colour");
+        ui.colored_label(Theme::text_muted(), "Colour");
         if fill_picker(ui, &mut rgba) {
             set_character(
                 state,
@@ -2232,7 +2232,7 @@ fn text_section(
     // should be one click and recognisable without reading.
     let mut weight_change = None;
     ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, "Weight");
+        ui.colored_label(Theme::text_muted(), "Weight");
         let bold = shown.weight.is_some_and(|w| w >= 600);
         if icon_button(ui, crate::icons::Icon::Bold, "Bold", bold) {
             // Off returns to 400 rather than to inherit: a toggle that cleared
@@ -2289,7 +2289,7 @@ fn text_section(
 
     let mut alignment_change = None;
     ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, "Align");
+        ui.colored_label(Theme::text_muted(), "Align");
         for (icon, name, alignment) in [
             (crate::icons::Icon::AlignLeft, "Left", Alignment::Left),
             (
@@ -2366,7 +2366,7 @@ fn text_section(
     // language and a story has no language to pick one with.
     let hyphenating = paragraph.hyphenate == Some(true);
     ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, "Hyphenate");
+        ui.colored_label(Theme::text_muted(), "Hyphenate");
         if ui
             .selectable_label(hyphenating, "Break words")
             .on_hover_text("English patterns")
@@ -2496,7 +2496,7 @@ fn family_picker(
 
     for family in missing {
         ui.colored_label(
-            Theme::ERROR,
+            Theme::error(),
             format!("{family} is not installed — a substitute is shown"),
         );
     }
@@ -2509,7 +2509,7 @@ fn frame_section(ui: &mut Ui, frame: &tessera_document::nodes::Frame) {
         return;
     };
     ui.colored_label(
-        Theme::TEXT_MUTED,
+        Theme::text_muted(),
         format!("{} objects grouped", children.len()),
     );
 }
@@ -2577,7 +2577,7 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
 
     let orientation = Orientation::of(width, height);
     ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, "Orientation");
+        ui.colored_label(Theme::text_muted(), "Orientation");
         for (label, which) in [
             ("Portrait", Orientation::Portrait),
             ("Landscape", Orientation::Landscape),
@@ -2738,7 +2738,7 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
 
     ui.add_space(Theme::SPACING_LG);
     ui.colored_label(
-        Theme::TEXT_MUTED,
+        Theme::text_muted(),
         format!("Measurements in {}", unit_name(unit)),
     );
 }
@@ -2758,7 +2758,7 @@ fn output_intent_controls(ui: &mut Ui, state: &mut TesseraApp) {
 
     let intent = state.active().document().output_intent.clone();
     let Some(mut intent) = intent else {
-        ui.colored_label(Theme::TEXT_MUTED, "No press chosen.")
+        ui.colored_label(Theme::text_muted(), "No press chosen.")
             .on_hover_text(
                 "Without one, colours are shown as an approximation \
                  rather than as they will print",
@@ -2785,7 +2785,7 @@ fn output_intent_controls(ui: &mut Ui, state: &mut TesseraApp) {
     // Why a proof asked for is not appearing. Somebody who ticked the box and saw
     // nothing change is entitled to know.
     if let Some(trouble) = state.soft_proof.trouble.clone() {
-        ui.colored_label(Theme::ERROR, trouble);
+        ui.colored_label(Theme::error(), trouble);
     }
 
     let before = intent.rendering;
@@ -2850,7 +2850,7 @@ fn profile_picker(ui: &mut Ui, state: &mut TesseraApp, current: Option<&str>) {
                         if !heading.is_empty() {
                             ui.separator();
                         }
-                        ui.colored_label(Theme::TEXT_MUTED, group);
+                        ui.colored_label(Theme::text_muted(), group);
                         heading = group;
                     }
 
@@ -2899,12 +2899,15 @@ fn profile_picker(ui: &mut Ui, state: &mut TesseraApp, current: Option<&str>) {
     if found == 0 {
         // Said plainly, because a person expecting the familiar CMYK presses and
         // not finding them should know it is the machine and not Tessera.
-        ui.colored_label(Theme::TEXT_MUTED, "No profiles installed on this machine.")
-            .on_hover_text(
-                "CMYK profiles are measured data and cannot be computed, so \
+        ui.colored_label(
+            Theme::text_muted(),
+            "No profiles installed on this machine.",
+        )
+        .on_hover_text(
+            "CMYK profiles are measured data and cannot be computed, so \
                  Tessera reads the ones the system and other applications \
                  install. Use Browse to point at one anywhere on disk.",
-            );
+        );
     }
 }
 
@@ -2979,9 +2982,9 @@ pub fn stepped_zoom(current: f64, up: bool) -> f64 {
 pub fn status_bar(ui: &mut Ui, state: &mut TesseraApp) {
     ui.horizontal(|ui| {
         match &state.status {
-            Some(s) if s.is_error => ui.colored_label(Theme::ERROR, &s.message),
-            Some(s) => ui.colored_label(Theme::TEXT_MUTED, &s.message),
-            None => ui.colored_label(Theme::TEXT_MUTED, state.active_tool.label()),
+            Some(s) if s.is_error => ui.colored_label(Theme::error(), &s.message),
+            Some(s) => ui.colored_label(Theme::text_muted(), &s.message),
+            None => ui.colored_label(Theme::text_muted(), state.active_tool.label()),
         };
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -3056,7 +3059,7 @@ fn style_rows(ui: &mut Ui, state: &mut TesseraApp, story: StoryId, target: std::
     let mut attach_paragraph = None;
     let mut define_paragraph = false;
     ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, "Paragraph style");
+        ui.colored_label(Theme::text_muted(), "Paragraph style");
         let label = paragraph_style
             .and_then(|id| paragraphs.iter().find(|(p, _)| *p == id))
             .map_or("None", |(_, name)| name.as_str())
@@ -3117,7 +3120,7 @@ fn style_rows(ui: &mut Ui, state: &mut TesseraApp, story: StoryId, target: std::
     let mut attach_character = None;
     let mut define_character = false;
     ui.horizontal(|ui| {
-        ui.colored_label(Theme::TEXT_MUTED, "Character style");
+        ui.colored_label(Theme::text_muted(), "Character style");
         let label = character_style
             .and_then(|id| characters.iter().find(|(c, _)| *c == id))
             .map_or("None", |(_, name)| name.as_str())
@@ -3201,7 +3204,7 @@ fn overrides_row(
     ui.add_space(Theme::SPACING_MD);
     if character_overrides || paragraph_overrides {
         ui.colored_label(
-            Theme::ERROR,
+            Theme::error(),
             "+ this text states formatting of its own, over its styles",
         );
     }
@@ -3360,7 +3363,7 @@ fn page_navigator(ui: &mut Ui, state: &mut TesseraApp) {
         .and_then(|page| state.active().document().page_ids().position(|p| p == page))
         .map_or(1, |i| i + 1);
 
-    ui.colored_label(Theme::TEXT_MUTED, format!("{number} of {pages}"));
+    ui.colored_label(Theme::text_muted(), format!("{number} of {pages}"));
 
     if glyph_button(ui, crate::icons::Icon::ChevronLeft, "Previous spread").clicked() && at > 0 {
         state.active_mut().current_spread = at - 1;

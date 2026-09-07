@@ -89,7 +89,7 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
         .fixed_pos(egui::pos2(window.center().x - 220.0, window.min.y + 80.0))
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style())
-                .fill(Theme::PANEL_BG)
+                .fill(Theme::panel_bg())
                 .show(ui, |ui| {
                     ui.set_width(440.0);
                     let field = ui.text_edit_singleline(&mut state.palette.query);
@@ -100,7 +100,7 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
                         .max_height(300.0)
                         .show(ui, |ui| {
                             if matches.is_empty() {
-                                ui.colored_label(Theme::TEXT_MUTED, "No matching command");
+                                ui.colored_label(Theme::text_muted(), "No matching command");
                             }
                             for (i, action) in matches.iter().enumerate() {
                                 let selected = i == state.palette.highlighted;
@@ -110,7 +110,7 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
                                         ui.with_layout(
                                             egui::Layout::right_to_left(egui::Align::Center),
                                             |ui| {
-                                                ui.colored_label(Theme::TEXT_MUTED, shortcut);
+                                                ui.colored_label(Theme::text_muted(), shortcut);
                                             },
                                         );
                                     }

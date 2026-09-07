@@ -107,7 +107,7 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp, selection: Rect, viewport: Rect
         .fixed_pos(at)
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style())
-                .fill(Theme::PANEL_BG)
+                .fill(Theme::panel_bg())
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         for (icon, tip, verb) in BUTTONS {
@@ -172,10 +172,10 @@ fn icon_button(ui: &mut Ui, icon: Icon, tip: &str) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(BUTTON), egui::Sense::click());
     if response.hovered() {
         ui.painter()
-            .rect_filled(rect, Theme::RADIUS, Theme::HOVER_BG);
+            .rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
     }
     // Inset so the 24-unit grid does not touch the button's edge.
-    crate::icons::paint(ui.painter(), rect.shrink(4.0), icon, Theme::TEXT_PRIMARY);
+    crate::icons::paint(ui.painter(), rect.shrink(4.0), icon, Theme::text_primary());
     response.on_hover_text(tip)
 }
 

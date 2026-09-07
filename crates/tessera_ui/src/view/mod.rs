@@ -32,6 +32,10 @@ use crate::theme::Theme;
 
 /// The whole window, outermost first.
 pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
+    // Before anything is drawn, so a theme changed in the preferences window
+    // takes effect on the frame it was changed in rather than the one after.
+    crate::theme::follow(ui.ctx(), state.prefs.theme);
+
     accelerators(ui, state);
 
     Panel::top("menu").show(ui, |ui| menu_bar(ui, state));
@@ -106,8 +110,8 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
             .resizable(false)
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
-                    ui.colored_label(Theme::ACCENT, "\u{25c0}");
-                    ui.colored_label(Theme::TEXT_PRIMARY, format!("Editing {name}"));
+                    ui.colored_label(Theme::accent(), "\u{25c0}");
+                    ui.colored_label(Theme::text_primary(), format!("Editing {name}"));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Done").clicked() {
                             state.edit_master(None);

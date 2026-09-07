@@ -57,7 +57,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // judging an ink against a dark chrome in one theme and a light one in
     // the other would be judging two different inks. See D8.
     let surround = if state.screen_mode.shows_chrome() {
-        Theme::CANVAS_BG
+        Theme::canvas_bg()
     } else {
         Theme::PREVIEW_SURROUND
     };
@@ -223,7 +223,7 @@ fn scaled_view(state: &TesseraApp, ppp: f32) -> ViewTransform {
 }
 
 fn pasteboard() -> vello::peniko::color::AlphaColor<vello::peniko::color::Srgb> {
-    let [r, g, b, a] = Theme::CANVAS_BG.to_normalized_gamma_f32();
+    let [r, g, b, a] = Theme::canvas_bg().to_normalized_gamma_f32();
     vello::peniko::color::AlphaColor::new([r, g, b, a])
 }
 
@@ -850,12 +850,12 @@ fn thread_connectors(state: &TesseraApp, rect: Rect, painter: &egui::Painter) {
                 rect.min + egui::vec2(end.x, end.y),
             );
 
-            let stroke = egui::Stroke::new(1.0, Theme::ACCENT);
+            let stroke = egui::Stroke::new(1.0, Theme::accent());
             painter.line_segment([start, end], stroke);
             // A blob at each end, so a connector that runs off the edge of the
             // canvas still says which frames it joins.
-            painter.circle_filled(start, 3.0, Theme::ACCENT);
-            painter.circle_filled(end, 3.0, Theme::ACCENT);
+            painter.circle_filled(start, 3.0, Theme::accent());
+            painter.circle_filled(end, 3.0, Theme::accent());
         }
     }
 }
@@ -908,13 +908,13 @@ fn overset_marks(state: &TesseraApp, rect: Rect, painter: &egui::Painter, overse
         if !rect.intersects(at) {
             continue;
         }
-        painter.rect_filled(at, 1.0, Theme::ERROR);
+        painter.rect_filled(at, 1.0, Theme::error());
         painter.text(
             at.center(),
             egui::Align2::CENTER_CENTER,
             "+",
             egui::FontId::proportional(MARK),
-            Theme::TEXT_PRIMARY,
+            Theme::text_primary(),
         );
     }
 }
@@ -1818,7 +1818,7 @@ fn draw_overlays(
         }
         painter.add(egui::Shape::closed_line(
             quad(state, rect, frame.bounds, frame.transform),
-            Stroke::new(1.0, Theme::FRAME_EDGE),
+            Stroke::new(1.0, Theme::frame_edge()),
         ));
     }
 
@@ -1844,7 +1844,7 @@ fn draw_overlays(
         .collect();
         painter.add(egui::Shape::closed_line(
             corners,
-            Stroke::new(1.0, Theme::SELECTION),
+            Stroke::new(1.0, Theme::selection()),
         ));
 
         // Handles ride the rotation too, so they stay on the frame's own
@@ -1857,7 +1857,7 @@ fn draw_overlays(
                 painter.rect_filled(
                     Rect::from_center_size(pos, egui::vec2(h, h)),
                     0.0,
-                    Theme::SELECTION,
+                    Theme::selection(),
                 );
             }
 
@@ -1872,7 +1872,7 @@ fn draw_overlays(
             // already looking.
             let c = to_screen(placement.apply(state.anchor.in_rect(bounds)));
             let arm = Theme::REFERENCE_MARK;
-            let hair = Stroke::new(1.0, Theme::SELECTION);
+            let hair = Stroke::new(1.0, Theme::selection());
             painter.line_segment([c - egui::vec2(arm, arm), c + egui::vec2(arm, arm)], hair);
             painter.line_segment([c - egui::vec2(arm, -arm), c + egui::vec2(arm, -arm)], hair);
         }
@@ -1920,7 +1920,7 @@ fn draw_overlays(
             _ => {}
         });
         if run.len() > 1 {
-            painter.add(egui::Shape::line(run, Stroke::new(1.0, Theme::ACCENT)));
+            painter.add(egui::Shape::line(run, Stroke::new(1.0, Theme::accent())));
         }
 
         // The segment being aimed at, following the pointer, drawn with the
@@ -1940,7 +1940,10 @@ fn draw_overlays(
                 _ => {}
             });
             if run.len() > 1 {
-                painter.add(egui::Shape::line(run, Stroke::new(1.0, Theme::TEXT_MUTED)));
+                painter.add(egui::Shape::line(
+                    run,
+                    Stroke::new(1.0, Theme::text_muted()),
+                ));
             }
         }
 
@@ -1950,7 +1953,7 @@ fn draw_overlays(
             painter.rect_filled(
                 Rect::from_center_size(c, egui::vec2(h, h)),
                 0.0,
-                Theme::ACCENT,
+                Theme::accent(),
             );
             // Draw both handles, so a smooth point reads as symmetrical.
             for handle in [anchor.handle_out, anchor.handle_in()]
@@ -1958,8 +1961,8 @@ fn draw_overlays(
                 .flatten()
             {
                 let hp = to_screen(handle);
-                painter.line_segment([c, hp], Stroke::new(1.0, Theme::TEXT_MUTED));
-                painter.circle_filled(hp, h * 0.4, Theme::TEXT_MUTED);
+                painter.line_segment([c, hp], Stroke::new(1.0, Theme::text_muted()));
+                painter.circle_filled(hp, h * 0.4, Theme::text_muted());
             }
         }
     }
@@ -1971,7 +1974,7 @@ fn draw_overlays(
             // A box tells you where an ellipse will land but not what it will
             // look like, and for a line it is actively misleading.
             DragKind::Draw => {
-                let stroke = Stroke::new(1.0, Theme::ACCENT);
+                let stroke = Stroke::new(1.0, Theme::accent());
                 match state.active_tool {
                     Tool::Ellipse => painter.add(egui::Shape::line(
                         ellipse_points(drag.rect(), &to_screen),
@@ -1991,11 +1994,11 @@ fn draw_overlays(
             }
             DragKind::Marquee => {
                 let r = doc_rect_to_screen(drag.rect());
-                painter.rect_filled(r, 0.0, Theme::SELECTION.gamma_multiply(0.15));
+                painter.rect_filled(r, 0.0, Theme::selection().gamma_multiply(0.15));
                 painter.rect_stroke(
                     r,
                     0.0,
-                    Stroke::new(1.0, Theme::SELECTION),
+                    Stroke::new(1.0, Theme::selection()),
                     egui::StrokeKind::Middle,
                 );
             }
@@ -2022,7 +2025,7 @@ fn draw_overlays(
 
         painter.add(egui::Shape::closed_line(
             quad(state, rect, bounds, frame.transform),
-            Stroke::new(1.0, Theme::ACCENT),
+            Stroke::new(1.0, Theme::accent()),
         ));
 
         for r in &geometry.selection {
@@ -2033,7 +2036,7 @@ fn draw_overlays(
                     local(r.x1, r.y1),
                     local(r.x0, r.y1),
                 ],
-                Theme::SELECTION.gamma_multiply(0.3),
+                Theme::selection().gamma_multiply(0.3),
                 Stroke::NONE,
             ));
         }
