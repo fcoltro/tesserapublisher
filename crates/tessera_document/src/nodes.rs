@@ -204,6 +204,15 @@ pub struct Frame {
     /// should not throw those away.
     #[serde(default)]
     pub shadow: Option<crate::shadow::Shadow>,
+    /// The named appearance this object follows, if any.
+    ///
+    /// Only the reference is stored, never a copy of what the style says. The
+    /// object’s own fields hold its current values, and whether a value is the
+    /// style’s or the object’s own is answered by **comparing** them — see
+    /// [`crate::object_style`]. A recorded list of overrides would be a second
+    /// description of a fact the values already tell.
+    #[serde(default)]
+    pub style: Option<crate::ids::ObjectStyleId>,
 }
 
 impl Frame {

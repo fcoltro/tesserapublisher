@@ -110,6 +110,19 @@ pub struct Document {
     #[serde(default)]
     pub links: SlotMap<LinkId, Link>,
 
+    /// The document’s named object appearances.
+    ///
+    /// A `SlotMap` rather than a `Vec`, because objects hold references to
+    /// these: a deleted style must leave a stale key that reads as `None`, not
+    /// an index that quietly means a different style.
+    #[serde(default)]
+    pub object_styles:
+        slotmap::SlotMap<crate::ids::ObjectStyleId, crate::object_style::ObjectStyle>,
+
+    /// The order the panel lists object styles in.
+    #[serde(default)]
+    pub object_style_order: Vec<crate::ids::ObjectStyleId>,
+
     /// The document's named colours, in the order the panel lists them.
     ///
     /// A `Vec` rather than a map: a swatches panel is an ordered list a person
@@ -159,6 +172,8 @@ impl Document {
             master_order: Vec::new(),
             overrides: slotmap::SecondaryMap::new(),
             links: SlotMap::with_key(),
+            object_styles: slotmap::SlotMap::with_key(),
+            object_style_order: Vec::new(),
             swatches: Vec::new(),
             character_styles: SlotMap::with_key(),
             paragraph_styles: SlotMap::with_key(),
@@ -1037,6 +1052,220 @@ impl Document {
                 (id, count)
             })
             .collect()
+    }
+
+    // --- object styles ----------------------------------------------------
+
+    /// Add a style and put it at the end of the list.
+    pub fn add_object_style(
+        &mut self,
+        style: crate::object_style::ObjectStyle,
+    ) -> crate::ids::ObjectStyleId {
+        let id = self.object_styles.insert(style);
+        self.object_style_order.push(id);
+        self.revision += 1;
+        id
+    }
+
+    /// Remove a style. Objects following it are left as they are.
+    ///
+    /// **Their appearance does not change**, because they already hold the
+    /// values — they simply stop following anything. That is the opposite of
+    /// what deleting a *swatch* does, and for the opposite reason: a swatch is a
+    /// value objects point at, so removing it removes the value; a style is a
+    /// source objects were copying from, so removing it removes only the source.
+    pub fn remove_object_style(&mut self, id: crate::ids::ObjectStyleId) -> bool {
+        if self.object_styles.remove(id).is_none() {
+            return false;
+        }
+        self.object_style_order.retain(|other| *other != id);
+        for frame in self.frames.values_mut() {
+            if frame.style == Some(id) {
+                frame.style = None;
+            }
+        }
+        for style in self.object_styles.values_mut() {
+            if style.based_on == Some(id) {
+                style.based_on = None;
+            }
+        }
+        self.revision += 1;
+        true
+    }
+
+    /// A style with everything it inherits folded in.
+    ///
+    /// Followed to a fixed depth, so somebody who bases A on B on A sees a style
+    /// that stops rather than an application that hangs.
+    pub fn resolved_object_style(
+        &self,
+        id: crate::ids::ObjectStyleId,
+    ) -> crate::object_style::ObjectFormat {
+        const DEPTH: usize = 8;
+
+        let mut chain = Vec::new();
+        let mut at = Some(id);
+        for _ in 0..DEPTH {
+            let Some(current) = at else { break };
+            let Some(style) = self.object_styles.get(current) else {
+                break;
+            };
+            chain.push(&style.format);
+            at = style.based_on;
+        }
+
+        // Nearest last, so folding walks from the base outwards and the style
+        // itself wins.
+        let mut folded = crate::object_style::ObjectFormat::default();
+        for format in chain.into_iter().rev() {
+            folded = format.over(&folded);
+        }
+        folded
+    }
+
+    /// Attach a style to an object and write everything it states.
+    pub fn apply_object_style(
+        &mut self,
+        frame: crate::ids::FrameId,
+        style: crate::ids::ObjectStyleId,
+    ) -> bool {
+        if !self.object_styles.contains_key(style) {
+            return false;
+        }
+        let format = self.resolved_object_style(style);
+        let Some(target) = self.frames.get_mut(frame) else {
+            return false;
+        };
+        target.style = Some(style);
+        write_format(target, &format);
+        self.revision += 1;
+        true
+    }
+
+    /// Change a style, carrying the change into every object that was following
+    /// it and leaving every override alone.
+    ///
+    /// **The whole design, in one method.** For each property the style used to
+    /// state, an object holding that old value was following the style and is
+    /// updated; an object holding something else was overriding it and is not
+    /// touched. Nothing had to be recorded for that, and so nothing can drift
+    /// out of step with it.
+    pub fn restyle_object_style(
+        &mut self,
+        id: crate::ids::ObjectStyleId,
+        format: crate::object_style::ObjectFormat,
+    ) -> bool {
+        if !self.object_styles.contains_key(id) {
+            return false;
+        }
+
+        // Every style whose resolved format could change: this one, and anything
+        // based on it.
+        let affected: Vec<crate::ids::ObjectStyleId> = self
+            .object_style_order
+            .iter()
+            .copied()
+            .filter(|other| self.object_style_inherits(*other, id))
+            .collect();
+
+        let before: Vec<(crate::ids::ObjectStyleId, crate::object_style::ObjectFormat)> = affected
+            .iter()
+            .map(|style| (*style, self.resolved_object_style(*style)))
+            .collect();
+
+        if let Some(style) = self.object_styles.get_mut(id) {
+            style.format = format;
+        }
+
+        for (style, was) in before {
+            let now = self.resolved_object_style(style);
+            let ids: Vec<crate::ids::FrameId> = self
+                .frames
+                .iter()
+                .filter(|(_, frame)| frame.style == Some(style))
+                .map(|(frame_id, _)| frame_id)
+                .collect();
+            for frame_id in ids {
+                if let Some(frame) = self.frames.get_mut(frame_id) {
+                    cascade(frame, &was, &now);
+                }
+            }
+        }
+
+        self.revision += 1;
+        true
+    }
+
+    /// Whether `style` is `ancestor`, or is based on it however indirectly.
+    pub fn object_style_inherits(
+        &self,
+        style: crate::ids::ObjectStyleId,
+        ancestor: crate::ids::ObjectStyleId,
+    ) -> bool {
+        const DEPTH: usize = 8;
+        let mut at = Some(style);
+        for _ in 0..DEPTH {
+            let Some(current) = at else { return false };
+            if current == ancestor {
+                return true;
+            }
+            at = self.object_styles.get(current).and_then(|s| s.based_on);
+        }
+        false
+    }
+
+    /// Which properties an object holds differently from the style it follows.
+    ///
+    /// Asked of the values rather than looked up, which is why it cannot be
+    /// wrong. `None` for an object following no style: there is nothing for it to
+    /// differ from, and reporting "no overrides" would suggest there was.
+    pub fn object_overrides(
+        &self,
+        frame: crate::ids::FrameId,
+    ) -> Option<crate::object_style::ObjectFormat> {
+        let target = self.frames.get(frame)?;
+        let style = target.style?;
+        let format = self.resolved_object_style(style);
+        Some(differences(target, &format))
+    }
+
+    /// Put an object back to exactly what its style says.
+    pub fn clear_object_overrides(&mut self, frame: crate::ids::FrameId) -> bool {
+        let Some(style) = self.frames.get(frame).and_then(|f| f.style) else {
+            return false;
+        };
+        let format = self.resolved_object_style(style);
+        let Some(target) = self.frames.get_mut(frame) else {
+            return false;
+        };
+        write_format(target, &format);
+        self.revision += 1;
+        true
+    }
+
+    /// How many objects follow a style, so removing one is not a guess.
+    pub fn frames_following_object_style(&self, id: crate::ids::ObjectStyleId) -> usize {
+        self.frames
+            .values()
+            .filter(|frame| frame.style == Some(id))
+            .count()
+    }
+
+    /// A name no object style is using yet.
+    pub fn unused_object_style_name(&self) -> String {
+        let taken: Vec<&str> = self
+            .object_styles
+            .values()
+            .map(|s| s.name.as_str())
+            .collect();
+        let mut n = 1;
+        loop {
+            let candidate = format!("Object style {n}");
+            if !taken.contains(&candidate.as_str()) {
+                return candidate;
+            }
+            n += 1;
+        }
     }
 
     // --- named colours --------------------------------------------------
@@ -1976,6 +2205,7 @@ impl Document {
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         });
 
         let layer = self.layers.get_mut(layer_id)?;
@@ -2141,6 +2371,105 @@ impl Document {
 /// One level, not all of them: a swatch defined in terms of another is counted
 /// against the one it names directly, which is what somebody looking at a use
 /// count expects to see.
+/// Write every property a format states onto a frame.
+fn write_format(frame: &mut Frame, format: &crate::object_style::ObjectFormat) {
+    if let Some(fill) = &format.fill {
+        frame.fill = fill.clone();
+    }
+    if let Some(stroke) = &format.stroke {
+        frame.stroke = stroke.clone();
+    }
+    if let Some(blend) = format.blend {
+        frame.blend = blend;
+    }
+    if let Some(shadow) = &format.shadow {
+        frame.shadow = shadow.clone();
+    }
+    if let Some(wrap) = &format.wrap {
+        frame.wrap = *wrap;
+    }
+}
+
+/// What a frame states differently from `format`.
+///
+/// Only properties the format speaks about can be overridden: a style that says
+/// nothing about the shadow cannot be overridden on the shadow, because there is
+/// nothing to depart from.
+fn differences(
+    frame: &Frame,
+    format: &crate::object_style::ObjectFormat,
+) -> crate::object_style::ObjectFormat {
+    let mut out = crate::object_style::ObjectFormat::default();
+    if let Some(fill) = &format.fill
+        && frame.fill != *fill
+    {
+        out.fill = Some(frame.fill.clone());
+    }
+    if let Some(stroke) = &format.stroke
+        && frame.stroke != *stroke
+    {
+        out.stroke = Some(frame.stroke.clone());
+    }
+    if let Some(blend) = format.blend
+        && frame.blend != blend
+    {
+        out.blend = Some(frame.blend);
+    }
+    if let Some(shadow) = &format.shadow
+        && frame.shadow != *shadow
+    {
+        out.shadow = Some(frame.shadow.clone());
+    }
+    if let Some(wrap) = &format.wrap
+        && frame.wrap != *wrap
+    {
+        out.wrap = Some(frame.wrap);
+    }
+    out
+}
+
+/// Carry a style change into one object, leaving its overrides alone.
+///
+/// A property is updated only when the object still holds what the style used to
+/// say: that is what "was following the style" means, and it is read off the
+/// values rather than out of a record.
+fn cascade(
+    frame: &mut Frame,
+    was: &crate::object_style::ObjectFormat,
+    now: &crate::object_style::ObjectFormat,
+) {
+    if let Some(old) = &was.fill
+        && frame.fill == *old
+        && let Some(new) = &now.fill
+    {
+        frame.fill = new.clone();
+    }
+    if let Some(old) = &was.stroke
+        && frame.stroke == *old
+        && let Some(new) = &now.stroke
+    {
+        frame.stroke = new.clone();
+    }
+    if let Some(old) = was.blend
+        && frame.blend == old
+        && let Some(new) = now.blend
+    {
+        frame.blend = new;
+    }
+    if let Some(old) = &was.shadow
+        && frame.shadow == *old
+        && let Some(new) = &now.shadow
+    {
+        frame.shadow = new.clone();
+    }
+    if let Some(old) = &was.wrap
+        && frame.wrap == *old
+        && let Some(new) = &now.wrap
+    {
+        frame.wrap = *new;
+    }
+}
+
 fn uses_swatch(colour: &Color, name: &str) -> bool {
     matches!(colour, Color::Swatch { name: n, .. } if n == name)
 }
@@ -2567,6 +2896,7 @@ mod tests {
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         }
     }
 
@@ -2724,6 +3054,7 @@ mod tests {
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         }
     }
 
@@ -2791,6 +3122,7 @@ mod tests {
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         }
     }
 
@@ -2815,6 +3147,7 @@ mod tests {
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         }
     }
 
@@ -5187,6 +5520,307 @@ mod tests {
             b: 1.0,
             a: 1.0,
         }
+    }
+
+    // --- object styles ---------------------------------------------------
+
+    fn a_doc_with_one_object() -> (Document, crate::ids::FrameId) {
+        let mut doc = Document::new();
+        let page = doc.page_ids().next().expect("a page");
+        let id = frame_on(&mut doc, page);
+        (doc, id)
+    }
+
+    fn a_style_with(format: crate::object_style::ObjectFormat) -> crate::object_style::ObjectStyle {
+        crate::object_style::ObjectStyle {
+            name: "Caption box".to_string(),
+            based_on: None,
+            format,
+        }
+    }
+
+    fn blue_fill() -> Paint {
+        Paint::Solid(blue())
+    }
+
+    fn red_fill() -> Paint {
+        Paint::Solid(red())
+    }
+
+    #[test]
+    fn applying_a_style_writes_everything_it_states() {
+        let (mut doc, id) = a_doc_with_one_object();
+        let style = doc.add_object_style(a_style_with(crate::object_style::ObjectFormat {
+            fill: Some(blue_fill()),
+            shadow: Some(Some(crate::shadow::Shadow::TYPICAL)),
+            ..Default::default()
+        }));
+
+        assert!(doc.apply_object_style(id, style));
+        let frame = doc.frame(id).expect("frame");
+        assert_eq!(frame.fill, blue_fill());
+        assert_eq!(frame.shadow, Some(crate::shadow::Shadow::TYPICAL));
+        assert_eq!(frame.style, Some(style));
+    }
+
+    #[test]
+    fn applying_a_style_leaves_alone_what_it_says_nothing_about() {
+        let (mut doc, id) = a_doc_with_one_object();
+        doc.frame_mut(id).expect("frame").fill = red_fill();
+        let style = doc.add_object_style(a_style_with(crate::object_style::ObjectFormat {
+            blend: Some(crate::blending::Blending {
+                opacity: 0.5,
+                mode: crate::blending::BlendMode::Normal,
+            }),
+            ..Default::default()
+        }));
+
+        doc.apply_object_style(id, style);
+        assert_eq!(
+            doc.frame(id).expect("frame").fill,
+            red_fill(),
+            "a style silent about the fill must not touch it"
+        );
+    }
+
+    #[test]
+    fn editing_a_style_carries_into_every_object_following_it() {
+        // The cascade, which is the whole point of a style.
+        let mut doc = Document::new();
+        let page = doc.page_ids().next().expect("a page");
+        let ids: Vec<_> = (0..3).map(|_| frame_on(&mut doc, page)).collect();
+        let style = doc.add_object_style(a_style_with(crate::object_style::ObjectFormat {
+            fill: Some(blue_fill()),
+            ..Default::default()
+        }));
+        for id in &ids {
+            doc.apply_object_style(*id, style);
+        }
+
+        doc.restyle_object_style(
+            style,
+            crate::object_style::ObjectFormat {
+                fill: Some(red_fill()),
+                ..Default::default()
+            },
+        );
+
+        for id in &ids {
+            assert_eq!(doc.frame(*id).expect("frame").fill, red_fill());
+        }
+    }
+
+    #[test]
+    fn editing_a_style_leaves_an_overridden_property_alone() {
+        // **The reason the cascade compares rather than overwrites.** An object
+        // adjusted by hand must not lose that adjustment because the style
+        // changed somewhere else.
+        let mut doc = Document::new();
+        let page = doc.page_ids().next().expect("a page");
+        let following = frame_on(&mut doc, page);
+        let overriding = frame_on(&mut doc, page);
+        let style = doc.add_object_style(a_style_with(crate::object_style::ObjectFormat {
+            fill: Some(blue_fill()),
+            ..Default::default()
+        }));
+        doc.apply_object_style(following, style);
+        doc.apply_object_style(overriding, style);
+
+        // One object is given a fill of its own.
+        let green = Paint::Solid(Color::Rgb {
+            r: 0.0,
+            g: 1.0,
+            b: 0.0,
+            a: 1.0,
+        });
+        doc.frame_mut(overriding).expect("frame").fill = green.clone();
+
+        doc.restyle_object_style(
+            style,
+            crate::object_style::ObjectFormat {
+                fill: Some(red_fill()),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            doc.frame(following).expect("frame").fill,
+            red_fill(),
+            "the one that was following must follow"
+        );
+        assert_eq!(
+            doc.frame(overriding).expect("frame").fill,
+            green,
+            "and the one that was overriding must keep its own"
+        );
+    }
+
+    #[test]
+    fn an_override_is_read_off_the_values_rather_than_recorded() {
+        let (mut doc, id) = a_doc_with_one_object();
+        let style = doc.add_object_style(a_style_with(crate::object_style::ObjectFormat {
+            fill: Some(blue_fill()),
+            ..Default::default()
+        }));
+        doc.apply_object_style(id, style);
+        assert!(
+            doc.object_overrides(id)
+                .expect("following a style")
+                .is_empty(),
+            "nothing has been changed yet"
+        );
+
+        doc.frame_mut(id).expect("frame").fill = red_fill();
+        let overrides = doc.object_overrides(id).expect("following a style");
+        assert_eq!(overrides.fill, Some(red_fill()));
+        assert!(overrides.blend.is_none(), "only the fill was changed");
+    }
+
+    #[test]
+    fn an_object_following_no_style_has_nothing_to_differ_from() {
+        // `None` rather than an empty format: reporting "no overrides" would
+        // suggest there was something to override.
+        let (doc, id) = a_doc_with_one_object();
+        assert!(doc.object_overrides(id).is_none());
+    }
+
+    #[test]
+    fn only_a_property_the_style_speaks_about_can_be_overridden() {
+        let (mut doc, id) = a_doc_with_one_object();
+        let style = doc.add_object_style(a_style_with(crate::object_style::ObjectFormat {
+            fill: Some(blue_fill()),
+            ..Default::default()
+        }));
+        doc.apply_object_style(id, style);
+
+        // The style says nothing about the shadow, so giving the object one is
+        // not a departure from anything.
+        doc.frame_mut(id).expect("frame").shadow = Some(crate::shadow::Shadow::TYPICAL);
+        assert!(
+            doc.object_overrides(id).expect("following").is_empty(),
+            "a style silent about the shadow cannot be overridden on it"
+        );
+    }
+
+    #[test]
+    fn clearing_overrides_puts_an_object_back_to_what_its_style_says() {
+        let (mut doc, id) = a_doc_with_one_object();
+        let style = doc.add_object_style(a_style_with(crate::object_style::ObjectFormat {
+            fill: Some(blue_fill()),
+            ..Default::default()
+        }));
+        doc.apply_object_style(id, style);
+        doc.frame_mut(id).expect("frame").fill = red_fill();
+
+        assert!(doc.clear_object_overrides(id));
+        assert_eq!(doc.frame(id).expect("frame").fill, blue_fill());
+        assert!(doc.object_overrides(id).expect("following").is_empty());
+    }
+
+    #[test]
+    fn a_style_based_on_another_inherits_what_it_leaves_alone() {
+        let (mut doc, id) = a_doc_with_one_object();
+        let base = doc.add_object_style(a_style_with(crate::object_style::ObjectFormat {
+            fill: Some(blue_fill()),
+            shadow: Some(Some(crate::shadow::Shadow::TYPICAL)),
+            ..Default::default()
+        }));
+        let derived = doc.add_object_style(crate::object_style::ObjectStyle {
+            name: "Pull quote".to_string(),
+            based_on: Some(base),
+            format: crate::object_style::ObjectFormat {
+                fill: Some(red_fill()),
+                ..Default::default()
+            },
+        });
+
+        doc.apply_object_style(id, derived);
+        let frame = doc.frame(id).expect("frame");
+        assert_eq!(frame.fill, red_fill(), "its own");
+        assert_eq!(
+            frame.shadow,
+            Some(crate::shadow::Shadow::TYPICAL),
+            "and the base’s"
+        );
+    }
+
+    #[test]
+    fn editing_a_base_style_reaches_the_objects_of_the_styles_built_on_it() {
+        // A chain rather than a copy, which is the point of basing one style on
+        // another.
+        let (mut doc, id) = a_doc_with_one_object();
+        let base = doc.add_object_style(a_style_with(crate::object_style::ObjectFormat {
+            fill: Some(blue_fill()),
+            ..Default::default()
+        }));
+        let derived = doc.add_object_style(crate::object_style::ObjectStyle {
+            name: "Pull quote".to_string(),
+            based_on: Some(base),
+            format: crate::object_style::ObjectFormat::default(),
+        });
+        doc.apply_object_style(id, derived);
+        assert_eq!(doc.frame(id).expect("frame").fill, blue_fill());
+
+        doc.restyle_object_style(
+            base,
+            crate::object_style::ObjectFormat {
+                fill: Some(red_fill()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(doc.frame(id).expect("frame").fill, red_fill());
+    }
+
+    #[test]
+    fn a_ring_of_styles_stops_rather_than_hanging() {
+        // Somebody who bases A on B on A has made a mistake and should see a
+        // style that stops, not a frozen application.
+        let mut doc = Document::new();
+        let a = doc.add_object_style(a_style_with(crate::object_style::ObjectFormat {
+            fill: Some(blue_fill()),
+            ..Default::default()
+        }));
+        let b = doc.add_object_style(crate::object_style::ObjectStyle {
+            name: "B".to_string(),
+            based_on: Some(a),
+            format: crate::object_style::ObjectFormat::default(),
+        });
+        doc.object_styles.get_mut(a).expect("a").based_on = Some(b);
+
+        // Resolving must return rather than recurse for ever.
+        let _ = doc.resolved_object_style(a);
+        let _ = doc.resolved_object_style(b);
+    }
+
+    #[test]
+    fn removing_a_style_leaves_its_objects_looking_the_same() {
+        // The opposite of deleting a swatch, and for the opposite reason: a
+        // swatch is a value objects point at, a style is a source they copied
+        // from.
+        let (mut doc, id) = a_doc_with_one_object();
+        let style = doc.add_object_style(a_style_with(crate::object_style::ObjectFormat {
+            fill: Some(blue_fill()),
+            ..Default::default()
+        }));
+        doc.apply_object_style(id, style);
+
+        assert!(doc.remove_object_style(style));
+        let frame = doc.frame(id).expect("frame");
+        assert_eq!(frame.fill, blue_fill(), "the appearance stays");
+        assert_eq!(frame.style, None, "only the reference goes");
+    }
+
+    #[test]
+    fn a_new_object_style_never_takes_a_name_already_in_use() {
+        let mut doc = Document::new();
+        for _ in 0..3 {
+            let name = doc.unused_object_style_name();
+            doc.add_object_style(crate::object_style::ObjectStyle::new(name));
+        }
+        let mut names: Vec<String> = doc.object_styles.values().map(|s| s.name.clone()).collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), 3);
     }
 
     #[test]

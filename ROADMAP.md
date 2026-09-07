@@ -1080,7 +1080,30 @@ full argument, with sources, is in `docs/superpowers/specs/`.
     designer draws to reserve room for a photograph that has not arrived. It
     draws in the same violet as the column guides, and a frame whose file has
     *gone* draws red — different problems, and only the second is a fault.
-- [ ] **Object styles**, cascading on edit the way paragraph styles do.
+- [x] **Object styles**, cascading on edit the way paragraph styles do.
+  - **An override survives a style edit, and no override list is kept.** A style
+    that simply overwrote its objects would throw away every hand adjustment the
+    moment the style changed; one that recorded which properties each object had
+    overridden would be a second description of a fact the values already tell.
+    So the cascade *compares*: where the style’s old value is still what the
+    object holds, the object was following and is updated; where it differs, the
+    object was overriding and is left alone.
+  - Because of that, "differs from its style" is **asked of the values** rather
+    than looked up, and so it cannot be wrong. The inspector names *which*
+    properties differ, because "differs somehow" sends a person through every
+    control to find out where.
+  - A property can be **stated or deliberately left alone**, and where the
+    property is itself optional the field nests: `None` is "says nothing",
+    `Some(None)` is "says: none". Collapsing them would make "no stroke"
+    unstateable, which is exactly what a style for a plain filled box has to say.
+    A round-trip test caught JSON quietly collapsing the two — `null` reads
+    back as the outer `None` — and a custom reader keeps them apart.
+  - `based_on` is a **chain, not a copy**, so editing a base reaches the objects
+    of every style built on it, and a ring stops rather than hanging.
+  - Removing a style **leaves its objects looking exactly the same**. That is the
+    opposite of deleting a swatch, and for the opposite reason: a swatch is a
+    value objects point at, so removing it removes the value; a style is a source
+    they copied from, so removing it removes only the source.
 
 ---
 

@@ -11,6 +11,8 @@
 
 use egui::Ui;
 
+use tessera_color::Color;
+
 use tessera_text::story::{
     Alignment, Case, CharacterFormat, CharacterStyle, CharacterStyleId, ParagraphFormat,
     ParagraphStyle, ParagraphStyleId,
@@ -39,6 +41,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
                 "Character",
                 StyleKind::Character,
             ),
+            (crate::icons::Icon::Rectangle, "Object", StyleKind::Object),
         ] {
             let selected = state.styles_window.kind == kind;
             let (spot, _) = ui.allocate_exact_size(egui::Vec2::splat(14.0), egui::Sense::hover());
@@ -62,7 +65,243 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
     match state.styles_window.kind {
         StyleKind::Paragraph => paragraph_side(ui, state),
         StyleKind::Character => character_side(ui, state),
+        StyleKind::Object => object_side(ui, state),
     }
+}
+
+// --- object styles ---------------------------------------------------------
+
+/// Named object appearances: the list, and what the chosen one states.
+///
+/// The controls each have **three** states rather than two, and that is the
+/// whole of what an object style is: a property can be stated, or deliberately
+/// left alone. A style that could only state things would force every style to
+/// be a complete description of an object, so attaching a "drop shadow" style
+/// would also repaint the fill.
+fn object_side(ui: &mut Ui, state: &mut TesseraApp) {
+    let listed: Vec<(tessera_document::ids::ObjectStyleId, String)> = state
+        .active()
+        .document()
+        .object_style_order
+        .iter()
+        .filter_map(|id| {
+            state
+                .active()
+                .document()
+                .object_styles
+                .get(*id)
+                .map(|style| (*id, style.name.clone()))
+        })
+        .collect();
+
+    if listed.is_empty() {
+        ui.colored_label(Theme::TEXT_MUTED, "No object styles yet.");
+    }
+    for (id, name) in &listed {
+        let chosen = state.styles_window.object == Some(*id);
+        ui.horizontal(|ui| {
+            if ui.selectable_label(chosen, name).clicked() {
+                state.styles_window.object = Some(*id);
+            }
+            // How many objects follow it, so removing one is not a guess.
+            let following = state.active().document().frames_following_object_style(*id);
+            ui.colored_label(Theme::TEXT_MUTED, format!("{following}"))
+                .on_hover_text("Objects following this style");
+        });
+    }
+
+    // Set inside the closure and acted on outside it: a `return` in there would
+    // only leave the closure, and the editor below would still run against a
+    // style that has gone.
+    let mut remove = None;
+    ui.horizontal(|ui| {
+        if ui.button("New").clicked() {
+            apply(state, Command::AddObjectStyle);
+        }
+        if let Some(id) = state.styles_window.object
+            && ui
+                .button("Remove")
+                .on_hover_text("The objects that followed it keep their appearance")
+                .clicked()
+        {
+            remove = Some(id);
+        }
+    });
+    if let Some(id) = remove {
+        state.styles_window.object = None;
+        apply(state, Command::RemoveObjectStyle { id });
+        return;
+    }
+
+    let Some(id) = state.styles_window.object else {
+        return;
+    };
+    let Some(style) = state.active().document().object_styles.get(id).cloned() else {
+        state.styles_window.object = None;
+        return;
+    };
+
+    ui.separator();
+
+    // The name, and what it is based on.
+    let mut name = style.name.clone();
+    if crate::view::panels::field(ui, "Name", |ui| {
+        ui.text_edit_singleline(&mut name).changed()
+    }) {
+        apply(
+            state,
+            Command::NameObjectStyle {
+                id,
+                name,
+                based_on: style.based_on,
+            },
+        );
+        return;
+    }
+
+    let mut based_on = style.based_on;
+    let based_label = based_on
+        .and_then(|base| state.active().document().object_styles.get(base))
+        .map(|s| s.name.clone())
+        .unwrap_or_else(|| "Nothing".to_string());
+    crate::view::panels::field(ui, "Based on", |ui| {
+        egui::ComboBox::from_id_salt(("object-style-base", id))
+            .selected_text(based_label)
+            .width(ui.available_width())
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut based_on, None, "Nothing");
+                for (other, other_name) in &listed {
+                    if *other == id {
+                        continue;
+                    }
+                    ui.selectable_value(&mut based_on, Some(*other), other_name);
+                }
+            });
+    });
+    if based_on != style.based_on {
+        apply(
+            state,
+            Command::NameObjectStyle {
+                id,
+                name: style.name.clone(),
+                based_on,
+            },
+        );
+        return;
+    }
+
+    // What it states. Each row is a switch and, when it is on, the value.
+    let mut format = style.format.clone();
+    let mut changed = false;
+
+    changed |= states(ui, "Fill", &mut format.fill, || {
+        tessera_document::paint::Paint::Solid(Color::BLACK)
+    });
+    if let Some(fill) = &mut format.fill {
+        let [r, g, b, a] = fill.representative().to_rgb_f32();
+        let mut rgba = [r, g, b, a];
+        if crate::view::panels::swatch_picker(ui, &mut rgba) {
+            *fill = tessera_document::paint::Paint::Solid(Color::Rgb {
+                r: rgba[0],
+                g: rgba[1],
+                b: rgba[2],
+                a: rgba[3],
+            });
+            changed = true;
+        }
+    }
+
+    // The nesting shows here, and it is the point: "no stroke" is a value a
+    // style has to be able to state, so the switch turns the *statement* on and
+    // a second control chooses between a stroke and none.
+    changed |= states(ui, "Stroke", &mut format.stroke, || None);
+    if let Some(stroke) = &mut format.stroke {
+        let mut has = stroke.is_some();
+        if ui.checkbox(&mut has, "Has a stroke").changed() {
+            *stroke = if has {
+                Some(tessera_document::nodes::Stroke::new(Color::BLACK, 1.0))
+            } else {
+                None
+            };
+            changed = true;
+        }
+        if let Some(s) = stroke {
+            changed |= crate::view::panels::field(ui, "Width", |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut s.width)
+                        .speed(0.1)
+                        .range(0.0..=144.0)
+                        .suffix(" pt"),
+                )
+                .changed()
+            });
+        }
+    }
+
+    changed |= states(ui, "Opacity", &mut format.blend, || {
+        tessera_document::blending::Blending::PLAIN
+    });
+    if let Some(blend) = &mut format.blend {
+        let mut percent = blend.alpha() * 100.0;
+        if crate::view::panels::field(ui, "Opacity", |ui| {
+            ui.add(
+                egui::Slider::new(&mut percent, 0.0..=100.0)
+                    .suffix("%")
+                    .fixed_decimals(0),
+            )
+            .changed()
+        }) {
+            blend.opacity = percent / 100.0;
+            changed = true;
+        }
+    }
+
+    changed |= states(ui, "Shadow", &mut format.shadow, || {
+        Some(tessera_document::shadow::Shadow::TYPICAL)
+    });
+    if let Some(shadow) = &mut format.shadow {
+        let mut casts = shadow.is_some();
+        if ui.checkbox(&mut casts, "Casts a shadow").changed() {
+            *shadow = if casts {
+                Some(tessera_document::shadow::Shadow::TYPICAL)
+            } else {
+                None
+            };
+            changed = true;
+        }
+    }
+
+    changed |= states(ui, "Text wrap", &mut format.wrap, || {
+        tessera_document::nodes::TextWrap::None
+    });
+
+    if changed {
+        apply(
+            state,
+            Command::RestyleObjectStyle {
+                id,
+                format: Box::new(format),
+            },
+        );
+    }
+}
+
+/// A switch for whether a format states a property at all.
+///
+/// Returns whether the switch moved. `fresh` supplies the value the property
+/// takes when it is first stated, so turning a statement on never leaves the
+/// format holding something meaningless.
+fn states<T>(ui: &mut Ui, label: &str, slot: &mut Option<T>, fresh: impl FnOnce() -> T) -> bool {
+    let mut on = slot.is_some();
+    if ui
+        .checkbox(&mut on, label)
+        .on_hover_text("Off means the style leaves this alone")
+        .changed()
+    {
+        *slot = if on { Some(fresh()) } else { None };
+        return true;
+    }
+    false
 }
 
 // --- paragraph styles ------------------------------------------------------

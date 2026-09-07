@@ -107,6 +107,7 @@ pub enum StyleKind {
     #[default]
     Paragraph,
     Character,
+    Object,
 }
 
 /// The pages panel's own state.
@@ -169,6 +170,8 @@ pub struct LayersWindow {
 pub struct StylesWindow {
     pub open: bool,
     pub kind: StyleKind,
+    /// The object style being edited.
+    pub object: Option<tessera_document::ids::ObjectStyleId>,
     pub character: Option<tessera_text::story::CharacterStyleId>,
     pub paragraph: Option<tessera_text::story::ParagraphStyleId>,
 }

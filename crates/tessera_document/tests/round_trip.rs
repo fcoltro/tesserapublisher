@@ -61,6 +61,7 @@ fn a_document_with_a_rectangle_round_trips_exactly() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         },
     );
 
@@ -171,6 +172,7 @@ fn any_frame() -> impl Strategy<Value = Frame> {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         })
 }
 
@@ -222,6 +224,7 @@ fn text_survives_a_save_and_load() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         },
     );
 
@@ -270,6 +273,7 @@ fn a_version_1_document_still_opens() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         },
     );
 
@@ -349,6 +353,7 @@ fn a_placement_survives_a_save_and_load() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         },
     );
 
@@ -386,6 +391,7 @@ fn a_version_2_rotation_becomes_the_placement_that_means_the_same_thing() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         },
     );
 
@@ -565,6 +571,7 @@ fn a_version_four_document_still_opens_and_gains_no_setup_it_never_had() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         },
     );
 
@@ -603,9 +610,75 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_sixteen() {
+fn the_format_version_is_seventeen() {
     // If this changes, a migration step is owed.
-    assert_eq!(format::FORMAT_VERSION, 16);
+    assert_eq!(format::FORMAT_VERSION, 17);
+}
+
+#[test]
+fn object_styles_and_the_objects_following_them_round_trip() {
+    use tessera_document::object_style::{ObjectFormat, ObjectStyle};
+    use tessera_document::paint::Paint;
+
+    let path = temp_path("object_styles.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = Document::new();
+    let layer = doc.default_layer().expect("layer");
+    let id = doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 20.0,
+            },
+            transform: Default::default(),
+            kind: FrameKind::Rectangle,
+            fill: Paint::Solid(Color::default()),
+            stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
+            shadow: None,
+            style: None,
+        },
+    );
+
+    let base = doc.add_object_style(ObjectStyle::new("Panel"));
+    let style = doc.add_object_style(ObjectStyle {
+        name: "Caption box".to_string(),
+        based_on: Some(base),
+        format: ObjectFormat {
+            shadow: Some(Some(tessera_document::shadow::Shadow::TYPICAL)),
+            stroke: Some(None),
+            ..Default::default()
+        },
+    });
+    doc.apply_object_style(id, style);
+
+    format::save(&doc, &path).expect("save");
+    let back = format::load(&path).expect("load");
+
+    assert_eq!(back.object_style_order.len(), 2, "and in order");
+    let loaded = back
+        .object_styles
+        .get(style)
+        .expect("the style, under the same key");
+    assert_eq!(loaded.name, "Caption box");
+    assert_eq!(loaded.based_on, Some(base), "the chain, not a copy");
+    assert_eq!(
+        loaded.format.stroke,
+        Some(None),
+        "saying no stroke must survive: it is a value, not a silence"
+    );
+    assert_eq!(
+        back.frame(id).expect("frame").style,
+        Some(style),
+        "and the object still follows it"
+    );
+
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -644,6 +717,7 @@ fn a_drop_shadow_round_trips() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: Some(shadow.clone()),
+            style: None,
         },
     );
 
@@ -697,6 +771,7 @@ fn a_gradient_fill_round_trips() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         },
     );
 
@@ -746,6 +821,7 @@ fn a_document_written_before_gradients_opens_with_its_colour_intact() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         },
     );
     format::save(&doc, &path).expect("save");
@@ -793,6 +869,7 @@ fn an_objects_opacity_and_blend_mode_round_trip() {
                 mode: BlendMode::Multiply,
             },
             shadow: None,
+            style: None,
         },
     );
 
@@ -853,6 +930,7 @@ fn placed_artwork_round_trips_as_a_link_rather_than_as_pixels() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         },
     );
     let link = doc.add_link(Link::new("C:/art/photo.png", (640.0, 480.0)));
@@ -930,6 +1008,7 @@ fn swatches_and_the_objects_naming_them_round_trip() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         },
     );
 
@@ -1038,6 +1117,7 @@ fn a_version_nine_text_frame_opens_as_a_single_column() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         },
     );
 
@@ -1098,6 +1178,7 @@ fn a_columned_text_frame_round_trips() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         },
     );
 
@@ -1140,6 +1221,7 @@ fn a_version_eight_document_opens_with_no_masters_and_no_overrides() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         },
     );
 
@@ -1186,6 +1268,7 @@ fn a_master_and_its_overrides_survive_a_round_trip() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         },
     );
     let page = doc.page_ids().next().expect("a page");
@@ -1250,6 +1333,7 @@ fn version_7_archive(path: &std::path::Path) -> serde_json::Value {
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,
                 shadow: None,
+                style: None,
             },
         );
     }

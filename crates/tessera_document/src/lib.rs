@@ -16,6 +16,7 @@ pub mod ids;
 pub mod links;
 pub mod masters;
 pub mod nodes;
+pub mod object_style;
 pub mod paint;
 pub mod path;
 pub mod shadow;

@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 16;
+pub const FORMAT_VERSION: u32 = 17;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -170,6 +170,16 @@ fn migrate(value: &mut serde_json::Value, from: u32) {
     if from < 8 {
         layers_leave_the_page(value);
     }
+
+    // 16 -> 17: the document gained a table of object styles, and a frame
+    // gained the reference to the one it follows.
+    //
+    // Nothing to rewrite. An absent table is an empty one, which is the truth
+    // about a document written before object styles existed, and no frame in it
+    // can follow one. The version moves so an older build refuses a document
+    // using them rather than opening it with every object detached from its
+    // style — which would look right until somebody edited a style and nothing
+    // happened.
 
     // 15 -> 16: a frame gained the shadow it casts.
     //

@@ -304,6 +304,39 @@ pub enum Command {
         wrap: tessera_document::nodes::TextWrap,
     },
 
+    /// Add a named object appearance.
+    AddObjectStyle,
+    /// Rename one, or change what it is based on.
+    NameObjectStyle {
+        id: tessera_document::ids::ObjectStyleId,
+        name: String,
+        based_on: Option<tessera_document::ids::ObjectStyleId>,
+    },
+    /// Change what a style states, carrying it into every object following it.
+    RestyleObjectStyle {
+        id: tessera_document::ids::ObjectStyleId,
+        /// Boxed because a format is the largest thing any command carries, and
+        /// every `Command` is as big as its biggest variant.
+        format: Box<tessera_document::object_style::ObjectFormat>,
+    },
+    /// Remove a style. The objects that followed it keep their appearance.
+    RemoveObjectStyle {
+        id: tessera_document::ids::ObjectStyleId,
+    },
+    /// Attach a style to an object and write what it states.
+    ApplyObjectStyle {
+        id: tessera_document::ids::FrameId,
+        style: tessera_document::ids::ObjectStyleId,
+    },
+    /// Stop following a style, keeping the appearance.
+    DetachObjectStyle {
+        id: tessera_document::ids::FrameId,
+    },
+    /// Put an object back to exactly what its style says.
+    ClearObjectOverrides {
+        id: tessera_document::ids::FrameId,
+    },
+
     /// Define a named colour, or change the one of that name.
     SetSwatch(tessera_document::nodes::Swatch),
     /// Remove a named colour. Objects using it keep the reference.
@@ -1132,6 +1165,58 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             state.active_mut().document_mut().touch();
         }
 
+        Command::AddObjectStyle => {
+            let name = state.active().document().unused_object_style_name();
+            state
+                .active_mut()
+                .document_mut()
+                .add_object_style(tessera_document::object_style::ObjectStyle::new(name));
+        }
+
+        Command::NameObjectStyle { id, name, based_on } => {
+            let doc = state.active_mut().document_mut();
+            // A style based on itself, however indirectly, is a ring. Refusing
+            // it here is better than resolving it to a fixed depth and leaving
+            // somebody to wonder why their style stopped inheriting.
+            let ring = based_on.is_some_and(|base| doc.object_style_inherits(base, id));
+            if let Some(style) = doc.object_styles.get_mut(id) {
+                style.name = name;
+                if !ring {
+                    style.based_on = based_on;
+                }
+            }
+            doc.touch();
+        }
+
+        Command::RestyleObjectStyle { id, format } => {
+            state
+                .active_mut()
+                .document_mut()
+                .restyle_object_style(id, *format);
+        }
+
+        Command::RemoveObjectStyle { id } => {
+            state.active_mut().document_mut().remove_object_style(id);
+        }
+
+        Command::ApplyObjectStyle { id, style } => {
+            state
+                .active_mut()
+                .document_mut()
+                .apply_object_style(id, style);
+        }
+
+        Command::DetachObjectStyle { id } => {
+            if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
+                frame.style = None;
+            }
+            state.active_mut().document_mut().touch();
+        }
+
+        Command::ClearObjectOverrides { id } => {
+            state.active_mut().document_mut().clear_object_overrides(id);
+        }
+
         Command::SetSwatch(swatch) => {
             state.active_mut().document_mut().set_swatch(swatch);
         }
@@ -1474,6 +1559,7 @@ fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         },
     );
     state.active_mut().selection.set(id);
@@ -2781,6 +2867,7 @@ mod tests {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         };
         let a = state
             .active_mut()
@@ -4317,6 +4404,7 @@ mod tests {
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,
                 shadow: None,
+                style: None,
             },
         );
 
@@ -4666,6 +4754,7 @@ mod tests {
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,
                 shadow: None,
+                style: None,
             },
         );
         (master, item)

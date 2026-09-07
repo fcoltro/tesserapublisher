@@ -69,6 +69,7 @@ fn tool_button(ui: &mut Ui, tool: Tool, active: bool) -> egui::Response {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     Transform,
+    Style,
     Fill,
     Stroke,
     Effects,
@@ -80,8 +81,12 @@ pub enum Section {
 
 impl Section {
     /// Display order. Universal sections first; see the type's note.
-    pub const ALL: [Section; 8] = [
+    pub const ALL: [Section; 9] = [
         Section::Transform,
+        // Above Fill and Stroke, because it decides what those *start* as: an
+        // object’s style is read before its own adjustments, and the panel reads
+        // in the same order.
+        Section::Style,
         Section::Fill,
         Section::Stroke,
         // Every object composites, so this belongs with the always-present
@@ -107,6 +112,7 @@ impl Section {
             Section::Wrap => "Text wrap",
             Section::Graphic => "Artwork",
             Section::Effects => "Effects",
+            Section::Style => "Object style",
         }
     }
 
@@ -123,6 +129,7 @@ impl Section {
             Section::Wrap => Icon::AlignJustify,
             Section::Graphic => Icon::Rectangle,
             Section::Effects => Icon::Blend,
+            Section::Style => Icon::Duplicate,
         }
     }
 
@@ -132,7 +139,11 @@ impl Section {
         match self {
             // Every frame has a place, a fill and a stroke — even when the
             // stroke is None, which is a value the section can set.
-            Section::Transform | Section::Fill | Section::Stroke | Section::Effects => true,
+            Section::Transform
+            | Section::Fill
+            | Section::Stroke
+            | Section::Effects
+            | Section::Style => true,
             Section::Text => matches!(frame.kind, FrameKind::Text { .. }),
             Section::Frame => matches!(frame.kind, FrameKind::Group(_)),
             // Every kind of object. A picture is the thing most often
@@ -195,6 +206,7 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
                     Section::Wrap => wrap_controls(ui, state, id, &frame),
                     Section::Graphic => graphic_section(ui, state, id, &frame),
                     Section::Effects => effects_section(ui, state, id, &frame),
+                    Section::Style => object_style_section(ui, state, id, &frame),
                 });
         });
     }
@@ -1215,6 +1227,108 @@ fn graphic_section(
     });
     if ui.button("Fit frame to artwork").clicked() {
         apply(state, Command::FitFrameToArtwork { id });
+    }
+}
+
+/// Which named appearance the object follows, and whether it has departed from
+/// it.
+///
+/// The "differs" mark is **computed by comparing the object to its style**, not
+/// looked up, so it cannot be wrong. That is the same fact the cascade uses to
+/// decide what to leave alone when the style changes, asked from the other side.
+fn object_style_section(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::FrameId,
+    frame: &tessera_document::nodes::Frame,
+) {
+    let listed: Vec<(tessera_document::ids::ObjectStyleId, String)> = state
+        .active()
+        .document()
+        .object_style_order
+        .iter()
+        .filter_map(|style| {
+            state
+                .active()
+                .document()
+                .object_styles
+                .get(*style)
+                .map(|s| (*style, s.name.clone()))
+        })
+        .collect();
+
+    if listed.is_empty() {
+        ui.colored_label(Theme::TEXT_MUTED, "No object styles yet.")
+            .on_hover_text("Make one in the Styles panel, under Object");
+        return;
+    }
+
+    let current = frame
+        .style
+        .and_then(|s| state.active().document().object_styles.get(s))
+        .map(|s| s.name.clone())
+        .unwrap_or_else(|| "None".to_string());
+
+    let mut chosen = frame.style;
+    field(ui, "Style", |ui| {
+        egui::ComboBox::from_id_salt(("object-style", id))
+            .selected_text(current)
+            .width(ui.available_width())
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut chosen, None, "None");
+                for (style, name) in &listed {
+                    ui.selectable_value(&mut chosen, Some(*style), name);
+                }
+            });
+    });
+
+    if chosen != frame.style {
+        match chosen {
+            // Attaching writes what the style states; detaching writes nothing,
+            // because the object already holds its own appearance and taking it
+            // away would be a change nobody asked for.
+            Some(style) => apply(state, Command::ApplyObjectStyle { id, style }),
+            None => apply(state, Command::DetachObjectStyle { id }),
+        }
+        return;
+    }
+
+    // The overrides, and the way back. InDesign shows a `+` beside the style
+    // name; this says which properties, because "differs somehow" sends a person
+    // looking through every control to find out where.
+    let Some(overrides) = state.active().document().object_overrides(id) else {
+        return;
+    };
+    if overrides.is_empty() {
+        ui.colored_label(Theme::TEXT_MUTED, "Following its style");
+        return;
+    }
+
+    let mut departed: Vec<&str> = Vec::new();
+    if overrides.fill.is_some() {
+        departed.push("fill");
+    }
+    if overrides.stroke.is_some() {
+        departed.push("stroke");
+    }
+    if overrides.blend.is_some() {
+        departed.push("opacity");
+    }
+    if overrides.shadow.is_some() {
+        departed.push("shadow");
+    }
+    if overrides.wrap.is_some() {
+        departed.push("text wrap");
+    }
+
+    ui.colored_label(Theme::ACCENT, format!("Own {}", departed.join(", ")))
+        .on_hover_text("These stay as they are when the style changes");
+    if ui
+        .button("Follow the style again")
+        .on_hover_text("Put every property back to what the style says")
+        .clicked()
+    {
+        apply(state, Command::ClearObjectOverrides { id });
     }
 }
 
@@ -3067,6 +3181,7 @@ mod tests {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            style: None,
         }
     }
 

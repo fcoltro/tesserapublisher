@@ -2198,6 +2198,7 @@ mod tests {
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,
                 shadow: None,
+                style: None,
             },
         );
         state.active_mut().selection.set(id);

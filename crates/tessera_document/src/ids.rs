@@ -12,4 +12,5 @@ slotmap::new_key_type! {
     pub struct StoryId;
     pub struct MasterId;
     pub struct LinkId;
+    pub struct ObjectStyleId;
 }
