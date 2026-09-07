@@ -17,6 +17,7 @@ pub mod pen;
 pub mod prefs;
 pub mod recovery;
 pub mod selection;
+pub mod softproof;
 pub mod theme;
 pub mod tools;
 pub mod transform;

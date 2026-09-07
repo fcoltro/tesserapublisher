@@ -91,6 +91,8 @@ impl Group {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Run {
     ToggleStyles,
+    ChooseOutputIntent,
+    ToggleSoftProof,
     ToggleSwatches,
     TogglePages,
     ToggleLayers,
@@ -437,6 +439,17 @@ pub fn all() -> &'static [Action] {
         // a property of text, and putting it beside the paragraph styles would
         // say it was one.
         a("Swatches", Some("F6"), Group::Window, ToggleSwatches),
+        // Under View, because a soft proof is a way of *looking* at the document.
+        // Choosing the press is under View too rather than under File: the
+        // decision is inseparable from seeing its effect, and separating them
+        // would put the switch and the thing it switches in different menus.
+        a(
+            "Choose output intent...",
+            None,
+            Group::View,
+            ChooseOutputIntent,
+        ),
+        a("Soft proof", Some("Ctrl+Y"), Group::View, ToggleSoftProof),
         a("Snap to guides", None, Group::View, ToggleSnapping),
         //
         a(
@@ -504,6 +517,19 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         Run::SaveAs => crate::file_ops::save_as(state),
         Run::ExportPdf => crate::file_ops::export_pdf(state),
         Run::Place => crate::file_ops::place(state),
+        Run::ChooseOutputIntent => crate::file_ops::choose_output_intent(state),
+        Run::ToggleSoftProof => {
+            // Refused rather than silently ignored when there is no press to
+            // proof against: a switch that does nothing teaches a person that the
+            // feature is broken.
+            if state.active().document().output_intent.is_none() {
+                state.status = Some(crate::app::Status::info(
+                    "choose an output intent before proofing against it",
+                ));
+                return;
+            }
+            state.soft_proof.showing = !state.soft_proof.showing;
+        }
         Run::ToggleStyles => {
             let window = &mut state.styles_window;
             window.open = !window.open;

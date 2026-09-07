@@ -69,6 +69,13 @@ pdf-writer = "0.15"
 subsetter  = "0.2"
 rfd        = "0.17"
 
+# Colour management. Little CMS, vendored and built from source by `lcms2-sys`
+# rather than linked against whatever the machine happens to have, so that a
+# build is reproducible and does not need a system package on any of the three
+# platforms. The `unsafe` lives inside those two crates; nothing in this
+# workspace gains any.
+lcms2 = "6"
+
 # Blocking on async GPU calls in headless rendering.
 pollster = "0.4"
 

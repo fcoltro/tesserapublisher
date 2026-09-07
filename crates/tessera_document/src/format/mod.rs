@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 17;
+pub const FORMAT_VERSION: u32 = 18;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -170,6 +170,20 @@ fn migrate(value: &mut serde_json::Value, from: u32) {
     if from < 8 {
         layers_leave_the_page(value);
     }
+
+    // 17 -> 18: the document gained its output intent — which press it is being
+    // prepared for, with the ICC profile carried inside it.
+    //
+    // Nothing to rewrite. `None` is the truth about a document written before
+    // this: nobody had said which press. It is emphatically *not* "sRGB by
+    // default" — inventing a profile would show every old document proofed
+    // against a decision its author never made, and the colours would be
+    // believed.
+    //
+    // The version moves so an older build refuses a document with an intent
+    // rather than opening it with the profile silently dropped, which is the one
+    // failure here that costs money: a job sent to a press it was never
+    // prepared for.
 
     // 16 -> 17: the document gained a table of object styles, and a frame
     // gained the reference to the one it follows.

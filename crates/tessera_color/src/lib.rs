@@ -10,6 +10,8 @@
 //! placeholder for the ICC transform arriving in milestone 5. It is documented
 //! as an approximation so it is never mistaken for a silent fallback.
 
+pub mod managed;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

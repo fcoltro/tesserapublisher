@@ -223,6 +223,14 @@ pub struct TesseraApp {
     /// photograph on every redraw, which is the thing it exists to prevent.
     pub images: tessera_render::images::Images,
 
+    /// The soft proof: the compiled transform for the document’s output intent,
+    /// and whether it is being shown.
+    ///
+    /// Application state, not document data. *Which press* is part of the
+    /// document; *whether you are looking through it* is a way of working, like
+    /// the active tool.
+    pub soft_proof: crate::softproof::SoftProof,
+
     pub snapping: bool,
     /// The lines the object being dragged is currently settled on, for the
     /// indicator. Cleared when the gesture ends.
@@ -336,6 +344,7 @@ impl TesseraApp {
             swatches_window: SwatchesWindow::default(),
             pages_window: PagesWindow::default(),
             images: tessera_render::images::Images::new(),
+            soft_proof: crate::softproof::SoftProof::default(),
             snapping: true,
             snapped_to: None,
             editing_master: None,

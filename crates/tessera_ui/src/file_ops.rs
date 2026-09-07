@@ -112,6 +112,55 @@ pub fn place(state: &mut crate::app::TesseraApp) {
 ///
 /// Offering TIFF and PSD here would be offering something that then fails to
 /// draw, which is worse than not offering it.
+/// Choose the press this document is being prepared for.
+///
+/// The profile’s **bytes** go into the document, not its path: a layout that
+/// recorded a path would mean something different on the printer’s machine than
+/// on the designer’s, and that is exactly where being wrong is expensive.
+pub fn choose_output_intent(state: &mut crate::app::TesseraApp) {
+    let Some(path) = rfd::FileDialog::new()
+        .add_filter("ICC profiles", &["icc", "icm"])
+        .pick_file()
+    else {
+        return;
+    };
+
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            state.status = Some(crate::app::Status::error(format!(
+                "could not read the profile: {error}"
+            )));
+            return;
+        }
+    };
+
+    // Read here rather than at draw time, so an unusable profile is reported
+    // while the person is still looking at the dialog they chose it in.
+    let profile = match tessera_color::managed::OutputProfile::from_bytes(bytes) {
+        Ok(profile) => profile,
+        Err(error) => {
+            state.status = Some(crate::app::Status::error(error.to_string()));
+            return;
+        }
+    };
+
+    crate::command::apply(
+        state,
+        crate::command::Command::SetOutputIntent(Some(Box::new(
+            tessera_document::intent::OutputIntent {
+                description: profile.description().to_string(),
+                profile: profile.bytes().to_vec(),
+                rendering: tessera_document::intent::Rendering::default(),
+            },
+        ))),
+    );
+    // Showing it straight away: somebody who has just chosen a press wants to
+    // see the press, and making them find a second switch would be asking them
+    // to do the obvious thing by hand.
+    state.soft_proof.showing = true;
+}
+
 fn pick_artwork() -> Option<PathBuf> {
     rfd::FileDialog::new()
         .add_filter("Images", &["png", "jpg", "jpeg"])

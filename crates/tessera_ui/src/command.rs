@@ -337,6 +337,13 @@ pub enum Command {
         id: tessera_document::ids::FrameId,
     },
 
+    /// Choose the press this document is being prepared for, or choose none.
+    ///
+    /// The whole intent in one command, profile included, because the profile and
+    /// the rendering intent are one decision: "print this for that press, this
+    /// way".
+    SetOutputIntent(Option<Box<tessera_document::intent::OutputIntent>>),
+
     /// Define a named colour, or change the one of that name.
     SetSwatch(tessera_document::nodes::Swatch),
     /// Remove a named colour. Objects using it keep the reference.
@@ -1215,6 +1222,11 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::ClearObjectOverrides { id } => {
             state.active_mut().document_mut().clear_object_overrides(id);
+        }
+
+        Command::SetOutputIntent(intent) => {
+            state.active_mut().document_mut().output_intent = intent.map(|boxed| *boxed);
+            state.active_mut().document_mut().touch();
         }
 
         Command::SetSwatch(swatch) => {

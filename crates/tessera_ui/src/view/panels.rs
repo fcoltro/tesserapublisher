@@ -2693,11 +2693,93 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
         apply(state, Command::SetDocumentSetup(setup));
     }
 
+    output_intent_controls(ui, state);
+
     ui.add_space(Theme::SPACING_LG);
     ui.colored_label(
         Theme::TEXT_MUTED,
         format!("Measurements in {}", unit_name(unit)),
     );
+}
+
+/// Which press the document is for, and whether it is being shown that way.
+///
+/// In document setup rather than in a preferences dialog, because *which press*
+/// is a property of the job: it travels with the file, it is what the printer
+/// needs to know, and it belongs beside the trim and the bleed which are the
+/// same kind of fact. Whether you are *looking* through it is not, and reads as
+/// the switch it is.
+fn output_intent_controls(ui: &mut Ui, state: &mut TesseraApp) {
+    use tessera_document::intent::Rendering;
+
+    ui.add_space(Theme::SPACING_LG);
+    group_label(ui, "Output intent");
+
+    let intent = state.active().document().output_intent.clone();
+    let Some(mut intent) = intent else {
+        ui.colored_label(Theme::TEXT_MUTED, "No press chosen.")
+            .on_hover_text(
+                "Without one, colours are shown as an approximation \
+                 rather than as they will print",
+            );
+        if ui.button("Choose a profile...").clicked() {
+            crate::file_ops::choose_output_intent(state);
+        }
+        return;
+    };
+
+    // The profile’s own name for itself, not the file it came from: profiles are
+    // renamed, copied and re-supplied.
+    ui.label(&intent.description);
+
+    let mut showing = state.soft_proof.showing;
+    if ui
+        .checkbox(&mut showing, "Soft proof")
+        .on_hover_text("Show the document as this press will reproduce it (Ctrl+Y)")
+        .changed()
+    {
+        // Not a document edit, so not a command: which press is part of the job,
+        // whether you are looking through it is a way of working.
+        state.soft_proof.showing = showing;
+    }
+
+    // Why a proof asked for is not appearing. Somebody who ticked the box and saw
+    // nothing change is entitled to know.
+    if let Some(trouble) = state.soft_proof.trouble.clone() {
+        ui.colored_label(Theme::ERROR, trouble);
+    }
+
+    let before = intent.rendering;
+    field(ui, "Intent", |ui| {
+        egui::ComboBox::from_id_salt("output-intent-rendering")
+            .selected_text(intent.rendering.label())
+            .width(ui.available_width())
+            .show_ui(ui, |ui| {
+                for rendering in Rendering::ALL {
+                    ui.selectable_value(&mut intent.rendering, rendering, rendering.label());
+                }
+            });
+    });
+
+    let mut changed = intent.rendering != before;
+    ui.horizontal(|ui| {
+        if ui.button("Change profile...").clicked() {
+            crate::file_ops::choose_output_intent(state);
+        }
+        if ui
+            .button("Remove")
+            .on_hover_text("The document stops being prepared for any particular press")
+            .clicked()
+        {
+            apply(state, Command::SetOutputIntent(None));
+            state.soft_proof.showing = false;
+            changed = false;
+        }
+    });
+
+    if changed {
+        apply(state, Command::SetOutputIntent(Some(Box::new(intent))));
+    }
 }
 
 fn unit_name(unit: Unit) -> &'static str {

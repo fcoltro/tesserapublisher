@@ -110,6 +110,14 @@ pub struct Document {
     #[serde(default)]
     pub links: SlotMap<LinkId, Link>,
 
+    /// The press this document is being prepared for, if one has been chosen.
+    ///
+    /// `None` is not "sRGB by default" — it is "nobody has said", which is a
+    /// different thing and the honest one. Proofing against a guessed profile
+    /// would show colours nobody asked about, and they would be believed.
+    #[serde(default)]
+    pub output_intent: Option<crate::intent::OutputIntent>,
+
     /// The document’s named object appearances.
     ///
     /// A `SlotMap` rather than a `Vec`, because objects hold references to
@@ -172,6 +180,7 @@ impl Document {
             master_order: Vec::new(),
             overrides: slotmap::SecondaryMap::new(),
             links: SlotMap::with_key(),
+            output_intent: None,
             object_styles: slotmap::SlotMap::with_key(),
             object_style_order: Vec::new(),
             swatches: Vec::new(),

@@ -7,6 +7,7 @@
 //! by egui's painter on top, so they can never appear in an export.
 
 use tessera_color::Color;
+use tessera_color::managed::Proof;
 use tessera_document::nodes::{LineCap, LineJoin, Stroke};
 use tessera_document::paint::Paint;
 use tessera_geometry::{DocRect, ViewTransform};
@@ -32,9 +33,23 @@ fn to_join(join: LineJoin) -> vello::kurbo::Join {
     }
 }
 
-fn to_peniko(color: &Color) -> AlphaColor<Srgb> {
-    let [r, g, b, a] = color.to_rgb_f32();
-    AlphaColor::new([r, g, b, a])
+/// A document colour, as it will look on the chosen press.
+///
+/// **Every colour the document itself draws goes through here, and nothing else
+/// does.** A margin rule, a frame edge and a selection handle are *interface*,
+/// and proofing them would tint the furniture to match the paper — which tells a
+/// person nothing about their job and makes the application look broken. Those
+/// are drawn from the theme’s own constants and never pass through a `Color`,
+/// which is what makes the separation hold by construction rather than by care.
+///
+/// With no proof this is the plain conversion, so the unproofed path costs one
+/// branch and nothing else.
+fn ink(colour: &Color, proof: Option<&Proof>) -> AlphaColor<Srgb> {
+    let shown = match proof {
+        Some(proof) => proof.show(colour),
+        None => colour.to_rgb_f32(),
+    };
+    AlphaColor::new(shown)
 }
 
 /// The object's shadow, painted before the object itself.
@@ -60,6 +75,7 @@ fn draw_shadow(
     rect: Rect,
     kind: &ResolvedKind,
     shadow: &tessera_document::shadow::Shadow,
+    proof: Option<&Proof>,
 ) {
     if shadow.is_invisible() {
         return;
@@ -74,7 +90,7 @@ fn draw_shadow(
     scene.draw_blurred_rounded_rect(
         transform,
         offset,
-        to_peniko(&shadow.colour),
+        ink(&shadow.colour, proof),
         radius,
         shadow.std_dev(),
     );
@@ -86,12 +102,12 @@ fn draw_shadow(
 /// shape is given in, so the ramp is carried by the same transform that carries
 /// the object: a rotated frame rotates its gradient, and a resized one restretches
 /// it, without either being rewritten.
-fn brush_of(paint: &Paint, bounds: DocRect) -> vello::peniko::Brush {
+fn brush_of(paint: &Paint, bounds: DocRect, proof: Option<&Proof>) -> vello::peniko::Brush {
     use tessera_document::paint::Ramp;
     use vello::peniko::{Brush, Gradient};
 
     let gradient = match paint {
-        Paint::Solid(colour) => return Brush::Solid(to_peniko(colour)),
+        Paint::Solid(colour) => return Brush::Solid(ink(colour, proof)),
         Paint::Gradient(g) => g,
     };
 
@@ -108,7 +124,7 @@ fn brush_of(paint: &Paint, bounds: DocRect) -> vello::peniko::Brush {
             .iter()
             .map(|stop| vello::peniko::ColorStop {
                 offset: stop.at,
-                color: to_peniko(&stop.colour).into(),
+                color: ink(&stop.colour, proof).into(),
             })
             .collect::<Vec<_>>()
             .as_slice(),
@@ -193,6 +209,31 @@ pub struct SceneOptions {
     pub clip: Option<DocRect>,
 }
 
+impl SceneOptions {
+    /// A scene that shows the document as the chosen press will reproduce it.
+    ///
+    /// The proof is lent rather than owned because compiling one is the
+    /// expensive half: building a transform per frame would cost more than the
+    /// naive formula it replaces, so it is made when a profile is chosen and kept
+    /// for as long as that choice stands.
+    pub fn proofed(self, proof: &Proof) -> Proofed<'_> {
+        Proofed {
+            options: self,
+            proof: Some(proof),
+        }
+    }
+}
+
+/// Scene options together with the proof to draw through, if any.
+///
+/// A separate type rather than a lifetime on `SceneOptions`, so that everything
+/// building an ordinary scene — the tests, the headless renderer, the PDF
+/// preview — stays free of a lifetime it has no use for.
+pub struct Proofed<'a> {
+    pub options: SceneOptions,
+    pub proof: Option<&'a Proof>,
+}
+
 impl Default for SceneOptions {
     fn default() -> Self {
         Self {
@@ -224,7 +265,17 @@ pub fn build_scene_with_images(
     options: SceneOptions,
     images: &mut crate::images::Images,
 ) -> Scene {
-    build_inner(resolved, view, options, Some(images))
+    build_inner(resolved, view, options, Some(images), None)
+}
+
+/// As [`build_scene_with_images`], showing the document as a press will print it.
+pub fn build_scene_proofed(
+    resolved: &ResolvedDocument,
+    view: ViewTransform,
+    proofed: Proofed<'_>,
+    images: &mut crate::images::Images,
+) -> Scene {
+    build_inner(resolved, view, proofed.options, Some(images), proofed.proof)
 }
 
 /// As [`build_scene`], but able to leave the non-printing rules out.
@@ -236,7 +287,7 @@ pub fn build_scene_with(
     view: ViewTransform,
     options: SceneOptions,
 ) -> Scene {
-    build_inner(resolved, view, options, None)
+    build_inner(resolved, view, options, None, None)
 }
 
 fn build_inner(
@@ -244,6 +295,7 @@ fn build_inner(
     view: ViewTransform,
     options: SceneOptions,
     mut images: Option<&mut crate::images::Images>,
+    proof: Option<&Proof>,
 ) -> Scene {
     let rules = options.rules;
     let mut scene = Scene::new();
@@ -285,7 +337,11 @@ fn build_inner(
         scene.fill(
             Fill::NonZero,
             transform,
-            to_peniko(&Color::WHITE),
+            // The paper. Proofed too, and deliberately: the paper’s own white is
+            // the most visible thing a proof shows, and a page drawn pure white
+            // behind proofed ink would make every colour look wrong in the same
+            // direction.
+            ink(&Color::WHITE, proof),
             None,
             &page.bounds.to_kurbo(),
         );
@@ -377,7 +433,7 @@ fn build_inner(
         // object's own opacity, and a 50% object would cast a 25% shadow. It is
         // the object that is translucent, not the light.
         if let Some(shadow) = &item.shadow {
-            draw_shadow(&mut scene, transform, rect, &item.kind, shadow);
+            draw_shadow(&mut scene, transform, rect, &item.kind, shadow, proof);
         }
 
         // **The object's own composite group**, and the reason object opacity
@@ -461,7 +517,7 @@ fn build_inner(
                     scene.stroke(
                         &stroke_of(s),
                         transform,
-                        to_peniko(&s.color),
+                        ink(&s.color, proof),
                         None,
                         &stroked_rect(rect, s.offset()),
                     );
@@ -508,7 +564,7 @@ fn build_inner(
                     scene.stroke(
                         &stroke_of(s),
                         transform,
-                        to_peniko(&s.color),
+                        ink(&s.color, proof),
                         None,
                         &stroked_rect(rect, s.offset()),
                     );
@@ -519,7 +575,7 @@ fn build_inner(
                 scene.fill(
                     Fill::NonZero,
                     transform,
-                    &brush_of(fill, item.bounds),
+                    &brush_of(fill, item.bounds, proof),
                     None,
                     &rect,
                 );
@@ -527,7 +583,7 @@ fn build_inner(
                     scene.stroke(
                         &stroke_of(s),
                         transform,
-                        to_peniko(&s.color),
+                        ink(&s.color, proof),
                         None,
                         &stroked_rect(rect, s.offset()),
                     );
@@ -538,7 +594,7 @@ fn build_inner(
                 scene.fill(
                     Fill::NonZero,
                     transform,
-                    &brush_of(fill, item.bounds),
+                    &brush_of(fill, item.bounds, proof),
                     None,
                     &ellipse,
                 );
@@ -546,7 +602,7 @@ fn build_inner(
                     scene.stroke(
                         &stroke_of(s),
                         transform,
-                        to_peniko(&s.color),
+                        ink(&s.color, proof),
                         None,
                         &Ellipse::from_rect(stroked_rect(rect, s.offset())),
                     );
@@ -566,19 +622,25 @@ fn build_inner(
                         width: item.bounds.width,
                         height: item.bounds.height,
                     };
-                    scene.fill(Fill::NonZero, placed, &brush_of(f, local), None, path);
+                    scene.fill(
+                        Fill::NonZero,
+                        placed,
+                        &brush_of(f, local, proof),
+                        None,
+                        path,
+                    );
                 }
                 if let Some(s) = stroke {
                     // A path's alignment is not applied: offsetting an
                     // arbitrary curve is a different problem from insetting a
                     // rectangle, and drawing it centred is honest where
                     // approximating the offset would not be.
-                    scene.stroke(&stroke_of(s), placed, to_peniko(&s.color), None, path);
+                    scene.stroke(&stroke_of(s), placed, ink(&s.color, proof), None, path);
                 }
             }
 
             ResolvedKind::Text { shaped, color } => {
-                draw_text(&mut scene, transform, item.bounds, shaped, color);
+                draw_text(&mut scene, transform, item.bounds, shaped, color, proof);
             }
         }
 
@@ -638,6 +700,7 @@ fn draw_text(
     bounds: DocRect,
     shaped: &tessera_text::shape::ShapedText,
     color: &Color,
+    proof: Option<&Proof>,
 ) {
     // **Text never leaves its frame.** A story longer than its box is overset:
     // InDesign marks it and draws none of it past the edge. Letting it spill
@@ -689,7 +752,7 @@ fn draw_text(
             .draw_glyphs(font)
             .font_size(run.size)
             .transform(transform)
-            .brush(to_peniko(colour))
+            .brush(ink(colour, proof))
             .draw(Fill::NonZero, glyphs.into_iter());
     }
 
@@ -948,6 +1011,7 @@ mod tests {
                 width: 50.0,
                 height: 50.0,
             },
+            None,
         );
         let far = brush_of(
             &ramp,
@@ -957,6 +1021,7 @@ mod tests {
                 width: 50.0,
                 height: 50.0,
             },
+            None,
         );
 
         let ends = |brush: &vello::peniko::Brush| match brush {

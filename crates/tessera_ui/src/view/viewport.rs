@@ -116,12 +116,17 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
             rules: mode.shows_chrome(),
             clip,
         };
-        let scene = tessera_render::scene::build_scene_with_images(
-            resolved,
-            view,
+        // The proof, when the document names a press and the user is looking
+        // through it. Built on the first frame after the choice changes and kept
+        // after that, because compiling one costs more than the conversion it
+        // replaces.
+        let intent = state.active().document().output_intent.clone();
+        let proofed = tessera_render::scene::Proofed {
             options,
-            &mut state.images,
-        );
+            proof: state.soft_proof.proof_for(intent.as_ref()),
+        };
+        let scene =
+            tessera_render::scene::build_scene_proofed(resolved, view, proofed, &mut state.images);
 
         ui.painter().add(egui_wgpu::Callback::new_paint_callback(
             rect,

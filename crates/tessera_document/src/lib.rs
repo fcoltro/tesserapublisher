@@ -13,6 +13,7 @@ pub mod format;
 pub mod graphic;
 pub mod history;
 pub mod ids;
+pub mod intent;
 pub mod links;
 pub mod masters;
 pub mod nodes;

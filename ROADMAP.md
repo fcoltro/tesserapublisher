@@ -964,7 +964,16 @@ full argument, with sources, is in `docs/superpowers/specs/`.
   - Where the cache lives is a **field, not a global**, which is both how a
     portable install can place it and how "today and tomorrow" is testable
     without an environment variable or an ordering dependency between tests.
-- [ ] `lcms2` integration, **confirmed building on all three platforms.**
+- [~] `lcms2` integration — **built and working; confirmed on Windows only.**
+  Little CMS is vendored and compiled from source by `lcms2-sys` rather than
+  linked against whatever the machine happens to have, so a build is
+  reproducible and needs no system package. The `unsafe` stays inside those two
+  crates and nothing in this workspace gains any, so `unsafe_code = "forbid"`
+  still holds workspace-wide.
+  - **What is owed:** a build on macOS and on Linux. It compiles here with the
+    MSVC toolchain; the other two need a machine or a CI runner, and claiming
+    them from a Windows box would be exactly the kind of unverified tick this
+    roadmap exists to avoid.
 - [x] RGB, CMYK, Lab and spot colour throughout the model. RGB, CMYK and spot
   were built in milestone 0 for exactly this moment; Lab and the swatch
   reference landed here.
@@ -1002,7 +1011,39 @@ full argument, with sources, is in `docs/superpowers/specs/`.
     application.
   - `resolve` flattens every swatch, so the renderer and the PDF writer never
     meet a name and stay ignorant of the document.
-- [ ] Document output intent with on-screen soft proofing.
+- [x] Document output intent with on-screen soft proofing.
+  - **The profile travels in the document, not a path to it.** A layout recording
+    "C:/profiles/FOGRA39.icc" means something different on the printer’s machine
+    than on the designer’s, and that is exactly where being wrong is expensive.
+    PDF/X requires the profile in the file anyway.
+  - `None` is **"nobody has said"**, not "sRGB by default". Inventing a profile
+    would show every older document proofed against a decision its author never
+    made, and the colours would be believed.
+  - **A CMYK colour is converted, not proofed.** Sending 100% cyan through the
+    naive formula and then round-tripping the result proofs the *formula’s error*
+    rather than the press—and 100% cyan is precisely the colour a person
+    checks. So a proof holds two transforms: an ink-to-screen conversion for
+    colours already in the press’s space, and the round trip for everything
+    else. `Proof::show` picks, so no caller has to know there are two.
+  - The paper is proofed too. Its white is the most visible thing a proof shows,
+    and ink proofed over a pure-white page would look wrong in one direction
+    everywhere.
+  - **The furniture is not proofed, by construction rather than by care.** Margin
+    rules, guides and handles are drawn from the theme’s own constants and never
+    pass through a `Color` at all—which is how the plain conversion function
+    ended up dead code and was removed.
+  - The transform is compiled **once per choice, not once per frame**: building
+    one costs more than the conversion it replaces. A counter proves the rule
+    holds, because comparing addresses does not—an allocator is free to hand
+    back the one it just released.
+  - Switching the proof off **keeps it built**, so turning it back on is instant.
+    Comparing the two views is the whole way a person uses this.
+  - A profile that cannot be used **says why**. Somebody who asked for a proof
+    and is not seeing one is entitled to know, so it is read when it is chosen
+    — while the dialog is still on screen — and again reported in the panel.
+  - Which press is in the **document**; whether you are looking through it is in
+    the **application**. The first travels with the file and is what the printer
+    needs; the second is a way of working, like the active tool.
 - [~] Linear and radial gradients; drop shadow; multiply, screen and overlay
   blending — **all three are on screen; the shadow is not in the PDF.**
   - The shadow is drawn **behind the object and outside its composite group**. A

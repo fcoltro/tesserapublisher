@@ -610,9 +610,55 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_seventeen() {
+fn the_format_version_is_eighteen() {
     // If this changes, a migration step is owed.
-    assert_eq!(format::FORMAT_VERSION, 17);
+    assert_eq!(format::FORMAT_VERSION, 18);
+}
+
+#[test]
+fn an_output_intent_travels_in_the_document_with_its_profile() {
+    // **The profile itself, not a path to one.** A document recording
+    // "C:/profiles/FOGRA39.icc" would mean something different on the printer’s
+    // machine than on the designer’s, and that is exactly where being wrong is
+    // expensive.
+    use tessera_document::intent::{OutputIntent, Rendering};
+
+    let path = temp_path("output_intent.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    let profile = tessera_color::managed::OutputProfile::screen().expect("a profile");
+    let intent = OutputIntent {
+        description: profile.description().to_string(),
+        profile: profile.bytes().to_vec(),
+        rendering: Rendering::Perceptual,
+    };
+
+    let mut doc = Document::new();
+    doc.output_intent = Some(intent.clone());
+
+    format::save(&doc, &path).expect("save");
+    let back = format::load(&path).expect("load");
+    let loaded = back.output_intent.expect("the intent");
+
+    assert_eq!(loaded.profile, intent.profile, "byte for byte");
+    assert_eq!(loaded.rendering, Rendering::Perceptual);
+    assert!(!loaded.description.is_empty());
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_document_written_before_output_intents_has_no_press_rather_than_a_guessed_one() {
+    // Inventing sRGB would show every old document proofed against a decision
+    // its author never made, and the colours would be believed.
+    let path = temp_path("no_intent.tessera");
+    let _ = std::fs::remove_file(&path);
+
+    format::save(&Document::new(), &path).expect("save");
+    let back = format::load(&path).expect("load");
+    assert!(back.output_intent.is_none());
+
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
