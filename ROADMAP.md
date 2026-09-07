@@ -887,6 +887,26 @@ full argument, with sources, is in `docs/superpowers/specs/`.
 > change. Assign a document ICC profile and see a soft proof on screen. Fill a
 > shape with a gradient and give it a drop shadow.
 
+**Every sentence is performed, and two things are owed.**
+
+The whole sentence is reachable in the application: Ctrl+D places, the Artwork
+section reports the effective PPI against a threshold that is a preference, the
+link status has three states rather than two, the Swatches panel (F6) defines and
+edits global colours, an ICC profile is chosen in document setup and Ctrl+Y shows
+the proof, and the Fill section offers a linear or radial ramp while Effects
+offers the shadow.
+
+What is owed, stated rather than ticked:
+
+1. **The hand check.** Every claim here rests on tests, and tests cannot see. A
+   proof is judged by eye against a printed sheet, a gradient by whether it bands,
+   a shadow by whether it reads as depth. That check is a person’s job and has not
+   been done.
+2. **The two — items below.** Little CMS is confirmed building on Windows only,
+   and the drop shadow is not written to the PDF — which the panel says, where a
+   person can read it, because a shadow that appears on screen and not in the
+   export is the surprise that reaches a printer.
+
 - [x] Image placement with linked (never embedded) assets. Placed with
   Ctrl+D, drawn from the file on disk, and decoded once rather than every
   frame.
