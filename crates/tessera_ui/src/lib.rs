@@ -13,6 +13,7 @@ pub mod command;
 pub mod cursor;
 pub mod file_ops;
 pub mod icons;
+pub mod keys;
 pub mod open_document;
 pub mod package;
 pub mod pen;
@@ -25,6 +26,7 @@ pub mod theme;
 pub mod tools;
 pub mod transform;
 pub mod view;
+pub mod workspace;
 
 pub use app::{Status, TesseraApp};
 pub use command::{Command, apply};

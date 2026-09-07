@@ -30,17 +30,25 @@ pub enum Page {
     #[default]
     General,
     Appearance,
+    Workspaces,
     Colour,
     Files,
 }
 
 impl Page {
-    pub const ALL: [Page; 4] = [Page::General, Page::Appearance, Page::Colour, Page::Files];
+    pub const ALL: [Page; 5] = [
+        Page::General,
+        Page::Appearance,
+        Page::Workspaces,
+        Page::Colour,
+        Page::Files,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
             Page::General => "General",
             Page::Appearance => "Appearance",
+            Page::Workspaces => "Workspaces",
             Page::Colour => "Colour",
             Page::Files => "Files",
         }
@@ -51,6 +59,7 @@ impl Page {
         match self {
             Page::General => Icon::Scale,
             Page::Appearance => Icon::Blend,
+            Page::Workspaces => Icon::Layers,
             Page::Colour => Icon::Palette,
             Page::Files => Icon::Duplicate,
         }
@@ -147,6 +156,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
                 .show(ui, |ui| match state.settings.page {
                     Page::General => general(ui, state),
                     Page::Appearance => appearance(ui, state),
+                    Page::Workspaces => workspaces(ui, state),
                     Page::Colour => colour(ui, state),
                     Page::Files => files(ui, state),
                 });
@@ -189,12 +199,28 @@ fn restore(state: &mut TesseraApp) {
             state.prefs.blur = fresh.blur;
             state.prefs.panel_opacity = fresh.panel_opacity;
         }
+        Page::Workspaces => {
+            // The arrangements Tessera ships with, and nothing anybody saved.
+            // Restoring defaults here must not be a way to lose work by
+            // pressing the button labelled "put things back to normal".
+            for stock in fresh.workspaces {
+                match state
+                    .prefs
+                    .workspaces
+                    .iter_mut()
+                    .find(|w| w.name == stock.name)
+                {
+                    Some(existing) => *existing = stock,
+                    None => state.prefs.workspaces.push(stock),
+                }
+            }
+        }
         Page::Colour => {
             state.prefs.minimum_ppi = fresh.minimum_ppi;
         }
         Page::Files => {
-            state.prefs.autosave = fresh.autosave;
-            state.prefs.autosave_seconds = fresh.autosave_seconds;
+            state.prefs.recovery_copy = fresh.recovery_copy;
+            state.prefs.recovery_seconds = fresh.recovery_seconds;
         }
     }
 }
@@ -293,6 +319,77 @@ fn appearance(ui: &mut Ui, state: &mut TesseraApp) {
     );
 }
 
+/// The saved arrangements, and the only place they can be removed.
+///
+/// **A list that can only be added to is a list that fills up.** Workspaces are
+/// made by hand from whatever the panels happened to be doing, so most people
+/// will make one or two they did not mean; without this page the Window menu
+/// grows a permanent record of every experiment.
+fn workspaces(ui: &mut Ui, state: &mut TesseraApp) {
+    heading(ui, "Saved arrangements");
+    note(
+        ui,
+        "Which panels are open, and how the rail sits. Save and switch from the \
+         Window menu.",
+    );
+
+    let current = state.prefs.workspace.clone();
+    let mut remove = None;
+    let mut choose = None;
+
+    for (at, saved) in state.prefs.workspaces.iter().enumerate() {
+        ui.horizontal(|ui| {
+            let showing = current.as_deref() == Some(saved.name.as_str());
+            if ui
+                .selectable_label(showing, &saved.name)
+                .on_hover_text(describe(saved))
+                .clicked()
+            {
+                choose = Some(saved.name.clone());
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if crate::view::panels::icon_button(
+                    ui,
+                    crate::icons::Icon::Trash,
+                    "Remove this arrangement",
+                    false,
+                ) {
+                    remove = Some(at);
+                }
+            });
+        });
+    }
+
+    if let Some(name) = choose {
+        crate::view::apply_workspace(state, &name);
+    }
+    if let Some(at) = remove {
+        let gone = state.prefs.workspaces.remove(at);
+        // The one in force was just removed. Forgetting which is in force is
+        // right: leaving the name behind would mean the next launch looked for
+        // an arrangement that is not there.
+        if state.prefs.workspace.as_deref() == Some(gone.name.as_str()) {
+            state.prefs.workspace = None;
+        }
+    }
+
+    if state.prefs.workspaces.is_empty() {
+        note(
+            ui,
+            "None saved. Restore defaults brings back the ones Tessera ships \
+             with, and leaves anything of your own alone.",
+        );
+    }
+}
+
+/// What an arrangement holds, in a sentence.
+fn describe(saved: &crate::workspace::Workspace) -> String {
+    if saved.open.is_empty() {
+        return "No panels".to_string();
+    }
+    saved.open.join(", ")
+}
+
 fn colour(ui: &mut Ui, state: &mut TesseraApp) {
     heading(ui, "Artwork resolution");
     let mut ppi = state.prefs.minimum_ppi;
@@ -333,27 +430,32 @@ fn colour(ui: &mut Ui, state: &mut TesseraApp) {
 }
 
 fn files(ui: &mut Ui, state: &mut TesseraApp) {
-    heading(ui, "Saving");
+    heading(ui, "Recovery");
     ui.checkbox(
-        &mut state.prefs.autosave,
-        "Save automatically after a change",
+        &mut state.prefs.recovery_copy,
+        "Keep a recovery copy of unsaved work",
+    );
+    note(
+        ui,
+        "Not an autosave. Tessera writes a separate copy and offers it back          after a crash; your document is only ever written when you save it.          On by default, because data safety that has to be switched on          protects the people who did not need it.",
     );
 
-    if state.prefs.autosave {
-        let mut seconds = state.prefs.autosave_seconds.max(10);
-        crate::view::panels::field(ui, "After", |ui| {
+    if state.prefs.recovery_copy {
+        let mut seconds = state.prefs.recovery_seconds;
+        crate::view::panels::field(ui, "Every", |ui| {
             ui.add(
-                egui::DragValue::new(&mut seconds)
-                    .speed(5.0)
-                    .range(10..=3600)
-                    .suffix(" s"),
+                egui::Slider::new(
+                    &mut seconds,
+                    crate::prefs::RECOVERY_LEAST..=crate::prefs::RECOVERY_MOST,
+                )
+                .suffix(" s")
+                .logarithmic(true),
             );
         });
-        state.prefs.autosave_seconds = seconds;
+        state.prefs.recovery_seconds = seconds;
         note(
             ui,
-            "Counted from the last edit, not from the last save, so a document \
-             being worked on is not written on every pause.",
+            "Counted from the last edit, so a document being worked on is not              written on every pause.",
         );
     }
 
@@ -412,7 +514,7 @@ mod tests {
     fn every_page_has_a_name_and_an_icon() {
         // A column of icons with no names is a puzzle; names with no icons is a
         // list you have to read every time.
-        assert_eq!(Page::ALL.len(), 4);
+        assert_eq!(Page::ALL.len(), 5);
         for page in Page::ALL {
             assert!(!page.title().is_empty());
         }
@@ -458,9 +560,12 @@ mod tests {
             blur: 15,
             panel_opacity: 0.4,
             snapping: false,
-            autosave: true,
-            autosave_seconds: 11,
+            recovery_copy: false,
+            recovery_seconds: 11,
             export_presets: crate::view::export_dialog::Preset::usual(),
+            shortcuts: crate::keys::Bindings::default(),
+            workspaces: crate::workspace::Workspace::usual(),
+            workspace: None,
         };
 
         for page in Page::ALL {

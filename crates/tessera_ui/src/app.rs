@@ -1,5 +1,7 @@
 //! Application state.
 
+use std::path::PathBuf;
+
 use tessera_document::document::Document;
 use tessera_document::ids::{FrameId, LayerId};
 use tessera_geometry::DocRect;
@@ -258,6 +260,18 @@ pub struct TesseraApp {
     /// What the next export will produce.
     pub export: crate::view::export_dialog::ExportWindow,
 
+    /// The name being typed for a new workspace, if that box is open.
+    ///
+    /// Held rather than passed, because the box outlives the click that opened
+    /// it: a menu closure has gone by the time anybody has typed anything.
+    pub naming_workspace: Option<String>,
+
+    /// A document waiting on an answer about its unsaved changes.
+    ///
+    /// Held rather than asked inline, because the question is a window and a
+    /// window cannot be opened from inside the tab that raised it.
+    pub closing: Option<DocumentKey>,
+
     /// The interface's own ground, and the frosted copy the glass shows.
     ///
     /// **Not the document.** Panels frost the ground Tessera draws behind its
@@ -390,6 +404,8 @@ impl TesseraApp {
             preflight: crate::preflight::Preflight::default(),
             reveal: None,
             export: crate::view::export_dialog::ExportWindow::default(),
+            closing: None,
+            naming_workspace: None,
             ambient: crate::view::ambient::Ambient::default(),
             ground: None,
             snapped_to: None,
@@ -432,6 +448,29 @@ impl TesseraApp {
         if let Some(message) = complaint {
             self.status = Some(Status::error(message));
         }
+        self.restore_workspace();
+    }
+
+    /// Put the panels back the way they were left.
+    ///
+    /// A list of saved arrangements is only half of "quit and relaunch, and
+    /// find the layout as it was" — the other half is coming back to the one in
+    /// force, which is what this does. A name that no longer matches anything is
+    /// left alone rather than falling back to a default: a build that lost a
+    /// workspace should not silently rearrange somebody's panels as well.
+    fn restore_workspace(&mut self) {
+        let Some(name) = self.prefs.workspace.clone() else {
+            return;
+        };
+        if let Some(saved) = self
+            .prefs
+            .workspaces
+            .iter()
+            .find(|w| w.name == name)
+            .cloned()
+        {
+            saved.apply(self);
+        }
     }
 
     /// Write the crash-recovery copy, if one is owed.
@@ -441,8 +480,17 @@ impl TesseraApp {
     /// application stays idle. That is the performance invariant in the
     /// Instrument spec, §6.
     pub fn autosave_if_due(&mut self) {
+        if !self.prefs.recovery_copy {
+            // Switched off deliberately. Nothing is written and nothing is
+            // said: somebody who turned this off knows what they turned off.
+            return;
+        }
         let revision = self.active().document().revision();
-        if !self.recovery.due(revision, std::time::Instant::now()) {
+        if !self.recovery.due(
+            revision,
+            std::time::Instant::now(),
+            self.prefs.recovery_interval(),
+        ) {
             return;
         }
 
@@ -556,6 +604,48 @@ impl TesseraApp {
     pub fn replace_document(&mut self, document: Document) {
         self.active_mut().replace_document(document);
         self.drag = None;
+    }
+
+    /// Open a document **beside** the others and go to it.
+    ///
+    /// The map of open documents has been here since milestone 1.5 and nothing
+    /// ever put a second one in it: opening a file replaced the one you had, so
+    /// a person with two jobs on the go could hold exactly one. This is the
+    /// operation that was missing.
+    ///
+    /// An untouched, unsaved, empty document is **replaced** rather than added
+    /// to. The one Tessera opens with is a placeholder, not work, and leaving it
+    /// beside a real document as a stray "Untitled" tab is clutter somebody has
+    /// to tidy on every launch.
+    pub fn add_document(&mut self, document: Document, path: Option<PathBuf>) -> DocumentKey {
+        if self.active_is_an_untouched_blank() {
+            self.replace_document(document);
+            let open = self.active_mut();
+            open.current_path = path;
+            open.dirty = false;
+            open.fitted = false;
+            open.history = tessera_document::history::History::new(200);
+            return self.active;
+        }
+
+        let mut open = OpenDocument::new();
+        open.replace_document(document);
+        open.current_path = path;
+        open.dirty = false;
+        let key = self.documents.insert(open);
+        self.active = key;
+        self.drag = None;
+        key
+    }
+
+    /// Whether the document showing is the empty one Tessera started with.
+    ///
+    /// Three things at once, and all three matter: it has no path, it has not
+    /// been edited, and it holds nothing. A blank document somebody has been
+    /// working in is not a placeholder however empty it looks.
+    fn active_is_an_untouched_blank(&self) -> bool {
+        let open = self.active();
+        open.current_path.is_none() && !open.dirty && open.document().frames.is_empty()
     }
 
     /// The window title, marking unsaved work with a leading asterisk.

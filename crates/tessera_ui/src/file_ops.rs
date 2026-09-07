@@ -35,21 +35,27 @@ pub fn open_from_path(state: &mut TesseraApp, path: &Path) -> Result<(), FormatE
     // exactly as it was rather than clearing it.
     let document = format::load(path)?;
 
-    state.replace_document(document);
-    state.active_mut().current_path = Some(path.to_path_buf());
-    state.active_mut().dirty = false;
-    state.active_mut().fitted = false;
-    state.active_mut().history = tessera_document::history::History::new(200);
+    // Already open? Go to it rather than opening a second copy. Two tabs of one
+    // file are two histories of one file, and whichever is saved last wins
+    // silently.
+    let already = state
+        .documents
+        .iter()
+        .find(|(_, open)| open.current_path.as_deref() == Some(path))
+        .map(|(key, _)| key);
+    if let Some(key) = already {
+        state.active = key;
+        state.status = Some(Status::info(format!("{} is already open", path.display())));
+        return Ok(());
+    }
+
+    state.add_document(document, Some(path.to_path_buf()));
     state.status = Some(Status::info(format!("Opened {}", path.display())));
     Ok(())
 }
 
 pub fn new_document(state: &mut TesseraApp) {
-    state.replace_document(Document::new());
-    state.active_mut().current_path = None;
-    state.active_mut().dirty = false;
-    state.active_mut().fitted = false;
-    state.active_mut().history = tessera_document::history::History::new(200);
+    state.add_document(Document::new(), None);
     state.status = Some(Status::info("New document"));
 }
 

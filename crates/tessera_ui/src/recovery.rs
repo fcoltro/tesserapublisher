@@ -36,9 +36,6 @@ pub struct Recovery {
 }
 
 impl Recovery {
-    /// Long enough not to intrude, short enough that a crash costs seconds.
-    pub const INTERVAL: Duration = Duration::from_secs(30);
-
     const FILE_NAME: &'static str = "recovery.tessera";
 
     pub fn new(revision: u64) -> Self {
@@ -56,9 +53,12 @@ impl Recovery {
 
     /// Whether a copy is owed: the document has moved on, and enough time has
     /// passed.
-    pub fn due(&self, revision: u64, now: Instant) -> bool {
-        revision != self.last_saved_revision
-            && now.duration_since(self.last_write) >= Self::INTERVAL
+    ///
+    /// The interval is passed in rather than fixed here, because it is a
+    /// preference — and a preference that only this module could see would be a
+    /// switch in the interface that did nothing.
+    pub fn due(&self, revision: u64, now: Instant, every: Duration) -> bool {
+        revision != self.last_saved_revision && now.duration_since(self.last_write) >= every
     }
 
     /// A recovery file left behind by a previous run, if there is one.
@@ -141,6 +141,10 @@ pub fn offer_pending(state: &mut TesseraApp) {
 
 #[cfg(test)]
 mod tests {
+    /// The interval these tests reason about, so a change to the default does
+    /// not silently change what they are asserting.
+    const EVERY: Duration = Duration::from_secs(30);
+
     use super::*;
 
     fn at(offset: Duration) -> (Recovery, Instant) {
@@ -159,7 +163,7 @@ mod tests {
     fn nothing_is_due_when_the_document_has_not_changed() {
         let (r, later) = at(Duration::from_secs(600));
         assert!(
-            !r.due(7, later),
+            !r.due(7, later, EVERY),
             "an idle application must not rewrite the same bytes forever"
         );
     }
@@ -167,18 +171,53 @@ mod tests {
     #[test]
     fn nothing_is_due_before_the_interval_has_passed() {
         let (r, soon) = at(Duration::from_secs(1));
-        assert!(!r.due(8, soon));
+        assert!(!r.due(8, soon, EVERY));
     }
 
     #[test]
     fn a_changed_document_is_due_once_the_interval_has_passed() {
-        let (r, later) = at(Recovery::INTERVAL + Duration::from_millis(1));
-        assert!(r.due(8, later));
+        let (r, later) = at(EVERY + Duration::from_millis(1));
+        assert!(r.due(8, later, EVERY));
     }
 
     #[test]
-    fn the_interval_is_not_so_long_that_a_crash_costs_real_work() {
-        assert!(Recovery::INTERVAL <= Duration::from_secs(60));
+    fn the_default_interval_is_not_so_long_that_a_crash_costs_real_work() {
+        assert!(Preferences::default().recovery_interval() <= Duration::from_secs(60));
+    }
+
+    #[test]
+    fn the_interval_really_comes_from_the_preference() {
+        // **The defect this fixes.** The interval was a constant here and the
+        // preference beside it did nothing — a switch in the interface that a
+        // person could move and watch have no effect.
+        let quick = Preferences {
+            recovery_seconds: 5,
+            ..Preferences::default()
+        };
+        let slow = Preferences {
+            recovery_seconds: 600,
+            ..Preferences::default()
+        };
+        assert!(quick.recovery_interval() < slow.recovery_interval());
+
+        let (r, soon) = at(Duration::from_secs(10));
+        assert!(r.due(8, soon, quick.recovery_interval()), "the quick one");
+        assert!(
+            !r.due(8, soon, slow.recovery_interval()),
+            "and the slow one"
+        );
+    }
+
+    #[test]
+    fn a_stray_interval_is_held_to_something_sensible() {
+        let wild = Preferences {
+            recovery_seconds: 99_999,
+            ..Preferences::default()
+        };
+        assert_eq!(
+            wild.recovery_interval(),
+            Duration::from_secs(crate::prefs::RECOVERY_MOST as u64)
+        );
     }
 
     #[test]

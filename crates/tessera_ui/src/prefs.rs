@@ -116,13 +116,22 @@ pub struct Preferences {
     #[serde(default = "yes")]
     pub snapping: bool,
 
-    /// Whether a document is saved again automatically after it changes.
-    #[serde(default)]
-    pub autosave: bool,
+    /// Whether Tessera keeps a recovery copy of unsaved work.
+    ///
+    /// **Not "save my file automatically".** It writes a separate copy that is
+    /// offered back after a crash and deleted on a clean quit; the document
+    /// itself is only ever written when somebody saves it. Naming it autosave
+    /// would promise the wrong thing, and somebody who believed that promise
+    /// would stop pressing Ctrl+S.
+    ///
+    /// Defaults **on**, and is an opt-out rather than an opt-in: data safety
+    /// that has to be switched on protects the people who did not need it.
+    #[serde(default = "yes")]
+    pub recovery_copy: bool,
 
-    /// How long after the last edit an automatic save happens, in seconds.
-    #[serde(default = "default_autosave_seconds")]
-    pub autosave_seconds: u32,
+    /// How long after an edit the recovery copy is written, in seconds.
+    #[serde(default = "default_recovery_seconds")]
+    pub recovery_seconds: u32,
 
     /// Named sets of export choices.
     ///
@@ -130,15 +139,38 @@ pub struct Preferences {
     /// work, and opening somebody else’s layout must not change them.
     #[serde(default = "crate::view::export_dialog::Preset::usual")]
     pub export_presets: Vec<crate::view::export_dialog::Preset>,
+
+    /// Named arrangements of the panels.
+    #[serde(default = "crate::workspace::Workspace::usual")]
+    pub workspaces: Vec<crate::workspace::Workspace>,
+
+    /// Shortcuts anybody has changed from the ones this build ships.
+    #[serde(default)]
+    pub shortcuts: crate::keys::Bindings,
+
+    /// The arrangement in force, by name.
+    ///
+    /// Remembered so a relaunch comes back to the arrangement somebody left,
+    /// which is the half of "quit and relaunch, and find the layout as it was"
+    /// that a list of workspaces does not give on its own.
+    #[serde(default)]
+    pub workspace: Option<String>,
 }
 
 fn yes() -> bool {
     true
 }
 
-fn default_autosave_seconds() -> u32 {
-    300
+/// Long enough not to intrude, short enough that a crash costs seconds.
+fn default_recovery_seconds() -> u32 {
+    30
 }
+
+/// How rarely a recovery copy may be written before it stops being one.
+///
+/// Ten minutes of lost work is not recovery, it is a consolation prize.
+pub const RECOVERY_LEAST: u32 = 5;
+pub const RECOVERY_MOST: u32 = 600;
 
 impl Default for Preferences {
     fn default() -> Self {
@@ -152,9 +184,12 @@ impl Default for Preferences {
             blur: default_blur(),
             panel_opacity: default_panel_opacity(),
             snapping: yes(),
-            autosave: false,
-            autosave_seconds: default_autosave_seconds(),
+            recovery_copy: yes(),
+            recovery_seconds: default_recovery_seconds(),
             export_presets: crate::view::export_dialog::Preset::usual(),
+            shortcuts: crate::keys::Bindings::default(),
+            workspaces: crate::workspace::Workspace::usual(),
+            workspace: None,
         }
     }
 }
@@ -177,6 +212,16 @@ impl Preferences {
     /// have to work out how to undo.
     pub fn glass_opacity(&self) -> f32 {
         self.panel_opacity.clamp(0.35, 1.0)
+    }
+
+    /// How often a recovery copy is written.
+    ///
+    /// Clamped on the way out, as everything else here is, so a file carrying a
+    /// stray value behaves sensibly rather than being quietly rewritten.
+    pub fn recovery_interval(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(
+            self.recovery_seconds.clamp(RECOVERY_LEAST, RECOVERY_MOST) as u64
+        )
     }
 }
 
@@ -341,9 +386,12 @@ mod tests {
             blur: 11,
             panel_opacity: 0.5,
             snapping: false,
-            autosave: true,
-            autosave_seconds: 42,
+            recovery_copy: false,
+            recovery_seconds: 42,
             export_presets: crate::view::export_dialog::Preset::usual(),
+            shortcuts: crate::keys::Bindings::default(),
+            workspaces: crate::workspace::Workspace::usual(),
+            workspace: None,
         };
         written.save_to(&path).expect("save failed");
 

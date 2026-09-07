@@ -187,7 +187,17 @@ pub fn all() -> &'static [Action] {
         a("Cut", Some("Ctrl+X"), Group::Edit, Command(Cut)),
         a("Copy", Some("Ctrl+C"), Group::Edit, Command(Copy)),
         a("Paste", Some("Ctrl+V"), Group::Edit, Command(Paste)),
-        a("Duplicate", Some("Ctrl+D"), Group::Edit, Command(Duplicate)),
+        // Ctrl+Alt+Shift+D, not Ctrl+D, which belongs to Place. Both claimed
+        // Ctrl+D until the shortcut table became the thing the handler reads:
+        // the handler fired Duplicate and the File menu said Place, so a
+        // shortcut that had never worked was documented in a menu for months.
+        // InDesign settles which one keeps it, and it is Place.
+        a(
+            "Duplicate",
+            Some("Ctrl+Alt+Shift+D"),
+            Group::Edit,
+            Command(Duplicate),
+        ),
         a("Delete", Some("Del"), Group::Edit, Command(Delete)),
         a(
             "Select all",
@@ -373,9 +383,17 @@ pub fn all() -> &'static [Action] {
             Command(Distribute(Axis::Vertical)),
         ),
         //
+        // **W is Preview's, not Normal's.** Both claimed it until the shortcut
+        // table became the thing the handler reads, and two actions on one
+        // chord means one of them cannot be reached by keyboard at all —
+        // which one depending on the order of an `if` chain.
+        //
+        // Preview is where W goes because it is what somebody presses W to
+        // get, and picking it while already previewing returns to Normal, so
+        // one key still gets in and out as it does in InDesign.
         a(
             "Normal view",
-            Some("W"),
+            None,
             Group::View,
             Run::ScreenMode(crate::app::ScreenMode::Normal),
         ),
@@ -584,7 +602,18 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             crate::prefs::remember(state);
         }
         Run::PickTool(tool) => state.active_tool = tool,
-        Run::ScreenMode(mode) => state.screen_mode = mode,
+        Run::ScreenMode(mode) => {
+            // Asking for Preview while already previewing means "take me back",
+            // which is the whole of what W does in a layout tool. Every other
+            // mode is a plain choice: nobody presses Bleed twice meaning Normal.
+            state.screen_mode = if mode == crate::app::ScreenMode::Preview
+                && state.screen_mode == crate::app::ScreenMode::Preview
+            {
+                crate::app::ScreenMode::Normal
+            } else {
+                mode
+            };
+        }
         Run::ZoomToFit => state.active_mut().fitted = false,
         Run::Command(cmd) => {
             let command = match cmd {
