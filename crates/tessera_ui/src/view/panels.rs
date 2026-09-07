@@ -1926,7 +1926,7 @@ pub(crate) fn section_heading_with(
 }
 
 /// A measurement control with no label of its own.
-fn measure_bare(ui: &mut Ui, points: &mut f64, unit: Unit) -> bool {
+pub(crate) fn measure_bare(ui: &mut Ui, points: &mut f64, unit: Unit) -> bool {
     let mut shown = unit.from_points(*points);
     let changed = ui
         .add(

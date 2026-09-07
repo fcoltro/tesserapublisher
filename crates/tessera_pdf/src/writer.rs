@@ -4,11 +4,14 @@ use std::collections::BTreeMap;
 
 use pdf_writer::types::{BlendMode, LineCapStyle, LineJoinStyle};
 use pdf_writer::writers::ExtGraphicsState;
-use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref, Str};
+use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref, Str, TextStr};
 use tessera_color::Color;
 use tessera_document::nodes::{LineCap, LineJoin, Stroke};
 use tessera_geometry::{DocRect, Transform};
 use tessera_layout::resolve::{ResolvedDocument, ResolvedKind};
+
+use crate::ink::Ink;
+use crate::options::{ExportOptions, Standard};
 use tessera_text::shape::{FontData, ShapedText};
 
 /// PDF expresses glyph metrics in thousandths of an em.
@@ -27,6 +30,8 @@ pub enum PdfError {
          with Identity-H encoding"
     )]
     GlyphIdTooLarge(u32),
+    #[error("this export cannot claim what it was asked to: {}", .0.join("; "))]
+    CannotConform(Vec<String>),
 }
 
 /// Convert a document-space y to PDF space.
@@ -77,7 +82,43 @@ struct EmbeddedFont {
     file_ref: Ref,
 }
 
+/// A plain PDF, claiming nothing.
+///
+/// What milestone 0 wrote, and still the right answer for a document that names
+/// no press.
 pub fn export(resolved: &ResolvedDocument) -> Result<Vec<u8>, PdfError> {
+    export_with(resolved, &ExportOptions::default())
+}
+
+/// A PDF for a particular press, standard and set of marks.
+///
+/// **Refuses rather than lies.** A file claiming PDF/X it does not meet is worse
+/// than one claiming nothing: a printer’s preflight believes the claim, passes
+/// the file, and the job fails on press instead of in the studio.
+pub fn export_with(
+    resolved: &ResolvedDocument,
+    options: &ExportOptions,
+) -> Result<Vec<u8>, PdfError> {
+    let refused = options.refusals(uses_transparency(resolved));
+    if !refused.is_empty() {
+        return Err(PdfError::CannotConform(refused));
+    }
+    write(resolved, options)
+}
+
+/// Whether anything in the document needs a transparency model to reproduce.
+///
+/// Asked before an X-1a claim is allowed, because X-1a forbids it and Tessera
+/// does not flatten.
+fn uses_transparency(resolved: &ResolvedDocument) -> bool {
+    resolved
+        .items
+        .iter()
+        .any(|item| !item.blend.is_plain() || item.shadow.is_some())
+}
+
+fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>, PdfError> {
+    let ink = Ink::for_intent(options.intent.as_ref());
     // The page comes from the resolved document rather than from a parameter,
     // so the screen and the PDF cannot disagree about where the trim is.
     // Milestone 3 makes this every page; today it is the first.
@@ -98,11 +139,63 @@ pub fn export(resolved: &ResolvedDocument) -> Result<Vec<u8>, PdfError> {
 
     let fonts = collect_fonts(resolved, &mut alloc)?;
     let states = collect_states(resolved, &mut alloc);
-    let shadings = collect_shadings(resolved, page, &mut alloc);
-    let content = build_content(resolved, page, &fonts, &states, &shadings)?;
+    let shadings = collect_shadings(resolved, page, &mut alloc, &ink);
+    let content = build_content(
+        resolved,
+        &Written {
+            page,
+            fonts: &fonts,
+            states: &states,
+            shadings: &shadings,
+            ink: &ink,
+            resolved_page: &resolved_page,
+            options,
+        },
+    )?;
 
-    pdf.catalog(catalog_id).pages(page_tree_id);
+    // The profile is an indirect stream; the intent dictionary that points at it
+    // is written inline in the catalogue, which is where PDF/X expects it.
+    let profile_id = options
+        .intent
+        .as_ref()
+        .filter(|_| options.standard != Standard::Plain)
+        .map(|_| alloc());
+
+    let mut catalog = pdf.catalog(catalog_id);
+    catalog.pages(page_tree_id);
+    if let (Some(profile), Some(intent)) = (profile_id, options.intent.as_ref()) {
+        // **The output intent is what makes a PDF/X a PDF/X.** Without it the
+        // file says which numbers to print and not what they mean, which is the
+        // whole problem the standard exists to solve.
+        let mut intents = catalog.output_intents();
+        let mut written = intents.push();
+        written
+            .subtype(pdf_writer::types::OutputIntentSubtype::PDFX)
+            .output_condition_identifier(TextStr(&intent.description))
+            .output_condition(TextStr(&intent.description))
+            .dest_output_profile(profile);
+        written.finish();
+        intents.finish();
+    }
+    catalog.finish();
     pdf.pages(page_tree_id).kids([page_id]).count(1);
+
+    // **The claim itself.** `GTS_PDFXVersion` is what a printer’s preflight reads
+    // to decide the file conforms, which is exactly why it is written only after
+    // `refusals` came back empty. A file carrying this key that does not conform
+    // fails on press rather than in the studio.
+    if let Some(version) = options.standard.version_key() {
+        let info_id = alloc();
+        let mut info = pdf.document_info(info_id);
+        info.pair(Name(b"GTS_PDFXVersion"), Str(version.as_bytes()));
+        info.title(TextStr("Tessera document"));
+        info.producer(TextStr("Tessera Publisher"));
+        // A trapped state is required by PDF/X and there is no honest answer but
+        // "unknown": Tessera does not trap, and claiming False would say the
+        // file has been checked and needs none.
+        info.trapped(pdf_writer::types::TrappingStatus::Unknown);
+        info.finish();
+    }
 
     {
         let mut page_obj = pdf.page(page_id);
@@ -115,20 +208,34 @@ pub fn export(resolved: &ResolvedDocument) -> Result<Vec<u8>, PdfError> {
         // The origin stays at the trim corner, so adding a bleed does not
         // move a single object on the page; the boxes grow around the content
         // rather than shifting it.
+        // MediaBox has to hold everything imaged, and marks are imaged outside
+        // the bleed. A media box that stopped at the bleed would crop the crop
+        // marks, which is the kind of failure that is only noticed on the
+        // proof.
+        let reach = options.marks.reach();
         let bleed = resolved_page.bleed;
         let media = Rect::new(
+            (bleed.x - page.x - reach) as f32,
+            (bleed.y - page.y - reach) as f32,
+            (bleed.x - page.x + bleed.width + reach) as f32,
+            (bleed.y - page.y + bleed.height + reach) as f32,
+        );
+        let trim = Rect::new(0.0, 0.0, page.width as f32, page.height as f32);
+
+        // BleedBox is the bleed, not the media box. They were the same while
+        // there were no marks; with marks the media box is larger, and saying
+        // the ink runs that far would be a lie a printer acts on.
+        let bleed_box = Rect::new(
             (bleed.x - page.x) as f32,
             (bleed.y - page.y) as f32,
             (bleed.x - page.x + bleed.width) as f32,
             (bleed.y - page.y + bleed.height) as f32,
         );
-        let trim = Rect::new(0.0, 0.0, page.width as f32, page.height as f32);
-
         page_obj
             .parent(page_tree_id)
             .media_box(media)
             .trim_box(trim)
-            .bleed_box(media)
+            .bleed_box(bleed_box)
             .contents(content_id);
         let mut resources = page_obj.resources();
         let mut font_dict = resources.fonts();
@@ -167,7 +274,16 @@ pub fn export(resolved: &ResolvedDocument) -> Result<Vec<u8>, PdfError> {
         write_state(&mut pdf, state);
     }
     for shading in shadings.iter().flatten() {
-        write_shading(&mut pdf, shading);
+        write_shading(&mut pdf, shading, &ink);
+    }
+
+    if let (Some(profile), Some(intent)) = (profile_id, options.intent.as_ref()) {
+        // The profile itself, embedded. A file that names a press without
+        // carrying its profile is a claim nobody downstream can check, and
+        // PDF/X requires it for exactly that reason.
+        let mut stream = pdf.stream(profile, &intent.profile);
+        stream.pair(Name(b"N"), if ink.is_cmyk() { 4 } else { 3 });
+        stream.finish();
     }
 
     Ok(pdf.finish())
@@ -260,7 +376,7 @@ struct Shading {
 struct ShadingKind {
     axial: bool,
     coords: Vec<f32>,
-    stops: Vec<([f32; 3], f32)>,
+    stops: Vec<(Vec<f32>, f32)>,
 }
 
 /// The distinct shadings the document needs, one per gradient-filled object.
@@ -271,6 +387,7 @@ fn collect_shadings(
     resolved: &ResolvedDocument,
     page: DocRect,
     alloc: &mut impl FnMut() -> Ref,
+    ink: &Ink,
 ) -> Vec<Option<Shading>> {
     let mut out = Vec::with_capacity(resolved.items.len());
 
@@ -307,13 +424,13 @@ fn collect_shadings(
             ]
         };
 
-        let stops: Vec<([f32; 3], f32)> = gradient
+        // In whichever space this export writes. A shading declares its colour
+        // space once and every function under it must agree, so a ramp in a CMYK
+        // export is four components per stop and not three.
+        let stops: Vec<(Vec<f32>, f32)> = gradient
             .stops()
             .iter()
-            .map(|stop| {
-                let [r, g, b, _] = stop.colour.to_rgb_f32();
-                ([r, g, b], stop.at)
-            })
+            .map(|stop| (ink.components(&stop.colour).values(), stop.at))
             .collect();
 
         let pieces: Vec<Ref> = (0..stops.len().saturating_sub(1))
@@ -348,17 +465,21 @@ fn collect_shadings(
     out
 }
 
-fn write_shading(pdf: &mut Pdf, shading: &Shading) {
+fn write_shading(pdf: &mut Pdf, shading: &Shading, ink: &Ink) {
     use pdf_writer::types::FunctionShadingType;
 
     // One exponential function per interval, each interpolating between the two
     // colours at its ends. `N = 1` is a straight ramp; anything else would be a
     // curve nobody asked for.
     for (i, piece) in shading.pieces.iter().enumerate() {
-        let (from, _) = shading.kind.stops[i];
-        let (to, _) = shading.kind.stops[i + 1];
+        let (from, _) = &shading.kind.stops[i];
+        let (to, _) = &shading.kind.stops[i + 1];
         let mut function = pdf.exponential_function(*piece);
-        function.domain([0.0, 1.0]).c0(from).c1(to).n(1.0);
+        function
+            .domain([0.0, 1.0])
+            .c0(from.iter().copied())
+            .c1(to.iter().copied())
+            .n(1.0);
         function.finish();
     }
 
@@ -385,7 +506,12 @@ fn write_shading(pdf: &mut Pdf, shading: &Shading) {
     } else {
         FunctionShadingType::Radial
     });
-    written.color_space().device_rgb();
+    // The same space the stops were written in, or no RIP will read the file.
+    if ink.is_cmyk() {
+        written.color_space().device_cmyk();
+    } else {
+        written.color_space().device_rgb();
+    }
     written
         .coords(shading.kind.coords.iter().copied())
         // Extended at both ends, so the first and last colours run to the edge
@@ -471,13 +597,31 @@ fn collect_fonts(
     Ok(fonts)
 }
 
-fn build_content(
-    resolved: &ResolvedDocument,
+/// Everything the content stream needs besides the document itself.
+///
+/// One argument rather than seven. They arrived one at a time as milestone 6
+/// grew, and a function whose parameter list has to be read carefully to call is
+/// one where a caller eventually passes the fonts where the shadings go.
+struct Written<'a> {
     page: DocRect,
-    fonts: &[EmbeddedFont],
-    states: &[GraphicsState],
-    shadings: &[Option<Shading>],
-) -> Result<Vec<u8>, PdfError> {
+    fonts: &'a [EmbeddedFont],
+    states: &'a [GraphicsState],
+    shadings: &'a [Option<Shading>],
+    ink: &'a Ink,
+    resolved_page: &'a tessera_layout::ResolvedPage,
+    options: &'a ExportOptions,
+}
+
+fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>, PdfError> {
+    let Written {
+        page,
+        fonts,
+        states,
+        shadings,
+        ink,
+        resolved_page,
+        options,
+    } = *w;
     let mut content = Content::new();
 
     for (index, item) in resolved.items.iter().enumerate() {
@@ -551,7 +695,7 @@ fn build_content(
                         content.restore_state();
                     }
                     None => {
-                        set_solid_fill(&mut content, fill);
+                        set_solid_fill(&mut content, fill, ink);
                         rect(&mut content, item.bounds);
                         content.fill_nonzero();
                     }
@@ -561,7 +705,7 @@ fn build_content(
                     // The fill and the stroke follow different rectangles once
                     // the stroke is aligned inside or outside, so they cannot
                     // share one path.
-                    apply_stroke(&mut content, s);
+                    apply_stroke(&mut content, s, ink);
                     rect(&mut content, offset_rect(item.bounds, s.offset()));
                     content.stroke();
                 }
@@ -580,13 +724,13 @@ fn build_content(
                         content.restore_state();
                     }
                     None => {
-                        set_solid_fill(&mut content, fill);
+                        set_solid_fill(&mut content, fill, ink);
                         ellipse_path(&mut content, page, item.bounds);
                         content.fill_nonzero();
                     }
                 }
                 if let Some(s) = stroke {
-                    apply_stroke(&mut content, s);
+                    apply_stroke(&mut content, s, ink);
                     ellipse_path(&mut content, page, offset_rect(item.bounds, s.offset()));
                     content.stroke();
                 }
@@ -604,11 +748,11 @@ fn build_content(
                         content.shading(Name(sh.resource.as_bytes()));
                     }
                     (Some(f), _) => {
-                        set_solid_fill(&mut content, f);
+                        set_solid_fill(&mut content, f, ink);
                         content.fill_nonzero();
                     }
                     (None, Some(s)) => {
-                        apply_stroke(&mut content, s);
+                        apply_stroke(&mut content, s, ink);
                         content.stroke();
                     }
                     (None, None) => {
@@ -621,7 +765,7 @@ fn build_content(
             }
 
             ResolvedKind::Text { shaped, color } => {
-                draw_text(&mut content, page, item.bounds, shaped, color, fonts)?;
+                draw_text(&mut content, page, item.bounds, shaped, color, fonts, ink)?;
             }
         }
 
@@ -633,6 +777,12 @@ fn build_content(
         }
     }
 
+    // The marks, after the document and outside the trim, so nothing on the page
+    // can sit on top of a crop mark. An object dragged onto the pasteboard is
+    // not bounded by the bleed, and a crop mark half covered by a stray
+    // rectangle is one somebody cuts to the wrong place.
+    crate::marks::draw(&mut content, resolved_page, options, ink);
+
     Ok(content.finish().to_vec())
 }
 
@@ -641,9 +791,8 @@ fn build_content(
 /// Colour, width, cap, join, miter limit and dash pattern. A stroke that
 /// exported as a bare width would not be the stroke that was on screen, which
 /// is the one thing this crate exists to prevent.
-fn apply_stroke(content: &mut Content, stroke: &Stroke) {
-    let [r, g, b, _] = stroke.color.to_rgb_f32();
-    content.set_stroke_rgb(r, g, b);
+fn apply_stroke(content: &mut Content, stroke: &Stroke, ink: &Ink) {
+    ink.set_stroke(content, &stroke.color);
     content.set_line_width(stroke.width as f32);
     content.set_line_cap(match stroke.cap {
         LineCap::Butt => LineCapStyle::ButtCap,
@@ -675,13 +824,12 @@ fn apply_stroke(content: &mut Content, stroke: &Stroke) {
 /// back to the ramp’s representative colour rather than to black, so that if a
 /// gradient ever did arrive the page would be wrong in a way somebody notices
 /// rather than silently black.
-fn set_solid_fill(content: &mut Content, paint: &tessera_document::paint::Paint) {
+fn set_solid_fill(content: &mut Content, paint: &tessera_document::paint::Paint, ink: &Ink) {
     let colour = paint
         .solid()
         .cloned()
         .unwrap_or_else(|| paint.representative());
-    let [r, g, b, _] = colour.to_rgb_f32();
-    content.set_fill_rgb(r, g, b);
+    ink.set_fill(content, &colour);
 }
 
 fn offset_rect(bounds: DocRect, offset: f64) -> DocRect {
@@ -812,12 +960,13 @@ fn draw_text(
     shaped: &ShapedText,
     color: &Color,
     fonts: &[EmbeddedFont],
+    ink: &Ink,
 ) -> Result<(), PdfError> {
     // One text object per run, because the size lives there — and now the
     // colour too. Grouping by font alone would set the font once and draw
     // every size at it.
     for run in shaped.runs() {
-        let [r, g, b, _] = run.colour.as_ref().unwrap_or(color).to_rgb_f32();
+        let run_colour = run.colour.as_ref().unwrap_or(color).clone();
         let index = run.font_index;
         // Match by subset content: `collect_fonts` walked the same items in
         // the same order, so position `index` here maps to the same font.
@@ -829,7 +978,7 @@ fn draw_text(
         }
 
         content.save_state();
-        content.set_fill_rgb(r, g, b);
+        ink.set_fill(content, &run_colour);
         content.begin_text();
         content.set_font(Name(embedded.resource.as_bytes()), run.size);
 

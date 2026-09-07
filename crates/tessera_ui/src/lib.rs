@@ -14,6 +14,7 @@ pub mod cursor;
 pub mod file_ops;
 pub mod icons;
 pub mod open_document;
+pub mod package;
 pub mod pen;
 pub mod preflight;
 pub mod prefs;

@@ -8,6 +8,7 @@
 pub mod ambient;
 pub mod canvas_toolbar;
 pub mod control;
+pub mod export_dialog;
 pub mod glass;
 pub mod layers;
 pub mod pages;
@@ -79,6 +80,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // A window rather than a panel: preferences are visited, decided and left,
     // and everything in them is judged against the document behind.
     settings::show(ui.ctx(), state);
+    export_dialog::show(ui.ctx(), state);
 
     Panel::bottom("status")
         .exact_size(24.0)

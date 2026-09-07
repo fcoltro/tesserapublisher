@@ -18,6 +18,8 @@ kurbo.workspace = true
 pdf-writer.workspace = true
 subsetter.workspace = true
 thiserror.workspace = true
+# For `Standard`, which travels in an export preset.
+serde.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

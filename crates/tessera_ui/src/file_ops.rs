@@ -60,11 +60,63 @@ pub fn new_document(state: &mut TesseraApp) {
 /// screen. Note it needs no GPU: a document is exportable even if the surface
 /// failed to start.
 pub fn export_pdf_to_path(state: &mut TesseraApp, path: &Path) -> Result<(), ExportError> {
+    // The choices from the export dialog, and the press from the document. An
+    // export that ignored either would be one somebody had to check the file to
+    // find out about.
+    let options = state.export.options(state);
     let resolved = state.resolve_uncached();
-    let bytes = tessera_pdf::export(&resolved)?;
+    let bytes = tessera_pdf::export_with(&resolved, &options)?;
     tessera_io::atomic::write_atomic(path, &bytes)?;
     state.status = Some(Status::info(format!("Exported {}", path.display())));
     Ok(())
+}
+
+/// Collect the job into a folder somebody can hand to a printer.
+///
+/// The preflight report goes into the summary, so the folder says what state the
+/// job was in when it was packed. A folder claiming nothing about that is one a
+/// printer has to check from scratch.
+pub fn package(state: &mut TesseraApp) {
+    let Some(folder) = rfd::FileDialog::new().pick_folder() else {
+        return;
+    };
+
+    let name = state
+        .active()
+        .current_path
+        .as_ref()
+        .and_then(|p| p.file_stem())
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Untitled".to_string());
+
+    // Into a folder of its own inside the one chosen, so packaging twice does
+    // not mix two jobs together and picking a busy folder does not scatter a
+    // job across it.
+    let into = folder.join(&name);
+    let report = crate::preflight::Preflight::report(state).clone();
+    let doc = state.active().document().clone();
+
+    match crate::package::collect(&doc, &name, &into, &report) {
+        Ok(packaged) => {
+            let missing = packaged.missing.len();
+            state.status = Some(Status::info(if missing == 0 {
+                format!(
+                    "Packaged {} links into {}",
+                    packaged.links.len(),
+                    into.display()
+                )
+            } else {
+                format!(
+                    "Packaged into {} — {missing} link{} could not be copied",
+                    into.display(),
+                    if missing == 1 { "" } else { "s" }
+                )
+            }));
+        }
+        Err(error) => {
+            state.status = Some(Status::error(format!("Could not package: {error}")));
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

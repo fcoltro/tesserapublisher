@@ -460,6 +460,7 @@ mod tests {
             snapping: false,
             autosave: true,
             autosave_seconds: 11,
+            export_presets: crate::view::export_dialog::Preset::usual(),
         };
 
         for page in Page::ALL {

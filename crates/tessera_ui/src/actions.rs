@@ -91,6 +91,7 @@ impl Group {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Run {
     OpenSettings,
+    Package,
     TogglePreflight,
     ToggleStyles,
     ChooseOutputIntent,
@@ -177,6 +178,9 @@ pub fn all() -> &'static [Action] {
         a("Save", Some("Ctrl+S"), Group::File, Save),
         a("Save as…", Some("Ctrl+Shift+S"), Group::File, SaveAs),
         a("Export PDF…", Some("Ctrl+Shift+E"), Group::File, ExportPdf),
+        // Beside Export, because packaging is the other way a job leaves the
+        // studio and somebody looking for one will look where the other is.
+        a("Package…", Some("Ctrl+Alt+Shift+P"), Group::File, Package),
         //
         a("Undo", Some("Ctrl+Z"), Group::Edit, Command(Undo)),
         a("Redo", Some("Ctrl+Shift+Z"), Group::Edit, Command(Redo)),
@@ -522,7 +526,14 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         Run::Open => crate::file_ops::open(state),
         Run::Save => crate::file_ops::save(state),
         Run::SaveAs => crate::file_ops::save_as(state),
-        Run::ExportPdf => crate::file_ops::export_pdf(state),
+        Run::Package => crate::file_ops::package(state),
+        Run::ExportPdf => {
+            // The dialog, not the file picker. Which standard and which marks
+            // are decisions worth seeing before the file is written, and an
+            // export that went straight to a save dialog would make them
+            // silently, from whatever was chosen last.
+            state.export.open = true;
+        }
         Run::Place => crate::file_ops::place(state),
         Run::OpenSettings => state.settings.open = true,
         Run::TogglePreflight => {

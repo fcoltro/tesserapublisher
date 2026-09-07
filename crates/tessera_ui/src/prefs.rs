@@ -123,6 +123,13 @@ pub struct Preferences {
     /// How long after the last edit an automatic save happens, in seconds.
     #[serde(default = "default_autosave_seconds")]
     pub autosave_seconds: u32,
+
+    /// Named sets of export choices.
+    ///
+    /// A preference rather than document data: they are how *this studio* sends
+    /// work, and opening somebody else’s layout must not change them.
+    #[serde(default = "crate::view::export_dialog::Preset::usual")]
+    pub export_presets: Vec<crate::view::export_dialog::Preset>,
 }
 
 fn yes() -> bool {
@@ -147,6 +154,7 @@ impl Default for Preferences {
             snapping: yes(),
             autosave: false,
             autosave_seconds: default_autosave_seconds(),
+            export_presets: crate::view::export_dialog::Preset::usual(),
         }
     }
 }
@@ -335,6 +343,7 @@ mod tests {
             snapping: false,
             autosave: true,
             autosave_seconds: 42,
+            export_presets: crate::view::export_dialog::Preset::usual(),
         };
         written.save_to(&path).expect("save failed");
 

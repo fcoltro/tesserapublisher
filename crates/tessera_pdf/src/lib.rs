@@ -8,10 +8,18 @@
 //! `ResolvedDocument` — the same resolved geometry, and the same shaped glyph
 //! runs — so they agree by construction instead.
 //!
-//! Milestone 0 targets a valid, readable PDF with embedded subsetted fonts and
-//! RGB colour. PDF/X-1a and PDF/X-4, CMYK conversion and print marks arrive in
-//! milestone 6.
+//! Milestone 0 targeted a valid, readable PDF with embedded subsetted fonts and
+//! RGB colour. Milestone 6 adds what a commercial job needs: CMYK converted
+//! through the press’s own profile, the marks a guillotine and a press
+//! operator read, and the PDF/X claims a printer’s preflight will believe — which
+//! is exactly why they are refused rather than written when they cannot be
+//! honoured.
 
+mod ink;
+mod marks;
+mod options;
 mod writer;
 
-pub use writer::{PdfError, export};
+pub use ink::Ink;
+pub use options::{ExportOptions, MARK_LENGTH, Marks, Standard};
+pub use writer::{PdfError, export, export_with};

@@ -668,3 +668,154 @@ fn a_gradient_runs_the_same_way_in_the_file_as_on_the_page() {
             .unwrap_or("no coords line")
     );
 }
+
+// --- prepress: standards, marks and the output intent ------------------------
+
+use tessera_pdf::{ExportOptions, Marks, Standard};
+
+fn an_intent() -> tessera_document::intent::OutputIntent {
+    let profile = tessera_color::managed::OutputProfile::screen().expect("a profile");
+    tessera_document::intent::OutputIntent {
+        description: "Tessera test condition".to_string(),
+        profile: profile.bytes().to_vec(),
+        rendering: tessera_document::intent::Rendering::default(),
+    }
+}
+
+fn text_of(doc: &ResolvedDocument, options: &ExportOptions) -> String {
+    let bytes = tessera_pdf::export_with(doc, options).expect("export");
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+#[test]
+fn a_plain_export_claims_no_standard_and_embeds_no_intent() {
+    // What milestone 0 wrote, unchanged. A file that claims nothing is the right
+    // answer for a document that names no press.
+    let text = text_of(
+        &black_rect(rect(10.0, 10.0, 50.0, 50.0)),
+        &ExportOptions::default(),
+    );
+    assert!(!text.contains("GTS_PDFXVersion"));
+    assert!(!text.contains("/OutputIntents"));
+}
+
+#[test]
+fn a_standard_without_a_press_is_refused_rather_than_written() {
+    // **The failure this prevents.** A file claiming PDF/X it does not meet is
+    // worse than one claiming nothing: a printer's preflight believes the claim,
+    // passes the file, and the job fails on press instead of in the studio.
+    let options = ExportOptions {
+        standard: Standard::X4,
+        ..Default::default()
+    };
+    let error = tessera_pdf::export_with(&empty_doc(), &options)
+        .expect_err("a claim with nothing behind it must be refused");
+    assert!(format!("{error}").contains("output intent"));
+}
+
+#[test]
+fn pdf_x4_writes_its_version_key_and_embeds_the_profile() {
+    let options = ExportOptions {
+        standard: Standard::X4,
+        intent: Some(an_intent()),
+        ..Default::default()
+    };
+    let text = text_of(&black_rect(rect(10.0, 10.0, 50.0, 50.0)), &options);
+
+    assert!(text.contains("GTS_PDFXVersion"), "no version key");
+    assert!(text.contains("PDF/X-4"), "the wrong version");
+    assert!(text.contains("/OutputIntents"), "no output intent array");
+    assert!(
+        text.contains("/DestOutputProfile"),
+        "the profile is not pointed at"
+    );
+    assert!(
+        text.contains("Tessera test condition"),
+        "the condition is not named"
+    );
+    // Required by PDF/X, and "unknown" is the only honest answer: Tessera does
+    // not trap, and False would say the file was checked and needs none.
+    assert!(text.contains("/Trapped"), "no trapping state");
+}
+
+#[test]
+fn pdf_x1a_refuses_a_document_that_uses_transparency() {
+    // X-1a forbids it and Tessera does not flatten, so the claim cannot be
+    // honoured. Refusing is the whole point.
+    use tessera_document::blending::{BlendMode, Blending};
+
+    let mut doc = black_rect(rect(10.0, 10.0, 50.0, 50.0));
+    doc.items[0].blend = Blending {
+        opacity: 0.5,
+        mode: BlendMode::Normal,
+    };
+
+    let options = ExportOptions {
+        standard: Standard::X1a,
+        intent: Some(an_intent()),
+        ..Default::default()
+    };
+    let error = tessera_pdf::export_with(&doc, &options).expect_err("must be refused");
+    assert!(format!("{error}").contains("transparency"));
+}
+
+#[test]
+fn pdf_x1a_accepts_the_same_document_without_transparency() {
+    let options = ExportOptions {
+        standard: Standard::X1a,
+        intent: Some(an_intent()),
+        ..Default::default()
+    };
+    let text = text_of(&black_rect(rect(10.0, 10.0, 50.0, 50.0)), &options);
+    assert!(text.contains("PDF/X-1a:2003"));
+}
+
+#[test]
+fn marks_grow_the_media_box_without_moving_the_trim() {
+    // A media box that stopped at the bleed would crop the crop marks, which is
+    // a failure only noticed on the proof. The trim must not move: it is where
+    // the guillotine goes.
+    let doc = black_rect(rect(10.0, 10.0, 50.0, 50.0));
+    let plain = text_of(&doc, &ExportOptions::default());
+    let marked = text_of(
+        &doc,
+        &ExportOptions {
+            marks: Marks::all(),
+            ..Default::default()
+        },
+    );
+
+    let trim = format!("/TrimBox [0 0 {} {}]", page().width, page().height);
+    assert!(plain.contains(&trim), "the plain trim moved");
+    assert!(marked.contains(&trim), "marks moved the trim");
+    assert!(marked.len() > plain.len(), "asking for marks drew nothing");
+}
+
+#[test]
+fn marks_at_no_offset_are_refused() {
+    // They would be cut through by the trim, which defeats them.
+    let options = ExportOptions {
+        marks: Marks {
+            offset: 0.0,
+            ..Marks::all()
+        },
+        ..Default::default()
+    };
+    assert!(tessera_pdf::export_with(&empty_doc(), &options).is_err());
+}
+
+#[test]
+fn an_rgb_press_still_writes_rgb() {
+    // Converting for a press that is not CMYK would be converting for nothing.
+    let options = ExportOptions {
+        standard: Standard::X4,
+        intent: Some(an_intent()),
+        ..Default::default()
+    };
+    let text = text_of(&black_rect(rect(10.0, 10.0, 50.0, 50.0)), &options);
+    assert!(text.contains(" rg"), "an RGB fill operator was expected");
+    assert!(
+        !text.contains(" k\n"),
+        "a CMYK fill was written for an RGB press"
+    );
+}

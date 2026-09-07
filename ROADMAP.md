@@ -1318,6 +1318,18 @@ application.
 > have it RIP correctly. Package the document and get one folder holding the
 > file, its links and its fonts.
 
+**Nine of ten items performed, and what is owed is not more code.**
+
+*"Have it RIP correctly"* needs a commercial printer and a press. *"Open it in
+Acrobat’s output preview"* needs Acrobat. Both are a person’s job, and ticking
+them because the file parses would be exactly the unverified claim this
+milestone is built to refuse — the same refusal the exporter makes when it will
+not write a PDF/X key it cannot stand behind.
+
+The one sentence knowingly **not** met: the folder holds the file and its links,
+and *lists* its fonts rather than holding them. A licence to set type is not a
+licence to pass the font on. See the packaging item.
+
 - [x] Preflight engine, independent of the GPU, live as the document changes.
   - **A crate, and the boundary is the proof.** `tessera_preflight` cannot reach
     `vello` or `wgpu`, so "independent of the GPU" is enforced by the dependency
@@ -1375,14 +1387,78 @@ application.
     is still owed.
   - Severity is a **shape as well as a colour**: roughly one man in twelve
     cannot tell the red from the amber.
-- [ ] PDF/X-1a and PDF/X-4 export.
-- [ ] CMYK conversion through the document's output intent.
-- [ ] `MediaBox`, `TrimBox`, `BleedBox`; crop, bleed and registration marks,
+- [x] PDF/X-1a and PDF/X-4 export.
+  - **The file refuses to lie.** `GTS_PDFXVersion` is written only after
+    `refusals` comes back empty, because a printer’s preflight *believes* that
+    key: a file claiming a standard it does not meet passes their check and
+    fails on the press instead of in the studio. A claim with nothing behind it
+    is worse than no claim.
+  - X-1a is refused for a document using transparency. Tessera does not flatten,
+    so the claim could not be honoured, and X-4 exists precisely for that
+    document.
+  - Either standard is refused without an output intent, because PDF/X is a
+    promise about *which* press and there is nothing to promise.
+  - `/Trapped` is written as unknown, which is the only honest answer: Tessera
+    does not trap, and `False` would say the file had been checked and needs
+    none.
+- [x] CMYK conversion through the document’s output intent.
+  - **A CMYK colour is passed through, not converted.** The same trap the soft
+    proof had: 100% K is one ink and a rich black is four, and a designer who
+    typed one and got the other has been overruled by a colour engine. Only
+    colours in some other space are converted.
+  - Gradients follow the ink: a shading declares its colour space once and every
+    function under it must agree, so a ramp in a CMYK export is four components
+    per stop.
+  - An unusable profile falls back to RGB rather than failing the export.
+    Preflight has already said so, and a readable file beats no file.
+  - **A spot is written as its fallback, which is a shortfall.** It should
+    separate onto its own plate through a Separation space and a tint transform.
+    Recorded rather than hidden.
+- [x] `MediaBox`, `TrimBox`, `BleedBox`; crop, bleed and registration marks,
   and colour bars.
-- [ ] Font subsetting verified by RIP, not only by Acrobat.
-- [ ] Export presets, saved and reused.
-- [ ] Package: collect the document, `/Links` and `/Document Fonts`, with a
-  summary of dimensions, fonts, required inks and preflight state.
+  - **A registration mark is 100% of every ink**, which is the only thing that
+    makes it work: a mark in black lands on the black plate alone and says
+    nothing about whether the other three line up.
+  - Marks grow the media box and leave the trim where it is. A media box that
+    stopped at the bleed would crop the crop marks — a failure only noticed on
+    the proof — and BleedBox stays the bleed, because saying the ink runs as far
+    as the marks is a lie a printer acts on.
+  - Marks clear the bleed even when the offset is smaller, because a mark over
+    the artwork cannot be seen. Marks at no offset are refused: they would be
+    cut through by the trim.
+  - No colour bar in an RGB export. There are no plates to measure, and a
+    printer seeing one would reasonably assume the file was separated.
+- [ ] Font subsetting verified by RIP, not only by Acrobat. **Cannot be done
+  here.** It needs a real RIP and a real press, which is a person with hardware
+  rather than a test. Left open on purpose: ticking it on the strength of
+  Acrobat opening the file would be exactly the unverified claim the rest of
+  this milestone is built to avoid.
+- [x] Export presets, saved and reused.
+  - **Not a convenience.** A studio sends the same three kinds of file for
+    years, and re-choosing a standard and a set of marks each time is how a job
+    goes out as an RGB proof to a printer expecting X-1a.
+  - A preset deliberately does **not** carry the output intent. Which press a
+    job is for belongs to the document — it travels in the file and is what the
+    printer needs — and a preset carrying one would silently re-target somebody’s
+    job to the press they last used.
+  - The dialog says what the export will be, in a sentence, before it runs.
+    Finding out from the file afterwards is finding out too late.
+- [~] Package: collect the document, `/Links` and a summary — **fonts are listed,
+  not copied, and that is deliberate.**
+  - A font is licensed software. A licence to *set type* is not a licence to
+    redistribute the file: outline embedding in a PDF is explicitly permitted by
+    most foundries and handing over the `.otf` is explicitly not. InDesign copies
+    them behind a warning dialog; Tessera lists them so the question can be
+    asked, and says in the summary why they are not in the folder. The PDF
+    carries subsetted outlines, which is what makes the job printable.
+  - A link that cannot be copied is **reported, not fatal**. A job with one
+    missing photograph still needs packaging: the printer wants everything else
+    and the studio needs the list to chase.
+  - The summary is plain text, opened on a machine nobody here chose by somebody
+    whose job is to check a folder and pass it on. It carries the trim size, the
+    bleed, the press, the spot inks, the links, the fonts and the preflight
+    state — a folder that says nothing about its own state is one a printer has
+    to check from scratch.
 
 ---
 

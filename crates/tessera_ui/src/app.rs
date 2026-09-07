@@ -255,6 +255,9 @@ pub struct TesseraApp {
     /// this; the viewport serves it and clears it.
     pub reveal: Option<FrameId>,
 
+    /// What the next export will produce.
+    pub export: crate::view::export_dialog::ExportWindow,
+
     /// The interface's own ground, and the frosted copy the glass shows.
     ///
     /// **Not the document.** Panels frost the ground Tessera draws behind its
@@ -386,6 +389,7 @@ impl TesseraApp {
             settings: crate::view::settings::SettingsWindow::default(),
             preflight: crate::preflight::Preflight::default(),
             reveal: None,
+            export: crate::view::export_dialog::ExportWindow::default(),
             ambient: crate::view::ambient::Ambient::default(),
             ground: None,
             snapped_to: None,
