@@ -13,15 +13,36 @@
 #   name      what to call it in the interface
 #   source    where to fetch it
 #
-# NOTHING IS BUNDLED UNTIL `tools/vendor-profiles.py` HAS BEEN RUN. The
-# application offers whichever of these files is actually present, so a fresh
-# checkout has a shorter list rather than a broken one.
+# NOTHING IS BUNDLED UNTIL `tools/vendor-profiles.py` HAS BEEN RUN, and nothing
+# fetched is committed to this repository. The application offers whichever of
+# these files is actually present, so a fresh checkout has a shorter list rather
+# than a broken one.
+#
+# **`idealliance-crpc` may not be sold.** That is fine for a personal build and
+# for Tessera's own free distribution, where the profiles are separate data files
+# rather than part of the program. It is not fine for anybody selling Tessera or
+# packaging it for a distribution that requires the freedom to sell — Debian's
+# DFSG, for one. Those builds should run the script with `--skip idealliance-crpc`
+# and offer the discovered system profiles instead.
 #
 # URLs rot. The script reports a fetch that fails and carries on with the rest;
 # pass `--url` to give a moved file its new address, and please correct the row.
 #
-# See CANDIDATES.md for the CMYK presses that are freely licensed but are not
-# listed here yet, and what has to be confirmed before they can be.
+# See CANDIDATES.md for what else is worth adding, and HOW-OTHERS-SOLVE-IT.md for
+# how Krita, Scribus, GIMP and darktable each handle this.
 
-sRGB2014.icc	RGB	icc	sRGB (ICC 2014)	https://www.color.org/profiles/sRGB2014.icc
-sRGB_v4_ICC_preference.icc	RGB	icc	sRGB v4 preference	https://www.color.org/profiles/sRGB_v4_ICC_preference.icc
+# --- The screen. Copy, distribute, embed, use and sell without restriction.
+sRGB2014.icc	RGB	icc	sRGB (ICC 2014)	https://registry.color.org/profiles/sRGB2014.icc
+sRGB_v4_ICC_preference.icc	RGB	icc	sRGB v4 preference	https://registry.color.org/profiles/sRGB_v4_ICC_preference.icc
+
+# --- The presses. CGATS.21-2 / ISO 15339 reference printing conditions: seven
+# characterised CMYK conditions from newsprint to premium coated, published
+# through the ICC registry. These are the freely shareable answer to the CMYK
+# list, and CRPC6 is the one nearest the coated stock most work is printed on.
+CGATS21_CRPC1.icc	CMYK	idealliance-crpc	CRPC1 - cold-set news	https://www.color.org/profiles/CGATS21_CRPC1.icc
+CGATS21_CRPC2.icc	CMYK	idealliance-crpc	CRPC2 - heat-set, uncoated	https://www.color.org/profiles/CGATS21_CRPC2.icc
+CGATS21_CRPC3.icc	CMYK	idealliance-crpc	CRPC3 - heat-set, coated	https://www.color.org/profiles/CGATS21_CRPC3.icc
+CGATS21_CRPC4.icc	CMYK	idealliance-crpc	CRPC4 - sheet-fed, uncoated	https://www.color.org/profiles/CGATS21_CRPC4.icc
+CGATS21_CRPC5.icc	CMYK	idealliance-crpc	CRPC5 - sheet-fed, coated	https://www.color.org/profiles/CGATS21_CRPC5.icc
+CGATS21_CRPC6.icc	CMYK	idealliance-crpc	CRPC6 - premium coated	https://www.color.org/profiles/CGATS21_CRPC6.icc
+CGATS21_CRPC7.icc	CMYK	idealliance-crpc	CRPC7 - extra-large gamut	https://www.color.org/profiles/CGATS21_CRPC7.icc

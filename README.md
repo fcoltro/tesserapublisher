@@ -74,7 +74,16 @@ than one, is worth a paragraph:
   the profiles already installed on the machine**, which on any machine with a
   creative suite on it is the whole standard set — and means a document proofed
   here is proofed against the same bytes the next application will use.
-- **A few are freely licensed and are vendored.** That is what the script is for.
+- **The free CMYK presses are the CGATS.21-2 reference printing conditions**,
+  seven of them from cold-set news to premium coated, published through the ICC
+  registry and granted for sharing. The script fetches those. They may not be
+  *sold*, so a build that will be — or a distribution package that requires the
+  freedom to — runs `--skip idealliance-crpc` and relies on the discovered
+  profiles instead, which is what Scribus does.
+- **Nothing fetched is committed.** The repository carries URLs and licence terms,
+  never profiles, so Tessera’s source can be redistributed and sold by anyone
+  without a thought about profile licensing.
+- More on what else is worth adding: that is what the script is for.
   See [assets/profiles/CANDIDATES.md](assets/profiles/CANDIDATES.md) for which
   presses are free, which are not, and what has to be confirmed before one can be
   added. Every bundled profile needs its terms quoted in

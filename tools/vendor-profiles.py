@@ -18,7 +18,14 @@ profile is somebody else's work; it does not arrive without its terms.
 Options:
     --url FILE=URL   fetch one file from somewhere else (a moved download)
     --from DIR       take files from a local directory instead of the network
+    --skip TAG       leave out everything under one licence tag
+    --only TAG       take nothing but that tag
     --list           say what is expected and what is present, and change nothing
+
+Some profiles may be shared but not sold. `--skip idealliance-crpc` leaves those
+out, which is what a build that will be sold, or packaged for a distribution
+requiring the freedom to sell, has to do. LICENCES.md says which tags those are
+and why, and the script prints a reminder when it fetches one.
 """
 
 import argparse
@@ -152,6 +159,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", action="append", default=[], metavar="FILE=URL")
     parser.add_argument("--from", dest="source_dir", metavar="DIR")
+    parser.add_argument("--skip", action="append", default=[], metavar="TAG")
+    parser.add_argument("--only", action="append", default=[], metavar="TAG")
     parser.add_argument("--list", action="store_true")
     options = parser.parse_args()
 
@@ -164,6 +173,22 @@ def main():
 
     wanted = rows()
     tags = licence_tags()
+
+    # A tag named on the command line that no row uses is almost certainly a
+    # typo, and a typo in `--skip` would silently ship what was meant to be left
+    # out. That is the one mistake here with a consequence, so it is an error.
+    present = {row["licence"] for row in wanted}
+    for tag in options.skip + options.only:
+        if tag not in present:
+            sys.exit(
+                f"no row uses the licence tag {tag!r}; the manifest has: "
+                + ", ".join(sorted(present))
+            )
+
+    if options.only:
+        wanted = [row for row in wanted if row["licence"] in options.only]
+    wanted = [row for row in wanted if row["licence"] not in options.skip]
+
     os.makedirs(PROFILES, exist_ok=True)
 
     if options.list:
@@ -226,6 +251,10 @@ def main():
 
         digest = hashlib.sha256(data).hexdigest()
         print(f"saved    {file}  {space}  sha256:{digest}")
+        if row["licence"] == "idealliance-crpc":
+            # Printed at the moment of fetching, because a clause read once in a
+            # file is a clause forgotten by the time somebody packages this.
+            print("         may be shared but NOT SOLD - see LICENCES.md")
         notice = copyright_of(data)
         if notice:
             # Printed so a person can compare it with LICENCES.md. An automatic

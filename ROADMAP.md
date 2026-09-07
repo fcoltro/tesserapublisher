@@ -1102,6 +1102,23 @@ What is owed, stated rather than ticked:
       `ISOcoated_v2_bas.ICC` — the same FOGRA39L condition, permissively licensed,
       and already reviewed as DFSG-free by Debian, which is a second party having
       read the terms.
+    - **The free CMYK presses are the CGATS.21-2 reference printing conditions.**
+      Seven of them — cold-set news through premium coated to extra-large gamut —
+      published through the ICC registry, granted to be "used, embedded,
+      exchanged, and shared without restriction". CRPC6 is the one nearest the
+      coated stock most commercial work is printed on. So the CMYK list is
+      answered after all, and the earlier "nothing free exists" was wrong.
+    - The catch is one clause: they **may not be sold**. A free build may ship
+      them as aggregated data; a build that will be sold, or a Debian package
+      which must permit selling, runs the vendoring script with
+      `--skip idealliance-crpc`. `LICENCES.md` states the "may be sold" answer for
+      every tag, because that is the clause deciding who can ship the result.
+    - **Nothing fetched is committed.** The repository carries URLs and terms,
+      never profiles, so Tessera’s own source stays sellable by anyone without a
+      thought about profile licensing. Naming a licence tag that no row uses is an
+      error rather than a no-op: a typo in `--skip` would silently ship what was
+      meant to be left out.
+
     - **The scan recurses, and that was a bug rather than a nicety.** Debian’s
       `icc-profiles-free` installs into `/usr/share/color/icc/basICColor/` and
       `.../OpenICC/`, so reading one level found nothing on exactly the platform

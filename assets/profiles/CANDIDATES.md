@@ -20,6 +20,25 @@ not interchangeable byte for byte, which is also why Tessera prefers to *find*
 the profile a machine already has: matching the next application matters more
 than matching a name.
 
+## Answered: CGATS.21-2 CRPC is the free CMYK set
+
+Seven characterised reference printing conditions — cold-set news through
+premium coated to extra-large gamut — published through the ICC registry and
+granted in terms that permit sharing:
+
+> This profile is made available by IDEAlliance®, with permission of X-Rite,
+> Inc., and may be used, embedded, exchanged, and shared without restriction. It
+> may not be altered, or sold without written permission of IDEAlliance.
+
+They are in `manifest.tsv`, and `tools/vendor-profiles.py` fetches them.
+**CRPC6** is the one nearest the coated stock most commercial work is printed on,
+which makes it the practical default where a printer has not supplied a profile.
+
+The catch is the last clause, and `LICENCES.md` spells out who it binds: shipping
+them in a free build is fine, selling a build containing them is not, so a
+packager runs the script with `--skip idealliance-crpc`. That is also why nothing
+fetched is committed here — the repository carries URLs and terms, never profiles.
+
 ## Worth adding, once the terms are confirmed
 
 Each of these is reported to be freely redistributable. **None is in the manifest
@@ -27,7 +46,11 @@ yet, because "reported to be" is not a licence I have read.** Read the terms tha
 ship with the download, add an entry to `LICENCES.md` quoting them, then add the
 row to `manifest.tsv`.
 
-### basICColor / OpenICC set — the strongest candidate
+### basICColor / OpenICC set — the one a packager can sell
+
+Still worth having, and for a reason CRPC cannot cover: these are **DFSG-free**,
+with no clause about selling, so a Debian package or a commercial build can carry
+them where the CRPC set cannot.
 
 `ISOcoated_v2_bas.ICC`, `ISOcoated_v2_300_bas.ICC`, `ISOuncoated.ICC`,
 `ISOwebcoated.ICC`, `ISOnewspaper26v4.icc`.
