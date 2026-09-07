@@ -2722,9 +2722,7 @@ fn output_intent_controls(ui: &mut Ui, state: &mut TesseraApp) {
                 "Without one, colours are shown as an approximation \
                  rather than as they will print",
             );
-        if ui.button("Choose a profile...").clicked() {
-            crate::file_ops::choose_output_intent(state);
-        }
+        profile_picker(ui, state, None);
         return;
     };
 
@@ -2761,24 +2759,110 @@ fn output_intent_controls(ui: &mut Ui, state: &mut TesseraApp) {
             });
     });
 
-    let mut changed = intent.rendering != before;
-    ui.horizontal(|ui| {
-        if ui.button("Change profile...").clicked() {
-            crate::file_ops::choose_output_intent(state);
-        }
-        if ui
-            .button("Remove")
-            .on_hover_text("The document stops being prepared for any particular press")
-            .clicked()
-        {
-            apply(state, Command::SetOutputIntent(None));
-            state.soft_proof.showing = false;
-            changed = false;
-        }
-    });
+    let changed = intent.rendering != before;
+    profile_picker(ui, state, Some(&intent.description));
+
+    if ui
+        .button("Remove")
+        .on_hover_text("The document stops being prepared for any particular press")
+        .clicked()
+    {
+        apply(state, Command::SetOutputIntent(None));
+        state.soft_proof.showing = false;
+        return;
+    }
 
     if changed {
         apply(state, Command::SetOutputIntent(Some(Box::new(intent))));
+    }
+}
+
+/// The list of profiles a person can choose from.
+///
+/// **The standard spaces are built, and the presses are found.** An RGB working
+/// space is defined by published numbers, so it is constructed here and is always
+/// on offer. A CMYK profile is measured data and can only come from a file — and
+/// the familiar ones belong to Adobe, so they are not bundled. They are read from
+/// where the operating system and the other creative applications already keep
+/// them, which means a document proofed here is proofed against the same bytes
+/// the next application will use.
+fn profile_picker(ui: &mut Ui, state: &mut TesseraApp, current: Option<&str>) {
+    let choices = state.profiles.choices();
+    let mut chosen: Option<crate::catalogue::Choice> = None;
+
+    field(ui, "Profile", |ui| {
+        egui::ComboBox::from_id_salt("output-intent-profile")
+            .selected_text(current.unwrap_or("Choose..."))
+            .width(ui.available_width())
+            .show_ui(ui, |ui| {
+                let mut heading = "";
+                for choice in &choices {
+                    // Grouped by where it came from, because "built in" and "on
+                    // this machine" are different promises: one is always there,
+                    // the other depends on what is installed.
+                    let group = match choice {
+                        crate::catalogue::Choice::Standard(_) => "Standard spaces",
+                        crate::catalogue::Choice::Installed(_) => "On this machine",
+                    };
+                    if group != heading {
+                        if !heading.is_empty() {
+                            ui.separator();
+                        }
+                        ui.colored_label(Theme::TEXT_MUTED, group);
+                        heading = group;
+                    }
+
+                    // The space beside the name, because that is the thing a
+                    // person is choosing on: a CMYK entry is a press and an RGB
+                    // one is not.
+                    let label = format!("{}  · {}", choice.label(), choice.space());
+                    let selected = current == Some(choice.label().as_str());
+                    let mut response = ui.selectable_label(selected, label);
+                    if let crate::catalogue::Choice::Standard(standard) = choice {
+                        response = response.on_hover_text(standard.purpose());
+                    }
+                    if response.clicked() {
+                        chosen = Some(choice.clone());
+                    }
+                }
+            });
+    });
+
+    if let Some(choice) = chosen {
+        crate::file_ops::adopt_output_intent(state, &choice);
+        return;
+    }
+
+    ui.horizontal(|ui| {
+        if ui
+            .button("Browse...")
+            .on_hover_text("Choose a profile from anywhere on disk")
+            .clicked()
+        {
+            crate::file_ops::choose_output_intent(state);
+        }
+        // Offered rather than done automatically: somebody who has just installed
+        // a profile knows they have, and re-scanning on every frame to catch it
+        // would read the disk for nothing the rest of the time.
+        if ui
+            .small_button("Look again")
+            .on_hover_text("Re-scan for profiles installed since Tessera started")
+            .clicked()
+        {
+            state.profiles.refresh();
+        }
+    });
+
+    let found = state.profiles.installed_count();
+    if found == 0 {
+        // Said plainly, because a person expecting the familiar CMYK presses and
+        // not finding them should know it is the machine and not Tessera.
+        ui.colored_label(Theme::TEXT_MUTED, "No profiles installed on this machine.")
+            .on_hover_text(
+                "CMYK profiles are measured data and cannot be computed, so \
+                 Tessera reads the ones the system and other applications \
+                 install. Use Browse to point at one anywhere on disk.",
+            );
     }
 }
 

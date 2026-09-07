@@ -1064,6 +1064,45 @@ What is owed, stated rather than ticked:
   - Which press is in the **document**; whether you are looking through it is in
     the **application**. The first travels with the file and is what the printer
     needs; the second is a way of working, like the active tool.
+  - **The standard profiles are on offer without shipping anybody else’s files**,
+    and the two halves of that list cannot be got the same way.
+    - An **RGB working space is defined by numbers** — three primaries, a white
+      point, a transfer curve, all published — so sRGB, Adobe RGB (1998)
+      compatible, Display P3, ProPhoto RGB, Rec. 2020 and two greys are *built*
+      from those numbers. Nothing bundled, nothing downloaded, colorimetrically
+      exact. The sRGB and Rec. 709 curves go in as their published five
+      parameters rather than as a rounded gamma: a plain 2.2 is visibly wrong in
+      the shadows, which is where a proof is judged, and a test pins the linear
+      foot.
+    - A **CMYK profile is measured** — thousands of printed and read patches, with
+      no formula to compute it from. It has to come from a file, and the familiar
+      files (`USWebCoatedSWOP.icc`, `CoatedFOGRA39.icc`) are Adobe’s, under
+      Adobe’s copyright, and not ours to redistribute. So Tessera **finds the
+      ones already on the machine**: the system’s colour directory, and the
+      directories the creative suites install theirs into. On the development
+      machine that is 23 CMYK presses including Coated FOGRA39, U.S. Web Coated
+      (SWOP) v2, Coated GRACoL 2006 and Japan Color 2001 Coated.
+    - Discovery beats bundling twice over: it is legally clean, and a document
+      proofed here against "Coated FOGRA39" is proofed against **the same bytes**
+      the next application will use.
+  - "Adobe RGB (1998) **compatible**", deliberately. The primaries and gamma are
+    published and are what it is built from, so it behaves identically — but
+    Adobe’s profile is Adobe’s, and claiming to *be* it is a claim nobody here is
+    entitled to make.
+  - Greyscale is a real output intent, not an unsupported space: a newspaper
+    printed in one ink has one.
+  - The machine is scanned **once**, not per frame, with a cap on how many files
+    are read and a "look again" for somebody who has just installed one. A menu
+    that read the disk on every frame it was open for would be a menu that reads
+    the disk.
+  - **A bug this found, worth recording.** `Transform::new_proofing` silently
+    *ignores the proofing profile* unless `SOFT_PROOFING` is passed: Little CMS
+    sees that the source and destination are the same profile and collapses the
+    whole thing to an identity. The proof did nothing at all, and it was the worst
+    kind of nothing — it looked like a press with a perfect gamut. The test that
+    catches it has to probe a press *narrower* than the source, because sRGB
+    content proofed for a wider space is correctly left alone; a saturated green
+    proofed for a one-ink press must come back neutral.
 - [~] Linear and radial gradients; drop shadow; multiply, screen and overlay
   blending — **all three are on screen; the shadow is not in the PDF.**
   - The shadow is drawn **behind the object and outside its composite group**. A

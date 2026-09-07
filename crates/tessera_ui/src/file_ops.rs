@@ -112,6 +112,39 @@ pub fn place(state: &mut crate::app::TesseraApp) {
 ///
 /// Offering TIFF and PSD here would be offering something that then fails to
 /// draw, which is worse than not offering it.
+/// Adopt one of the profiles on offer as the document’s output intent.
+///
+/// Reads the bytes here rather than at draw time, so an unusable profile is
+/// reported while the person is still looking at the list they chose it from.
+pub fn adopt_output_intent(state: &mut crate::app::TesseraApp, choice: &crate::catalogue::Choice) {
+    let Some(bytes) = choice.bytes() else {
+        state.status = Some(crate::app::Status::error(format!(
+            "could not read {}",
+            choice.label()
+        )));
+        return;
+    };
+    let profile = match tessera_color::managed::OutputProfile::from_bytes(bytes) {
+        Ok(profile) => profile,
+        Err(error) => {
+            state.status = Some(crate::app::Status::error(error.to_string()));
+            return;
+        }
+    };
+
+    crate::command::apply(
+        state,
+        crate::command::Command::SetOutputIntent(Some(Box::new(
+            tessera_document::intent::OutputIntent {
+                description: profile.description().to_string(),
+                profile: profile.bytes().to_vec(),
+                rendering: tessera_document::intent::Rendering::default(),
+            },
+        ))),
+    );
+    state.soft_proof.showing = true;
+}
+
 /// Choose the press this document is being prepared for.
 ///
 /// The profile’s **bytes** go into the document, not its path: a layout that

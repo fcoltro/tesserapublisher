@@ -87,9 +87,9 @@ fn space_of(profile: &Profile) -> Result<(usize, &'static str), ProfileError> {
     match profile.color_space() {
         lcms2::ColorSpaceSignature::CmykData => Ok((4, "CMYK")),
         lcms2::ColorSpaceSignature::RgbData => Ok((3, "RGB")),
-        lcms2::ColorSpaceSignature::GrayData => {
-            Err(ProfileError::UnsupportedSpace { found: "greyscale" })
-        }
+        // A mono job is a real job. A newspaper printed in one ink has a
+        // greyscale output intent, and refusing it would refuse that work.
+        lcms2::ColorSpaceSignature::GrayData => Ok((1, "Grey")),
         _ => Err(ProfileError::UnsupportedSpace { found: "other" }),
     }
 }
@@ -183,6 +183,15 @@ impl OutputProfile {
         // source, the destination the *screen* actually is, and the profile being
         // proofed as a third. Doing it as two chained transforms would double the
         // rounding and lose gamut-clipping information between them.
+        //
+        // **`SOFT_PROOFING` is not optional here.** Without it Little CMS is free
+        // to notice that the source and the destination are the same profile and
+        // collapse the whole thing to an identity, throwing the proofing profile
+        // away — so the proof silently does nothing and every colour comes back
+        // exactly as it went in. That is the worst possible failure for this
+        // feature, because it looks like a press with a perfect gamut. A test
+        // pins it: two spaces of different width must not proof one colour
+        // identically.
         let transform = Transform::new_proofing(
             &screen,
             PixelFormat::RGB_FLT,
@@ -191,7 +200,7 @@ impl OutputProfile {
             &self.profile,
             intent.to_lcms(),
             Intent::RelativeColorimetric,
-            lcms2::Flags::default(),
+            lcms2::Flags::SOFT_PROOFING,
         )
         .map_err(|_| ProfileError::NoTransform)?;
 
@@ -214,6 +223,9 @@ impl OutputProfile {
                 .map_err(|_| ProfileError::NoTransform)?,
             )
         } else {
+            // Three-channel and one-channel outputs both take the round trip: a
+            // colour specified in RGB is not in a greyscale press’s own space
+            // either, so there is nothing to convert *from*.
             None
         };
 
@@ -399,8 +411,11 @@ mod tests {
 
     #[test]
     fn proofing_against_the_screens_own_profile_changes_almost_nothing() {
-        // The identity case, and the one that catches the plumbing being wired
-        // backwards: sRGB proofed for sRGB is sRGB.
+        // The identity case: sRGB proofed for sRGB is sRGB. On its own this test
+        // is weak — it also passed while the proof was doing nothing at all — so
+        // the one that has teeth is
+        // `profiles::tests::a_wider_space_really_is_wider`, which proves the
+        // proofing profile is not being thrown away.
         let proof = a_profile()
             .proof(Rendering::RelativeColorimetric)
             .expect("a proof");

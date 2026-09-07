@@ -231,6 +231,12 @@ pub struct TesseraApp {
     /// the active tool.
     pub soft_proof: crate::softproof::SoftProof,
 
+    /// The profiles on offer, found once.
+    ///
+    /// Application state: which profiles a machine has is a fact about the
+    /// machine, not about the document.
+    pub profiles: crate::catalogue::Catalogue,
+
     pub snapping: bool,
     /// The lines the object being dragged is currently settled on, for the
     /// indicator. Cleared when the gesture ends.
@@ -345,6 +351,7 @@ impl TesseraApp {
             pages_window: PagesWindow::default(),
             images: tessera_render::images::Images::new(),
             soft_proof: crate::softproof::SoftProof::default(),
+            profiles: crate::catalogue::Catalogue::default(),
             snapping: true,
             snapped_to: None,
             editing_master: None,

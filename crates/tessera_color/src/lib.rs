@@ -11,6 +11,7 @@
 //! as an approximation so it is never mistaken for a silent fallback.
 
 pub mod managed;
+pub mod profiles;
 
 use serde::{Deserialize, Serialize};
 

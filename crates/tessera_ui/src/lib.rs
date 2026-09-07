@@ -8,6 +8,7 @@ pub mod actions;
 pub mod align;
 pub mod app;
 pub mod camera;
+pub mod catalogue;
 pub mod command;
 pub mod cursor;
 pub mod file_ops;
