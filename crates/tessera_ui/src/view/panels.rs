@@ -1377,6 +1377,13 @@ fn shadow_controls(
 /// and its object's opacity are different facts and offering both in one place
 /// is how a person comes to believe they are the same control. A shadow has no
 /// such pair — its alpha *is* how much of it shows.
+pub(crate) fn swatch_picker(ui: &mut Ui, rgba: &mut [f32; 4]) -> bool {
+    // A swatch offers alpha, because a named colour at 60% is a thing a person
+    // defines once and refers to everywhere. That is different from an object’s
+    // opacity, which is about one object.
+    shadow_picker(ui, rgba)
+}
+
 fn shadow_picker(ui: &mut Ui, rgba: &mut [f32; 4]) -> bool {
     let mut colour = egui::Rgba::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
     let changed = egui::widgets::color_picker::color_edit_button_rgba(

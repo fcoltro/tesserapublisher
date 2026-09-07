@@ -29,10 +29,17 @@ pub enum Dock {
     Pages,
     Layers,
     Styles,
+    Swatches,
 }
 
 impl Dock {
-    pub const ALL: [Dock; 4] = [Dock::Properties, Dock::Pages, Dock::Layers, Dock::Styles];
+    pub const ALL: [Dock; 5] = [
+        Dock::Properties,
+        Dock::Pages,
+        Dock::Layers,
+        Dock::Styles,
+        Dock::Swatches,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -40,6 +47,7 @@ impl Dock {
             Dock::Pages => "Pages",
             Dock::Layers => "Layers",
             Dock::Styles => "Styles",
+            Dock::Swatches => "Swatches",
         }
     }
 
@@ -49,6 +57,7 @@ impl Dock {
             Dock::Pages => Icon::Duplicate,
             Dock::Layers => Icon::Layers,
             Dock::Styles => Icon::Pilcrow,
+            Dock::Swatches => Icon::Palette,
         }
     }
 
@@ -63,6 +72,7 @@ impl Dock {
             Dock::Pages => state.pages_window.open,
             Dock::Layers => state.layers_window.open,
             Dock::Styles => state.styles_window.open,
+            Dock::Swatches => state.swatches_window.open,
         }
     }
 
@@ -72,6 +82,7 @@ impl Dock {
             Dock::Pages => state.pages_window.open = open,
             Dock::Layers => state.layers_window.open = open,
             Dock::Styles => state.styles_window.open = open,
+            Dock::Swatches => state.swatches_window.open = open,
         }
     }
 }
@@ -147,6 +158,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp, dock: Dock) {
         Dock::Pages => crate::view::pages::docked(ui, state),
         Dock::Layers => crate::view::layers::docked(ui, state),
         Dock::Styles => crate::view::styles::docked(ui, state),
+        Dock::Swatches => crate::view::swatches::docked(ui, state),
     }
 }
 
@@ -161,7 +173,7 @@ mod tests {
         // nothing would be a blank column.
         let state = TesseraApp::headless();
         assert!(Dock::Properties.is_open(&state));
-        for dock in [Dock::Pages, Dock::Layers, Dock::Styles] {
+        for dock in [Dock::Pages, Dock::Layers, Dock::Styles, Dock::Swatches] {
             assert!(!dock.is_open(&state), "{} starts shut", dock.title());
         }
     }

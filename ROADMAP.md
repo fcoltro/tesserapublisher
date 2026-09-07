@@ -943,9 +943,22 @@ full argument, with sources, is in `docs/superpowers/specs/`.
   - Lab converts through **D50**, the illuminant a printing standard assumes,
     and is the plain formula — a placeholder for the ICC transform in the same
     documented way the CMYK conversion has been since milestone 0.
-- [~] Global colours that cascade on edit — **the model is done, the panel is
-  not.** Objects store the swatch's *name*, so editing it changes every one of
-  them without any being touched, and there is a test that does exactly that.
+- [x] Global colours that cascade on edit. Objects store the swatch's *name*, so
+  editing it changes every one of them without any being touched, and there is a
+  test that does exactly that.
+  - The panel is a list of the document's **definitions**, not a palette to pick
+    from. That is what a swatch is: rename one and every object follows.
+  - Deleting one **says what it costs first**. "Remove Brand red" is a different
+    decision when four objects use it than when none do, and a panel that does
+    not say which is asking somebody to guess.
+  - The chosen swatch is held **by name, not by index**. The list is reordered by
+    every rename, and an index would quietly start pointing at a different
+    colour.
+  - A new swatch takes the **selected object's colour**, because naming the colour
+    you are looking at is what "new swatch" almost always means. With nothing
+    selected it is a plain black — a colour rather than a surprise.
+  - Only the swatch being worked on carries a picker. Every row carrying one
+    would be a column of pickers, and one is edited at a time.
   - `Color::Swatch` carries **no fallback**, deliberately. A fallback is a
     second copy of the value, and the second copy is what a global colour
     exists to avoid — so a swatch cannot resolve itself and a document must be

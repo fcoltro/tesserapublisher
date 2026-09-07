@@ -504,7 +504,7 @@ mod tests {
             .filter(|a| a.group == Group::Window)
             .map(|a| a.name)
             .collect();
-        assert_eq!(named, vec!["Pages", "Layers"]);
+        assert_eq!(named, vec!["Pages", "Layers", "Swatches"]);
         assert_eq!(Group::Window.menu(), Some("Window"));
     }
 

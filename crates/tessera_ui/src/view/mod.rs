@@ -14,6 +14,7 @@ pub mod panels;
 pub mod rail;
 pub mod rulers;
 pub mod styles;
+pub mod swatches;
 pub mod text_edit;
 pub mod vello_host;
 pub mod viewport;

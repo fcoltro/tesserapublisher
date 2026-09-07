@@ -173,6 +173,21 @@ pub struct StylesWindow {
     pub paragraph: Option<tessera_text::story::ParagraphStyleId>,
 }
 
+/// The Swatches panel: open or not, and which swatch is being worked on.
+///
+/// View state, not document data. Which swatch you happen to have selected in a
+/// panel is not part of the document and must not make it dirty, land in undo,
+/// or travel in the file.
+#[derive(Default)]
+pub struct SwatchesWindow {
+    pub open: bool,
+    /// The swatch whose value is being edited, by name.
+    ///
+    /// By name rather than by index, because the list is reordered by every
+    /// rename and an index would quietly start pointing at a different colour.
+    pub chosen: Option<String>,
+}
+
 /// Everything the application holds.
 ///
 /// Constructed with [`TesseraApp::headless`] in tests, so the command layer,
@@ -235,6 +250,9 @@ pub struct TesseraApp {
     /// selected in a panel is not part of the document and must not make it
     /// dirty, land in undo, or travel in the file.
     pub styles_window: StylesWindow,
+
+    /// The swatches panel.
+    pub swatches_window: SwatchesWindow,
 
     /// How much of the document is shown, and whether the interface is.
     pub screen_mode: ScreenMode,
@@ -312,6 +330,7 @@ impl TesseraApp {
             shaper: Shaper::new(),
             active_tool: Tool::Select,
             styles_window: StylesWindow::default(),
+            swatches_window: SwatchesWindow::default(),
             pages_window: PagesWindow::default(),
             images: tessera_render::images::Images::new(),
             snapping: true,

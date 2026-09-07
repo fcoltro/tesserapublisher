@@ -91,6 +91,7 @@ impl Group {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Run {
     ToggleStyles,
+    ToggleSwatches,
     TogglePages,
     ToggleLayers,
     ToggleSnapping,
@@ -432,6 +433,10 @@ pub fn all() -> &'static [Action] {
         // The last menu milestone 1.5 named as absent for having no commands.
         a("Pages", Some("F12"), Group::Window, TogglePages),
         a("Layers", Some("F7"), Group::Window, ToggleLayers),
+        // Under Window rather than Type: a swatch is a document-wide colour, not
+        // a property of text, and putting it beside the paragraph styles would
+        // say it was one.
+        a("Swatches", Some("F6"), Group::Window, ToggleSwatches),
         a("Snap to guides", None, Group::View, ToggleSnapping),
         //
         a(
@@ -501,6 +506,10 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         Run::Place => crate::file_ops::place(state),
         Run::ToggleStyles => {
             let window = &mut state.styles_window;
+            window.open = !window.open;
+        }
+        Run::ToggleSwatches => {
+            let window = &mut state.swatches_window;
             window.open = !window.open;
         }
         Run::TogglePages => {
