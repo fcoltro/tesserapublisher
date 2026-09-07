@@ -413,10 +413,22 @@ fn build_inner(
             // The artwork, clipped by its container. The clip is what
             // makes a crop a crop: content larger than the frame is cut
             // by it rather than spilling onto the page.
+            // How big the artwork actually lands on screen, in device pixels.
+            // Asking for a proxy that size is what lets the disk cache do
+            // anything: a thumbnail wants a thumbnail, not a 40-megapixel
+            // photograph shrunk on every frame.
+            let scale = transform.determinant().abs().sqrt().max(f64::EPSILON);
+            let across = (rect.width().max(rect.height()) * scale).ceil().max(1.0);
+            let wanted = if across.is_finite() && across < f64::from(u32::MAX) {
+                Some(across as u32)
+            } else {
+                None
+            };
+
             let drawn = source.as_ref().and_then(|path| {
                 images
                     .as_mut()
-                    .and_then(|cache| cache.get(path))
+                    .and_then(|cache| cache.at_size(path, wanted))
                     .map(|decoded| (decoded.image.clone(), decoded.pixels))
             });
 

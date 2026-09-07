@@ -932,10 +932,38 @@ full argument, with sources, is in `docs/superpowers/specs/`.
   - The threshold is a **preference**, not a constant: 300 is the bar for
     offset litho, 150 is fine for newsprint, and 72 is right for a screen PDF.
     A hard-coded 300 would cry wolf at every newspaper.
-- [~] Disk-backed proxy cache, so downscaling survives a restart — **the
-  in-memory decode cache is done; nothing is written to disk yet.** A page of
-  photographs is decoded once per session rather than once per frame, which is
-  what makes panning usable; surviving a restart is the remaining half.
+- [x] Disk-backed proxy cache, so downscaling survives a restart.
+  - The in-memory cache stops a decode per *frame*; this stops one per *restart*,
+    which is the wait a person actually notices on opening a picture-heavy
+    document. A test proves it: one session writes, a second reads back and
+    decodes nothing.
+  - **Raw RGBA, not PNG.** A proxy is written once and read on every cold start,
+    so reading fast matters and writing small does not. Re-encoding on write and
+    inflating on read would trade away the one thing it exists to buy, and the
+    files are the cache’s own so nothing outside has to read them.
+  - Keyed on the file, its modification time **and** the size asked for. The
+    modification time is there for the same reason as in the memory cache — a
+    cache that served last week’s photograph would be worse than no cache — and
+    a test replaces a file on disk to prove it.
+  - Sizes are **rounded up to a power of two**, so nudging a frame by a point
+    does not throw the proxy away and build another. A dozen sizes per picture
+    would be a cache that never hits.
+  - The **original size is never written**. Putting the full pixels of every
+    photograph in a cache directory would be a copy of the user’s picture
+    library, and a resolution report or an export asks for the original anyway.
+  - It lives in the platform’s *cache* directory, not beside the preferences:
+    everything in it can be rebuilt, so the system is welcome to delete it, and
+    asking a backup to carry derived data — or losing settings because a cache
+    was cleared — would both be wrong.
+  - A truncated or foreign file is **discarded and rebuilt**, never misread. A
+    half-written file that a later read trusts and draws as garbage is the worst
+    failure a cache has, so proxies go out through a temporary and a rename and
+    are checked against their own header on the way back in.
+  - A cache that cannot be written makes Tessera **slower, not broken**: a
+    read-only directory or a full disk is a missed optimisation, not an error.
+  - Where the cache lives is a **field, not a global**, which is both how a
+    portable install can place it and how "today and tomorrow" is testable
+    without an environment variable or an ordering dependency between tests.
 - [ ] `lcms2` integration, **confirmed building on all three platforms.**
 - [x] RGB, CMYK, Lab and spot colour throughout the model. RGB, CMYK and spot
   were built in milestone 0 for exactly this moment; Lab and the swatch

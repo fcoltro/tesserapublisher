@@ -6,6 +6,7 @@
 
 pub mod headless;
 pub mod images;
+pub mod proxies;
 pub mod scene;
 
 pub use headless::{HeadlessRenderer, RenderError};
