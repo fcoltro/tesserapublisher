@@ -158,9 +158,12 @@ mod tests {
     }
 
     #[test]
-    fn glass_is_on_by_default() {
+    fn panels_are_solid_by_default() {
+        // Glass was the default while there was a lit ground worth seeing
+        // through it. There is not any more, so the honest default is the one
+        // that does not ask the reader to look through a panel at nothing.
         let state = TesseraApp::headless();
-        assert!(state.prefs.panel_surface.is_glass());
+        assert!(!state.prefs.panel_surface.is_glass());
     }
 
     #[test]

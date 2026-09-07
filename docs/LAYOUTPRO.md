@@ -71,30 +71,40 @@ two to a row, and the section heading spanning both.
 
 ## Colour
 
-### Dark *(read)*
+### What the prototype does
 
-| Role | Value |
-| --- | --- |
-| Window ground | `#080b14` — a deep near-black, blue-biased |
-| Panels | white-tinted glass over that ground |
-| Accent | purple / indigo |
-| Toggle icon | moon |
+| Role | Dark | Light |
+| --- | --- | --- |
+| Window ground | `#080b14`, a blue-biased near-black | `#eef0f5`, a cool neutral grey |
+| Panels | white-tinted glass | white-tinted glass |
+| Toggle | violet, moon | amber, sun |
 
-### Light *(read)*
+Both themes run off the same variables and cross-fade in 250ms.
 
-| Role | Value |
-| --- | --- |
-| Window ground | `#eef0f5` — a cool neutral grey |
-| Panels | white-tinted glass |
-| Accent | amber on the toggle |
-| Toggle icon | sun |
+### What Tessera does instead, and why
 
-Both themes run off the same variables and cross-fade in **250ms** *(read)*.
+**Tessera's greys are neutral, not cool.** This is a deliberate departure,
+made after seeing the cool palette running, and it is the one place the
+implementation argues with the design.
 
-The near-black is not neutral: it is pulled towards blue, which is what stops
-the purple accent reading as a stain on grey. A neutral `#0a0a0a` with the same
-accent is a different and worse design, so the bias is the point rather than a
-rounding of it.
+A tinted interface makes a claim about the paper beside it. Cool greys make
+warm stock look yellow and warm greys make it look blue, and which way the
+chrome leans is not a judgement this software gets to make on somebody else's
+job — it is the same reason ISO 3664 asks for a neutral surround around a
+proof. In a mockup the tint is styling; in a window somebody colour-corrects
+in for eight hours it is a thumb on the scale.
+
+So the accent carries all the colour there is, and
+`the_greys_are_neutral_in_both_palettes` holds the line.
+
+**There is no lit ground behind the chrome, and panels are solid.** The
+prototype's glass sits over a decorative wash. Tessera had one — three
+coloured lights in `view::ambient` — and it is gone for the reason above: a
+violet gradient beside a proof is a claim about the proof. `lights()` still
+exists, returns nothing, and is the single place a light would go back.
+
+With nothing worth seeing through them, panels default to solid. The glass
+machinery is intact and still selectable; it now frosts a flat ground.
 
 ## What this means for Tessera
 
@@ -111,6 +121,11 @@ panels, a canvas, a status bar and the glass. The gaps are:
 - **A light palette that has been looked at.** The dark one is Tessera's own and
   is close; the light one is currently untested, and this design is not
   optional about having both.
+
+The gradient hairline under the menu bar is kept, and is now the only coloured
+decoration in the window. It stays because it is the design's own identity mark
+rather than a tint applied to a working surface: it sits on the menu bar, not
+beside the page.
 
 ## What will not carry over
 

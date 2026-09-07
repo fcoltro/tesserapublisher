@@ -25,10 +25,13 @@ pub enum ThemeChoice {
 pub enum PanelSurface {
     /// Panels sit beside the canvas and are opaque. The canvas is narrower and
     /// nothing shows through.
+    ///
+    /// **The default.** Glass needs something worth seeing through it, and the
+    /// decorative ground that used to supply that is gone.
+    #[default]
     Solid,
     /// Panels float over the canvas, which extends beneath them, and the
     /// document shows through blurred.
-    #[default]
     Glass,
 }
 

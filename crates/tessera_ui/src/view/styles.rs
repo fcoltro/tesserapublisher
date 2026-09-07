@@ -243,7 +243,7 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp) {
     });
     if let Some(blend) = &mut format.blend {
         let mut percent = blend.alpha() * 100.0;
-        if crate::view::panels::field(ui, "Opacity", |ui| {
+        if crate::view::panels::slider_field(ui, "Opacity", |ui| {
             ui.add(
                 egui::Slider::new(&mut percent, 0.0..=100.0)
                     .suffix("%")

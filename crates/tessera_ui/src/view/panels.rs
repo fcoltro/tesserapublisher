@@ -1364,7 +1364,7 @@ fn effects_section(
     // fraction, which is what every renderer wants. Converted here, once, at
     // the edge.
     let mut percent = blend.alpha() * 100.0;
-    changed |= field(ui, "Opacity", |ui| {
+    changed |= slider_field(ui, "Opacity", |ui| {
         ui.add(
             egui::Slider::new(&mut percent, 0.0..=100.0)
                 .suffix("%")
@@ -1451,7 +1451,7 @@ fn shadow_controls(
     // In points rather than in the document's unit: a blur is not a measurement
     // on the page, it is how soft an edge is, and reading it in millimetres
     // invites somebody to try to line it up with something.
-    changed |= field(ui, "Blur", |ui| {
+    changed |= slider_field(ui, "Blur", |ui| {
         ui.add(
             egui::Slider::new(&mut shadow.blur, 0.0..=MOST_BLUR)
                 .suffix(" pt")
@@ -1789,8 +1789,32 @@ fn set_paragraph(
 /// wrapping. The column is fixed, the label is clipped rather than allowed to
 /// push, and the control begins at the same x in every row of the application.
 pub(crate) fn field<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
-    labelled(ui, label, Theme::LABEL_COLUMN, add)
+    labelled(ui, label, Theme::LABEL_COLUMN, false, add)
 }
+
+/// A labelled **slider**, which is the one control that needs its row split.
+///
+/// Separate from [`field`] rather than detected inside it, because a `Ui`
+/// cannot be asked what is about to be drawn into it. Calling `field` with a
+/// slider is the mistake this name exists to make visible, and
+/// `a_slider_row_fits_the_panel_it_is_in` is the test that catches it.
+pub(crate) fn slider_field<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+    labelled(ui, label, Theme::LABEL_COLUMN, true, add)
+}
+
+/// How wide one row of a properties panel may grow.
+///
+/// A ceiling rather than a size. Rows fill whatever they are given, and this
+/// only stops "whatever they are given" being a whole 4K screen when the
+/// surrounding container has not decided its own width yet.
+const WIDEST_ROW: f32 = 420.0;
+
+/// How wide a slider’s value box is allowed to be.
+///
+/// Sliders are the one control that draws *two* things: a rail, sized from
+/// `spacing.slider_width`, and a value box beside it, sized from
+/// `spacing.interact_size.x`. Everything else here draws one.
+const VALUE_BOX: f32 = 52.0;
 
 /// A labelled control with a chosen label width.
 ///
@@ -1798,7 +1822,17 @@ pub(crate) fn field<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R)
 /// itself and leaving the rest of the panel blank to its right. A 292-point
 /// panel with a 64-point label and a field that draws at its natural 60 was
 /// throwing away more than half its width on every row.
-fn labelled<R>(ui: &mut Ui, label: &str, width: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
+///
+/// `for_slider` is the exception to that, and it exists because giving a
+/// slider all the room twice over is not the same as giving it all the room.
+/// See [`slider_field`].
+fn labelled<R>(
+    ui: &mut Ui,
+    label: &str,
+    width: f32,
+    for_slider: bool,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
     ui.horizontal(|ui| {
         let height = ui.spacing().interact_size.y;
         let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
@@ -1809,11 +1843,30 @@ fn labelled<R>(ui: &mut Ui, label: &str, width: f32, add: impl FnOnce(&mut Ui) -
             egui::TextStyle::Body.resolve(ui.style()),
             Theme::text_muted(),
         );
-        ui.style_mut().spacing.slider_width = ui.available_width();
+        // Clamped, and **not** fed back into a minimum. `available_width` in a
+        // resizable window is however wide the window currently is, so a row
+        // that answers "I need all of it" ratchets: the window grows, the row
+        // grows with it, and it can never be dragged smaller again. That is
+        // what made Preferences open at the size of the screen and refuse to be
+        // adjusted. The control fills the row by being *sized*, never by
+        // asserting a minimum.
+        let room = ui.available_width().min(WIDEST_ROW);
+        let gap = ui.spacing().item_spacing.x;
+
+        // A slider spends the row on a rail *and* a value box. Sized as though
+        // it were one control, each half took the whole row and the row came
+        // out twice the width of the panel — which ran the properties panel
+        // off the right of the window the moment anything with an opacity was
+        // selected. Splitting the room is the whole fix.
+        let (rail, box_) = if for_slider {
+            ((room - VALUE_BOX - gap).max(32.0), VALUE_BOX)
+        } else {
+            (room, room)
+        };
+        ui.style_mut().spacing.slider_width = rail;
+
         ui.scope(|ui| {
-            let room = ui.available_width();
-            ui.set_min_width(room);
-            ui.spacing_mut().interact_size.x = room;
+            ui.spacing_mut().interact_size.x = box_;
             add(ui)
         })
         .inner
@@ -1842,11 +1895,11 @@ pub(crate) fn pair<A, B>(
         let half = (ui.available_width() - Theme::SPACE_2) / 2.0;
         ui.scope(|ui| {
             ui.set_max_width(half);
-            out.0 = Some(labelled(ui, first.0, NARROW, first.1));
+            out.0 = Some(labelled(ui, first.0, NARROW, false, first.1));
         });
         ui.scope(|ui| {
             ui.set_max_width(half);
-            out.1 = Some(labelled(ui, second.0, NARROW, second.1));
+            out.1 = Some(labelled(ui, second.0, NARROW, false, second.1));
         });
     });
     (

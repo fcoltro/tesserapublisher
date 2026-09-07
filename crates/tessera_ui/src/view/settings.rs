@@ -291,13 +291,13 @@ fn appearance(ui: &mut Ui, state: &mut TesseraApp) {
 
     heading(ui, "Glass");
     let mut blur = state.prefs.blur.clamp(BLUR_LEAST, BLUR_MOST);
-    crate::view::panels::field(ui, "Blur", |ui| {
+    crate::view::panels::slider_field(ui, "Blur", |ui| {
         ui.add(egui::Slider::new(&mut blur, BLUR_LEAST..=BLUR_MOST).show_value(false));
     });
     state.prefs.blur = blur;
 
     let mut opacity = state.prefs.glass_opacity() * 100.0;
-    crate::view::panels::field(ui, "Opacity", |ui| {
+    crate::view::panels::slider_field(ui, "Opacity", |ui| {
         ui.add(
             egui::Slider::new(&mut opacity, 35.0..=100.0)
                 .suffix("%")
@@ -442,7 +442,7 @@ fn files(ui: &mut Ui, state: &mut TesseraApp) {
 
     if state.prefs.recovery_copy {
         let mut seconds = state.prefs.recovery_seconds;
-        crate::view::panels::field(ui, "Every", |ui| {
+        crate::view::panels::slider_field(ui, "Every", |ui| {
             ui.add(
                 egui::Slider::new(
                     &mut seconds,

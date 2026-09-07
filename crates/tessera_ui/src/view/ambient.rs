@@ -35,7 +35,7 @@
 
 use egui::{Color32, ColorImage};
 
-use crate::theme::{Theme, palette};
+use crate::theme::Theme;
 
 /// How wide the sharp background is generated.
 ///
@@ -63,36 +63,18 @@ struct Light {
     strength: f32,
 }
 
-/// The lights, from the palette in force.
+/// The lights on the ground behind the chrome. **There are none.**
 ///
-/// Built from the theme rather than fixed, so the light background does not get
-/// a ground designed for the dark one. Three of them: two accent-family and one
-/// warm, which is the arrangement the reference uses and the smallest number
-/// that stops the ground looking like a single vignette.
-fn lights() -> [Light; 3] {
-    let p = palette();
-    [
-        Light {
-            at: (0.18, 0.22),
-            radius: 0.55,
-            colour: p.accent,
-            strength: 0.55,
-        },
-        Light {
-            at: (0.82, 0.68),
-            radius: 0.62,
-            colour: p.accent_hover,
-            strength: 0.42,
-        },
-        // The warm one, weakest. It is what keeps the ground from reading as a
-        // single blue wash, and at this strength it is felt rather than seen.
-        Light {
-            at: (0.62, 0.12),
-            radius: 0.40,
-            colour: p.error,
-            strength: 0.22,
-        },
-    ]
+/// There were three — two accent-family and one warm — and together they made
+/// a coloured wash that read as decoration in a window whose whole job is to
+/// let somebody judge colour on a page. An interface that puts a violet
+/// gradient beside a proof is making a claim about the proof.
+///
+/// Kept as a function returning nothing rather than deleted, because the
+/// machinery around it is sound and correct: this is the one place that
+/// decides, and putting a light back is putting a `Light` in this list.
+fn lights() -> [Light; 0] {
+    []
 }
 
 /// Build the background at `width` pixels across, in the window's proportions.
@@ -102,7 +84,7 @@ fn lights() -> [Light; 3] {
 pub fn image(width: usize, aspect: f32) -> ColorImage {
     let width = width.max(2);
     let height = ((width as f32 / aspect.max(0.05)).round() as usize).clamp(2, 4096);
-    let ground = Theme::canvas_bg();
+    let ground = Theme::panel_bg_solid();
     let lights = lights();
 
     let mut pixels = Vec::with_capacity(width * height);
@@ -234,14 +216,19 @@ mod tests {
     }
 
     #[test]
-    fn the_ground_is_lit_rather_than_flat() {
-        // The whole point: a flat fill would be a coloured rectangle, and there
-        // would be nothing for the glass to frost.
+    fn the_ground_is_flat() {
+        // It used to be lit, and the lights are gone. A coloured wash behind the
+        // chrome is decoration in a window whose whole job is letting somebody
+        // judge colour on a page — a violet gradient beside a proof is a claim
+        // about the proof.
+        //
+        // Asserted rather than left to `lights()` being empty, because the
+        // failure this guards is somebody adding "just one" light back.
         let made = image(48, 1.5);
         let first = made.pixels[0];
         assert!(
-            made.pixels.iter().any(|p| *p != first),
-            "the background came out a single colour"
+            made.pixels.iter().all(|p| *p == first),
+            "something is lighting the ground again"
         );
     }
 

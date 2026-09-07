@@ -91,18 +91,18 @@ impl Palette {
 
     pub const DARK: Self = Self {
         steps: [
-            Color32::from_rgb(0x08, 0x0B, 0x14),
-            Color32::from_rgb(0x0D, 0x11, 0x1B),
-            Color32::from_rgb(0x12, 0x16, 0x21),
-            Color32::from_rgb(0x18, 0x1D, 0x29),
-            Color32::from_rgb(0x1F, 0x24, 0x31),
-            Color32::from_rgb(0x27, 0x2D, 0x3B),
-            Color32::from_rgb(0x32, 0x39, 0x48),
-            Color32::from_rgb(0x5C, 0x65, 0x78),
+            Color32::from_rgb(0x0E, 0x0E, 0x0E),
+            Color32::from_rgb(0x14, 0x14, 0x14),
+            Color32::from_rgb(0x1A, 0x1A, 0x1A),
+            Color32::from_rgb(0x21, 0x21, 0x21),
+            Color32::from_rgb(0x28, 0x28, 0x28),
+            Color32::from_rgb(0x31, 0x31, 0x31),
+            Color32::from_rgb(0x3C, 0x3C, 0x3C),
+            Color32::from_rgb(0x66, 0x66, 0x66),
             Color32::from_rgb(0x5B, 0x8D, 0xEF),
             Color32::from_rgb(0x7A, 0xA3, 0xF4),
-            Color32::from_rgb(0x8B, 0x93, 0xA3),
-            Color32::from_rgb(0xE8, 0xEB, 0xF2),
+            Color32::from_rgb(0x94, 0x94, 0x94),
+            Color32::from_rgb(0xEA, 0xEA, 0xEA),
         ],
         canvas_bg: Color32::from_rgb(0x12, 0x12, 0x12),
         // Desaturated from the blue this used to be. A saturated blue on a
@@ -111,24 +111,24 @@ impl Palette {
         accent: Color32::from_rgb(0x5B, 0x8D, 0xEF),
         accent_hover: Color32::from_rgb(0x7A, 0xA3, 0xF4),
         error: Color32::from_rgb(0xF0, 0x8C, 0x82),
-        frame_edge: Color32::from_rgb(0x5C, 0x65, 0x78),
+        frame_edge: Color32::from_rgb(0x66, 0x66, 0x66),
         mode_signal: Color32::from_rgb(0xA7, 0x8B, 0xFA),
     };
 
     pub const LIGHT: Self = Self {
         steps: [
-            Color32::from_rgb(0xFB, 0xFC, 0xFE),
-            Color32::from_rgb(0xF4, 0xF6, 0xFA),
-            Color32::from_rgb(0xEE, 0xF0, 0xF5),
-            Color32::from_rgb(0xE4, 0xE7, 0xEE),
-            Color32::from_rgb(0xDA, 0xDE, 0xE7),
-            Color32::from_rgb(0xCD, 0xD2, 0xDD),
-            Color32::from_rgb(0xB8, 0xBE, 0xCC),
-            Color32::from_rgb(0x86, 0x8D, 0x9E),
+            Color32::from_rgb(0xFC, 0xFC, 0xFC),
+            Color32::from_rgb(0xF5, 0xF5, 0xF5),
+            Color32::from_rgb(0xEE, 0xEE, 0xEE),
+            Color32::from_rgb(0xE5, 0xE5, 0xE5),
+            Color32::from_rgb(0xDC, 0xDC, 0xDC),
+            Color32::from_rgb(0xD0, 0xD0, 0xD0),
+            Color32::from_rgb(0xBB, 0xBB, 0xBB),
+            Color32::from_rgb(0x89, 0x89, 0x89),
             Color32::from_rgb(0x2C, 0x5F, 0xC4),
             Color32::from_rgb(0x23, 0x4E, 0xA6),
-            Color32::from_rgb(0x5A, 0x60, 0x6E),
-            Color32::from_rgb(0x16, 0x19, 0x21),
+            Color32::from_rgb(0x5D, 0x5D, 0x5D),
+            Color32::from_rgb(0x1A, 0x1A, 0x1A),
         ],
         // A light grey, the shade every layout tool has used for a
         // pasteboard. Dark enough to separate from paper, light enough that a
@@ -142,7 +142,7 @@ impl Palette {
         // Dark enough to read on the pasteboard as well as on paper: an
         // empty text frame is invisible without its edge, and it can sit in
         // either place.
-        frame_edge: Color32::from_rgb(0x5F, 0x65, 0x75),
+        frame_edge: Color32::from_rgb(0x62, 0x62, 0x62),
         mode_signal: Color32::from_rgb(0xD9, 0x7A, 0x06),
     };
 }
@@ -714,17 +714,19 @@ mod tests {
     }
 
     #[test]
-    fn the_chrome_is_cool_in_both_palettes() {
-        // The blue bias is the design, not a rounding of it: it is what stops
-        // the accent reading as a stain on grey, and a neutral near-black with
-        // the same accent is a different and worse interface. See
-        // `docs/LAYOUTPRO.md`.
+    fn the_greys_are_neutral_in_both_palettes() {
+        // **No tint either way.** A tinted interface is an interface making a
+        // claim about the paper next to it: cool greys make warm stock look
+        // yellow and warm greys make it look blue, and which way the chrome
+        // leans is not a judgement this software gets to make on somebody
+        // else’s job. The accent carries all the colour there is.
         for (name, p) in [("dark", Palette::DARK), ("light", Palette::LIGHT)] {
             for n in 1..=8 {
                 let c = p.step(n);
+                let spread = c.r().max(c.g()).max(c.b()) - c.r().min(c.g()).min(c.b());
                 assert!(
-                    c.b() > c.r(),
-                    "{name}: step {n} is warm ({}, {}, {})",
+                    spread <= 2,
+                    "{name}: step {n} is tinted ({}, {}, {})",
                     c.r(),
                     c.g(),
                     c.b()
