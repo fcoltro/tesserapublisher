@@ -111,7 +111,6 @@ machinery is intact and still selectable; it now frosts a flat ground.
 Most of it already exists. Tessera has a menu bar, an icon rail, dockable
 panels, a canvas, a status bar and the glass. The gaps are:
 
-- The gradient hairline under the menu bar. Nothing like it exists.
 - The control bar: `X Y W H`, rotation, shear, align, fill/stroke, opacity as a
   strip under the menu, rather than only in the properties panel.
 - Ruler tick numbers and the canvas grid.
@@ -122,10 +121,11 @@ panels, a canvas, a status bar and the glass. The gaps are:
   is close; the light one is currently untested, and this design is not
   optional about having both.
 
-The gradient hairline under the menu bar is kept, and is now the only coloured
-decoration in the window. It stays because it is the design's own identity mark
-rather than a tint applied to a working surface: it sits on the menu bar, not
-beside the page.
+**The gradient hairline is not built.** It was, briefly, and it came out once
+the rest of the interface went neutral: it was then the only coloured thing in a
+window built to let somebody judge colour on a page, and a violet-to-cyan line
+reads as a claim rather than as trim. Nothing about the rest of the design
+depends on it.
 
 ## What will not carry over
 

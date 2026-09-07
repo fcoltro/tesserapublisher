@@ -31,15 +31,17 @@ pub enum Page {
     General,
     Appearance,
     Workspaces,
+    Shortcuts,
     Colour,
     Files,
 }
 
 impl Page {
-    pub const ALL: [Page; 5] = [
+    pub const ALL: [Page; 6] = [
         Page::General,
         Page::Appearance,
         Page::Workspaces,
+        Page::Shortcuts,
         Page::Colour,
         Page::Files,
     ];
@@ -49,6 +51,7 @@ impl Page {
             Page::General => "General",
             Page::Appearance => "Appearance",
             Page::Workspaces => "Workspaces",
+            Page::Shortcuts => "Shortcuts",
             Page::Colour => "Colour",
             Page::Files => "Files",
         }
@@ -60,6 +63,7 @@ impl Page {
             Page::General => Icon::Scale,
             Page::Appearance => Icon::Blend,
             Page::Workspaces => Icon::Layers,
+            Page::Shortcuts => Icon::TextCursor,
             Page::Colour => Icon::Palette,
             Page::Files => Icon::Duplicate,
         }
@@ -78,6 +82,12 @@ pub struct SettingsWindow {
     /// preferences file rewritten because somebody looked at it is a modified
     /// time that lies.
     opened_with: Option<Preferences>,
+    /// The action whose shortcut is waiting for a key press, if any.
+    ///
+    /// By name rather than by index, so the list can be reordered or filtered
+    /// underneath a capture in progress without the keys landing on whatever
+    /// moved into that row.
+    pub capturing: Option<String>,
 }
 
 /// The window, if it is open.
@@ -157,6 +167,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
                     Page::General => general(ui, state),
                     Page::Appearance => appearance(ui, state),
                     Page::Workspaces => workspaces(ui, state),
+                    Page::Shortcuts => shortcuts(ui, state),
                     Page::Colour => colour(ui, state),
                     Page::Files => files(ui, state),
                 });
@@ -215,6 +226,7 @@ fn restore(state: &mut TesseraApp) {
                 }
             }
         }
+        Page::Shortcuts => state.prefs.shortcuts.clear(),
         Page::Colour => {
             state.prefs.minimum_ppi = fresh.minimum_ppi;
         }
@@ -390,6 +402,149 @@ fn describe(saved: &crate::workspace::Workspace) -> String {
     saved.open.join(", ")
 }
 
+/// Every command that can carry a shortcut, and what it carries.
+///
+/// **The list is `actions::all()`, not a copy of it.** A settings page that
+/// enumerated its own commands would go stale the moment one was added, and the
+/// stale half would be the half nobody could remap.
+fn shortcuts(ui: &mut Ui, state: &mut TesseraApp) {
+    note(
+        ui,
+        "Click a shortcut and press the keys you want. Backspace clears it; Esc \
+         leaves it alone.",
+    );
+
+    let capturing = state.settings.capturing.clone();
+    if let Some(name) = &capturing {
+        // Read the keys before anything else draws, so the chord being pressed
+        // is not consumed by whatever it happens to collide with.
+        if let Some(pressed) = captured(ui) {
+            match pressed {
+                Captured::Cancel => state.settings.capturing = None,
+                Captured::Clear => {
+                    if let Some(action) = crate::actions::all().iter().find(|a| a.name == *name) {
+                        state.prefs.shortcuts.set(action, None);
+                    }
+                    state.settings.capturing = None;
+                }
+                Captured::Chord(chord) => {
+                    if let Some(action) = crate::actions::all().iter().find(|a| a.name == *name) {
+                        state.prefs.shortcuts.set(action, Some(chord));
+                    }
+                    state.settings.capturing = None;
+                }
+            }
+        }
+    }
+
+    let mut start = None;
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for menu in ["File", "Edit", "Layout", "Object", "Type", "View", "Window"] {
+                let group: Vec<_> = crate::actions::all()
+                    .iter()
+                    .filter(|a| a.group.menu() == Some(menu))
+                    .collect();
+                if group.is_empty() {
+                    continue;
+                }
+                heading(ui, menu);
+
+                for action in group {
+                    ui.horizontal(|ui| {
+                        ui.label(action.name);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let waiting = capturing.as_deref() == Some(action.name);
+                            let shown = if waiting {
+                                "Press keys\u{2026}".to_string()
+                            } else {
+                                match state.prefs.shortcuts.chord(action) {
+                                    Some(chord) => chord.label(),
+                                    // Not blank: a blank cell reads as a
+                                    // rendering failure, and "none" is a
+                                    // fact worth stating.
+                                    None => "\u{2014}".to_string(),
+                                }
+                            };
+                            let changed = state.prefs.shortcuts.is_changed(action);
+                            let text = if changed {
+                                egui::RichText::new(shown).color(Theme::accent())
+                            } else {
+                                egui::RichText::new(shown).color(Theme::text_muted())
+                            };
+                            if ui
+                                .selectable_label(waiting, text)
+                                .on_hover_text(if changed {
+                                    "Changed from the shipped shortcut"
+                                } else {
+                                    "Click to change"
+                                })
+                                .clicked()
+                            {
+                                start = Some(action.name.to_string());
+                            }
+                        });
+                    });
+
+                    // A clash is worth saying where it is made rather than in a
+                    // summary somewhere else, and it is a warning rather than a
+                    // refusal: two chords can share when they can never be
+                    // reachable at the same moment.
+                    if let Some(other) = state
+                        .prefs
+                        .shortcuts
+                        .chord(action)
+                        .and_then(|chord| state.prefs.shortcuts.clash(chord, action))
+                    {
+                        note(ui, &format!("Also {other}. Only one of them will fire."));
+                    }
+                }
+            }
+        });
+
+    if let Some(name) = start {
+        state.settings.capturing = Some(name);
+    }
+}
+
+/// What a key press during capture meant.
+enum Captured {
+    Chord(crate::keys::Chord),
+    Clear,
+    Cancel,
+}
+
+/// The chord being pressed, if the press has finished.
+///
+/// Modifier keys alone are ignored rather than accepted: somebody reaching for
+/// Ctrl+Shift+K holds Ctrl first, and a capture that took the first key down
+/// would record `Ctrl` and stop listening before they finished.
+fn captured(ui: &Ui) -> Option<Captured> {
+    ui.ctx().input(|i| {
+        for event in &i.events {
+            let egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } = event
+            else {
+                continue;
+            };
+            return Some(match key {
+                egui::Key::Escape => Captured::Cancel,
+                egui::Key::Backspace | egui::Key::Delete => Captured::Clear,
+                key => Captured::Chord(crate::keys::Chord {
+                    modifiers: *modifiers,
+                    key: *key,
+                }),
+            });
+        }
+        None
+    })
+}
+
 fn colour(ui: &mut Ui, state: &mut TesseraApp) {
     heading(ui, "Artwork resolution");
     let mut ppi = state.prefs.minimum_ppi;
@@ -514,7 +669,7 @@ mod tests {
     fn every_page_has_a_name_and_an_icon() {
         // A column of icons with no names is a puzzle; names with no icons is a
         // list you have to read every time.
-        assert_eq!(Page::ALL.len(), 5);
+        assert_eq!(Page::ALL.len(), 6);
         for page in Page::ALL {
             assert!(!page.title().is_empty());
         }

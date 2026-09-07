@@ -112,6 +112,81 @@ pub enum Run {
     ZoomToFit,
 }
 
+/// When an action may be reached from the keyboard.
+///
+/// **Stated per action rather than implied by the order of an `if` chain.**
+/// The old accelerator handler encoded this by writing the file and history
+/// chords above an early `return` and the object chords below it, which worked
+/// and could not be read, tested, or extended without re-deriving it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Guard {
+    /// Whatever has the keyboard. Saving and undoing mean the same thing with
+    /// a caret live as without one.
+    Always,
+    /// Not while text is being edited. These chords belong to the text there —
+    /// consuming them is what made Ctrl+V paste a duplicate frame instead of
+    /// the clipboard’s text and Ctrl+A select frames instead of characters.
+    NotWhileTyping,
+    /// Not while typing, and not with nothing selected. There is no object to
+    /// do it to.
+    NeedsSelection,
+}
+
+/// When this action may fire from the keyboard.
+///
+/// Derived from what the action *is* rather than stored beside it, so a new
+/// action cannot be added without an answer and cannot be given the wrong one
+/// by copying the line above it.
+pub fn guard(run: Run) -> Guard {
+    use Cmd::*;
+    match run {
+        // The document, the window, and history. All of these mean the same
+        // thing wherever the caret is.
+        Run::NewDocument
+        | Run::Open
+        | Run::Save
+        | Run::SaveAs
+        | Run::ExportPdf
+        | Run::Package
+        | Run::Place
+        | Run::OpenSettings
+        | Run::ChooseOutputIntent
+        | Run::TogglePreflight
+        | Run::ToggleStyles
+        | Run::ToggleSoftProof
+        | Run::ToggleSwatches
+        | Run::TogglePages
+        | Run::ToggleLayers
+        | Run::ToggleSnapping
+        | Run::ScreenMode(_)
+        | Run::ZoomToFit
+        | Run::Command(Undo | Redo) => Guard::Always,
+
+        // Something has to be selected for these to mean anything.
+        Run::Command(
+            Cut
+            | Copy
+            | Duplicate
+            | Delete
+            | GroupObjects
+            | UngroupObjects
+            | Z(_)
+            | Align(_, _)
+            | Distribute(_)
+            | Flip { .. }
+            | Rotate90 { .. }
+            | SwapFillAndStroke
+            | DefaultFillAndStroke
+            | ClearFill
+            | ThreadSelection
+            | UnthreadSelection,
+        ) => Guard::NeedsSelection,
+
+        // Everything else: page commands, paste, select-all, picking a tool.
+        Run::Command(_) | Run::PickTool(_) => Guard::NotWhileTyping,
+    }
+}
+
 /// The document commands an action can name.
 ///
 /// A parallel to `Command` holding only the variants that need no argument
@@ -698,6 +773,96 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn every_action_with_a_shortcut_says_when_it_may_fire() {
+        // `guard` matches on `Run` exhaustively, so this cannot fail to compile
+        // — but it can quietly answer `NotWhileTyping` for something that should
+        // be `Always`, which is a shortcut that stops working the moment
+        // somebody clicks into a text frame. Named here so the list is
+        // reviewable rather than buried in a match arm.
+        for action in all() {
+            if action.shortcut.is_none() {
+                continue;
+            }
+            let expected = match action.name {
+                "New document"
+                | "Open\u{2026}"
+                | "Save"
+                | "Save as\u{2026}"
+                | "Export PDF\u{2026}"
+                | "Package\u{2026}"
+                | "Place artwork\u{2026}"
+                | "Undo"
+                | "Redo"
+                | "Preferences..."
+                | "Soft proof"
+                | "Pages"
+                | "Layers"
+                | "Swatches"
+                | "Preflight"
+                | "Paragraph and character styles"
+                | "Preview view" => Guard::Always,
+                "Cut"
+                | "Copy"
+                | "Duplicate"
+                | "Delete"
+                | "Group"
+                | "Ungroup"
+                | "No fill"
+                | "Bring forward"
+                | "Bring to front"
+                | "Send backward"
+                | "Send to back"
+                | "Swap fill and stroke"
+                | "Default fill and stroke" => Guard::NeedsSelection,
+                _ => Guard::NotWhileTyping,
+            };
+            assert_eq!(
+                guard(action.run),
+                expected,
+                "{} fires at the wrong time",
+                action.name
+            );
+        }
+    }
+
+    #[test]
+    fn saving_works_with_a_caret_live() {
+        // The one rule the old if-chain got right, encoded there as "these are
+        // above the early return". Saving and undoing mean the same thing
+        // wherever the caret is.
+        for name in ["Save", "Undo", "Redo"] {
+            let action = all().iter().find(|a| a.name == name).expect(name);
+            assert_eq!(guard(action.run), Guard::Always, "{name} needs the caret");
+        }
+    }
+
+    #[test]
+    fn the_chords_that_belong_to_text_do_not_fire_while_typing() {
+        // Consuming these is what made Ctrl+V paste a duplicate frame instead of
+        // the clipboard's text, and Ctrl+A select frames instead of characters.
+        for name in ["Paste", "Select all", "Cut", "Copy"] {
+            let action = all().iter().find(|a| a.name == name).expect(name);
+            assert_ne!(
+                guard(action.run),
+                Guard::Always,
+                "{name} would be taken from the text"
+            );
+        }
+    }
+
+    #[test]
+    fn picking_a_tool_never_interrupts_typing() {
+        // Every tool key is a bare letter. `T` with a caret live is the letter
+        // T. The handler also refuses bare chords while typing outright; this is
+        // the half of that rule which is stated on the action.
+        for action in all() {
+            if matches!(action.run, Run::PickTool(_)) {
+                assert_ne!(guard(action.run), Guard::Always, "{}", action.name);
+            }
+        }
+    }
     use super::*;
     use std::collections::HashSet;
 

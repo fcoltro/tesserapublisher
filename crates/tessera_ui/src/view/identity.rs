@@ -1,63 +1,18 @@
-//! The two marks that make the interface recognisably itself.
+//! The switch that says which theme is on.
 //!
-//! A hairline of colour under the menu bar, and the switch that says which
-//! theme is on. Neither does anything a layout tool needs; both are the whole
-//! of what somebody remembers about a window they look at all day, which is why
-//! they are worth the eighty lines.
+//! This module also held a gradient hairline under the menu bar, taken from the
+//! prototype. It was removed once the rest of the interface went neutral: it was
+//! then the only coloured thing in a window built to let somebody judge colour
+//! on a page, and a violet-to-cyan line reads as a claim rather than as trim.
 //!
-//! Taken from the prototype recorded in `docs/LAYOUTPRO.md`.
+//! The switch stays, because saying which theme is on is information rather
+//! than decoration.
 
-use egui::{Color32, Rect, Ui};
+use egui::Ui;
 
 use crate::app::TesseraApp;
 use crate::prefs::ThemeChoice;
 use crate::theme::Theme;
-
-/// How thick the hairline is.
-///
-/// Two points, not one. A one-point line is a hair on the screen that people
-/// try to wipe off, and at two it reads as a deliberate edge. It does not grow
-/// beyond that: a band of colour under the menu is a title bar, and this is a
-/// rule.
-const HAIRLINE: f32 = 2.0;
-
-/// The colours the hairline runs through, left to right.
-///
-/// Violet into blue into cyan. Three stops rather than two because a two-stop
-/// ramp across a whole window reads as a flat wash — the eye needs the turn in
-/// the middle to see that it is a gradient at all.
-const RAMP: [Color32; 3] = [
-    Color32::from_rgb(0x8B, 0x5C, 0xF6),
-    Color32::from_rgb(0x3B, 0x82, 0xF6),
-    Color32::from_rgb(0x22, 0xD3, 0xEE),
-];
-
-/// Draw the hairline across the full width of `rect`'s bottom edge.
-///
-/// Painted as a mesh with a colour per vertex rather than as a stack of little
-/// rectangles: the gradient is then the GPU's interpolation, exact at any
-/// width, instead of a hundred bands that show their seams on a high-density
-/// screen.
-pub fn hairline(ui: &Ui, rect: Rect) {
-    let top = rect.bottom() - HAIRLINE;
-    let mut mesh = egui::Mesh::default();
-
-    for (at, colour) in RAMP.iter().enumerate() {
-        let across = at as f32 / (RAMP.len() - 1) as f32;
-        let x = rect.left() + rect.width() * across;
-        mesh.colored_vertex(egui::pos2(x, top), *colour);
-        mesh.colored_vertex(egui::pos2(x, rect.bottom()), *colour);
-    }
-
-    // Two triangles per span between stops.
-    for span in 0..RAMP.len() as u32 - 1 {
-        let left = span * 2;
-        mesh.add_triangle(left, left + 1, left + 2);
-        mesh.add_triangle(left + 1, left + 2, left + 3);
-    }
-
-    ui.painter().add(egui::Shape::mesh(mesh));
-}
 
 /// The switch that changes theme, and says which one is on.
 ///
@@ -142,17 +97,6 @@ pub fn theme_switch(ui: &mut Ui, state: &mut TesseraApp) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn the_ramp_turns_in_the_middle() {
-        // Two stops across a whole window read as a flat wash. The middle stop
-        // is what makes it legible as a gradient rather than as a smudge.
-        assert!(RAMP.len() >= 3, "the ramp cannot turn");
-        let ends_apart = (i32::from(RAMP[0].r()) - i32::from(RAMP[2].r())).abs()
-            + (i32::from(RAMP[0].b()) - i32::from(RAMP[2].b())).abs();
-        assert!(ends_apart > 60, "the ends are too close to read as a ramp");
-    }
 
     #[test]
     fn the_switch_is_not_drawn_in_the_accent() {

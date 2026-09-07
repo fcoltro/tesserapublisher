@@ -1478,17 +1478,70 @@ milestone the layout is fixed: a tool strip, one inspector, and the canvas.
 
 - [ ] Dockable panels: drag between regions, tabbed stacks, splitters, icon
   rail. **Floating panels remain out of scope** (see the spec, section 14).
-- [ ] Named workspaces, saved and restored, with presets.
-- [ ] Full menu bar with accelerators.
-- [ ] A keyboard shortcut for every common command, user-remappable.
-- [ ] Theme tokens complete; light and dark both finished → **moved to
+- [x] Named workspaces, saved and restored, with presets.
+  - Panels, their order, and the rail. **Not** the theme, the document, or
+    where the page was scrolled to: those belong to the person and to the work,
+    and a workspace that restored them would mean switching from Layout to
+    Prepress turned the lights off and threw away your place on the page.
+  - Applying one **closes what it does not ask for**, or switching from a
+    crowded arrangement to a spare one leaves the crowd behind and the spare
+    workspace is only spare the first time it is used.
+  - Panels are stored by name, so an arrangement saved by an older build still
+    applies minus the part this build cannot honour.
+  - A settings page removes them. A list that can only be added to is a list
+    that fills up, and workspaces are made by hand from whatever the panels
+    happened to be doing.
+- [x] Full menu bar with accelerators.
+- [x] A keyboard shortcut for every common command, user-remappable.
+  - **The shortcut was written down twice**, and that was the whole problem:
+    `actions.rs` carried `Some("Ctrl+N")` as a label and the handler separately
+    matched `pressed(cmd, Key::N)`. Two descriptions of one fact, free to
+    disagree, with no test able to notice \u2014 and the reason remapping was
+    impossible, because changing the string changed the label and nothing else.
+  - Wiring the handler to the table found two shortcuts wrong for months.
+    Duplicate and Place both claimed `Ctrl+D`; the handler fired Duplicate and
+    the File menu advertised Place, so a shortcut that had never once worked
+    was documented in a menu. Normal view and Preview view both claimed `W`.
+    `the_shipped_table_has_no_clashes` now stands guard.
+  - It also brought a dozen documented-but-dead chords alive at once: `F6`,
+    `F8`, `Ctrl+,`, `Ctrl+Y`, `Del`, `/`, and every tool key were in the table
+    and in the menus, and nothing listened for any of them.
+  - **When an action may fire is stated on the action**, as a `Guard`. The old
+    handler encoded it by writing the file and history chords above an early
+    `return` and the object chords below it \u2014 which worked, and could not be
+    read, tested or extended without re-deriving it.
+  - A bare key belongs to the text whatever its action says: `T` with a caret
+    live is the letter T, and the handler refuses bare chords while typing
+    outright rather than trusting each guard to remember.
+  - Only *changes* are stored. A file holding all sixty would freeze this
+    build's defaults into it, and the next version's better chord for something
+    nobody remapped would never arrive.
+  - A clash is reported where it is made and **not refused**: two chords can
+    share when they can never be reachable at the same moment, and the settings
+    page says so rather than deciding.
+- [x] Theme tokens complete; light and dark both finished \u2192 **moved to
   milestone 1.5, phase A**, with contrast asserted by a test.
-- [ ] Preferences dialog. *The store itself lands in milestone 1.5 phase A,
+- [x] Preferences dialog. *The store itself lands in milestone 1.5 phase A,
   because phase A introduces two preferences and they need somewhere to live.*
-- [ ] Autosave and crash recovery → **moved to milestone 1.5, phase A.** Data
+  - Six pages, applied as changed, with per-page restore \u2014 per page rather than
+    everything, because somebody who wants their blur back is not asking to
+    lose their units.
+- [x] Autosave and crash recovery \u2192 **moved to milestone 1.5, phase A.** Data
   safety belongs with the cross-cutting rules, not eight milestones away.
-- [ ] Multiple open documents. *The structure lands in milestone 1.5 phase A;
+  - The preferences for it were a **lying switch** until this milestone:
+    `Recovery::INTERVAL` was a hardcoded thirty seconds and nothing read either
+    field. They were mislabelled too \u2014 it writes a recovery copy, not the
+    document \u2014 so they say what they do now, and default on. Data safety that
+    has to be switched on protects the people who did not need it.
+- [x] Multiple open documents. *The structure lands in milestone 1.5 phase A;
   what remains here is the tab bar and switching between them.*
+  - The map has been there since milestone 1.5 and **nothing ever put a second
+    thing in it**: `new_document` and `open_from_path` both called
+    `replace_document`, so opening a file made the one you had unreachable.
+  - An untouched blank is replaced rather than left beside real work, and
+    opening a file that is already open goes to it. Two tabs of one file are
+    two histories of one file, and whichever is saved last wins silently.
+  - A tab with unsaved work does not close on one click.
 
 ---
 

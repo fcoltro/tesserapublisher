@@ -28,11 +28,7 @@ pub mod viewport;
 
 use egui::{Panel, Ui};
 
-use tessera_document::document::ZMove;
-
 use crate::app::TesseraApp;
-use crate::command::{Command, apply};
-use crate::file_ops;
 use crate::theme::Theme;
 
 /// The whole window, outermost first.
@@ -66,10 +62,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
 
     accelerators(ui, state);
 
-    let menu = Panel::top("menu").show(ui, |ui| menu_bar(ui, state));
-    // Over the panel rather than inside it: the hairline runs the full width of
-    // the window, and anything drawn inside stops at the panel's padding.
-    identity::hairline(ui, menu.response.rect);
+    Panel::top("menu").show(ui, |ui| menu_bar(ui, state));
 
     // The control bar, directly under the menu and always in the same place.
     // It describes whatever is selected, which is why the geometry fields no
@@ -431,94 +424,69 @@ fn entry(ui: &mut Ui, action: &crate::actions::Action) -> bool {
     clicked
 }
 
+/// How many modifiers a chord carries.
+///
+/// Chords are tried most-modified first so `Ctrl+Shift+S` is tested before
+/// `Ctrl+S`. The old handler did this by hand, one comment per overlapping
+/// pair — "Save As is tested before Save, since its chord also matches Save" —
+/// which is a rule that has to be remembered every time a chord is added.
+fn weight(chord: crate::keys::Chord) -> u8 {
+    u8::from(chord.modifiers.command)
+        + u8::from(chord.modifiers.shift)
+        + u8::from(chord.modifiers.alt)
+}
+
+/// Run whatever the keyboard just asked for.
+///
+/// **Driven by the shortcut table, not by a list of keys written out again
+/// here.** The two used to be separate, which meant a menu could advertise a
+/// chord nothing listened for: `Ctrl+D` was in the File menu against Place and
+/// fired Duplicate, and F6, F8, `Ctrl+,`, `Ctrl+Y`, Del and every tool key were
+/// documented and dead. Reading the table is what makes those work, and what
+/// makes remapping possible at all.
 fn accelerators(ui: &Ui, state: &mut TesseraApp) {
-    let cmd = egui::Modifiers::COMMAND;
-    let cmd_shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+    use crate::actions::{self, Guard};
 
-    let pressed = |m: egui::Modifiers, k: egui::Key| ui.ctx().input_mut(|i| i.consume_key(m, k));
+    let typing = state.active().editing.is_some();
+    let nothing_selected = state.active().selection.is_empty();
 
-    // File. Save As is tested before Save, since its chord also matches Save.
-    if pressed(cmd, egui::Key::N) {
-        file_ops::new_document(state);
-    }
-    if pressed(cmd, egui::Key::O) {
-        file_ops::open(state);
-    }
-    if pressed(cmd_shift, egui::Key::S) {
-        file_ops::save_as(state);
-    } else if pressed(cmd, egui::Key::S) {
-        file_ops::save(state);
-    }
-    if pressed(cmd_shift, egui::Key::E) {
-        file_ops::export_pdf(state);
-    }
+    let mut candidates: Vec<(crate::actions::Run, crate::keys::Chord)> = actions::all()
+        .iter()
+        .filter_map(|action| {
+            state
+                .prefs
+                .shortcuts
+                .chord(action)
+                .map(|chord| (action.run, chord))
+        })
+        .collect();
+    candidates.sort_by_key(|(_, chord)| std::cmp::Reverse(weight(*chord)));
 
-    // History. Redo before undo, for the same reason.
-    if pressed(cmd_shift, egui::Key::Z) {
-        apply(state, Command::Redo);
-    } else if pressed(cmd, egui::Key::Z) {
-        apply(state, Command::Undo);
-    }
-
-    // No modifier, so it must not fire while a caret is live — F11 is not a
-    // text key, but the guard is the rule rather than the exception.
-    if !state.active().editing.is_some() && pressed(egui::Modifiers::NONE, egui::Key::F11) {
-        crate::actions::run(state, crate::actions::Run::ToggleStyles);
-    }
-    if !state.active().editing.is_some() && pressed(egui::Modifiers::NONE, egui::Key::F12) {
-        crate::actions::run(state, crate::actions::Run::TogglePages);
-    }
-    if !state.active().editing.is_some() && pressed(egui::Modifiers::NONE, egui::Key::F7) {
-        crate::actions::run(state, crate::actions::Run::ToggleLayers);
-    }
-
-    // Everything below is about objects, and while a caret is live the same
-    // chords belong to the text. Consuming them here is what made Ctrl+V paste
-    // a duplicate frame instead of the clipboard's text, Ctrl+A select frames
-    // instead of characters, and Ctrl+X delete the very frame being edited.
-    //
-    // The file and history chords above stay: saving and undoing mean the same
-    // thing wherever the caret is.
-    if state.active().editing.is_some() {
-        return;
-    }
-
-    if pressed(cmd, egui::Key::V) {
-        apply(state, Command::Paste);
-    }
-    if pressed(cmd, egui::Key::A) {
-        state.active_mut().select_all();
-    }
-
-    // Everything below needs something selected.
-    if state.active().selection.is_empty() {
-        return;
-    }
-    if pressed(cmd, egui::Key::X) {
-        apply(state, Command::CutSelection);
-    }
-    if pressed(cmd, egui::Key::C) {
-        apply(state, Command::CopySelection);
-    }
-    if pressed(cmd, egui::Key::D) {
-        apply(state, Command::DuplicateSelection);
-    }
-    // Shift+Ctrl+G before Ctrl+G: the chords overlap.
-    if pressed(cmd_shift, egui::Key::G) {
-        apply(state, Command::UngroupSelection);
-    } else if pressed(cmd, egui::Key::G) {
-        apply(state, Command::GroupSelection);
-    }
-
-    // Z-order, following InDesign's bracket chords.
-    for (m, key, how) in [
-        (cmd_shift, egui::Key::CloseBracket, ZMove::ToFront),
-        (cmd, egui::Key::CloseBracket, ZMove::Forward),
-        (cmd, egui::Key::OpenBracket, ZMove::Backward),
-        (cmd_shift, egui::Key::OpenBracket, ZMove::ToBack),
-    ] {
-        if pressed(m, key) {
-            apply(state, Command::MoveSelectionInZ(how));
+    let mut fired = None;
+    for (run, chord) in candidates {
+        // A bare key belongs to the text, whatever the action says. `T` with a
+        // caret live is the letter T, and no guard below is allowed to argue.
+        if typing && chord.is_bare() {
+            continue;
         }
+        let allowed = match crate::actions::guard(run) {
+            Guard::Always => true,
+            Guard::NotWhileTyping => !typing,
+            Guard::NeedsSelection => !typing && !nothing_selected,
+        };
+        if !allowed {
+            continue;
+        }
+        if ui
+            .ctx()
+            .input_mut(|i| i.consume_key(chord.modifiers, chord.key))
+        {
+            fired = Some(run);
+            break;
+        }
+    }
+
+    if let Some(run) = fired {
+        actions::run(state, run);
     }
 }
