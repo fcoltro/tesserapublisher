@@ -31,6 +31,7 @@ pub fn check(doc: &Document, shaper: &mut Shaper, limits: Limits) -> Report {
     problems.extend(resolution(doc, limits));
     problems.extend(colour_space(doc));
     problems.extend(outside_bleed(doc, limits));
+    problems.extend(missing_fonts(doc, shaper));
     Report { problems }.sorted()
 }
 
@@ -344,6 +345,40 @@ fn crosses_and_stops_short(
         || (over_bottom && bounds.y + bounds.height < trim.y + trim.height + bleed)
 }
 
+/// Families the shaper cannot resolve on this machine.
+///
+/// **Asked of the shaper, not of a list of installed fonts.** The shaper is what
+/// will actually set the type, generic families and fallbacks included, so it is
+/// the only thing whose answer matches what the reader will see. A rule that
+/// consulted the system font list separately would disagree with the renderer
+/// sooner or later, and the disagreement would be silent.
+///
+/// Reported once per family rather than once per frame. A document set entirely
+/// in one missing face has one problem, not four hundred, and a preflight report
+/// nobody can scroll to the end of is a preflight report nobody reads.
+pub fn missing_fonts(doc: &Document, shaper: &mut Shaper) -> Vec<Problem> {
+    let mut out = Vec::new();
+
+    for family in crate::fonts::families(doc) {
+        if shaper.has_family(&family) {
+            continue;
+        }
+        out.push(Problem {
+            rule: Rule::MissingFont,
+            message: format!(
+                "{family} is not on this machine, so type set in it will print \
+                 in another face."
+            ),
+            // Only where a *run* names it. A family coming from the document
+            // default or from a style is not any one frame's fault, and jumping
+            // to an arbitrary frame would look like an answer.
+            at: crate::fonts::first_frame_using(doc, &family).map_or(Where::Document, Where::Frame),
+        });
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,6 +389,83 @@ mod tests {
 
     fn a_document() -> Document {
         Document::new()
+    }
+
+    // --- missing fonts ------------------------------------------------------
+
+    #[test]
+    fn a_family_nothing_can_set_is_reported() {
+        // The type prints in whatever the shaper falls back to, so the copy
+        // fits differently and breaks differently. Worse than a missing picture
+        // in one way: a missing picture prints as nothing and gets noticed.
+        let mut doc = a_document();
+        doc.text_default.family = "Definitely Not Installed Sans".to_string();
+
+        let mut shaper = Shaper::new();
+        let found = missing_fonts(&doc, &mut shaper);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].rule, Rule::MissingFont);
+        assert_eq!(found[0].severity(), crate::Severity::Error);
+        assert!(
+            found[0].message.contains("Definitely Not Installed Sans"),
+            "the message must name the family: {}",
+            found[0].message
+        );
+    }
+
+    #[test]
+    fn a_family_the_shaper_can_set_is_not_reported() {
+        // Asked of the shaper rather than of a system font list, because the
+        // shaper is what will actually set the type — generic families and
+        // fallbacks included.
+        let doc = a_document();
+        let mut shaper = Shaper::new();
+        assert!(
+            shaper.has_family(&doc.text_default.family),
+            "the default family must be resolvable, or this test proves nothing"
+        );
+        assert!(missing_fonts(&doc, &mut shaper).is_empty());
+    }
+
+    #[test]
+    fn one_missing_family_is_one_problem_however_much_text_uses_it() {
+        // A document set entirely in one missing face has one problem, not four
+        // hundred. A report nobody can scroll to the end of is one nobody reads.
+        let mut doc = a_document();
+        doc.text_default.family = "Definitely Not Installed Sans".to_string();
+        for _ in 0..5 {
+            doc.stories.insert(tessera_text::story::Story::default());
+        }
+
+        let mut shaper = Shaper::new();
+        assert_eq!(missing_fonts(&doc, &mut shaper).len(), 1);
+    }
+
+    #[test]
+    fn a_family_named_only_by_the_default_belongs_to_the_document() {
+        // Not to any one frame. Jumping to an arbitrary frame would look like an
+        // answer to "where is it?".
+        let mut doc = a_document();
+        doc.text_default.family = "Definitely Not Installed Sans".to_string();
+
+        let mut shaper = Shaper::new();
+        let found = missing_fonts(&doc, &mut shaper);
+        assert_eq!(found[0].at, Where::Document);
+    }
+
+    #[test]
+    fn check_runs_the_font_rule_too() {
+        // The rule existing and the rule running are different things, and the
+        // second is the one anybody sees.
+        let mut doc = a_document();
+        doc.text_default.family = "Definitely Not Installed Sans".to_string();
+
+        let mut shaper = Shaper::new();
+        let report = check(&doc, &mut shaper, Limits::default());
+        assert!(
+            report.problems.iter().any(|p| p.rule == Rule::MissingFont),
+            "check() does not run the font rule"
+        );
     }
 
     fn a_frame(bounds: DocRect, kind: FrameKind, fill: Paint) -> Frame {

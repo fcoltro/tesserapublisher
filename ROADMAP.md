@@ -1342,7 +1342,27 @@ licence to pass the font on. See the packaging item.
   - Link status is the one thing a revision cannot see — a file can vanish while
     the document sits untouched — which is why the panel has a re-check button
     and not only a list.
-- [~] Preflight rules — **seven of eight; missing fonts is not built.**
+- [x] Preflight rules — **all eight.**
+  - Missing fonts is asked of the **shaper**, not of a system font list. The
+    shaper is what will actually set the type, generic families and fallbacks
+    included, so it is the only thing whose answer matches what a reader sees. A
+    rule consulting the font list separately would disagree with the renderer
+    eventually, and silently.
+  - An error, not a warning, and for the reason a missing picture is: the type
+    is set in whatever the fallback is, so the copy fits and breaks differently
+    and the job comes back looking like somebody else's. Worse than a missing
+    picture in one way — a missing picture prints as nothing and gets noticed,
+    and a substituted face prints as type.
+  - Once per family, not once per frame. A document set entirely in one missing
+    face has one problem, not four hundred, and a report nobody scrolls to the
+    end of is a report nobody reads.
+  - A family named only by the document default or by a style is reported
+    against the *document*, because it is not any one frame's fault and a jump
+    to an arbitrary frame looks like an answer to "where is it?".
+  - The walk that finds the families now lives in `tessera_preflight::fonts` and
+    packaging calls it. It had its own copy, and two walks over one fact drift —
+    the way they drift is that one forgets the run-local families, which is the
+    half a printer would have been misled about.
   - **Errors and warnings are a real distinction**, and the line is not taste:
     it is whether a printer following the file exactly produces something the
     customer did not intend. Overset text, a missing link and an unresolved

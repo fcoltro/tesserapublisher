@@ -28,6 +28,7 @@
 //! every rule answers a question with a definite answer, and where a question
 //! cannot be answered definitely the rule is absent rather than approximate.
 
+pub mod fonts;
 pub mod rules;
 
 use tessera_document::ids::{FrameId, PageId};
@@ -75,10 +76,12 @@ pub enum Rule {
     UnresolvedSwatch,
     /// No press has been chosen, so nothing can be checked against one.
     NoOutputIntent,
+    /// Type in a family this machine cannot resolve.
+    MissingFont,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 8] = [
+    pub const ALL: [Rule; 9] = [
         Rule::OversetText,
         Rule::MissingLink,
         Rule::ModifiedLink,
@@ -87,6 +90,7 @@ impl Rule {
         Rule::OutsideBleed,
         Rule::UnresolvedSwatch,
         Rule::NoOutputIntent,
+        Rule::MissingFont,
     ];
 
     pub fn title(self) -> &'static str {
@@ -99,6 +103,7 @@ impl Rule {
             Rule::OutsideBleed => "Outside the bleed",
             Rule::UnresolvedSwatch => "Unresolved swatch",
             Rule::NoOutputIntent => "No output intent",
+            Rule::MissingFont => "Missing font",
         }
     }
 
@@ -111,7 +116,15 @@ impl Rule {
             // Text that is not printed is text nobody reads. A missing picture
             // prints as nothing. An unresolved swatch prints in the alarming
             // magenta that exists to be noticed. All three come back wrong.
-            Rule::OversetText | Rule::MissingLink | Rule::UnresolvedSwatch => Severity::Error,
+            // A missing font is the same kind of wrong as a missing
+            // picture: the type is set in whatever the shaper falls back to, so
+            // the copy fits differently, breaks differently, and comes back
+            // looking like somebody else's job. It is worse than a missing
+            // picture in one way \— a missing picture prints as nothing and is
+            // noticed, and a substituted face prints as type.
+            Rule::OversetText | Rule::MissingLink | Rule::UnresolvedSwatch | Rule::MissingFont => {
+                Severity::Error
+            }
 
             // These all need a person. A modified link might be the newer
             // artwork somebody meant to place; 200ppi is fine on newsprint; an
@@ -348,10 +361,18 @@ mod tests {
     }
 
     #[test]
-    fn every_rule_has_a_title() {
-        assert_eq!(Rule::ALL.len(), 8);
-        for rule in Rule::ALL {
-            assert!(!rule.title().is_empty());
+    fn every_rule_has_a_title_of_its_own() {
+        // Distinct, not merely present. Two rules under one title are two
+        // problems a reader cannot tell apart, and counting them to eight was a
+        // proxy that broke the moment a ninth rule arrived while saying nothing
+        // about whether the eight were distinguishable.
+        let mut titles: Vec<&str> = Rule::ALL.iter().map(|r| r.title()).collect();
+        for title in &titles {
+            assert!(!title.is_empty());
         }
+        titles.sort_unstable();
+        let total = titles.len();
+        titles.dedup();
+        assert_eq!(titles.len(), total, "two rules share a title");
     }
 }

@@ -107,36 +107,11 @@ pub fn collect(
 
 /// Every font family the document sets type in.
 ///
-/// From the styles and from the runs, because a run can name a family the styles
-/// never mention — and a font list that missed those would be a list a printer
-/// trusted and was wrong about.
-fn families(doc: &Document) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut note = |family: Option<&String>| {
-        if let Some(name) = family
-            && !out.contains(name)
-        {
-            out.push(name.clone());
-        }
-    };
-
-    // The document default is always set, so it goes in directly.
-    note(Some(&doc.text_default.family));
-    for style in doc.character_styles.values() {
-        note(style.format.family.as_ref());
-    }
-    for style in doc.paragraph_styles.values() {
-        note(style.format.character.family.as_ref());
-    }
-    for story in doc.stories.values() {
-        for run in &story.runs {
-            note(run.local.family.as_ref());
-        }
-    }
-
-    out.sort();
-    out
-}
+/// **`tessera_preflight::fonts`, not a second walk of the same document.** This
+/// used to have its own, and two walks over one fact drift: the way they drift
+/// is that one of them forgets the run-local families, which is the half a
+/// printer would have been misled about.
+use tessera_preflight::fonts::families;
 
 /// The note a printer reads first.
 ///
