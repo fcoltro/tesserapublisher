@@ -969,11 +969,17 @@ fn settle(
         return (dx, dy);
     }
 
+    // **Every way out of here clears the indicator.** Three of these used to
+    // return without touching it, which leaves the last line that was caught
+    // drawn across the canvas while the object moves away from it — a green
+    // guide sitting nowhere near the frame it claims to be about.
     let moving: Vec<FrameId> = origins.iter().map(|(id, _)| *id).collect();
     let Some(first) = moving.first().copied() else {
+        state.snapped_to = None;
         return (dx, dy);
     };
     let Some(spread) = state.active().document().spread_of_frame(first) else {
+        state.snapped_to = None;
         return (dx, dy);
     };
 
@@ -984,6 +990,7 @@ fn settle(
             .filter_map(|id| state.active().document().visual_bounds(*id))
             .collect::<Vec<_>>(),
     ) else {
+        state.snapped_to = None;
         return (dx, dy);
     };
     let landing = DocRect {

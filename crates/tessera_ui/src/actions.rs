@@ -702,12 +702,38 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
                     // would guess at what somebody meant.
                     let picked = state.active().selection.as_slice().to_vec();
                     let [from, to] = picked[..] else {
+                        // **Said rather than ignored.** Threading with one or
+                        // three frames selected used to do nothing at all, and
+                        // a menu item that does nothing is indistinguishable
+                        // from one that is broken.
+                        state.status = Some(crate::app::Status::info(
+                            "Threading joins two frames. Select the one the text \
+                             starts in, then the one it continues into.",
+                        ));
                         return;
                     };
                     Command::ThreadFrames { from, to }
                 }
                 Cmd::UnthreadSelection => {
-                    let Some(id) = state.active().selection.single() else {
+                    // **Whatever is selected, not exactly one.** It required a
+                    // single frame, and the selection you have immediately
+                    // after threading is *both* of them — so the obvious way to
+                    // undo the thing you just did silently did nothing.
+                    //
+                    // The frame taken is the first selected one that actually
+                    // leads somewhere, so selecting a pair and unthreading
+                    // breaks the join between them.
+                    let leader = state
+                        .active()
+                        .selection
+                        .as_slice()
+                        .iter()
+                        .copied()
+                        .find(|id| leads_somewhere(state, *id));
+                    let Some(id) = leader else {
+                        state.status = Some(crate::app::Status::info(
+                            "Nothing selected continues into another frame.",
+                        ));
                         return;
                     };
                     Command::UnthreadFrame { id }
@@ -769,6 +795,17 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             apply(state, command);
         }
     }
+}
+
+/// Whether this frame's text continues into another one.
+///
+/// The question "is there a thread to break", asked of the frame rather than of
+/// the selection, so that a selection of any size can be searched for one.
+fn leads_somewhere(state: &crate::app::TesseraApp, id: tessera_document::ids::FrameId) -> bool {
+    matches!(
+        state.active().document().frame(id).map(|f| &f.kind),
+        Some(tessera_document::nodes::FrameKind::Text { layout, .. }) if layout.next.is_some()
+    )
 }
 
 #[cfg(test)]

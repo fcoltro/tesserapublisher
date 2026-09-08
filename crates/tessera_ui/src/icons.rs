@@ -73,6 +73,7 @@ pub enum Icon {
     TypeSize,
     Plus,
     Duplicate,
+    PlaceImage,
     Trash,
     /// Navigation, and the disclosure a submenu shows.
     ChevronLeft,
@@ -110,6 +111,16 @@ impl Icon {
             ],
             // lucide: circle — <circle cx=12 cy=12 r=10>
             Self::Ellipse => &["M22 12 A10 10 0 1 1 2 12 A10 10 0 1 1 22 12 Z"],
+            // lucide: image-plus — an image frame with a plus, which is
+            // placing art rather than the artwork itself. The <circle> is
+            // written as an arc pair, as everything else here is.
+            Self::PlaceImage => &[
+                "M16 5h6",
+                "M19 2v6",
+                "M21 11.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7.5",
+                "m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21",
+                "M11 9 A2 2 0 1 1 7 9 A2 2 0 1 1 11 9 Z",
+            ],
             // lucide: slash
             Self::Line => &["M22 2 2 22"],
             // lucide: blend — two overlapping circles, which is compositing
@@ -451,6 +462,7 @@ impl Icon {
             | Self::TypeSize
             | Self::Plus
             | Self::Duplicate
+            | Self::PlaceImage
             | Self::Trash
             | Self::ChevronLeft
             | Self::ChevronRight

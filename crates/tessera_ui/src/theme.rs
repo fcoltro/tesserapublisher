@@ -41,6 +41,15 @@ pub struct Palette {
     /// it would be a white surround behind white paper, and the trim edge
     /// would vanish. The pasteboard is a role, not a step.
     pub canvas_bg: Color32,
+    /// The surface of something you type into.
+    ///
+    /// **A role, not a step**, for the same reason the pasteboard is one. In a
+    /// dark theme a field is *lighter* than the panel around it and in a light
+    /// theme it is *lighter still* — near white, the way paper is. One step
+    /// number cannot mean both, and using step 4 for both is what made every
+    /// input in the light theme a muddy grey box: two steps toward the light is
+    /// a well in the dark and a stain in the light.
+    pub field_bg: Color32,
     pub accent: Color32,
     pub accent_hover: Color32,
     pub error: Color32,
@@ -105,6 +114,8 @@ impl Palette {
             Color32::from_rgb(0xEA, 0xEA, 0xEA),
         ],
         canvas_bg: Color32::from_rgb(0x12, 0x12, 0x12),
+        // Two steps up from the panel: in the dark, a well is lighter.
+        field_bg: Color32::from_rgb(0x21, 0x21, 0x21),
         // Desaturated from the blue this used to be. A saturated blue on a
         // near-black ground vibrates at small sizes, and step 9 is what a
         // one-pixel selection edge is drawn in.
@@ -136,6 +147,8 @@ impl Palette {
         // first and fails the second, because a saturated hue sits at about
         // the luminance of a mid grey by definition.
         canvas_bg: Color32::from_rgb(0xC6, 0xC6, 0xC6),
+        // White, not a step. A field in a light interface is paper.
+        field_bg: Color32::from_rgb(0xFF, 0xFF, 0xFF),
         accent: Color32::from_rgb(0x2C, 0x5F, 0xC4),
         accent_hover: Color32::from_rgb(0x23, 0x4E, 0xA6),
         error: Color32::from_rgb(0xA8, 0x24, 0x18),
@@ -252,6 +265,10 @@ impl Theme {
         palette().step(6)
     }
     /// Hovered. Step 4.
+    /// What you type into. See [`Palette::field_bg`].
+    pub fn field_bg() -> Color32 {
+        palette().field_bg
+    }
     pub fn hover_bg() -> Color32 {
         palette().step(4)
     }
@@ -497,7 +514,11 @@ pub fn apply(ctx: &Context) {
     ctx.all_styles_mut(|style| {
         style.visuals.panel_fill = Theme::panel_bg();
         style.visuals.window_fill = Theme::panel_bg();
-        style.visuals.extreme_bg_color = Theme::canvas_bg();
+        // The pasteboard is not a field. It was used here because both
+        // happen to be darker than the panel *in the dark theme*, which is a
+        // coincidence rather than a reason, and in the light theme it made
+        // every text field the colour of the surround around the page.
+        style.visuals.extreme_bg_color = Theme::field_bg();
         style.visuals.override_text_color = Some(Theme::text_primary());
         style.visuals.selection.bg_fill = Theme::selection();
         // Steps 4 and 5 are the component states, and using them is what
@@ -505,7 +526,7 @@ pub fn apply(ctx: &Context) {
         // panel behind it is identified only by its border, and a border
         // loud enough to do that alone is a border you notice all day.
         style.visuals.widgets.noninteractive.bg_fill = Theme::panel_bg();
-        style.visuals.widgets.inactive.bg_fill = Theme::hover_bg();
+        style.visuals.widgets.inactive.bg_fill = Theme::field_bg();
         style.visuals.widgets.hovered.bg_fill = Theme::selected_bg();
         style.visuals.widgets.active.bg_fill = Theme::accent();
 
