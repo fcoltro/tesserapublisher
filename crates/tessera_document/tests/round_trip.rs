@@ -706,7 +706,13 @@ fn object_styles_and_the_objects_following_them_round_trip() {
     format::save(&doc, &path).expect("save");
     let back = format::load(&path).expect("load");
 
-    assert_eq!(back.object_style_order.len(), 2, "and in order");
+    // The order itself, not a count of it. Counting to two was a proxy that
+    // broke when a new document started with a style of its own, and that would
+    // have gone on passing if the order had been reversed.
+    assert_eq!(
+        back.object_style_order, doc.object_style_order,
+        "and in order"
+    );
     let loaded = back
         .object_styles
         .get(style)

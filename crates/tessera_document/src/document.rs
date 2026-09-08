@@ -5826,10 +5826,15 @@ mod tests {
             let name = doc.unused_object_style_name();
             doc.add_object_style(crate::object_style::ObjectStyle::new(name));
         }
+        // Every name distinct, which is the property. Counting to three was a
+        // proxy for it that broke the moment a new document started with a
+        // style of its own — and would have gone on passing if two of the three
+        // *had* collided while a fourth existed.
+        let total = doc.object_styles.len();
         let mut names: Vec<String> = doc.object_styles.values().map(|s| s.name.clone()).collect();
         names.sort();
         names.dedup();
-        assert_eq!(names.len(), 3);
+        assert_eq!(names.len(), total, "two object styles share a name");
     }
 
     #[test]

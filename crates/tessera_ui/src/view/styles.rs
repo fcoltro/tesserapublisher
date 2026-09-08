@@ -22,13 +22,76 @@ use crate::app::{StyleKind, TesseraApp};
 use crate::command::{Command, apply};
 use crate::theme::Theme;
 
-/// The window, if it is open.
-/// The section, as it sits in the rail.
-pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
-    body(ui, state);
+/// Which half of the styles interface is being drawn.
+///
+/// The list and the properties are the same code either way: one function per
+/// style kind, drawing whichever half it is asked for. Two functions would be
+/// two places to add a style kind, and the second one would be forgotten.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Show {
+    /// The names, in the rail.
+    List,
+    /// The properties, in a window.
+    Editor,
 }
 
-fn body(ui: &mut Ui, state: &mut TesseraApp) {
+impl Show {
+    fn list(self) -> bool {
+        self == Show::List
+    }
+    fn editor(self) -> bool {
+        self == Show::Editor
+    }
+}
+
+/// The section, as it sits in the rail: the names, and nothing else.
+pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
+    body(ui, state, Show::List);
+}
+
+/// The properties of the chosen style, in a window of its own.
+///
+/// **A window, not a wider panel.** Editing a style is something somebody does
+/// occasionally and deliberately, and it wants room: a paragraph style states
+/// two dozen properties, each of which can also state nothing. The list is what
+/// gets looked at every few minutes.
+pub fn editor(ctx: &egui::Context, state: &mut TesseraApp) {
+    if !state.styles_window.editing {
+        return;
+    }
+    let mut open = true;
+    egui::Window::new(match state.styles_window.kind {
+        StyleKind::Paragraph => "Paragraph style",
+        StyleKind::Character => "Character style",
+        StyleKind::Object => "Object style",
+    })
+    .open(&mut open)
+    .resizable(true)
+    .default_width(420.0)
+    .default_height(520.0)
+    .show(ctx, |ui| {
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| body(ui, state, Show::Editor));
+    });
+    if !open {
+        state.styles_window.editing = false;
+    }
+}
+
+fn body(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
+    // The kind is chosen in the rail. In the window it is already decided, and
+    // a second set of tabs there would let somebody switch to a kind whose
+    // list they cannot see.
+    if show.editor() {
+        match state.styles_window.kind {
+            StyleKind::Paragraph => paragraph_side(ui, state, show),
+            StyleKind::Character => character_side(ui, state, show),
+            StyleKind::Object => object_side(ui, state, show),
+        }
+        return;
+    }
+
     ui.horizontal(|ui| {
         for (icon, label, kind) in [
             (
@@ -63,9 +126,9 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
     ui.separator();
 
     match state.styles_window.kind {
-        StyleKind::Paragraph => paragraph_side(ui, state),
-        StyleKind::Character => character_side(ui, state),
-        StyleKind::Object => object_side(ui, state),
+        StyleKind::Paragraph => paragraph_side(ui, state, show),
+        StyleKind::Character => character_side(ui, state, show),
+        StyleKind::Object => object_side(ui, state, show),
     }
 }
 
@@ -78,7 +141,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
 /// left alone. A style that could only state things would force every style to
 /// be a complete description of an object, so attaching a "drop shadow" style
 /// would also repaint the fill.
-fn object_side(ui: &mut Ui, state: &mut TesseraApp) {
+fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
     let listed: Vec<(tessera_document::ids::ObjectStyleId, String)> = state
         .active()
         .document()
@@ -94,42 +157,60 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp) {
         })
         .collect();
 
-    if listed.is_empty() {
-        ui.colored_label(Theme::text_muted(), "No object styles yet.");
-    }
-    for (id, name) in &listed {
-        let chosen = state.styles_window.object == Some(*id);
+    if show.list() {
+        if listed.is_empty() {
+            ui.colored_label(Theme::text_muted(), "No object styles yet.");
+        }
+        for (id, name) in &listed {
+            let chosen = state.styles_window.object == Some(*id);
+            ui.horizontal(|ui| {
+                let row = ui
+                    .selectable_label(chosen, name)
+                    .on_hover_text("Double-click to edit");
+                if row.clicked() {
+                    state.styles_window.object = Some(*id);
+                }
+                // Double-click opens the properties. A single click only chooses,
+                // because choosing is what the list is mostly used for \— applying a
+                // style to what is selected, and seeing which one is on it.
+                if row.double_clicked() {
+                    state.styles_window.object = Some(*id);
+                    state.styles_window.editing = true;
+                }
+                // How many objects follow it, so removing one is not a guess.
+                let following = state.active().document().frames_following_object_style(*id);
+                ui.colored_label(Theme::text_muted(), format!("{following}"))
+                    .on_hover_text("Objects following this style");
+            });
+        }
+
+        // Set inside the closure and acted on outside it: a `return` in there would
+        // only leave the closure, and the editor below would still run against a
+        // style that has gone.
+        let mut remove = None;
         ui.horizontal(|ui| {
-            if ui.selectable_label(chosen, name).clicked() {
-                state.styles_window.object = Some(*id);
+            if ui.button("New").clicked() {
+                apply(state, Command::AddObjectStyle);
             }
-            // How many objects follow it, so removing one is not a guess.
-            let following = state.active().document().frames_following_object_style(*id);
-            ui.colored_label(Theme::text_muted(), format!("{following}"))
-                .on_hover_text("Objects following this style");
+            if let Some(id) = state.styles_window.object
+                && ui
+                    .button("Remove")
+                    .on_hover_text("The objects that followed it keep their appearance")
+                    .clicked()
+            {
+                remove = Some(id);
+            }
         });
+        if let Some(id) = remove {
+            state.styles_window.object = None;
+            apply(state, Command::RemoveObjectStyle { id });
+            return;
+        }
     }
 
-    // Set inside the closure and acted on outside it: a `return` in there would
-    // only leave the closure, and the editor below would still run against a
-    // style that has gone.
-    let mut remove = None;
-    ui.horizontal(|ui| {
-        if ui.button("New").clicked() {
-            apply(state, Command::AddObjectStyle);
-        }
-        if let Some(id) = state.styles_window.object
-            && ui
-                .button("Remove")
-                .on_hover_text("The objects that followed it keep their appearance")
-                .clicked()
-        {
-            remove = Some(id);
-        }
-    });
-    if let Some(id) = remove {
-        state.styles_window.object = None;
-        apply(state, Command::RemoveObjectStyle { id });
+    // The list is above; everything below states properties, and belongs in
+    // the window rather than in a 292-point column.
+    if !show.editor() {
         return;
     }
 
@@ -306,7 +387,7 @@ fn states<T>(ui: &mut Ui, label: &str, slot: &mut Option<T>, fresh: impl FnOnce(
 
 // --- paragraph styles ------------------------------------------------------
 
-fn paragraph_side(ui: &mut Ui, state: &mut TesseraApp) {
+fn paragraph_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
     let styles: Vec<(ParagraphStyleId, String)> = state
         .active()
         .document()
@@ -325,91 +406,100 @@ fn paragraph_side(ui: &mut Ui, state: &mut TesseraApp) {
     let selected = state.styles_window.paragraph;
 
     ui.horizontal_top(|ui| {
-        ui.vertical(|ui| {
-            ui.set_min_width(150.0);
-            for (id, name) in &styles {
-                let overridden = uses_with_overrides(state, Some(*id), None);
-                let label = if overridden {
-                    format!("{name} +")
-                } else {
-                    name.clone()
-                };
-                if ui.selectable_label(selected == Some(*id), label).clicked() {
-                    state.styles_window.paragraph = Some(*id);
+        if show.list() {
+            ui.vertical(|ui| {
+                ui.set_min_width(150.0);
+                for (id, name) in &styles {
+                    let overridden = uses_with_overrides(state, Some(*id), None);
+                    let label = if overridden {
+                        format!("{name} +")
+                    } else {
+                        name.clone()
+                    };
+                    let row = ui
+                        .selectable_label(selected == Some(*id), label)
+                        .on_hover_text("Double-click to edit");
+                    if row.clicked() {
+                        state.styles_window.paragraph = Some(*id);
+                    }
+                    if row.double_clicked() {
+                        state.styles_window.paragraph = Some(*id);
+                        state.styles_window.editing = true;
+                    }
                 }
-            }
-            if styles.is_empty() {
-                ui.colored_label(Theme::text_muted(), "No paragraph styles yet.");
-            }
+                if styles.is_empty() {
+                    ui.colored_label(Theme::text_muted(), "No paragraph styles yet.");
+                }
 
-            ui.add_space(Theme::SPACING_SM);
-            ui.horizontal(|ui| {
-                if crate::view::panels::icon_button(
-                    ui,
-                    crate::icons::Icon::Plus,
-                    "New style, stating nothing",
-                    false,
-                ) {
-                    apply(
-                        state,
-                        Command::DefineParagraphStyle(ParagraphStyle {
-                            name: format!("Paragraph style {}", styles.len() + 1),
-                            based_on: None,
-                            // Nothing specified. A new style that pinned every
-                            // property would be a style you could only subtract
-                            // from, and subtracting is the thing no interface makes
-                            // obvious.
-                            format: ParagraphFormat::default(),
-                        }),
-                    );
-                    state.styles_window.paragraph =
-                        state.active().document().paragraph_styles.keys().last();
-                }
-                if let Some(id) = selected {
+                ui.add_space(Theme::SPACING_SM);
+                ui.horizontal(|ui| {
                     if crate::view::panels::icon_button(
                         ui,
-                        crate::icons::Icon::Duplicate,
-                        "Duplicate this style",
+                        crate::icons::Icon::Plus,
+                        "New style, stating nothing",
                         false,
-                    ) && let Some(existing) =
-                        state.active().document().paragraph_styles.get(id).cloned()
-                    {
+                    ) {
                         apply(
                             state,
                             Command::DefineParagraphStyle(ParagraphStyle {
-                                name: format!("{} copy", existing.name),
-                                ..existing
+                                name: format!("Paragraph style {}", styles.len() + 1),
+                                based_on: None,
+                                // Nothing specified. A new style that pinned every
+                                // property would be a style you could only subtract
+                                // from, and subtracting is the thing no interface makes
+                                // obvious.
+                                format: ParagraphFormat::default(),
                             }),
                         );
                         state.styles_window.paragraph =
                             state.active().document().paragraph_styles.keys().last();
                     }
-                    if crate::view::panels::icon_button(
-                        ui,
-                        crate::icons::Icon::Trash,
-                        "Delete — the text keeps how it looks",
-                        false,
-                    ) {
-                        apply(state, Command::DeleteParagraphStyle { id });
-                        state.styles_window.paragraph = None;
+                    if let Some(id) = selected {
+                        if crate::view::panels::icon_button(
+                            ui,
+                            crate::icons::Icon::Duplicate,
+                            "Duplicate this style",
+                            false,
+                        ) && let Some(existing) =
+                            state.active().document().paragraph_styles.get(id).cloned()
+                        {
+                            apply(
+                                state,
+                                Command::DefineParagraphStyle(ParagraphStyle {
+                                    name: format!("{} copy", existing.name),
+                                    ..existing
+                                }),
+                            );
+                            state.styles_window.paragraph =
+                                state.active().document().paragraph_styles.keys().last();
+                        }
+                        if crate::view::panels::icon_button(
+                            ui,
+                            crate::icons::Icon::Trash,
+                            "Delete — the text keeps how it looks",
+                            false,
+                        ) {
+                            apply(state, Command::DeleteParagraphStyle { id });
+                            state.styles_window.paragraph = None;
+                        }
                     }
-                }
+                });
             });
-        });
-
-        ui.separator();
-
-        ui.vertical(|ui| {
-            let Some(id) = state.styles_window.paragraph else {
-                ui.colored_label(Theme::text_muted(), "Select a style to edit it.");
-                return;
-            };
-            let Some(existing) = state.active().document().paragraph_styles.get(id).cloned() else {
-                state.styles_window.paragraph = None;
-                return;
-            };
-            paragraph_fields(ui, state, id, existing, &styles);
-        });
+        }
+        if show.editor() {
+            ui.vertical(|ui| {
+                let Some(id) = state.styles_window.paragraph else {
+                    ui.colored_label(Theme::text_muted(), "Select a style in the panel.");
+                    return;
+                };
+                let Some(existing) = state.active().document().paragraph_styles.get(id).cloned()
+                else {
+                    state.styles_window.paragraph = None;
+                    return;
+                };
+                paragraph_fields(ui, state, id, existing, &styles);
+            });
+        }
     });
 }
 
@@ -526,7 +616,7 @@ fn paragraph_fields(
 
 // --- character styles ------------------------------------------------------
 
-fn character_side(ui: &mut Ui, state: &mut TesseraApp) {
+fn character_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
     let styles: Vec<(CharacterStyleId, String)> = state
         .active()
         .document()
@@ -540,138 +630,147 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp) {
     let selected = state.styles_window.character;
 
     ui.horizontal_top(|ui| {
-        ui.vertical(|ui| {
-            ui.set_min_width(150.0);
-            for (id, name) in &styles {
-                let overridden = uses_with_overrides(state, None, Some(*id));
-                let label = if overridden {
-                    format!("{name} +")
-                } else {
-                    name.clone()
-                };
-                if ui.selectable_label(selected == Some(*id), label).clicked() {
-                    state.styles_window.character = Some(*id);
+        if show.list() {
+            ui.vertical(|ui| {
+                ui.set_min_width(150.0);
+                for (id, name) in &styles {
+                    let overridden = uses_with_overrides(state, None, Some(*id));
+                    let label = if overridden {
+                        format!("{name} +")
+                    } else {
+                        name.clone()
+                    };
+                    let row = ui
+                        .selectable_label(selected == Some(*id), label)
+                        .on_hover_text("Double-click to edit");
+                    if row.clicked() {
+                        state.styles_window.character = Some(*id);
+                    }
+                    if row.double_clicked() {
+                        state.styles_window.character = Some(*id);
+                        state.styles_window.editing = true;
+                    }
                 }
-            }
-            if styles.is_empty() {
-                ui.colored_label(Theme::text_muted(), "No character styles yet.");
-            }
+                if styles.is_empty() {
+                    ui.colored_label(Theme::text_muted(), "No character styles yet.");
+                }
 
-            ui.add_space(Theme::SPACING_SM);
-            ui.horizontal(|ui| {
-                if crate::view::panels::icon_button(
-                    ui,
-                    crate::icons::Icon::Plus,
-                    "New style, stating nothing",
-                    false,
-                ) {
-                    apply(
-                        state,
-                        Command::DefineCharacterStyle(CharacterStyle {
-                            name: format!("Character style {}", styles.len() + 1),
-                            based_on: None,
-                            format: CharacterFormat::default(),
-                        }),
-                    );
-                    state.styles_window.character =
-                        state.active().document().character_styles.keys().last();
-                }
-                if let Some(id) = selected {
+                ui.add_space(Theme::SPACING_SM);
+                ui.horizontal(|ui| {
                     if crate::view::panels::icon_button(
                         ui,
-                        crate::icons::Icon::Duplicate,
-                        "Duplicate this style",
+                        crate::icons::Icon::Plus,
+                        "New style, stating nothing",
                         false,
-                    ) && let Some(existing) =
-                        state.active().document().character_styles.get(id).cloned()
-                    {
+                    ) {
                         apply(
                             state,
                             Command::DefineCharacterStyle(CharacterStyle {
-                                name: format!("{} copy", existing.name),
-                                ..existing
+                                name: format!("Character style {}", styles.len() + 1),
+                                based_on: None,
+                                format: CharacterFormat::default(),
                             }),
                         );
                         state.styles_window.character =
                             state.active().document().character_styles.keys().last();
                     }
-                    if crate::view::panels::icon_button(
-                        ui,
-                        crate::icons::Icon::Trash,
-                        "Delete — the text keeps how it looks",
-                        false,
-                    ) {
-                        apply(state, Command::DeleteCharacterStyle { id });
-                        state.styles_window.character = None;
-                    }
-                }
-            });
-        });
-
-        ui.separator();
-
-        ui.vertical(|ui| {
-            let Some(id) = state.styles_window.character else {
-                ui.colored_label(Theme::text_muted(), "Select a style to edit it.");
-                return;
-            };
-            let Some(existing) = state.active().document().character_styles.get(id).cloned() else {
-                state.styles_window.character = None;
-                return;
-            };
-            let mut edited = existing.clone();
-
-            ui.horizontal(|ui| {
-                ui.colored_label(Theme::text_muted(), "Name");
-                ui.text_edit_singleline(&mut edited.name);
-            });
-
-            let mut chosen_parent = None;
-            ui.horizontal(|ui| {
-                ui.colored_label(Theme::text_muted(), "Based on");
-                let label = existing
-                    .based_on
-                    .and_then(|p| styles.iter().find(|(s, _)| *s == p))
-                    .map_or("[None]", |(_, name)| name.as_str())
-                    .to_string();
-                egui::ComboBox::from_id_salt("character-based-on")
-                    .selected_text(label)
-                    .show_ui(ui, |ui| {
-                        if ui
-                            .selectable_label(existing.based_on.is_none(), "[None]")
-                            .clicked()
+                    if let Some(id) = selected {
+                        if crate::view::panels::icon_button(
+                            ui,
+                            crate::icons::Icon::Duplicate,
+                            "Duplicate this style",
+                            false,
+                        ) && let Some(existing) =
+                            state.active().document().character_styles.get(id).cloned()
                         {
-                            chosen_parent = Some(None);
+                            apply(
+                                state,
+                                Command::DefineCharacterStyle(CharacterStyle {
+                                    name: format!("{} copy", existing.name),
+                                    ..existing
+                                }),
+                            );
+                            state.styles_window.character =
+                                state.active().document().character_styles.keys().last();
                         }
-                        for (candidate, name) in &styles {
-                            if *candidate == id
-                                || state
-                                    .active()
-                                    .document()
-                                    .character_based_on_would_cycle(id, *candidate)
-                            {
-                                continue;
-                            }
+                        if crate::view::panels::icon_button(
+                            ui,
+                            crate::icons::Icon::Trash,
+                            "Delete — the text keeps how it looks",
+                            false,
+                        ) {
+                            apply(state, Command::DeleteCharacterStyle { id });
+                            state.styles_window.character = None;
+                        }
+                    }
+                });
+            });
+        }
+        if show.editor() {
+            ui.vertical(|ui| {
+                let Some(id) = state.styles_window.character else {
+                    ui.colored_label(Theme::text_muted(), "Select a style in the panel.");
+                    return;
+                };
+                let Some(existing) = state.active().document().character_styles.get(id).cloned()
+                else {
+                    state.styles_window.character = None;
+                    return;
+                };
+                let mut edited = existing.clone();
+
+                ui.horizontal(|ui| {
+                    ui.colored_label(Theme::text_muted(), "Name");
+                    ui.text_edit_singleline(&mut edited.name);
+                });
+
+                let mut chosen_parent = None;
+                ui.horizontal(|ui| {
+                    ui.colored_label(Theme::text_muted(), "Based on");
+                    let label = existing
+                        .based_on
+                        .and_then(|p| styles.iter().find(|(s, _)| *s == p))
+                        .map_or("[None]", |(_, name)| name.as_str())
+                        .to_string();
+                    egui::ComboBox::from_id_salt("character-based-on")
+                        .selected_text(label)
+                        .show_ui(ui, |ui| {
                             if ui
-                                .selectable_label(existing.based_on == Some(*candidate), name)
+                                .selectable_label(existing.based_on.is_none(), "[None]")
                                 .clicked()
                             {
-                                chosen_parent = Some(Some(*candidate));
+                                chosen_parent = Some(None);
                             }
-                        }
-                    });
+                            for (candidate, name) in &styles {
+                                if *candidate == id
+                                    || state
+                                        .active()
+                                        .document()
+                                        .character_based_on_would_cycle(id, *candidate)
+                                {
+                                    continue;
+                                }
+                                if ui
+                                    .selectable_label(existing.based_on == Some(*candidate), name)
+                                    .clicked()
+                                {
+                                    chosen_parent = Some(Some(*candidate));
+                                }
+                            }
+                        });
+                });
+
+                ui.separator();
+                character_format_fields(ui, state, &mut edited.format);
+
+                if let Some(based_on) = chosen_parent {
+                    apply(state, Command::SetCharacterStyleBasedOn { id, based_on });
+                }
+                if edited != existing {
+                    apply(state, Command::EditCharacterStyle { id, style: edited });
+                }
             });
-
-            ui.separator();
-            character_format_fields(ui, state, &mut edited.format);
-
-            if let Some(based_on) = chosen_parent {
-                apply(state, Command::SetCharacterStyleBasedOn { id, based_on });
-            }
-            if edited != existing {
-                apply(state, Command::EditCharacterStyle { id, style: edited });
-            }
-        });
+        }
     });
 }
 

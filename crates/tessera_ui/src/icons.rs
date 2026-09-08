@@ -64,6 +64,10 @@ pub enum Icon {
     Bold,
     Italic,
     AlignJustify,
+    TextAlignLeft,
+    TextAlignCentre,
+    TextAlignRight,
+    TextAlignJustify,
     Palette,
     /// A paragraph mark, for the paragraph half of the text controls.
     Pilcrow,
@@ -303,6 +307,18 @@ impl Icon {
             Self::Italic => &["M19 4 10 4", "M14 20 5 20", "M15 4 9 20"],
             // lucide: align-justify
             Self::AlignJustify => &["M3 5h18", "M3 12h18", "M3 19h18"],
+            // The paragraph alignments. **Not the object ones**, which is what
+            // was drawn here: `align-left` for an object is two bars pushed
+            // against a rule, and for text it is ragged lines of type. They
+            // mean different things and the panel was showing the wrong one.
+            // lucide: align-left
+            Self::TextAlignLeft => &["M15 12H3", "M17 18H3", "M21 6H3"],
+            // lucide: align-center
+            Self::TextAlignCentre => &["M17 12H7", "M19 18H5", "M21 6H3"],
+            // lucide: align-right
+            Self::TextAlignRight => &["M21 12H9", "M21 18H7", "M21 6H3"],
+            // lucide: align-justify
+            Self::TextAlignJustify => &["M3 12h18", "M3 18h18", "M3 6h18"],
             // lucide: palette — four <circle> dots written as arc pairs
             Self::Palette => &[
                 "M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z",
@@ -456,6 +472,10 @@ impl Icon {
             | Self::Bold
             | Self::Italic
             | Self::AlignJustify
+            | Self::TextAlignLeft
+            | Self::TextAlignCentre
+            | Self::TextAlignRight
+            | Self::TextAlignJustify
             | Self::Palette
             | Self::Pilcrow
             | Self::CaseSensitive

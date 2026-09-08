@@ -16,6 +16,7 @@ pub mod layers;
 pub mod pages;
 pub mod palette;
 pub mod panels;
+pub mod ports;
 pub mod preflight_panel;
 pub mod rail;
 pub mod rulers;
@@ -91,6 +92,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // and everything in them is judged against the document behind.
     settings::show(ui.ctx(), state);
     export_dialog::show(ui.ctx(), state);
+    styles::editor(ui.ctx(), state);
 
     Panel::bottom("status")
         .exact_size(24.0)

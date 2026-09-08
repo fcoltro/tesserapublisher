@@ -2329,15 +2329,19 @@ fn text_section(
     ui.horizontal(|ui| {
         ui.colored_label(Theme::text_muted(), "Align");
         for (icon, name, alignment) in [
-            (crate::icons::Icon::AlignLeft, "Left", Alignment::Left),
+            (crate::icons::Icon::TextAlignLeft, "Left", Alignment::Left),
             (
-                crate::icons::Icon::AlignCentreH,
+                crate::icons::Icon::TextAlignCentre,
                 "Centre",
                 Alignment::Centre,
             ),
-            (crate::icons::Icon::AlignRight, "Right", Alignment::Right),
             (
-                crate::icons::Icon::AlignJustify,
+                crate::icons::Icon::TextAlignRight,
+                "Right",
+                Alignment::Right,
+            ),
+            (
+                crate::icons::Icon::TextAlignJustify,
                 "Justify",
                 Alignment::Justify,
             ),

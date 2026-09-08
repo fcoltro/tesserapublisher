@@ -872,6 +872,54 @@ fn thread_connectors(state: &TesseraApp, rect: Rect, painter: &egui::Painter) {
     }
 }
 
+/// A click that belongs to threading rather than to selection.
+///
+/// **Returns whether it was consumed**, so the caller can fall through to
+/// selection when it was not. Threading is a two-click gesture, and both clicks
+/// land on things a normal click would otherwise select: the first is on a port
+/// sitting inside its own frame, the second is on the frame the text should run
+/// into. Neither may also change the selection, or the first click would
+/// deselect the frame whose port was just clicked.
+fn threading_click(state: &mut TesseraApp, rect: Rect, pos: egui::Pos2) -> bool {
+    use super::ports;
+
+    // Second click: somewhere for the text to go.
+    if let Some(from) = state.loading_thread {
+        state.loading_thread = None;
+        let Some(to) = frame_at(state, rect, pos) else {
+            // Empty canvas cancels, quietly. Somebody who clicks nothing has
+            // changed their mind, and saying so would be a scolding.
+            return true;
+        };
+        if !ports::is_text(state, to) {
+            state.status = Some(crate::app::Status::info(
+                "Text can only continue into another text frame.",
+            ));
+            return true;
+        }
+        // `Document::thread` refuses a loop, a frame that already takes
+        // overflow from somewhere else, and a frame joined to itself. It
+        // returns whether it did anything, and a refusal that says nothing is
+        // a click that looks broken.
+        let before = state.active().document().revision();
+        apply(state, Command::ThreadFrames { from, to });
+        if state.active().document().revision() == before {
+            state.status = Some(crate::app::Status::info(
+                "Those frames cannot be joined: a frame takes text from one \
+                 place only, and a thread cannot run in a circle.",
+            ));
+        }
+        return true;
+    }
+
+    // First click: a port to start from.
+    if let Some(from) = ports::out_port_at(state, rect, pos) {
+        state.loading_thread = Some(from);
+        return true;
+    }
+    false
+}
+
 /// The lines a dragged object has settled onto.
 ///
 /// Drawn across the whole canvas rather than only beside the object, which is
@@ -892,42 +940,6 @@ fn snap_indicator(state: &TesseraApp, rect: Rect, painter: &egui::Painter) {
     if let Some(y) = on_y {
         let at = rect.top() + view.doc_to_screen(DocPoint { x: 0.0, y }).y;
         painter.hline(rect.x_range(), at, stroke);
-    }
-}
-
-fn overset_marks(state: &TesseraApp, rect: Rect, painter: &egui::Painter, overset: &[FrameId]) {
-    const MARK: f32 = 14.0;
-
-    for id in overset {
-        let Some(frame) = state.active().document().frame(*id) else {
-            continue;
-        };
-        let bounds = frame.bounds;
-        // Through the frame's own transform, like everything else drawn for a
-        // frame. Without it the mark stayed where the frame was first laid
-        // out, so moving the frame left it behind.
-        let corner = state
-            .active()
-            .view
-            .doc_to_screen(frame.transform.apply(DocPoint {
-                x: bounds.x + bounds.width,
-                y: bounds.y + bounds.height,
-            }));
-        let at = Rect::from_min_size(
-            egui::pos2(rect.min.x + corner.x - MARK, rect.min.y + corner.y - MARK),
-            egui::vec2(MARK, MARK),
-        );
-        if !rect.intersects(at) {
-            continue;
-        }
-        painter.rect_filled(at, 1.0, Theme::error());
-        painter.text(
-            at.center(),
-            egui::Align2::CENTER_CENTER,
-            "+",
-            egui::FontId::proportional(MARK),
-            Theme::text_primary(),
-        );
     }
 }
 
@@ -1392,12 +1404,19 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
         }
     }
 
+    // Escape ends a half-made thread. A mode you cannot leave is worse than
+    // the menu item that needed two frames selected in the right order.
+    if state.loading_thread.is_some() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        state.loading_thread = None;
+    }
+
     if response.clicked()
         && let Some(pos) = response.interact_pointer_pos()
         // A click that began on a grip changed nothing and selected nothing;
         // without this it would fall through and reselect whatever the handle
         // happens to be sitting over.
         && press_pos(ui, response).is_none_or(|p| grab_at(state, rect, p).is_none())
+        && !threading_click(state, rect, pos)
     {
         match frame_at(state, rect, pos) {
             Some(hit) if extend => state.active_mut().selection.toggle(hit),
@@ -1841,7 +1860,8 @@ fn draw_overlays(
         ));
     }
 
-    overset_marks(state, rect, &painter, overset);
+    super::ports::draw(state, rect, &painter, overset);
+    super::ports::draw_loading(ui, state, rect);
     snap_indicator(state, rect, &painter);
     thread_connectors(state, rect, &painter);
 

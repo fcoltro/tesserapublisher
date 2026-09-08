@@ -176,6 +176,14 @@ pub struct StylesWindow {
     pub object: Option<tessera_document::ids::ObjectStyleId>,
     pub character: Option<tessera_text::story::CharacterStyleId>,
     pub paragraph: Option<tessera_text::story::ParagraphStyleId>,
+    /// Whether the editing window is open.
+    ///
+    /// The properties of a style are a page of controls, and the rail is a
+    /// column two hundred and ninety points wide. Putting them there made the
+    /// panel a thing you scrolled rather than a list you picked from, and the
+    /// list is what the panel is *for*: which styles exist, which one is on
+    /// this text, and which have been overridden.
+    pub editing: bool,
 }
 
 /// The Swatches panel: open or not, and which swatch is being worked on.
@@ -289,6 +297,15 @@ pub struct TesseraApp {
     /// The lines the object being dragged is currently settled on, for the
     /// indicator. Cleared when the gesture ends.
     pub snapped_to: Option<(Option<f64>, Option<f64>)>,
+
+    /// The frame whose out port was clicked, waiting for somewhere to run into.
+    ///
+    /// The one piece of modal state on the canvas, and it is modal on purpose:
+    /// "click here, then click there" is the gesture every layout tool uses for
+    /// this, and it cannot be expressed without remembering the first click.
+    /// Escape and a click on empty canvas both end it, because a mode you
+    /// cannot leave is worse than a menu item that needs two frames selected.
+    pub loading_thread: Option<FrameId>,
 
     /// The parent page being edited on its own, if any.
     ///
@@ -409,6 +426,7 @@ impl TesseraApp {
             ambient: crate::view::ambient::Ambient::default(),
             ground: None,
             snapped_to: None,
+            loading_thread: None,
             editing_master: None,
             rail_open: true,
             sections: Sections::default(),

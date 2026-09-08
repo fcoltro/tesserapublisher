@@ -55,8 +55,50 @@ pub fn open_from_path(state: &mut TesseraApp, path: &Path) -> Result<(), FormatE
 }
 
 pub fn new_document(state: &mut TesseraApp) {
-    state.add_document(Document::new(), None);
+    state.add_document(starting_document(), None);
     state.status = Some(Status::info("New document"));
+}
+
+/// A new document as *Tessera* starts one, styles and all.
+///
+/// **Not `Document::new`.** An empty document is what the model means by empty,
+/// and every test and every load relies on that; starting with three styles is
+/// an authoring decision about what somebody finds when they choose File > New.
+/// Putting it in the model made a dozen tests fail that had every right to
+/// assume a fresh document has no styles in it.
+fn starting_document() -> Document {
+    use tessera_document::object_style::{ObjectFormat, ObjectStyle};
+    use tessera_text::story::{CharacterFormat, CharacterStyle, ParagraphFormat, ParagraphStyle};
+
+    let mut doc = Document::new();
+
+    // **Ordinary entries, not roots.** `[Basic Paragraph]` and `[None]` are the
+    // floor of the cascade and are deliberately not rows in these tables — a
+    // second root could disagree with the first. These are the styles somebody
+    // would have made in their first minute.
+    //
+    // Each states *nothing*. A starting style that stated properties would be
+    // worse than none at all: applying "Body" would silently repaint text that
+    // already looked right, and the only way to find out which properties it
+    // had pinned would be to open it and read.
+    doc.paragraph_styles.insert(ParagraphStyle {
+        name: "Body".to_string(),
+        based_on: None,
+        format: ParagraphFormat::default(),
+    });
+    doc.character_styles.insert(CharacterStyle {
+        name: "Emphasis".to_string(),
+        based_on: None,
+        format: CharacterFormat::default(),
+    });
+    let object = doc.object_styles.insert(ObjectStyle {
+        name: "Basic object".to_string(),
+        based_on: None,
+        format: ObjectFormat::default(),
+    });
+    doc.object_style_order.push(object);
+
+    doc
 }
 
 /// Export the open document as a PDF.
