@@ -22,6 +22,7 @@
 use std::path::Path;
 
 use crate::PdfError as Error;
+use tessera_color::managed::Conversion;
 
 /// How the bytes are compressed, which is the same thing as which PDF filter
 /// reads them.
@@ -33,12 +34,21 @@ pub enum Coding {
     Flate,
 }
 
+/// How many components a prepared image's samples carry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Space {
+    Rgb,
+    /// Converted through the press's own profile.
+    Cmyk,
+}
+
 /// One image, ready to be written.
 #[derive(Debug, Clone)]
 pub struct Prepared {
     pub width: u32,
     pub height: u32,
     pub coding: Coding,
+    pub space: Space,
     /// The colour samples: JPEG bytes, or deflated RGB triples.
     pub data: Vec<u8>,
     /// The alpha channel, deflated, one byte per pixel. `None` when the artwork
@@ -73,6 +83,7 @@ pub fn prepare(path: &Path) -> Result<Prepared, Error> {
                 width,
                 height,
                 coding: Coding::Jpeg,
+                space: Space::Rgb,
                 data: bytes,
                 // A baseline JPEG has no alpha. There is nothing to look for.
                 alpha: None,
@@ -100,7 +111,71 @@ pub fn prepare(path: &Path) -> Result<Prepared, Error> {
         width,
         height,
         coding: Coding::Flate,
+        space: Space::Rgb,
         data: deflate(&colour),
+        alpha: any_transparent.then(|| deflate(&alpha)),
+    })
+}
+
+/// How many pixels are converted per call into Little CMS.
+///
+/// A chunk rather than the whole image, because the buffers are `[f32; 3]` and
+/// `[f32; 4]` going in and out: a forty-megapixel scan converted in one call
+/// wants a gigabyte of scratch for a picture that is a fifth of that on disk.
+/// Big enough that the per-call cost disappears, small enough to be free.
+const CHUNK: usize = 1 << 16;
+
+/// The same artwork, converted into the press's inks.
+///
+/// **A JPEG cannot be passed through here.** `/DCTDecode` carries the file's own
+/// bytes, and those bytes are RGB — converting means decoding, so the
+/// pass-through that makes an RGB export cheap is exactly what a CMYK export
+/// cannot have. That is a real cost of a CMYK export and not a shortcut worth
+/// looking for: the alternative is a file whose pictures are in the wrong space.
+///
+/// Alpha survives. It is coverage, not colour, and has nothing to do with which
+/// inks the picture is made of.
+pub fn to_cmyk(path: &Path, conversion: &Conversion) -> Result<Prepared, Error> {
+    let bytes = std::fs::read(path)?;
+    let decoded = image::load_from_memory(&bytes)
+        .map_err(|e| Error::Unreadable(path.to_path_buf(), e.to_string()))?;
+    let rgba = decoded.to_rgba8();
+    let (width, height) = rgba.dimensions();
+
+    let mut inks: Vec<u8> = Vec::with_capacity((width * height * 4) as usize);
+    let mut alpha: Vec<u8> = Vec::with_capacity((width * height) as usize);
+    let mut any_transparent = false;
+
+    let pixels: Vec<_> = rgba.pixels().collect();
+    for block in pixels.chunks(CHUNK) {
+        let source: Vec<[f32; 3]> = block
+            .iter()
+            .map(|p| {
+                [
+                    f32::from(p.0[0]) / 255.0,
+                    f32::from(p.0[1]) / 255.0,
+                    f32::from(p.0[2]) / 255.0,
+                ]
+            })
+            .collect();
+
+        for ink in conversion.apply_run(&source) {
+            for channel in ink {
+                inks.push((channel.clamp(0.0, 1.0) * 255.0).round() as u8);
+            }
+        }
+        for p in block {
+            alpha.push(p.0[3]);
+            any_transparent |= p.0[3] != 255;
+        }
+    }
+
+    Ok(Prepared {
+        width,
+        height,
+        coding: Coding::Flate,
+        space: Space::Cmyk,
+        data: deflate(&inks),
         alpha: any_transparent.then(|| deflate(&alpha)),
     })
 }
@@ -175,6 +250,82 @@ mod tests {
                 image::ImageFormat::Jpeg,
             )
             .expect("encode");
+        out
+    }
+
+    fn a_conversion() -> Conversion {
+        // The screen profile, which is RGB. That makes this a test of the
+        // *path* rather than of any press's numbers — the numbers need a real
+        // CMYK profile, and `tools/vendor-profiles.py` has never been run.
+        tessera_color::managed::OutputProfile::screen()
+            .expect("a profile")
+            .ink_for_screen_colour(tessera_color::managed::Rendering::default())
+            .expect("a conversion")
+    }
+
+    fn written(name: &str, image: image::DynamicImage) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join("tessera-pdf-images");
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join(name);
+        image.save(&path).expect("write");
+        path
+    }
+
+    #[test]
+    fn converting_gives_four_components_a_pixel() {
+        // Three would be an RGB image wearing a CMYK label, which a press would
+        // read as a third of the picture.
+        let path = written(
+            "convert.png",
+            image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+                4,
+                5,
+                image::Rgb([10, 120, 200]),
+            )),
+        );
+        let ready = to_cmyk(&path, &a_conversion()).expect("convert");
+
+        assert_eq!(ready.space, Space::Cmyk);
+        let raw = inflate(&ready.data);
+        assert_eq!(raw.len(), 4 * 4 * 5, "not four components a pixel");
+    }
+
+    #[test]
+    fn a_jpeg_cannot_be_passed_through_when_it_has_to_be_converted() {
+        // `/DCTDecode` carries the file's own bytes and those bytes are RGB.
+        // Converting means decoding, so the pass-through that makes an RGB
+        // export cheap is exactly what a CMYK export cannot have.
+        let bytes = tiny_jpeg();
+        let dir = std::env::temp_dir().join("tessera-pdf-images");
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("converted.jpg");
+        std::fs::write(&path, &bytes).expect("write");
+
+        let ready = to_cmyk(&path, &a_conversion()).expect("convert");
+        assert_eq!(ready.coding, Coding::Flate, "the RGB bytes were passed on");
+        assert_ne!(ready.data, bytes);
+    }
+
+    #[test]
+    fn alpha_survives_conversion() {
+        // It is coverage, not colour, and has nothing to do with which inks the
+        // picture is made of. Dropping it here would composite a cut-out onto
+        // black in exactly the export that goes to a press.
+        let mut image = image::RgbaImage::from_pixel(3, 3, image::Rgba([9, 9, 9, 255]));
+        image.put_pixel(0, 0, image::Rgba([9, 9, 9, 0]));
+        let path = written("convert-alpha.png", image::DynamicImage::ImageRgba8(image));
+
+        let ready = to_cmyk(&path, &a_conversion()).expect("convert");
+        assert!(ready.is_transparent(), "the alpha channel was dropped");
+    }
+
+    /// Undo `deflate`, so a test can look at the samples that were written.
+    fn inflate(bytes: &[u8]) -> Vec<u8> {
+        use std::io::Read;
+        let mut out = Vec::new();
+        flate2::read::ZlibDecoder::new(bytes)
+            .read_to_end(&mut out)
+            .expect("inflate");
         out
     }
 

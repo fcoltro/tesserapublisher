@@ -157,7 +157,12 @@ impl ExportOptions {
     /// press instead of in the studio.
     ///
     /// An empty list means the claim can be made honestly.
-    pub fn refusals(&self, has_transparency: bool, has_artwork: bool) -> Vec<String> {
+    /// `has_artwork` is no longer a reason to refuse anything: placed pictures
+    /// are converted through the output intent's profile, so a CMYK export has
+    /// no RGB left in it. Kept in the signature because the caller already
+    /// computes it and a rule that needs it will arrive before one that does
+    /// not — an X-1a document with a spot colour in a picture, for one.
+    pub fn refusals(&self, has_transparency: bool, _has_artwork: bool) -> Vec<String> {
         let mut out = Vec::new();
 
         if self.standard != Standard::Plain && self.intent.is_none() {
@@ -171,22 +176,6 @@ impl ExportOptions {
             out.push(format!(
                 "{} does not allow transparency, and this document uses it. \
                  Export PDF/X-4, or remove the opacity and blend modes.",
-                self.standard.label()
-            ));
-        }
-
-        // Placed artwork is embedded in `/DeviceRGB`, and PDF/X-1a admits only
-        // CMYK, grey and spot. **Refused rather than written**, for the same
-        // reason every other claim here is: a printer's preflight believes the
-        // `GTS_PDFXVersion` key, so a file claiming X-1a with an RGB image in it
-        // passes their check and fails on the press instead of in the studio.
-        //
-        // The honest fix is converting the image through the output intent's
-        // profile, which is owed. Saying so beats writing a file that lies.
-        if self.standard == Standard::X1a && has_artwork {
-            out.push(format!(
-                "{} allows no RGB, and placed artwork is written in RGB. \
-                 Export PDF/X-4, or take the pictures out.",
                 self.standard.label()
             ));
         }

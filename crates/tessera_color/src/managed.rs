@@ -341,6 +341,31 @@ pub enum Conversion {
 }
 
 impl Conversion {
+    /// A whole run of screen colours, in one call.
+    ///
+    /// **One transform call for many pixels, not many calls for one each.**
+    /// Little CMS is built to work in bulk; going through [`Self::apply`] a
+    /// pixel at a time makes converting a photograph take minutes rather than a
+    /// moment, and a converting exporter nobody waits for is one nobody uses.
+    ///
+    /// The caller chunks. This does not, because how much memory to spend at
+    /// once is the caller's business and a fixed choice here would be wrong for
+    /// both a swatch and a forty-megapixel scan.
+    pub fn apply_run(&self, rgb: &[[f32; 3]]) -> Vec<[f32; 4]> {
+        match self {
+            Self::Cmyk(transform) => {
+                let mut out = vec![[0.0f32; 4]; rgb.len()];
+                transform.transform_pixels(rgb, &mut out);
+                out
+            }
+            Self::Rgb(transform) => {
+                let mut out = vec![[0.0f32; 3]; rgb.len()];
+                transform.transform_pixels(rgb, &mut out);
+                out.into_iter().map(|c| [c[0], c[1], c[2], 0.0]).collect()
+            }
+        }
+    }
+
     /// The ink values for a screen colour.
     ///
     /// Always four, so callers need no arm of their own; the fourth is zero for

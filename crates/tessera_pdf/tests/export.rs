@@ -926,40 +926,22 @@ fn a_broken_link_does_not_stop_the_export() {
 }
 
 #[test]
-fn pdf_x1a_is_refused_for_a_document_with_pictures_in_it() {
-    // The artwork is embedded in `/DeviceRGB` and X-1a admits only CMYK, grey
-    // and spot. A printer's preflight *believes* `GTS_PDFXVersion`, so a file
-    // claiming X-1a with an RGB image in it passes their check and fails on the
-    // press instead of in the studio.
+fn pdf_x1a_is_no_longer_refused_over_pictures() {
+    // It was, for one commit, and the reason was sound: the artwork was
+    // embedded in `/DeviceRGB` and X-1a admits only CMYK, grey and spot. The
+    // answer was never to keep refusing — it was to convert the pictures
+    // through the press's own profile, which is what happens now.
     let path = a_jpeg("conformance.jpg", 8, 8);
     let doc = one(placed(Some(path)), page());
 
     let options = tessera_pdf::ExportOptions {
         standard: tessera_pdf::Standard::X1a,
-        intent: None,
+        intent: Some(an_intent()),
         ..Default::default()
     };
-    let refused =
-        tessera_pdf::export_with(&doc, &options).expect_err("X-1a was claimed over an RGB image");
-    assert!(format!("{refused}").contains("RGB"), "{refused}");
-}
-
-#[test]
-fn an_empty_picture_box_does_not_refuse_pdf_x1a() {
-    // It embeds nothing, so it puts no RGB in the file. Refusing over it would
-    // be refusing over something that is not there.
-    let doc = one(placed(None), page());
-    let options = tessera_pdf::ExportOptions {
-        standard: tessera_pdf::Standard::X1a,
-        intent: None,
-        ..Default::default()
-    };
-    let reasons = options.refusals(false, false);
-    assert!(
-        !reasons.iter().any(|r| r.contains("RGB")),
-        "an empty box was refused: {reasons:?}"
-    );
-    let _ = doc;
+    let bytes = tessera_pdf::export_with(&doc, &options)
+        .expect("X-1a was refused over a picture it can now convert");
+    assert!(bytes.starts_with(b"%PDF-"));
 }
 
 // --- drop shadows -----------------------------------------------------------

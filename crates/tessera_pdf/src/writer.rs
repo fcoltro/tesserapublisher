@@ -168,7 +168,7 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
     let fonts = collect_fonts(resolved, &mut alloc)?;
     let states = collect_states(resolved, &mut alloc);
     let shadings = collect_shadings(resolved, page, &mut alloc, &ink);
-    let pictures = collect_pictures(resolved, &mut alloc);
+    let pictures = collect_pictures(resolved, &mut alloc, &ink);
     let shadows = collect_shadows(resolved, &mut alloc);
     let content = build_content(
         resolved,
@@ -587,7 +587,11 @@ struct Picture {
 /// A file that cannot be read is **skipped, not fatal**. Preflight has already
 /// reported the broken link, and refusing the whole export because of one
 /// missing picture would mean a job with a broken link cannot even be proofed.
-fn collect_pictures(resolved: &ResolvedDocument, alloc: &mut impl FnMut() -> Ref) -> Vec<Picture> {
+fn collect_pictures(
+    resolved: &ResolvedDocument,
+    alloc: &mut impl FnMut() -> Ref,
+    ink: &Ink,
+) -> Vec<Picture> {
     let mut out: Vec<Picture> = Vec::new();
 
     for item in &resolved.items {
@@ -598,7 +602,15 @@ fn collect_pictures(resolved: &ResolvedDocument, alloc: &mut impl FnMut() -> Ref
         if out.iter().any(|p| &p.source == source) {
             continue;
         }
-        let Ok(ready) = crate::images::prepare(source) else {
+        // Converted through the press's own profile when there is one, so a
+        // CMYK export has no RGB left in it. The pass-through that makes an RGB
+        // export cheap is exactly what a converting export cannot have, and
+        // that is a real cost rather than a shortcut worth looking for.
+        let ready = match ink {
+            Ink::Cmyk(conversion) => crate::images::to_cmyk(source, conversion),
+            Ink::Rgb => crate::images::prepare(source),
+        };
+        let Ok(ready) = ready else {
             continue;
         };
 
@@ -639,7 +651,10 @@ fn write_pictures(pdf: &mut Pdf, pictures: &[Picture]) {
 
         let mut image = pdf.image_xobject(picture.id, &ready.data);
         image.width(ready.width as i32).height(ready.height as i32);
-        image.color_space().device_rgb();
+        match ready.space {
+            crate::images::Space::Cmyk => image.color_space().device_cmyk(),
+            crate::images::Space::Rgb => image.color_space().device_rgb(),
+        };
         image.bits_per_component(8);
         image.filter(match ready.coding {
             // `/DCTDecode` *is* JPEG: the file's own bytes, handed over.

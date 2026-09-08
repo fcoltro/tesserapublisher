@@ -972,10 +972,21 @@ What is owed, stated rather than ticked:
     smaller than anything a re-encode could produce and exactly as good. Alpha
     becomes an `/SMask`, since PDF has no RGBA and dropping it would composite a
     cut-out onto black. One file placed forty times is one image object.
-  - **PDF/X-1a is refused for a document with pictures in it.** The artwork is
-    embedded in `/DeviceRGB` and X-1a admits only CMYK, grey and spot. Converting
-    it through the output intent is owed; claiming conformance it does not have
-    would be the exact lie the rest of this exporter refuses.
+  - **Placed artwork is converted through the press's own profile**, so a CMYK
+    export has no RGB left in it and PDF/X-1a is not refused over pictures. It
+    was refused, for one commit, and the reason was sound — the answer was never
+    to keep refusing but to convert.
+  - A JPEG cannot be passed through when it has to be converted: `/DCTDecode`
+    carries the file's own bytes and those bytes are RGB. That is a real cost of
+    a CMYK export rather than a shortcut worth looking for; the alternative is a
+    file whose pictures are in the wrong space.
+  - Converted in chunks and in bulk. Little CMS is built to work on runs, and
+    going a pixel at a time makes converting a photograph take minutes — while
+    converting a forty-megapixel scan in one call wants a gigabyte of scratch.
+  - **The numbers are unverified.** The conversion path is tested, but with the
+    *screen* profile standing in, because no real CMYK profile is in the tree:
+    `tools/vendor-profiles.py` has never been run. What is proven is that the
+    picture comes out with four components a pixel and its alpha intact.
   - The placeholder is **never written to the PDF**. A violet cross in a
     printed job is far worse than a blank space.
   - The decode cache is keyed on the file's **modification time as well as its
