@@ -15,6 +15,7 @@
 //! is exactly why they are refused rather than written when they cannot be
 //! honoured.
 
+mod images;
 mod ink;
 mod marks;
 mod options;

@@ -206,7 +206,20 @@ fn summary(ui: &mut Ui, state: &mut TesseraApp) {
         .iter()
         .any(|item| !item.blend.is_plain() || item.shadow.is_some());
 
-    let refusals = options.refusals(transparency);
+    // Artwork that will actually be embedded. An empty picture box puts no RGB
+    // in the file, so refusing an X-1a export over one would be refusing over
+    // something that is not there.
+    let artwork = resolved.items.iter().any(|item| {
+        matches!(
+            &item.kind,
+            tessera_layout::resolve::ResolvedKind::Graphic {
+                source: Some(_),
+                ..
+            }
+        )
+    });
+
+    let refusals = options.refusals(transparency, artwork);
     if !refusals.is_empty() {
         for reason in &refusals {
             ui.colored_label(Theme::error(), reason);

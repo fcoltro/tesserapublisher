@@ -66,6 +66,7 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 zip        = "8"
 
 # Assets and export.
+flate2     = "1"
 image      = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 pdf-writer = "0.15"
 subsetter  = "0.2"

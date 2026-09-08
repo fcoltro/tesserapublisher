@@ -157,7 +157,7 @@ impl ExportOptions {
     /// press instead of in the studio.
     ///
     /// An empty list means the claim can be made honestly.
-    pub fn refusals(&self, has_transparency: bool) -> Vec<String> {
+    pub fn refusals(&self, has_transparency: bool, has_artwork: bool) -> Vec<String> {
         let mut out = Vec::new();
 
         if self.standard != Standard::Plain && self.intent.is_none() {
@@ -171,6 +171,22 @@ impl ExportOptions {
             out.push(format!(
                 "{} does not allow transparency, and this document uses it. \
                  Export PDF/X-4, or remove the opacity and blend modes.",
+                self.standard.label()
+            ));
+        }
+
+        // Placed artwork is embedded in `/DeviceRGB`, and PDF/X-1a admits only
+        // CMYK, grey and spot. **Refused rather than written**, for the same
+        // reason every other claim here is: a printer's preflight believes the
+        // `GTS_PDFXVersion` key, so a file claiming X-1a with an RGB image in it
+        // passes their check and fails on the press instead of in the studio.
+        //
+        // The honest fix is converting the image through the output intent's
+        // profile, which is owed. Saying so beats writing a file that lies.
+        if self.standard == Standard::X1a && has_artwork {
+            out.push(format!(
+                "{} allows no RGB, and placed artwork is written in RGB. \
+                 Export PDF/X-4, or take the pictures out.",
                 self.standard.label()
             ));
         }
@@ -200,7 +216,7 @@ mod tests {
     fn a_plain_pdf_claims_nothing_and_so_refuses_nothing() {
         let options = ExportOptions::default();
         assert!(options.standard.version_key().is_none());
-        assert!(options.refusals(true).is_empty());
+        assert!(options.refusals(true, false).is_empty());
     }
 
     #[test]
@@ -212,7 +228,7 @@ mod tests {
             standard: Standard::X4,
             ..Default::default()
         };
-        let refused = options.refusals(false);
+        let refused = options.refusals(false, false);
         assert_eq!(refused.len(), 1);
         assert!(refused[0].contains("output intent"));
     }
@@ -229,11 +245,11 @@ mod tests {
         };
         assert!(
             options
-                .refusals(true)
+                .refusals(true, false)
                 .iter()
                 .any(|r| r.contains("transparency"))
         );
-        assert!(options.refusals(false).is_empty());
+        assert!(options.refusals(false, false).is_empty());
     }
 
     #[test]
@@ -243,7 +259,7 @@ mod tests {
             intent: Some(an_intent()),
             ..Default::default()
         };
-        assert!(options.refusals(true).is_empty());
+        assert!(options.refusals(true, false).is_empty());
     }
 
     #[test]
@@ -256,7 +272,7 @@ mod tests {
             },
             ..Default::default()
         };
-        assert!(!options.refusals(false).is_empty());
+        assert!(!options.refusals(false, false).is_empty());
     }
 
     #[test]

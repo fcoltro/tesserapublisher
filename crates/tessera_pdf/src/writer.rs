@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use pdf_writer::Filter;
 use pdf_writer::types::{BlendMode, LineCapStyle, LineJoinStyle};
 use pdf_writer::writers::ExtGraphicsState;
 use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref, Str, TextStr};
@@ -32,6 +33,16 @@ pub enum PdfError {
     GlyphIdTooLarge(u32),
     #[error("this export cannot claim what it was asked to: {}", .0.join("; "))]
     CannotConform(Vec<String>),
+    #[error("could not read {0}: {1}")]
+    Unreadable(std::path::PathBuf, String),
+}
+
+impl From<std::io::Error> for PdfError {
+    fn from(error: std::io::Error) -> Self {
+        // The path is not known here; the caller that had one wraps it with a
+        // better message. This is the fallback so `?` works on a read.
+        PdfError::Unreadable(std::path::PathBuf::new(), error.to_string())
+    }
 }
 
 /// Convert a document-space y to PDF space.
@@ -99,7 +110,7 @@ pub fn export_with(
     resolved: &ResolvedDocument,
     options: &ExportOptions,
 ) -> Result<Vec<u8>, PdfError> {
-    let refused = options.refusals(uses_transparency(resolved));
+    let refused = options.refusals(uses_transparency(resolved), has_artwork(resolved));
     if !refused.is_empty() {
         return Err(PdfError::CannotConform(refused));
     }
@@ -110,6 +121,23 @@ pub fn export_with(
 ///
 /// Asked before an X-1a claim is allowed, because X-1a forbids it and Tessera
 /// does not flatten.
+/// Whether any placed artwork will actually be written.
+///
+/// A frame with no file, or one whose file has gone, embeds nothing and so puts
+/// no RGB in the PDF. Refusing an X-1a export because of an empty picture box
+/// would be refusing over something that is not there.
+fn has_artwork(resolved: &ResolvedDocument) -> bool {
+    resolved.items.iter().any(|item| {
+        matches!(
+            &item.kind,
+            ResolvedKind::Graphic {
+                source: Some(_),
+                ..
+            }
+        )
+    })
+}
+
 fn uses_transparency(resolved: &ResolvedDocument) -> bool {
     resolved
         .items
@@ -140,6 +168,7 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
     let fonts = collect_fonts(resolved, &mut alloc)?;
     let states = collect_states(resolved, &mut alloc);
     let shadings = collect_shadings(resolved, page, &mut alloc, &ink);
+    let pictures = collect_pictures(resolved, &mut alloc);
     let content = build_content(
         resolved,
         &Written {
@@ -147,6 +176,7 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
             fonts: &fonts,
             states: &states,
             shadings: &shadings,
+            pictures: &pictures,
             ink: &ink,
             resolved_page: &resolved_page,
             options,
@@ -258,6 +288,13 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
             }
             shading_dict.finish();
         }
+        if !pictures.is_empty() {
+            let mut objects = resources.x_objects();
+            for picture in &pictures {
+                objects.pair(Name(picture.resource.as_bytes()), picture.id);
+            }
+            objects.finish();
+        }
         resources.finish();
         page_obj.finish();
     }
@@ -266,6 +303,7 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
     // damaged file stays inspectable. Milestone 6 owns export quality and
     // turns on compression there.
     pdf.stream(content_id, &content);
+    write_pictures(&mut pdf, &pictures);
 
     for font in &fonts {
         write_font(&mut pdf, font);
@@ -383,6 +421,92 @@ struct ShadingKind {
 ///
 /// Not deduplicated, because a shading carries its object's geometry: the same
 /// ramp on two differently sized frames is two different sets of coordinates.
+/// One placed picture, written once however many frames show it.
+struct Picture {
+    /// The file it came from, which is what makes it reusable.
+    source: std::path::PathBuf,
+    id: Ref,
+    /// The `/SMask` object, when the artwork has an alpha channel.
+    mask: Option<Ref>,
+    resource: String,
+    ready: crate::images::Prepared,
+}
+
+/// Read every placed file once, whatever it is placed into.
+///
+/// **Keyed on the path.** A logo on forty pages is one image object and forty
+/// references to it; embedding it forty times would multiply the file by forty
+/// for a picture the reader already has.
+///
+/// A file that cannot be read is **skipped, not fatal**. Preflight has already
+/// reported the broken link, and refusing the whole export because of one
+/// missing picture would mean a job with a broken link cannot even be proofed.
+fn collect_pictures(resolved: &ResolvedDocument, alloc: &mut impl FnMut() -> Ref) -> Vec<Picture> {
+    let mut out: Vec<Picture> = Vec::new();
+
+    for item in &resolved.items {
+        let ResolvedKind::Graphic { source, .. } = &item.kind else {
+            continue;
+        };
+        let Some(source) = source else { continue };
+        if out.iter().any(|p| &p.source == source) {
+            continue;
+        }
+        let Ok(ready) = crate::images::prepare(source) else {
+            continue;
+        };
+
+        let id = alloc();
+        let mask = ready.is_transparent().then(&mut *alloc);
+        out.push(Picture {
+            source: source.clone(),
+            id,
+            mask,
+            resource: format!("Im{}", out.len()),
+            ready,
+        });
+    }
+
+    out
+}
+
+/// Write the image objects themselves.
+fn write_pictures(pdf: &mut Pdf, pictures: &[Picture]) {
+    use crate::images::Coding;
+
+    for picture in pictures {
+        let ready = &picture.ready;
+
+        // The mask first, so its id is settled before the image names it.
+        if let (Some(mask_id), Some(alpha)) = (picture.mask, ready.alpha.as_ref()) {
+            let mut mask = pdf.image_xobject(mask_id, alpha);
+            mask.width(ready.width as i32)
+                .height(ready.height as i32)
+                // One component per pixel, and **`/DeviceGray`**: a soft mask is
+                // coverage, not colour. Written in a colour space with three
+                // components it would be read as a third of the pixels.
+                .color_space()
+                .device_gray();
+            mask.bits_per_component(8).filter(Filter::FlateDecode);
+            mask.finish();
+        }
+
+        let mut image = pdf.image_xobject(picture.id, &ready.data);
+        image.width(ready.width as i32).height(ready.height as i32);
+        image.color_space().device_rgb();
+        image.bits_per_component(8);
+        image.filter(match ready.coding {
+            // `/DCTDecode` *is* JPEG: the file's own bytes, handed over.
+            Coding::Jpeg => Filter::DctDecode,
+            Coding::Flate => Filter::FlateDecode,
+        });
+        if let Some(mask_id) = picture.mask {
+            image.s_mask(mask_id);
+        }
+        image.finish();
+    }
+}
+
 fn collect_shadings(
     resolved: &ResolvedDocument,
     page: DocRect,
@@ -607,6 +731,7 @@ struct Written<'a> {
     fonts: &'a [EmbeddedFont],
     states: &'a [GraphicsState],
     shadings: &'a [Option<Shading>],
+    pictures: &'a [Picture],
     ink: &'a Ink,
     resolved_page: &'a tessera_layout::ResolvedPage,
     options: &'a ExportOptions,
@@ -618,6 +743,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
         fonts,
         states,
         shadings,
+        pictures,
         ink,
         resolved_page,
         options,
@@ -664,12 +790,33 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
         }
 
         match &item.kind {
-            // Not yet written. A picture box is **furniture** — the cross and
-            // the frame edge are interface, not ink — and until the pixels are
-            // embedded there is nothing about it that belongs in a PDF.
-            // Drawing the placeholder here would put a violet cross in a
-            // printed job, which is far worse than a blank space.
-            ResolvedKind::Graphic { .. } => {}
+            // The picture, if its file could be read. The placeholder is
+            // still never written: a picture box is **furniture** — the cross
+            // and the frame edge are interface, not ink — and a violet cross in
+            // a printed job is far worse than a blank space.
+            ResolvedKind::Graphic { source, .. } => {
+                if let Some(source) = source
+                    && let Some(picture) = pictures.iter().find(|p| &p.source == source)
+                {
+                    content.save_state();
+                    // A PDF image occupies the **unit square**, so the matrix is
+                    // the whole of where and how big it is. The y flip is part
+                    // of it: PDF's image space runs top-down inside a
+                    // bottom-up page, so without the negative height every
+                    // photograph would print upside down.
+                    let b = item.bounds;
+                    content.transform([
+                        b.width as f32,
+                        0.0,
+                        0.0,
+                        b.height as f32,
+                        b.x as f32,
+                        to_pdf_y(page, b.y, b.height) as f32,
+                    ]);
+                    content.x_object(Name(picture.resource.as_bytes()));
+                    content.restore_state();
+                }
+            }
 
             ResolvedKind::Rectangle { fill, stroke } => {
                 content.save_state();

@@ -930,6 +930,18 @@ What is owed, stated rather than ticked:
     renderer, which can cache it, and the PDF writer wants bytes rather than a
     decoded surface — handing both a decoded image would decode twice and
     cache neither.
+  - **Placed artwork is written to the PDF.** It was not, until now: the
+    writer skipped `ResolvedKind::Graphic` entirely, so a page of photographs
+    exported as a page of nothing — and because the placeholder is deliberately
+    never written either, the file came out looking finished and empty. A JPEG
+    is passed through as `/DCTDecode`, which *is* JPEG: the file's own bytes are
+    smaller than anything a re-encode could produce and exactly as good. Alpha
+    becomes an `/SMask`, since PDF has no RGBA and dropping it would composite a
+    cut-out onto black. One file placed forty times is one image object.
+  - **PDF/X-1a is refused for a document with pictures in it.** The artwork is
+    embedded in `/DeviceRGB` and X-1a admits only CMYK, grey and spot. Converting
+    it through the output intent is owed; claiming conformance it does not have
+    would be the exact lie the rest of this exporter refuses.
   - The placeholder is **never written to the PDF**. A violet cross in a
     printed job is far worse than a blank space.
   - The decode cache is keyed on the file's **modification time as well as its

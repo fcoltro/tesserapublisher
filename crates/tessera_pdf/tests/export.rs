@@ -819,3 +819,142 @@ fn an_rgb_press_still_writes_rgb() {
         "a CMYK fill was written for an RGB press"
     );
 }
+
+// --- placed artwork ---------------------------------------------------------
+
+/// A real JPEG on disk, and its path.
+fn a_jpeg(name: &str, width: u32, height: u32) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join("tessera-pdf-export");
+    std::fs::create_dir_all(&dir).expect("dir");
+    let path = dir.join(name);
+
+    let image = image::RgbImage::from_pixel(width, height, image::Rgb([20, 120, 220]));
+    image::DynamicImage::ImageRgb8(image)
+        .save_with_format(&path, image::ImageFormat::Jpeg)
+        .expect("write");
+    path
+}
+
+fn placed(source: Option<std::path::PathBuf>) -> ResolvedKind {
+    ResolvedKind::Graphic {
+        inner: Transform::IDENTITY,
+        natural: (100.0, 100.0),
+        missing: source.is_none(),
+        stroke: None,
+        source,
+    }
+}
+
+#[test]
+fn a_placed_picture_is_written_into_the_pdf() {
+    // It was not. `ResolvedKind::Graphic` was skipped entirely, so a page of
+    // photographs exported as a page of nothing — and because the placeholder
+    // is deliberately never written either, the file came out looking finished
+    // and empty.
+    let path = a_jpeg("placed.jpg", 40, 25);
+    let doc = one(placed(Some(path)), page());
+
+    let bytes = tessera_pdf::export(&doc).expect("export");
+    let text = String::from_utf8_lossy(&bytes);
+
+    assert!(text.contains("/XObject"), "no image resources in the file");
+    assert!(text.contains("/Subtype /Image"), "no image object");
+    assert!(
+        text.contains("/DCTDecode"),
+        "the JPEG was re-encoded rather than passed through"
+    );
+    assert!(text.contains("/Im0 Do"), "the image is never drawn");
+}
+
+#[test]
+fn one_file_placed_twice_is_embedded_once() {
+    // A logo on forty pages is one image object and forty references. Embedding
+    // it each time would multiply the file by forty for a picture the reader
+    // already has.
+    let path = a_jpeg("twice.jpg", 16, 16);
+    let item = |bounds: DocRect, source: std::path::PathBuf| ResolvedItem {
+        frame: FrameId::default(),
+        transform: Transform::IDENTITY,
+        spread_area: None,
+        blend: tessera_document::blending::Blending::PLAIN,
+        shadow: None,
+        bounds,
+        kind: placed(Some(source)),
+    };
+    let doc = ResolvedDocument {
+        pages: vec![resolved_page()],
+        items: vec![
+            item(rect(0.0, 0.0, 50.0, 50.0), path.clone()),
+            item(rect(60.0, 0.0, 50.0, 50.0), path),
+        ],
+    };
+
+    let bytes = tessera_pdf::export(&doc).expect("export");
+    let text = String::from_utf8_lossy(&bytes);
+    assert_eq!(
+        text.matches("/Subtype /Image").count(),
+        1,
+        "the file was embedded more than once"
+    );
+    assert_eq!(text.matches("/Im0 Do").count(), 2, "it is not drawn twice");
+}
+
+#[test]
+fn a_frame_with_no_file_writes_nothing() {
+    // An empty picture box is furniture. The cross and the frame edge are
+    // interface, not ink, and a violet cross in a printed job is far worse than
+    // a blank space.
+    let doc = one(placed(None), page());
+
+    let bytes = tessera_pdf::export(&doc).expect("export");
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(!text.contains("/Subtype /Image"));
+}
+
+#[test]
+fn a_broken_link_does_not_stop_the_export() {
+    // Preflight has already reported it. Refusing the whole PDF because of one
+    // missing picture would mean a job with a broken link cannot be proofed.
+    let gone = std::env::temp_dir().join("tessera-pdf-export/definitely-not-here.jpg");
+    let doc = one(placed(Some(gone)), page());
+
+    let bytes = tessera_pdf::export(&doc).expect("a broken link stopped the export");
+    assert!(bytes.starts_with(b"%PDF-"));
+}
+
+#[test]
+fn pdf_x1a_is_refused_for_a_document_with_pictures_in_it() {
+    // The artwork is embedded in `/DeviceRGB` and X-1a admits only CMYK, grey
+    // and spot. A printer's preflight *believes* `GTS_PDFXVersion`, so a file
+    // claiming X-1a with an RGB image in it passes their check and fails on the
+    // press instead of in the studio.
+    let path = a_jpeg("conformance.jpg", 8, 8);
+    let doc = one(placed(Some(path)), page());
+
+    let options = tessera_pdf::ExportOptions {
+        standard: tessera_pdf::Standard::X1a,
+        intent: None,
+        ..Default::default()
+    };
+    let refused =
+        tessera_pdf::export_with(&doc, &options).expect_err("X-1a was claimed over an RGB image");
+    assert!(format!("{refused}").contains("RGB"), "{refused}");
+}
+
+#[test]
+fn an_empty_picture_box_does_not_refuse_pdf_x1a() {
+    // It embeds nothing, so it puts no RGB in the file. Refusing over it would
+    // be refusing over something that is not there.
+    let doc = one(placed(None), page());
+    let options = tessera_pdf::ExportOptions {
+        standard: tessera_pdf::Standard::X1a,
+        intent: None,
+        ..Default::default()
+    };
+    let reasons = options.refusals(false, false);
+    assert!(
+        !reasons.iter().any(|r| r.contains("RGB")),
+        "an empty box was refused: {reasons:?}"
+    );
+    let _ = doc;
+}
