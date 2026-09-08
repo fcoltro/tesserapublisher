@@ -11,6 +11,7 @@ pub mod camera;
 pub mod catalogue;
 pub mod command;
 pub mod cursor;
+pub mod docking;
 pub mod file_ops;
 pub mod icons;
 pub mod keys;

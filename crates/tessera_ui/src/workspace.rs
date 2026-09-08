@@ -39,6 +39,13 @@ pub struct Workspace {
     pub open: Vec<String>,
     /// Whether the rail is expanded or collapsed to its strip.
     pub rail_open: bool,
+    /// Where the open panels sit: sides, stacks and tab order.
+    ///
+    /// Defaulted rather than required, so a workspace saved before panels could
+    /// be arranged still applies — it simply lands them in the shipped layout,
+    /// which is what it meant when it was saved.
+    #[serde(default)]
+    pub docking: crate::docking::Docking,
 }
 
 impl Workspace {
@@ -52,6 +59,7 @@ impl Workspace {
                 .map(|dock| dock.title().to_string())
                 .collect(),
             rail_open: state.rail_open,
+            docking: state.prefs.docking.clone(),
         }
     }
 
@@ -66,6 +74,11 @@ impl Workspace {
             dock.set_open(state, wanted);
         }
         state.rail_open = self.rail_open;
+        state.prefs.docking = self.docking.clone();
+        // The saved layout may name panels this build has dropped, or miss ones
+        // it has gained. Reconciling here rather than at draw time means the
+        // arrangement is sound the moment it is applied.
+        state.prefs.docking.reconcile();
     }
 
     /// The arrangements Tessera comes with.
@@ -78,6 +91,7 @@ impl Workspace {
                 name: "Essentials".to_string(),
                 open: vec!["Properties".to_string()],
                 rail_open: true,
+                docking: crate::docking::Docking::default(),
             },
             Workspace {
                 name: "Layout".to_string(),
@@ -87,11 +101,13 @@ impl Workspace {
                     "Layers".to_string(),
                 ],
                 rail_open: true,
+                docking: crate::docking::Docking::default(),
             },
             Workspace {
                 name: "Typography".to_string(),
                 open: vec!["Properties".to_string(), "Styles".to_string()],
                 rail_open: true,
+                docking: crate::docking::Docking::default(),
             },
             Workspace {
                 name: "Prepress".to_string(),
@@ -101,6 +117,7 @@ impl Workspace {
                     "Preflight".to_string(),
                 ],
                 rail_open: true,
+                docking: crate::docking::Docking::default(),
             },
         ]
     }
@@ -109,6 +126,48 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_arrangement_of_panels_survives_switching_away_and_back() {
+        // **The milestone's acceptance sentence, as a test.** Arrange the
+        // panels, save that as a workspace, switch to another, switch back, and
+        // find it as it was. Before workspaces carried the docking they carried
+        // only *which* panels were open, so switching back restored the list and
+        // lost the layout — which is the half somebody actually arranged.
+        use crate::docking::Region;
+
+        let mut state = TesseraApp::headless();
+        state.prefs.docking.place("Pages", Region::Left, 0, 0);
+        state.prefs.docking.place("Layers", Region::Left, 0, 1);
+        let mine = Workspace::capture("Mine", &state);
+
+        Workspace::usual()[0].apply(&mut state);
+        assert!(
+            state.prefs.docking.stacks(Region::Left).is_empty(),
+            "the other workspace kept the left side"
+        );
+
+        mine.apply(&mut state);
+        let left = state.prefs.docking.stacks(Region::Left);
+        assert_eq!(left.len(), 1, "the left side did not come back");
+        assert_eq!(
+            left[0].panels,
+            vec!["Pages".to_string(), "Layers".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_workspace_saved_before_panels_could_be_arranged_still_applies() {
+        // It lands them in the shipped layout, which is what it meant when it
+        // was saved. Refusing to read it would lose the workspace entirely.
+        let older = r#"{"name":"Old","open":["Properties"],"rail_open":true}"#;
+        let read: Workspace = serde_json::from_str(older).expect("read");
+        assert_eq!(read.docking, crate::docking::Docking::default());
+
+        let mut state = TesseraApp::headless();
+        read.apply(&mut state);
+        assert!(Dock::Properties.is_open(&state));
+    }
 
     #[test]
     fn applying_a_workspace_closes_what_it_does_not_ask_for() {
@@ -150,6 +209,7 @@ mod tests {
             name: "From the future".to_string(),
             open: vec!["Properties".to_string(), "Sparkles".to_string()],
             rail_open: true,
+            docking: crate::docking::Docking::default(),
         };
         odd.apply(&mut state);
         assert!(Dock::Properties.is_open(&state));

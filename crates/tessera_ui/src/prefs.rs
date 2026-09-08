@@ -151,6 +151,14 @@ pub struct Preferences {
     #[serde(default)]
     pub shortcuts: crate::keys::Bindings,
 
+    /// Where every panel sits: which side, which stack, in what order.
+    ///
+    /// A preference rather than app state, and that is the whole of what makes
+    /// "quit and relaunch, and find the layout as it was" work: the file that
+    /// already persists is the one it belongs in.
+    #[serde(default)]
+    pub docking: crate::docking::Docking,
+
     /// The arrangement in force, by name.
     ///
     /// Remembered so a relaunch comes back to the arrangement somebody left,
@@ -190,6 +198,7 @@ impl Default for Preferences {
             recovery_copy: yes(),
             recovery_seconds: default_recovery_seconds(),
             export_presets: crate::view::export_dialog::Preset::usual(),
+            docking: crate::docking::Docking::default(),
             shortcuts: crate::keys::Bindings::default(),
             workspaces: crate::workspace::Workspace::usual(),
             workspace: None,
@@ -392,6 +401,7 @@ mod tests {
             recovery_copy: false,
             recovery_seconds: 42,
             export_presets: crate::view::export_dialog::Preset::usual(),
+            docking: crate::docking::Docking::default(),
             shortcuts: crate::keys::Bindings::default(),
             workspaces: crate::workspace::Workspace::usual(),
             workspace: None,

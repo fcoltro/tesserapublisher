@@ -718,6 +718,7 @@ mod tests {
             recovery_copy: false,
             recovery_seconds: 11,
             export_presets: crate::view::export_dialog::Preset::usual(),
+            docking: crate::docking::Docking::default(),
             shortcuts: crate::keys::Bindings::default(),
             workspaces: crate::workspace::Workspace::usual(),
             workspace: None,

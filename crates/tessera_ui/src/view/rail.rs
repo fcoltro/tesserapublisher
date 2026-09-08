@@ -29,7 +29,7 @@ pub const STRIP: f32 = 30.0;
 pub const WIDTH: f32 = 292.0;
 
 /// What the rail can show, in the order it shows it.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dock {
     Properties,
     Pages,
@@ -166,7 +166,7 @@ pub fn strip(ui: &mut Ui, state: &mut TesseraApp) {
     }
 }
 
-fn body(ui: &mut Ui, state: &mut TesseraApp, dock: Dock) {
+pub(crate) fn body(ui: &mut Ui, state: &mut TesseraApp, dock: Dock) {
     match dock {
         Dock::Properties => crate::view::panels::inspector(ui, state),
         Dock::Pages => crate::view::pages::docked(ui, state),

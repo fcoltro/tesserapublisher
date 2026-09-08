@@ -8,6 +8,7 @@
 pub mod ambient;
 pub mod canvas_toolbar;
 pub mod control;
+pub mod docks;
 pub mod document_tabs;
 pub mod export_dialog;
 pub mod glass;
@@ -119,18 +120,13 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // it, and that is the same question in both places — which is why it is
     // asked once, of `glass::floating`. Two places deciding independently is how
     // a rail ends up floating while the canvas still leaves a gap for it.
+    // Every panel, on either side, in whatever stacks somebody has arranged.
+    // The single fixed column this replaced is `docking::Docking::default()`.
     if state.rail_open {
-        Panel::right("rail")
-            .default_size(rail::WIDTH)
-            .min_size(232.0)
-            .frame(glass::panel_frame(state))
-            .show(ui, |ui| {
-                glass::behind(ui, state, glass::Edge::Left);
-                rail::show(ui, state);
-            });
+        docks::show(ui, state);
     } else {
-        // The rail *collapsed*, not a second thing beside it. Showing both at
-        // once put a column of icons hard against the rail's own scrollbar.
+        // Collapsed: a strip of icons rather than nothing at all. A panel you
+        // cannot see should still be somewhere you can find.
         Panel::right("rail-strip")
             .exact_size(rail::STRIP)
             .resizable(false)

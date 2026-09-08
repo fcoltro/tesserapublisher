@@ -1476,9 +1476,41 @@ milestone the layout is fixed: a tool strip, one inspector, and the canvas.
 > the layout as it was. Drive the common operations from the keyboard, and
 > from the menu bar, without reaching for the mouse.
 
-- [ ] Dockable panels: drag between regions, tabbed stacks, splitters, icon
+- [x] Dockable panels: drag between regions, tabbed stacks, splitters, icon
   rail. **Floating panels remain out of scope** (see the spec, section 14).
-- [x] Named workspaces, saved and restored, with presets.
+  - The arrangement is a **model with no screen in it** — `docking::Docking` —
+    and the drawing is separate. That split is what makes the part most likely
+    to be subtly wrong the part that is tested: eleven tests, none of which need
+    a GPU.
+  - **A panel is in exactly one place.** Everything goes through `place`, which
+    lifts the panel from wherever it was before putting it anywhere new. Drawn
+    twice, the second copy edits the same state as the first, which reads as a
+    bug in whatever the panel does rather than in the layout.
+  - Panels are stored by **name**, not by index. Numbering them means a layout
+    saved by an older build silently reassigns itself when a panel is added in
+    the middle of the list: it would still load, and every panel would be in the
+    wrong place. An unknown name is dropped and a missing panel is appended.
+  - Tabs rather than a column of stacked headings. Six panels under six headings
+    puts the one you want below the fold, and opening another pushes it further
+    down.
+  - A shut panel **keeps its tab**. Closing a panel is not taking it out of the
+    layout, and a tab that vanished would mean reopening it from the Window menu
+    and finding it somewhere else.
+  - Empty stacks are removed and every active index is clamped after every
+    change. An empty stack is a splitter with nothing in it; an index past the
+    end is a panel area that draws nothing while its tabs say otherwise.
+  - The drop targets are the tab bars and a strip at each outer edge, and
+    nothing else. Every drop lands somewhere a panel can live, which is what
+    "no floating panels" has to mean in the interface rather than only in the
+    spec.
+  - The layout lives in the **preferences**, which is the whole of what makes
+    "quit and relaunch, and find the layout as it was" work: the file that
+    already persists is the one it belongs in.
+- [x] Named workspaces, saved and restored, with presets. **They carry the
+  docking too**, so switching away and back restores the arrangement rather than
+  only the list of what was open — the list is not the half anybody arranged.
+  `an_arrangement_of_panels_survives_switching_away_and_back` is the acceptance
+  sentence as a test.
   - Panels, their order, and the rail. **Not** the theme, the document, or
     where the page was scrolled to: those belong to the person and to the work,
     and a workspace that restored them would mean switching from Layout to
