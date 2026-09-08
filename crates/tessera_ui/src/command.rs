@@ -278,6 +278,19 @@ pub enum Command {
         id: FrameId,
     },
 
+    /// Many copies of the selection at an even spacing.
+    ///
+    /// One command rather than a loop of `DuplicateSelection` at the call site,
+    /// because forty copies is one thing somebody did and must be one undo
+    /// entry. Undoing a row of forty forty times is not undo.
+    StepAndRepeat {
+        /// How many copies to make. Not how many objects end up: the original
+        /// stays, so `copies: 3` leaves four.
+        copies: usize,
+        dx: f64,
+        dy: f64,
+    },
+
     /// Set how an object composites onto what is behind it.
     ///
     /// Opacity and blend mode together, in one command, because they are one
@@ -1034,11 +1047,35 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 .as_slice()
                 .to_vec()
                 .into_iter()
-                .filter_map(|id| duplicate_one(state, id))
+                .filter_map(|id| duplicate_one(state, id, DUPLICATE_OFFSET, DUPLICATE_OFFSET))
                 .collect();
             // Select the copies, so a second Ctrl+D duplicates them rather
             // than making a second copy of the originals.
             state.active_mut().selection.replace_all(copies);
+        }
+
+        Command::StepAndRepeat { copies, dx, dy } => {
+            let originals: Vec<FrameId> = state.active().selection.as_slice().to_vec();
+            let mut made = Vec::new();
+
+            // **The offset accumulates.** Each copy is `n` steps from the
+            // original, not one step from the copy before it: reading the
+            // previous copy's position would compound any rounding, and a row of
+            // forty would drift visibly by the end.
+            for step in 1..=copies {
+                let by = step as f64;
+                for id in &originals {
+                    if let Some(copy) = duplicate_one(state, *id, dx * by, dy * by) {
+                        made.push(copy);
+                    }
+                }
+            }
+
+            // The copies, not the originals — the same rule Duplicate follows,
+            // so stepping twice steps what was just made.
+            if !made.is_empty() {
+                state.active_mut().selection.replace_all(made);
+            }
         }
 
         Command::CopySelection => {
@@ -1615,11 +1652,17 @@ fn clipboard_item(document: &Document, id: FrameId) -> Option<Clipboard> {
 }
 
 /// Copy one frame, offset, with its own story if it had one.
-fn duplicate_one(state: &mut TesseraApp, id: FrameId) -> Option<FrameId> {
-    const OFFSET: f64 = 12.0;
+/// How far a plain duplicate lands from what it copied.
+///
+/// Far enough to see that there are two, near enough to read as a copy of that
+/// one rather than as something new. Step and repeat states its own offset and
+/// does not use this.
+const DUPLICATE_OFFSET: f64 = 12.0;
+
+fn duplicate_one(state: &mut TesseraApp, id: FrameId, dx: f64, dy: f64) -> Option<FrameId> {
     let mut frame = state.active().document().frame(id).cloned()?;
-    frame.bounds.x += OFFSET;
-    frame.bounds.y += OFFSET;
+    frame.bounds.x += dx;
+    frame.bounds.y += dy;
 
     // Give the copy its own story, or editing the copy would edit the
     // original — the same aliasing trap as the frame/story split.
@@ -2019,6 +2062,157 @@ mod tests {
     }
 
     use tessera_geometry::Anchor;
+
+    // --- step and repeat ----------------------------------------------------
+
+    #[test]
+    fn step_and_repeat_makes_the_number_of_copies_asked_for() {
+        // The original stays, so three copies leaves four objects. Counting the
+        // original as one of them is the off-by-one somebody notices only after
+        // laying out a sheet of labels.
+        let mut state = TesseraApp::headless();
+        placed_rect(&mut state);
+        let before = state.active().document().frames.len();
+
+        apply(
+            &mut state,
+            Command::StepAndRepeat {
+                copies: 3,
+                dx: 50.0,
+                dy: 0.0,
+            },
+        );
+        assert_eq!(state.active().document().frames.len(), before + 3);
+    }
+
+    #[test]
+    fn the_offset_accumulates_rather_than_compounding() {
+        // Each copy is n steps from the original, not one step from the copy
+        // before it. Reading the previous copy's position would compound any
+        // rounding, and a row of forty would drift visibly by the end.
+        let mut state = TesseraApp::headless();
+        placed_rect(&mut state);
+        let origin = state
+            .active()
+            .document()
+            .frames
+            .values()
+            .next()
+            .unwrap()
+            .bounds
+            .x;
+
+        apply(
+            &mut state,
+            Command::StepAndRepeat {
+                copies: 4,
+                dx: 10.0,
+                dy: 0.0,
+            },
+        );
+
+        let mut xs: Vec<f64> = state
+            .active()
+            .document()
+            .frames
+            .values()
+            .map(|f| f.bounds.x)
+            .collect();
+        xs.sort_by(f64::total_cmp);
+        assert_eq!(
+            xs,
+            vec![
+                origin,
+                origin + 10.0,
+                origin + 20.0,
+                origin + 30.0,
+                origin + 40.0
+            ]
+        );
+    }
+
+    #[test]
+    fn a_whole_row_is_one_undo_entry() {
+        // Forty copies is one thing somebody did. Undoing a row of forty forty
+        // times is not undo.
+        let mut state = TesseraApp::headless();
+        placed_rect(&mut state);
+        let before = state.active().document().frames.len();
+
+        apply(
+            &mut state,
+            Command::StepAndRepeat {
+                copies: 8,
+                dx: 12.0,
+                dy: 0.0,
+            },
+        );
+        assert_eq!(state.active().document().frames.len(), before + 8);
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(
+            state.active().document().frames.len(),
+            before,
+            "the row took more than one undo"
+        );
+    }
+
+    #[test]
+    fn stepping_again_steps_what_was_just_made() {
+        // The copies end up selected, which is the rule Duplicate already
+        // follows. Leaving the originals selected would stack a second row on
+        // top of the first.
+        let mut state = TesseraApp::headless();
+        let original = placed_rect(&mut state);
+
+        apply(
+            &mut state,
+            Command::StepAndRepeat {
+                copies: 2,
+                dx: 10.0,
+                dy: 0.0,
+            },
+        );
+        assert!(!state.active().selection.as_slice().contains(&original));
+        assert_eq!(state.active().selection.as_slice().len(), 2);
+    }
+
+    #[test]
+    fn a_text_frame_copy_gets_its_own_story() {
+        // The same aliasing trap Duplicate guards: sharing the story would make
+        // editing any copy edit them all.
+        let mut state = TesseraApp::headless();
+        apply(
+            &mut state,
+            Command::AddTextFrame(DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 50.0,
+            }),
+        );
+
+        apply(
+            &mut state,
+            Command::StepAndRepeat {
+                copies: 2,
+                dx: 0.0,
+                dy: 60.0,
+            },
+        );
+
+        let stories: std::collections::HashSet<_> = state
+            .active()
+            .document()
+            .frames
+            .values()
+            .filter_map(|f| match f.kind {
+                FrameKind::Text { story, .. } => Some(story),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(stories.len(), 3, "the copies share a story");
+    }
 
     fn placed_rect(state: &mut TesseraApp) -> FrameId {
         apply(

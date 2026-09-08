@@ -110,6 +110,7 @@ pub enum Run {
     PickTool(Tool),
     ScreenMode(ScreenMode),
     ZoomToFit,
+    StepAndRepeat,
 }
 
 /// When an action may be reached from the keyboard.
@@ -163,6 +164,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::Command(Undo | Redo) => Guard::Always,
 
         // Something has to be selected for these to mean anything.
+        Run::StepAndRepeat => Guard::NeedsSelection,
         Run::Command(
             Cut
             | Copy
@@ -272,6 +274,14 @@ pub fn all() -> &'static [Action] {
             Some("Ctrl+Alt+Shift+D"),
             Group::Edit,
             Command(Duplicate),
+        ),
+        // Beside Duplicate, because somebody who wanted one copy and then finds
+        // they want forty looks where they got the one.
+        a(
+            "Step and repeat\u{2026}",
+            Some("Ctrl+Alt+U"),
+            Group::Edit,
+            Run::StepAndRepeat,
         ),
         a("Delete", Some("Del"), Group::Edit, Command(Delete)),
         a(
@@ -689,6 +699,9 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
                 mode
             };
         }
+        // Opens the box rather than doing anything: how many and how far are
+        // the whole question, and guessing them would make a mess to undo.
+        Run::StepAndRepeat => state.step.open = true,
         Run::ZoomToFit => state.active_mut().fitted = false,
         Run::Command(cmd) => {
             let command = match cmd {
@@ -852,7 +865,8 @@ mod tests {
                 | "Send backward"
                 | "Send to back"
                 | "Swap fill and stroke"
-                | "Default fill and stroke" => Guard::NeedsSelection,
+                | "Default fill and stroke"
+                | "Step and repeat\u{2026}" => Guard::NeedsSelection,
                 _ => Guard::NotWhileTyping,
             };
             assert_eq!(

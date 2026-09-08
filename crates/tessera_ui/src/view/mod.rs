@@ -22,6 +22,7 @@ pub mod preflight_panel;
 pub mod rail;
 pub mod rulers;
 pub mod settings;
+pub mod step_repeat;
 pub mod styles;
 pub mod swatches;
 pub mod text_edit;
@@ -93,6 +94,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // and everything in them is judged against the document behind.
     settings::show(ui.ctx(), state);
     export_dialog::show(ui.ctx(), state);
+    step_repeat::show(ui.ctx(), state);
     styles::editor(ui.ctx(), state);
 
     Panel::bottom("status")

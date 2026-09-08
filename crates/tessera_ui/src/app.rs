@@ -307,6 +307,9 @@ pub struct TesseraApp {
     /// cannot leave is worse than a menu item that needs two frames selected.
     pub loading_thread: Option<FrameId>,
 
+    /// The Step and Repeat box, and what it was last asked for.
+    pub step: crate::view::step_repeat::StepWindow,
+
     /// The parent page being edited on its own, if any.
     ///
     /// InDesign's arrangement, and the right one: a parent is edited in
@@ -427,6 +430,7 @@ impl TesseraApp {
             ground: None,
             snapped_to: None,
             loading_thread: None,
+            step: crate::view::step_repeat::StepWindow::default(),
             editing_master: None,
             rail_open: true,
             sections: Sections::default(),

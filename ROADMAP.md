@@ -180,7 +180,18 @@ Making the skeleton pleasant to use. No new file-format surface area.
   15-degree rotation snap. A group scales and rotates as one, carrying its
   contents. *From-centre scaling is not built, and a multiple selection has
   no handles — one frame or one group at a time.*
-- [~] Clipboard and duplicate. *Step-and-repeat is not built.*
+- [x] Clipboard, duplicate, and step and repeat.
+  - **The offset accumulates.** Each copy is `n` steps from the original, not one
+    step from the copy before it: reading the previous copy's position compounds
+    any rounding, and a row of forty drifts visibly by the end.
+  - One command rather than a loop of Duplicate at the call site, because forty
+    copies is one thing somebody did and must be one undo entry. Undoing a row of
+    forty forty times is not undo.
+  - The box says how many objects there will be **before** it runs. The original
+    is not one of the copies, and that off-by-one is the one somebody finds after
+    laying out a sheet of labels rather than before.
+  - The count is bounded. It is typed, and a stray keystroke turning 12 into
+    12000 would make twelve thousand frames and take the application with it.
 - [x] Z-order: bring forward, send backward, to front, to back — correct for
   multiple selections, which needs opposite traversal orders per operation.
 - [x] Grouping and ungrouping, including nested groups.
