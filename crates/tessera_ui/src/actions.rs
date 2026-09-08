@@ -625,7 +625,10 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
     use crate::command::{Command, apply};
 
     match run {
-        Run::NewDocument => crate::file_ops::new_document(state),
+        // Asks rather than makes. The same reason startup asks: a page size,
+        // a bleed and a press are decisions a job is built on, and a document
+        // that appears without being asked for has made all three already.
+        Run::NewDocument => state.new_document.open = true,
         Run::Open => crate::file_ops::open(state),
         Run::Save => crate::file_ops::save(state),
         Run::SaveAs => crate::file_ops::save_as(state),

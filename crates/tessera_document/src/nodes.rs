@@ -570,32 +570,74 @@ pub enum PageSide {
 /// documents, and a test can hold it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PagePreset {
+    // ISO A, which is most of the world.
+    A2,
     A3,
     A4,
     A5,
+    A6,
+    // ISO B, which is what a poster or a book block is trimmed from.
+    B4,
+    B5,
+    // North America.
     Letter,
     Legal,
     Tabloid,
+    Executive,
+    // Japan. JIS B is *not* ISO B — same names, different sizes, and a
+    // document set on one and printed on the other is trimmed wrong.
+    JisB4,
+    JisB5,
+    // What a book is actually printed at, in the trades that name their trims.
+    Crown,
+    Demy,
+    RoyalOctavo,
 }
 
 impl PagePreset {
-    pub const ALL: [PagePreset; 6] = [
-        PagePreset::A3,
+    /// In the order the chooser lists them: the sizes somebody reaches for
+    /// most, first. Alphabetical would put A2 above A4, and A4 is what most of
+    /// the world means by "a page".
+    pub const ALL: [PagePreset; 16] = [
         PagePreset::A4,
-        PagePreset::A5,
         PagePreset::Letter,
+        PagePreset::A5,
+        PagePreset::A3,
+        PagePreset::A2,
+        PagePreset::A6,
+        PagePreset::B4,
+        PagePreset::B5,
         PagePreset::Legal,
         PagePreset::Tabloid,
+        PagePreset::Executive,
+        PagePreset::JisB4,
+        PagePreset::JisB5,
+        PagePreset::Crown,
+        PagePreset::Demy,
+        PagePreset::RoyalOctavo,
     ];
 
     pub fn name(self) -> &'static str {
         match self {
+            PagePreset::A2 => "A2",
             PagePreset::A3 => "A3",
             PagePreset::A4 => "A4",
             PagePreset::A5 => "A5",
+            PagePreset::A6 => "A6",
+            PagePreset::B4 => "B4 (ISO)",
+            PagePreset::B5 => "B5 (ISO)",
             PagePreset::Letter => "Letter",
             PagePreset::Legal => "Legal",
             PagePreset::Tabloid => "Tabloid",
+            PagePreset::Executive => "Executive",
+            // Qualified, because JIS B4 and ISO B4 are different pieces of
+            // paper with the same name. A chooser offering two rows both
+            // called "B4" is a chooser that gets a job trimmed wrong.
+            PagePreset::JisB4 => "B4 (JIS)",
+            PagePreset::JisB5 => "B5 (JIS)",
+            PagePreset::Crown => "Crown octavo",
+            PagePreset::Demy => "Demy octavo",
+            PagePreset::RoyalOctavo => "Royal octavo",
         }
     }
 
@@ -607,12 +649,28 @@ impl PagePreset {
         const MM: f64 = 72.0 / 25.4;
         const IN: f64 = 72.0;
         match self {
+            PagePreset::A2 => (420.0 * MM, 594.0 * MM),
             PagePreset::A3 => (297.0 * MM, 420.0 * MM),
             PagePreset::A4 => (210.0 * MM, 297.0 * MM),
             PagePreset::A5 => (148.0 * MM, 210.0 * MM),
+            PagePreset::A6 => (105.0 * MM, 148.0 * MM),
+            PagePreset::B4 => (250.0 * MM, 353.0 * MM),
+            PagePreset::B5 => (176.0 * MM, 250.0 * MM),
             PagePreset::Letter => (8.5 * IN, 11.0 * IN),
             PagePreset::Legal => (8.5 * IN, 14.0 * IN),
             PagePreset::Tabloid => (11.0 * IN, 17.0 * IN),
+            PagePreset::Executive => (7.25 * IN, 10.5 * IN),
+            // JIS B is a different series from ISO B: it splits the difference
+            // between A sizes rather than following the same root-two rule
+            // from a different start, so B4 (JIS) is 7mm narrower than B4
+            // (ISO) and a page set on one and printed on the other is trimmed
+            // wrong.
+            PagePreset::JisB4 => (257.0 * MM, 364.0 * MM),
+            PagePreset::JisB5 => (182.0 * MM, 257.0 * MM),
+            // British book trims, still what a printer quotes for a novel.
+            PagePreset::Crown => (123.0 * MM, 186.0 * MM),
+            PagePreset::Demy => (138.0 * MM, 216.0 * MM),
+            PagePreset::RoyalOctavo => (156.0 * MM, 234.0 * MM),
         }
     }
 
@@ -629,6 +687,19 @@ impl PagePreset {
             let turned = (h - width).abs() < TOLERANCE && (w - height).abs() < TOLERANCE;
             same || turned
         })
+    }
+
+    /// Whether two presets are the same piece of paper.
+    ///
+    /// Not derived from the enum: **JIS B4 and ISO B4 are different sizes with
+    /// the same name**, and the point of listing both is that somebody can tell
+    /// them apart. This exists so a test can say that no two entries in the
+    /// list collide, which is the property that keeps `matching` meaningful.
+    pub fn same_paper(self, other: PagePreset) -> bool {
+        const TOLERANCE: f64 = 0.05;
+        let (aw, ah) = self.size();
+        let (bw, bh) = other.size();
+        (aw - bw).abs() < TOLERANCE && (ah - bh).abs() < TOLERANCE
     }
 }
 
@@ -754,6 +825,94 @@ pub struct Spread {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn no_two_paper_sizes_are_the_same_paper() {
+        // **The property that keeps `matching` meaningful.** Two entries with
+        // the same measurements make `matching` return whichever comes first,
+        // so choosing one and reopening shows the other — and the two most
+        // likely to collide are the ones deliberately listed side by side.
+        for (at, a) in PagePreset::ALL.into_iter().enumerate() {
+            for b in PagePreset::ALL.into_iter().skip(at + 1) {
+                assert!(
+                    !a.same_paper(b),
+                    "{} and {} are the same size",
+                    a.name(),
+                    b.name()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn jis_b_is_not_iso_b() {
+        // Same names, different paper. A page set on one and printed on the
+        // other is trimmed wrong, which is why both are listed and both say
+        // which series they belong to.
+        assert!(!PagePreset::B4.same_paper(PagePreset::JisB4));
+        assert!(!PagePreset::B5.same_paper(PagePreset::JisB5));
+        for preset in [
+            PagePreset::B4,
+            PagePreset::B5,
+            PagePreset::JisB4,
+            PagePreset::JisB5,
+        ] {
+            assert!(
+                preset.name().contains("ISO") || preset.name().contains("JIS"),
+                "{} does not say which series it is",
+                preset.name()
+            );
+        }
+    }
+
+    #[test]
+    fn every_preset_is_portrait() {
+        // `size` promises portrait, and `Orientation::apply` turns it. A
+        // landscape entry would come out turned twice.
+        for preset in PagePreset::ALL {
+            let (w, h) = preset.size();
+            assert!(w <= h, "{} is not portrait", preset.name());
+        }
+    }
+
+    #[test]
+    fn every_preset_is_found_by_its_own_size() {
+        // In either orientation, which is what `matching` promises.
+        for preset in PagePreset::ALL {
+            let (w, h) = preset.size();
+            assert_eq!(PagePreset::matching(w, h), Some(preset));
+            assert_eq!(PagePreset::matching(h, w), Some(preset));
+        }
+    }
+
+    #[test]
+    fn the_a_series_halves() {
+        // A4 is half of A3 the long way. If it is not, a number was typed
+        // wrong — and a paper size that is nearly right is worse than one that
+        // is obviously wrong.
+        let pairs = [
+            (PagePreset::A2, PagePreset::A3),
+            (PagePreset::A3, PagePreset::A4),
+            (PagePreset::A4, PagePreset::A5),
+            (PagePreset::A5, PagePreset::A6),
+        ];
+        for (big, small) in pairs {
+            let (bw, bh) = big.size();
+            let (sw, sh) = small.size();
+            assert!(
+                (bw - sh).abs() < 1.5,
+                "{} is not {} turned",
+                small.name(),
+                big.name()
+            );
+            assert!(
+                (bh / 2.0 - sw).abs() < 1.5,
+                "{} is not half {}",
+                small.name(),
+                big.name()
+            );
+        }
+    }
     use super::*;
 
     #[test]

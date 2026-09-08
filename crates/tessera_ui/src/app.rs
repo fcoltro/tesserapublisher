@@ -307,6 +307,9 @@ pub struct TesseraApp {
     /// cannot leave is worse than a menu item that needs two frames selected.
     pub loading_thread: Option<FrameId>,
 
+    /// The New Document dialog, and what it is currently asking for.
+    pub new_document: crate::view::new_document::NewDocument,
+
     /// The Step and Repeat box, and what it was last asked for.
     pub step: crate::view::step_repeat::StepWindow,
 
@@ -430,6 +433,7 @@ impl TesseraApp {
             ground: None,
             snapped_to: None,
             loading_thread: None,
+            new_document: crate::view::new_document::NewDocument::default(),
             step: crate::view::step_repeat::StepWindow::default(),
             editing_master: None,
             rail_open: true,
@@ -457,6 +461,18 @@ impl TesseraApp {
     /// Called once at startup. A first run is silent; a damaged file or one
     /// from a newer build says so in the status bar, because in both cases
     /// the user's settings were just discarded.
+    /// Open the New Document dialog, unless there is already work to show.
+    ///
+    /// Called once at startup, **after** crash recovery has had its chance:
+    /// somebody coming back to work that did not get saved wants their work,
+    /// not a dialog asking what to make instead.
+    pub fn ask_what_to_make(&mut self) {
+        let untouched = self.documents.len() == 1 && self.active_is_an_untouched_blank();
+        if untouched {
+            self.new_document.open = true;
+        }
+    }
+
     pub fn load_preferences(&mut self) {
         let Some(path) = crate::prefs::Preferences::path() else {
             self.status = Some(Status::error(

@@ -14,6 +14,7 @@ pub mod export_dialog;
 pub mod glass;
 pub mod identity;
 pub mod layers;
+pub mod new_document;
 pub mod pages;
 pub mod palette;
 pub mod panels;
@@ -94,6 +95,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // and everything in them is judged against the document behind.
     settings::show(ui.ctx(), state);
     export_dialog::show(ui.ctx(), state);
+    new_document::show(ui.ctx(), state);
     step_repeat::show(ui.ctx(), state);
     styles::editor(ui.ctx(), state);
 

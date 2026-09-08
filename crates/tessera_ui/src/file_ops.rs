@@ -66,7 +66,7 @@ pub fn new_document(state: &mut TesseraApp) {
 /// an authoring decision about what somebody finds when they choose File > New.
 /// Putting it in the model made a dozen tests fail that had every right to
 /// assume a fresh document has no styles in it.
-fn starting_document() -> Document {
+pub(crate) fn starting_document() -> Document {
     use tessera_document::object_style::{ObjectFormat, ObjectStyle};
     use tessera_text::story::{CharacterFormat, CharacterStyle, ParagraphFormat, ParagraphStyle};
 

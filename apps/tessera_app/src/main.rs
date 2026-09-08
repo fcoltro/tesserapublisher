@@ -57,6 +57,11 @@ fn main() -> eframe::Result<()> {
             // Before the first frame: work from a session that did not close
             // is offered rather than quietly discarded.
             tessera_ui::recovery::offer_pending(&mut app);
+            // And if there is nothing to come back to, ask what to make. A page
+            // size, a bleed and a press are decisions a job is built on, and a
+            // document that appears without being asked for has already made
+            // all three on somebody's behalf.
+            app.ask_what_to_make();
 
             Ok(Box::new(app) as Box<dyn eframe::App>)
         }),
