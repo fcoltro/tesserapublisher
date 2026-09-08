@@ -67,6 +67,7 @@ fn rect_doc(bounds: DocRect, fill: Color) -> ResolvedDocument {
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
             kind: ResolvedKind::Rectangle {
+                outline: None,
                 fill: tessera_document::paint::Paint::Solid(fill),
                 stroke: None,
             },

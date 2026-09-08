@@ -196,6 +196,12 @@ pub struct Frame {
     /// they are different facts about different things.
     #[serde(default)]
     pub blend: crate::blending::Blending,
+    /// How the corners are cut.
+    ///
+    /// `serde(default)` reads as square, which is what every document written
+    /// before this existed meant \— so the migration chain has no step for it.
+    #[serde(default)]
+    pub corners: crate::corners::Corners,
     /// The shadow this object casts, if any.
     ///
     /// `Option` rather than a shadow at no alpha, because "no shadow" and "a

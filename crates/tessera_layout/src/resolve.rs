@@ -20,6 +20,12 @@ pub enum ResolvedKind {
     Rectangle {
         fill: Paint,
         stroke: Option<Stroke>,
+        /// The outline, when the corners are cut.
+        ///
+        /// Resolved once here rather than built by the renderer and again by
+        /// the PDF writer. A rounded corner computed twice is two corners that
+        /// agree until somebody fixes a rounding error in one of them.
+        outline: Option<kurbo::BezPath>,
     },
     Ellipse {
         fill: Paint,
@@ -361,6 +367,7 @@ fn resolve_one(
 ) -> Option<ResolvedItem> {
     let kind = match &frame.kind {
         FrameKind::Rectangle => ResolvedKind::Rectangle {
+            outline: frame.corners.outline(frame.bounds),
             fill: doc.resolve_paint(&frame.fill),
             stroke: resolved_stroke(doc, frame.stroke.as_ref()),
         },
@@ -547,6 +554,7 @@ mod tests {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         }
@@ -659,6 +667,7 @@ mod tests {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         }

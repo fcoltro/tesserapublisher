@@ -477,6 +477,7 @@ mod tests {
             stroke: None,
             wrap: TextWrap::None,
             blend: Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         }

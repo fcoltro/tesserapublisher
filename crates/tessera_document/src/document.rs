@@ -2213,6 +2213,7 @@ impl Document {
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
+            corners: crate::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         });
@@ -2904,6 +2905,7 @@ mod tests {
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
+            corners: crate::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         }
@@ -3062,6 +3064,7 @@ mod tests {
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
+            corners: crate::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         }
@@ -3130,6 +3133,7 @@ mod tests {
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
+            corners: crate::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         }
@@ -3155,6 +3159,7 @@ mod tests {
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
+            corners: crate::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         }

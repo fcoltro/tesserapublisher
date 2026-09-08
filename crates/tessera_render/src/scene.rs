@@ -571,22 +571,49 @@ fn build_inner(
                 }
             }
 
-            ResolvedKind::Rectangle { fill, stroke } => {
-                scene.fill(
-                    Fill::NonZero,
-                    transform,
-                    &brush_of(fill, item.bounds, proof),
-                    None,
-                    &rect,
-                );
-                if let Some(s) = stroke {
-                    scene.stroke(
-                        &stroke_of(s),
+            ResolvedKind::Rectangle {
+                fill,
+                stroke,
+                outline,
+            } => {
+                // Cut corners come as a path from the resolver, which is the
+                // same path the PDF writer draws. Square corners stay a `Rect`:
+                // it is the commonest shape on any page, and a four-segment
+                // path for it is work per frame per redraw for no difference.
+                match outline {
+                    Some(path) => scene.fill(
+                        Fill::NonZero,
                         transform,
-                        ink(&s.color, proof),
+                        &brush_of(fill, item.bounds, proof),
                         None,
-                        &stroked_rect(rect, s.offset()),
-                    );
+                        path,
+                    ),
+                    None => scene.fill(
+                        Fill::NonZero,
+                        transform,
+                        &brush_of(fill, item.bounds, proof),
+                        None,
+                        &rect,
+                    ),
+                }
+                if let Some(s) = stroke {
+                    match outline {
+                        // **The stroke follows the same outline, not an inset
+                        // copy of it.** Insetting a curved path is an offset
+                        // curve, which is not a bezier and cannot be had by
+                        // moving the control points — so a cut corner strokes
+                        // on its centre line and the offset is owed.
+                        Some(path) => {
+                            scene.stroke(&stroke_of(s), transform, ink(&s.color, proof), None, path)
+                        }
+                        None => scene.stroke(
+                            &stroke_of(s),
+                            transform,
+                            ink(&s.color, proof),
+                            None,
+                            &stroked_rect(rect, s.offset()),
+                        ),
+                    }
                 }
             }
             ResolvedKind::Ellipse { fill, stroke } => {
@@ -821,6 +848,7 @@ mod tests {
 
         let plain = one_item(
             ResolvedKind::Rectangle {
+                outline: None,
                 fill: Paint::Solid(Color::BLACK),
                 stroke: None,
             },
@@ -853,6 +881,7 @@ mod tests {
 
         let plain = one_item(
             ResolvedKind::Rectangle {
+                outline: None,
                 fill: Paint::Solid(Color::BLACK),
                 stroke: None,
             },
@@ -885,6 +914,7 @@ mod tests {
 
         let mut doc = one_item(
             ResolvedKind::Rectangle {
+                outline: None,
                 fill: Paint::Solid(Color::BLACK),
                 stroke: None,
             },
@@ -915,6 +945,7 @@ mod tests {
         let empty = empty_scene();
         let one = one_item(
             ResolvedKind::Rectangle {
+                outline: None,
                 fill: Paint::Solid(Color::BLACK),
                 stroke: None,
             },
@@ -948,6 +979,7 @@ mod tests {
         };
         let solid = one_item(
             ResolvedKind::Rectangle {
+                outline: None,
                 fill: Paint::Solid(Color::BLACK),
                 stroke: None,
             },
@@ -955,6 +987,7 @@ mod tests {
         );
         let ramped = one_item(
             ResolvedKind::Rectangle {
+                outline: None,
                 fill: Paint::Gradient(Gradient::black_to_white(Ramp::Linear { angle: 0.0 })),
                 stroke: None,
             },
@@ -1059,6 +1092,7 @@ mod tests {
         };
         let plain = one_item(
             ResolvedKind::Rectangle {
+                outline: None,
                 fill: Paint::Solid(Color::BLACK),
                 stroke: None,
             },
@@ -1088,6 +1122,7 @@ mod tests {
         };
         let mut doc = one_item(
             ResolvedKind::Rectangle {
+                outline: None,
                 fill: Paint::Solid(Color::BLACK),
                 stroke: None,
             },
@@ -1128,6 +1163,7 @@ mod tests {
         };
         let mut doc = one_item(
             ResolvedKind::Rectangle {
+                outline: None,
                 fill: Paint::Solid(Color::BLACK),
                 stroke: None,
             },
@@ -1162,6 +1198,7 @@ mod tests {
         // in the options struct.
         let doc = one_item(
             ResolvedKind::Rectangle {
+                outline: None,
                 fill: Paint::Solid(Color::BLACK),
                 stroke: None,
             },
@@ -1191,6 +1228,7 @@ mod tests {
     fn leaving_the_rules_out_draws_less() {
         let mut doc = one_item(
             ResolvedKind::Rectangle {
+                outline: None,
                 fill: Paint::Solid(Color::BLACK),
                 stroke: None,
             },
@@ -1292,6 +1330,7 @@ mod tests {
         let with_rect = build_scene(
             &one_item(
                 ResolvedKind::Rectangle {
+                    outline: None,
                     fill: Paint::Solid(Color::BLACK),
                     stroke: None,
                 },
@@ -1322,6 +1361,7 @@ mod tests {
         let filled = build_scene(
             &one_item(
                 ResolvedKind::Rectangle {
+                    outline: None,
                     fill: Paint::Solid(Color::BLACK),
                     stroke: None,
                 },
@@ -1332,6 +1372,7 @@ mod tests {
         let stroked = build_scene(
             &one_item(
                 ResolvedKind::Rectangle {
+                    outline: None,
                     fill: Paint::Solid(Color::BLACK),
                     stroke: Some(Stroke::new(Color::BLACK, 2.0)),
                 },
@@ -1357,6 +1398,7 @@ mod tests {
         let rect = build_scene(
             &one_item(
                 ResolvedKind::Rectangle {
+                    outline: None,
                     fill: Paint::Solid(Color::BLACK),
                     stroke: None,
                 },

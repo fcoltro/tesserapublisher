@@ -2250,6 +2250,7 @@ mod tests {
         let id = state.active_mut().document_mut().add_frame(
             layer,
             tessera_document::nodes::Frame {
+                corners: tessera_document::corners::Corners::SQUARE,
                 bounds: DocRect {
                     x: 0.0,
                     y: 0.0,

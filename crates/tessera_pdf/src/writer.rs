@@ -428,6 +428,38 @@ struct ShadingKind {
 ///
 /// Not deduplicated, because a shading carries its object's geometry: the same
 /// ramp on two differently sized frames is two different sets of coordinates.
+/// Lay a document-space path into a PDF content stream.
+///
+/// The y flip happens here, through `to_pdf_y`, like every other conversion in
+/// this file — scattering it is how an exporter comes to disagree with the
+/// screen. A path's y flip is the page height minus the y, with no height to
+/// subtract, which is what the zero argument says.
+fn write_path(content: &mut Content, path: &kurbo::BezPath, page: DocRect) {
+    let y = |v: f64| to_pdf_y(page, v, 0.0) as f32;
+    for element in path.elements() {
+        match element {
+            kurbo::PathEl::MoveTo(p) => {
+                content.move_to(p.x as f32, y(p.y));
+            }
+            kurbo::PathEl::LineTo(p) => {
+                content.line_to(p.x as f32, y(p.y));
+            }
+            kurbo::PathEl::CurveTo(a, b, c) => {
+                content.cubic_to(a.x as f32, y(a.y), b.x as f32, y(b.y), c.x as f32, y(c.y));
+            }
+            kurbo::PathEl::QuadTo(a, b) => {
+                // kurbo does not produce these here, but a path arriving with
+                // one must not be silently dropped into a gap in the outline.
+                let (a, b) = (*a, *b);
+                content.cubic_to(a.x as f32, y(a.y), a.x as f32, y(a.y), b.x as f32, y(b.y));
+            }
+            kurbo::PathEl::ClosePath => {
+                content.close_path();
+            }
+        }
+    }
+}
+
 /// One frame's shadow: a rectangle of its colour, masked by its softness.
 ///
 /// **Not a luminosity soft mask.** That is the other way to do this and it needs
@@ -942,8 +974,27 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                 }
             }
 
-            ResolvedKind::Rectangle { fill, stroke } => {
+            ResolvedKind::Rectangle {
+                fill,
+                stroke,
+                outline,
+            } => {
                 content.save_state();
+                // Cut corners come as the same path the renderer draws, laid
+                // into PDF space. Square corners stay a `re` operator: it is
+                // one token against a dozen, and it is the commonest shape on
+                // any page.
+                let shape = |c: &mut Content, b: DocRect| match outline {
+                    Some(path) => write_path(c, path, page),
+                    None => {
+                        c.rect(
+                            b.x as f32,
+                            to_pdf_y(page, b.y, b.height) as f32,
+                            b.width as f32,
+                            b.height as f32,
+                        );
+                    }
+                };
                 let rect = |c: &mut Content, b: DocRect| {
                     c.rect(
                         b.x as f32,
@@ -959,7 +1010,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                     // fills the current clip, so the clip *is* the shape.
                     Some(sh) => {
                         content.save_state();
-                        rect(&mut content, item.bounds);
+                        shape(&mut content, item.bounds);
                         content.clip_nonzero();
                         content.end_path();
                         content.shading(Name(sh.resource.as_bytes()));
@@ -967,7 +1018,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                     }
                     None => {
                         set_solid_fill(&mut content, fill, ink);
-                        rect(&mut content, item.bounds);
+                        shape(&mut content, item.bounds);
                         content.fill_nonzero();
                     }
                 }
@@ -977,7 +1028,14 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                     // the stroke is aligned inside or outside, so they cannot
                     // share one path.
                     apply_stroke(&mut content, s, ink);
-                    rect(&mut content, offset_rect(item.bounds, s.offset()));
+                    match outline {
+                        // A cut corner strokes on its own centre line: offsetting
+                        // a curved path is an offset curve, which is not a bezier
+                        // and cannot be had by moving control points. The renderer
+                        // makes the same compromise, so the two still agree.
+                        Some(path) => write_path(&mut content, path, page),
+                        None => rect(&mut content, offset_rect(item.bounds, s.offset())),
+                    }
                     content.stroke();
                 }
                 content.restore_state();

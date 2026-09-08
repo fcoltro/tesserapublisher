@@ -203,8 +203,31 @@ Making the skeleton pleasant to use. No new file-format surface area.
   `Transform::rotation_degrees()`'s assumption that no shear exists.
 - [x] **Align and distribute** across a multiple selection. Nineteen actions,
   each reachable from the Object menu, the palette and the canvas toolbar.
-- [ ] Corner options and corner radius. *(Model change: a format version
-  bump.)*
+- [x] Corner options and corner radius. Rounded, bevelled and inverse, with a
+  radius per corner.
+  - **One outline, built once.** `Corners::outline` returns the path and the
+    renderer and the PDF writer both draw *that*. A rounded corner computed
+    twice is two corners that agree until somebody fixes a rounding error in
+    one of them, and then the export stops matching the screen in a way nobody
+    sees until it is printed.
+  - Four radii, one shape. A card with one cut corner is a real thing and a
+    single radius cannot say it; a rectangle rounded at the top and bevelled at
+    the bottom is not something anybody has asked a layout tool for, and the
+    control would cost more than the feature.
+  - **Clamped on read, not on write.** A radius bigger than half the shorter
+    side folds the outline through itself and draws a bow tie, so it is limited
+    when the path is built — and the number somebody typed is kept, so making
+    the frame bigger again brings the corner back.
+  - The panel shows one field while the corners agree and four when they do
+    not. Four for the commonest case is three fields of noise; one for a frame
+    with different corners is a control that flattens them silently.
+  - A cut corner strokes on its own centre line. Offsetting a curved path is an
+    offset curve, which is not a bezier and cannot be had by moving control
+    points — both drawers make the same compromise, so they still agree.
+  - **Format 19, with no migration step, on purpose.** The field defaults to
+    square, which is exactly what every document written before it meant. A step
+    that touched every frame to write the value it would already read as could
+    only introduce a bug.
 - [ ] Direct-select and zoom tools; add, delete and convert anchor points;
   polygon; scissors.
 

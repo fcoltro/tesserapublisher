@@ -72,6 +72,7 @@ pub enum Section {
     Style,
     Fill,
     Stroke,
+    Corners,
     Effects,
     Text,
     Frame,
@@ -81,7 +82,7 @@ pub enum Section {
 
 impl Section {
     /// Display order. Universal sections first; see the type's note.
-    pub const ALL: [Section; 9] = [
+    pub const ALL: [Section; 10] = [
         Section::Transform,
         // Above Fill and Stroke, because it decides what those *start* as: an
         // object’s style is read before its own adjustments, and the panel reads
@@ -89,6 +90,7 @@ impl Section {
         Section::Style,
         Section::Fill,
         Section::Stroke,
+        Section::Corners,
         // Every object composites, so this belongs with the always-present
         // sections — and it reads under Fill and Stroke because it is about
         // what happens to them once they are painted.
@@ -107,6 +109,7 @@ impl Section {
             Section::Transform => "Transform",
             Section::Fill => "Fill",
             Section::Stroke => "Stroke",
+            Section::Corners => "Corners",
             Section::Text => "Text",
             Section::Frame => "Frame",
             Section::Wrap => "Text wrap",
@@ -124,6 +127,7 @@ impl Section {
             Section::Transform => Icon::Scale,
             Section::Fill => Icon::Palette,
             Section::Stroke => Icon::Line,
+            Section::Corners => Icon::Rectangle,
             Section::Text => Icon::CaseSensitive,
             Section::Frame => Icon::TextFrame,
             Section::Wrap => Icon::AlignJustify,
@@ -146,6 +150,14 @@ impl Section {
             | Section::Style => true,
             Section::Text => matches!(frame.kind, FrameKind::Text { .. }),
             Section::Frame => matches!(frame.kind, FrameKind::Group(_)),
+            // Rectangles and the frames that are rectangles. An ellipse has no
+            // corners to cut, and a group is a box round other things rather
+            // than a shape of its own \— offering the control there would ask a
+            // question with no answer.
+            Section::Corners => matches!(
+                frame.kind,
+                FrameKind::Rectangle | FrameKind::Text { .. } | FrameKind::Graphic { .. }
+            ),
             // Every kind of object. A picture is the thing most often
             // wrapped, and it is the obstacle that carries the setting.
             Section::Wrap => true,
@@ -201,6 +213,7 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
                     Section::Transform => transform_section(ui, state, id, &frame),
                     Section::Fill => fill_section(ui, state, id, &frame),
                     Section::Stroke => stroke_section(ui, state, id, &frame),
+                    Section::Corners => corners_section(ui, state, id, &frame),
                     Section::Text => text_section(ui, state, id, &frame),
                     Section::Frame => frame_section(ui, &frame),
                     Section::Wrap => wrap_controls(ui, state, id, &frame),
@@ -982,6 +995,95 @@ const DASH_PRESETS: [(&str, &[f64]); 3] = [
     ("Dashed", &[3.0, 2.0]),
     ("Dotted", &[0.0, 2.0]),
 ];
+
+/// How the corners are cut.
+fn corners_section(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::FrameId,
+    frame: &tessera_document::nodes::Frame,
+) {
+    use tessera_document::corners::CornerShape;
+
+    let mut corners = frame.corners;
+    let mut changed = false;
+
+    ui.horizontal(|ui| {
+        for shape in CornerShape::ALL {
+            if ui
+                .selectable_label(corners.shape == shape, shape.label())
+                .clicked()
+                && corners.shape != shape
+            {
+                corners.shape = shape;
+                changed = true;
+            }
+        }
+    });
+
+    // **One field while the corners agree, four when they do not.** Four
+    // fields for the commonest case is three fields of noise; one field for a
+    // frame with different corners would be a control that silently flattens
+    // them the first time it is touched.
+    let mut same = corners.is_uniform();
+    if ui.checkbox(&mut same, "All corners the same").changed() && same {
+        // Levelling them takes the first, which is the one the eye reads as
+        // "the" corner: top-left is where a box starts.
+        corners.radii = [corners.radii[0]; 4];
+        changed = true;
+    }
+
+    let unit = state.prefs.unit;
+    if same {
+        let mut radius = corners.radii[0];
+        if field(ui, "Radius", |ui| measure_bare(ui, &mut radius, unit)) {
+            corners.radii = [radius; 4];
+            changed = true;
+        }
+    } else {
+        // One local per corner rather than indexing the array inside two
+        // closures: `pair` takes both halves at once, and two closures cannot
+        // hold the same array mutably.
+        let (mut tl, mut tr) = (corners.radii[0], corners.radii[1]);
+        let (mut br, mut bl) = (corners.radii[2], corners.radii[3]);
+
+        let (a, b) = pair(
+            ui,
+            ("Top L", |ui: &mut Ui| measure_bare(ui, &mut tl, unit)),
+            ("Top R", |ui: &mut Ui| measure_bare(ui, &mut tr, unit)),
+        );
+        let (c, d) = pair(
+            ui,
+            ("Bot L", |ui: &mut Ui| measure_bare(ui, &mut bl, unit)),
+            ("Bot R", |ui: &mut Ui| measure_bare(ui, &mut br, unit)),
+        );
+        if a || b || c || d {
+            corners.radii = [tl, tr, br, bl];
+            changed = true;
+        }
+    }
+
+    // Said only when it is actually happening. A permanent note about a limit
+    // nobody has reached is a line of chrome that teaches people to stop
+    // reading notes.
+    let fitted = corners.effective(frame.bounds);
+    if fitted != corners.radii.map(|r| r.max(0.0)) {
+        note_line(
+            ui,
+            "Trimmed to half the shorter side. The number is kept, so making \
+             the frame bigger brings the corner back.",
+        );
+    }
+
+    if changed {
+        apply(state, Command::SetCorners { id, corners });
+    }
+}
+
+/// A quiet line of explanation under a control.
+fn note_line(ui: &mut Ui, text: &str) {
+    ui.colored_label(Theme::text_muted(), text);
+}
 
 fn stroke_section(
     ui: &mut Ui,
@@ -3439,6 +3541,7 @@ mod tests {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         }

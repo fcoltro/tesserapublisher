@@ -8,6 +8,7 @@
 //! milestone 0 at all.
 
 pub mod blending;
+pub mod corners;
 pub mod document;
 pub mod format;
 pub mod graphic;

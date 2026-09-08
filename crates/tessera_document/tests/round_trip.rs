@@ -60,6 +60,7 @@ fn a_document_with_a_rectangle_round_trips_exactly() {
             stroke: Some(Stroke::new(Color::BLACK, 2.0)),
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         },
@@ -171,6 +172,7 @@ fn any_frame() -> impl Strategy<Value = Frame> {
             stroke: stroke_width.map(|width| Stroke::new(Color::BLACK, width)),
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         })
@@ -223,6 +225,7 @@ fn text_survives_a_save_and_load() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         },
@@ -272,6 +275,7 @@ fn a_version_1_document_still_opens() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         },
@@ -352,6 +356,7 @@ fn a_placement_survives_a_save_and_load() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         },
@@ -390,6 +395,7 @@ fn a_version_2_rotation_becomes_the_placement_that_means_the_same_thing() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         },
@@ -570,6 +576,7 @@ fn a_version_four_document_still_opens_and_gains_no_setup_it_never_had() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         },
@@ -610,9 +617,47 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_eighteen() {
-    // If this changes, a migration step is owed.
-    assert_eq!(format::FORMAT_VERSION, 18);
+fn the_format_version_is_nineteen() {
+    // A tripwire, not a fact worth asserting on its own: changing it means
+    // stopping to ask whether a migration step is owed. Sometimes the answer is
+    // no — version 19 added `corners`, whose default is exactly what older
+    // documents meant — and the point is that somebody had to answer.
+    assert_eq!(format::FORMAT_VERSION, 19);
+}
+
+#[test]
+fn a_frame_written_before_corners_reads_as_square() {
+    // The reason version 19 needs no migration step: the default *is* what
+    // those documents meant. Asserted against the serialised form with the
+    // field taken back out, which is exactly the shape version 18 wrote.
+    let frame = tessera_document::nodes::Frame {
+        bounds: DocRect {
+            x: 10.0,
+            y: 10.0,
+            width: 60.0,
+            height: 40.0,
+        },
+        transform: Transform::IDENTITY,
+        kind: tessera_document::nodes::FrameKind::Rectangle,
+        fill: Paint::Solid(Color::BLACK),
+        stroke: None,
+        wrap: tessera_document::nodes::TextWrap::None,
+        blend: tessera_document::blending::Blending::PLAIN,
+        corners: tessera_document::corners::Corners::SQUARE,
+        shadow: None,
+        style: None,
+    };
+
+    let mut written: serde_json::Value = serde_json::to_value(&frame).expect("write");
+    written
+        .as_object_mut()
+        .expect("a frame is an object")
+        .remove("corners")
+        .expect("corners were not written at all");
+
+    let back: tessera_document::nodes::Frame =
+        serde_json::from_value(written).expect("a frame without corners would not read");
+    assert!(back.corners.is_square(), "corners arrived from nowhere");
 }
 
 #[test]
@@ -686,6 +731,7 @@ fn object_styles_and_the_objects_following_them_round_trip() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         },
@@ -768,6 +814,7 @@ fn a_drop_shadow_round_trips() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
             shadow: Some(shadow.clone()),
             style: None,
         },
@@ -822,6 +869,7 @@ fn a_gradient_fill_round_trips() {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         },
@@ -872,6 +920,7 @@ fn a_document_written_before_gradients_opens_with_its_colour_intact() {
             stroke: Some(tessera_document::nodes::Stroke::new(Color::BLACK, 2.0)),
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         },
@@ -905,6 +954,7 @@ fn an_objects_opacity_and_blend_mode_round_trip() {
     let id = doc.add_frame(
         layer,
         Frame {
+            corners: tessera_document::corners::Corners::SQUARE,
             bounds: DocRect {
                 x: 0.0,
                 y: 0.0,
@@ -969,6 +1019,7 @@ fn placed_artwork_round_trips_as_a_link_rather_than_as_pixels() {
     let id = doc.add_frame(
         layer,
         Frame {
+            corners: tessera_document::corners::Corners::SQUARE,
             bounds: DocRect {
                 x: 0.0,
                 y: 0.0,
@@ -1044,6 +1095,7 @@ fn swatches_and_the_objects_naming_them_round_trip() {
     let id = doc.add_frame(
         layer,
         Frame {
+            corners: tessera_document::corners::Corners::SQUARE,
             bounds: DocRect {
                 x: 0.0,
                 y: 0.0,
@@ -1156,6 +1208,7 @@ fn a_version_nine_text_frame_opens_as_a_single_column() {
     let id = doc.add_frame(
         layer,
         Frame {
+            corners: tessera_document::corners::Corners::SQUARE,
             bounds: DocRect {
                 x: 0.0,
                 y: 0.0,
@@ -1214,6 +1267,7 @@ fn a_columned_text_frame_round_trips() {
     let id = doc.add_frame(
         layer,
         Frame {
+            corners: tessera_document::corners::Corners::SQUARE,
             bounds: DocRect {
                 x: 0.0,
                 y: 0.0,
@@ -1260,6 +1314,7 @@ fn a_version_eight_document_opens_with_no_masters_and_no_overrides() {
     let id = doc.add_frame(
         layer,
         Frame {
+            corners: tessera_document::corners::Corners::SQUARE,
             bounds: DocRect {
                 x: 12.0,
                 y: 14.0,
@@ -1307,6 +1362,7 @@ fn a_master_and_its_overrides_survive_a_round_trip() {
     let item = doc.add_frame(
         layer,
         Frame {
+            corners: tessera_document::corners::Corners::SQUARE,
             bounds: DocRect {
                 x: bounds.x + 10.0,
                 y: bounds.y + 10.0,
@@ -1372,6 +1428,7 @@ fn version_7_archive(path: &std::path::Path) -> serde_json::Value {
         doc.add_frame(
             layer,
             Frame {
+                corners: tessera_document::corners::Corners::SQUARE,
                 bounds: DocRect {
                     x: on.x + 10.0,
                     y: on.y + 10.0,

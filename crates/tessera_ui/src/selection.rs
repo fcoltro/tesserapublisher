@@ -124,6 +124,7 @@ mod tests {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         };

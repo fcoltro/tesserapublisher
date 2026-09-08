@@ -67,6 +67,7 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> DocRect {
 fn black_rect(bounds: DocRect) -> ResolvedDocument {
     one(
         ResolvedKind::Rectangle {
+            outline: None,
             fill: Paint::Solid(Color::BLACK),
             stroke: None,
         },
@@ -212,6 +213,7 @@ fn several_items_all_reach_the_content_stream() {
                 shadow: None,
                 bounds: rect(10.0, 10.0, 50.0, 50.0),
                 kind: ResolvedKind::Rectangle {
+                    outline: None,
                     fill: Paint::Solid(Color::BLACK),
                     stroke: None,
                 },
@@ -525,6 +527,7 @@ fn two_different_compositings_get_two_graphics_states() {
 fn painted_rect(paint: tessera_document::paint::Paint) -> ResolvedDocument {
     one(
         ResolvedKind::Rectangle {
+            outline: None,
             fill: paint,
             stroke: None,
         },

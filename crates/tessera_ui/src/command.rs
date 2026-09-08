@@ -301,6 +301,16 @@ pub enum Command {
         blend: tessera_document::blending::Blending,
     },
 
+    /// Cut a frame's corners, or square them again.
+    ///
+    /// The whole of the corners in one command, as the shadow is: rounding four
+    /// corners is one thing somebody did, and undoing it in four steps would
+    /// leave three rounded corners on the way past.
+    SetCorners {
+        id: FrameId,
+        corners: tessera_document::corners::Corners,
+    },
+
     /// Turn an object's shadow on, off, or change it.
     ///
     /// `None` is off. One command for the whole shadow rather than one per
@@ -1188,6 +1198,12 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             state.active_mut().document_mut().unthread(id);
         }
 
+        Command::SetCorners { id, corners } => {
+            if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
+                frame.corners = corners;
+            }
+        }
+
         Command::SetBlending { id, blend } => {
             if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
                 frame.blend = blend;
@@ -1607,6 +1623,7 @@ fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
             transform: Transform::IDENTITY,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         },
@@ -3072,6 +3089,7 @@ mod tests {
             stroke: None,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
             style: None,
         };
@@ -4609,6 +4627,7 @@ mod tests {
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,
+                corners: tessera_document::corners::Corners::SQUARE,
                 shadow: None,
                 style: None,
             },
@@ -4959,6 +4978,7 @@ mod tests {
                 stroke: None,
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,
+                corners: tessera_document::corners::Corners::SQUARE,
                 shadow: None,
                 style: None,
             },
