@@ -169,6 +169,7 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
     let states = collect_states(resolved, &mut alloc);
     let shadings = collect_shadings(resolved, page, &mut alloc, &ink);
     let pictures = collect_pictures(resolved, &mut alloc);
+    let shadows = collect_shadows(resolved, &mut alloc);
     let content = build_content(
         resolved,
         &Written {
@@ -177,6 +178,7 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
             states: &states,
             shadings: &shadings,
             pictures: &pictures,
+            shadows: &shadows,
             ink: &ink,
             resolved_page: &resolved_page,
             options,
@@ -288,10 +290,14 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
             }
             shading_dict.finish();
         }
-        if !pictures.is_empty() {
+        let cast: Vec<&CastShadow> = shadows.iter().flatten().collect();
+        if !pictures.is_empty() || !cast.is_empty() {
             let mut objects = resources.x_objects();
             for picture in &pictures {
                 objects.pair(Name(picture.resource.as_bytes()), picture.id);
+            }
+            for shadow in &cast {
+                objects.pair(Name(shadow.resource.as_bytes()), shadow.id);
             }
             objects.finish();
         }
@@ -304,6 +310,7 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
     // turns on compression there.
     pdf.stream(content_id, &content);
     write_pictures(&mut pdf, &pictures);
+    write_shadows(&mut pdf, &shadows);
 
     for font in &fonts {
         write_font(&mut pdf, font);
@@ -421,6 +428,113 @@ struct ShadingKind {
 ///
 /// Not deduplicated, because a shading carries its object's geometry: the same
 /// ramp on two differently sized frames is two different sets of coordinates.
+/// One frame's shadow: a rectangle of its colour, masked by its softness.
+///
+/// **Not a luminosity soft mask.** That is the other way to do this and it needs
+/// a transparency group and an `/ExtGState` to hang it on. An image of the
+/// shadow's colour carrying an `/SMask` is the same picture with none of that,
+/// and it reuses the path placed artwork already goes through — which is the
+/// path that is already tested.
+struct CastShadow {
+    id: Ref,
+    mask_id: Ref,
+    resource: String,
+    mask: crate::shadow::Mask,
+    /// Where the mask sits in document space, and how big.
+    at: DocRect,
+    colour: tessera_color::Color,
+}
+
+/// Build a mask for every frame that casts a shadow.
+///
+/// **Indexed to match `resolved.items`**, as the shadings are, so the content
+/// builder asks for item `n`'s shadow rather than searching for it. `None` means
+/// the frame casts none, or has no size to cast one from.
+fn collect_shadows(
+    resolved: &ResolvedDocument,
+    alloc: &mut impl FnMut() -> Ref,
+) -> Vec<Option<CastShadow>> {
+    let mut out: Vec<Option<CastShadow>> = Vec::with_capacity(resolved.items.len());
+
+    for item in &resolved.items {
+        let at_index = out.len();
+        let made = item.shadow.as_ref().and_then(|shadow| {
+            let mask = crate::shadow::mask(shadow, item.bounds.width, item.bounds.height)?;
+            let bleed = crate::shadow::bleed(shadow);
+            Some(CastShadow {
+                id: alloc(),
+                mask_id: alloc(),
+                resource: format!("Sh{at_index}"),
+                mask,
+                // Displaced by the shadow's offset, and grown by the blur's
+                // reach on every side: the mask is bigger than the shape, or its
+                // edge would be hard.
+                at: DocRect {
+                    x: item.bounds.x + shadow.offset.0 - bleed,
+                    y: item.bounds.y + shadow.offset.1 - bleed,
+                    width: item.bounds.width + bleed * 2.0,
+                    height: item.bounds.height + bleed * 2.0,
+                },
+                colour: shadow.colour.clone(),
+            })
+        });
+        out.push(made);
+    }
+
+    out
+}
+
+/// Write each shadow as a flat colour image wearing its softness as a mask.
+fn write_shadows(pdf: &mut Pdf, shadows: &[Option<CastShadow>]) {
+    for shadow in shadows.iter().flatten() {
+        // The softness. One component per sample and `/DeviceGray`, because a
+        // soft mask is coverage rather than colour — three components would be
+        // read as a third of the pixels.
+        //
+        // The shadow's own alpha is folded in here rather than written as an
+        // `/ExtGState`: coverage and opacity multiply, so doing it once in the
+        // mask is the same result with one object instead of two.
+        let [r, g, b, alpha] = shadow.colour.to_rgb_f32();
+        let alpha = alpha.clamp(0.0, 1.0);
+        let scaled: Vec<u8> = shadow
+            .mask
+            .coverage
+            .iter()
+            .map(|c| (f32::from(*c) * alpha).round() as u8)
+            .collect();
+
+        let packed = crate::images::deflate(&scaled);
+        let mut mask = pdf.image_xobject(shadow.mask_id, &packed);
+        mask.width(shadow.mask.width as i32)
+            .height(shadow.mask.height as i32);
+        mask.color_space().device_gray();
+        mask.bits_per_component(8).filter(Filter::FlateDecode);
+        mask.finish();
+
+        // The colour. A flat field the size of the mask, which deflates to
+        // almost nothing — a constant is the best case a compressor has.
+        let [r, g, b] = [
+            (r * 255.0).round() as u8,
+            (g * 255.0).round() as u8,
+            (b * 255.0).round() as u8,
+        ];
+        let mut flat = Vec::with_capacity(shadow.mask.coverage.len() * 3);
+        for _ in 0..shadow.mask.coverage.len() {
+            flat.extend_from_slice(&[r, g, b]);
+        }
+
+        let packed_flat = crate::images::deflate(&flat);
+        let mut image = pdf.image_xobject(shadow.id, &packed_flat);
+        image
+            .width(shadow.mask.width as i32)
+            .height(shadow.mask.height as i32);
+        image.color_space().device_rgb();
+        image.bits_per_component(8).filter(Filter::FlateDecode);
+        image.s_mask(shadow.mask_id);
+        image.finish();
+    }
+}
+
 /// One placed picture, written once however many frames show it.
 struct Picture {
     /// The file it came from, which is what makes it reusable.
@@ -732,6 +846,7 @@ struct Written<'a> {
     states: &'a [GraphicsState],
     shadings: &'a [Option<Shading>],
     pictures: &'a [Picture],
+    shadows: &'a [Option<CastShadow>],
     ink: &'a Ink,
     resolved_page: &'a tessera_layout::ResolvedPage,
     options: &'a ExportOptions,
@@ -744,6 +859,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
         states,
         shadings,
         pictures,
+        shadows,
         ink,
         resolved_page,
         options,
@@ -767,15 +883,6 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
             content.transform(to_pdf_matrix(item.transform, page).map(|v| v as f32));
         }
 
-        // **The shadow is not written, on purpose.** A blurred shadow in a PDF
-        // is a luminosity soft mask, and a gaussian blur of a rectangle is not
-        // any gradient PDF can express — it has to be a rasterised grey image,
-        // which means embedding images, which this writer does not do yet
-        // either. Writing a *hard* offset duplicate instead would be worse than
-        // writing nothing: a missing shadow is obviously missing, and a hard one
-        // looks like somebody meant it. Both wait for milestone 6, which owns
-        // export quality.
-        //
         // The object's compositing, named from the page's resources. Set
         // outside the per-kind save/restore so that the fill and the stroke it
         // brackets both inherit it.
@@ -787,6 +894,23 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
         if let Some(state) = composited {
             content.save_state();
             content.set_parameters(Name(state.resource.as_bytes()));
+        }
+
+        // The shadow, before anything the frame itself draws. It is behind the
+        // shape by definition, and drawing it after would put it over the fill.
+        if let Some(shadow) = shadows.get(index).and_then(|s| s.as_ref()) {
+            content.save_state();
+            let b = shadow.at;
+            content.transform([
+                b.width as f32,
+                0.0,
+                0.0,
+                b.height as f32,
+                b.x as f32,
+                to_pdf_y(page, b.y, b.height) as f32,
+            ]);
+            content.x_object(Name(shadow.resource.as_bytes()));
+            content.restore_state();
         }
 
         match &item.kind {

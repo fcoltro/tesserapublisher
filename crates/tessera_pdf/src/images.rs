@@ -150,7 +150,7 @@ fn jpeg_size(bytes: &[u8]) -> Option<(u32, u32)> {
 }
 
 /// Deflate, which is what PDF's `/FlateDecode` reads.
-fn deflate(bytes: &[u8]) -> Vec<u8> {
+pub(crate) fn deflate(bytes: &[u8]) -> Vec<u8> {
     use flate2::Compression;
     use flate2::write::ZlibEncoder;
     use std::io::Write;

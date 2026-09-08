@@ -19,6 +19,7 @@ mod images;
 mod ink;
 mod marks;
 mod options;
+mod shadow;
 mod writer;
 
 pub use ink::Ink;

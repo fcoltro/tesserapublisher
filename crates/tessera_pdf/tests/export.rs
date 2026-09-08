@@ -958,3 +958,77 @@ fn an_empty_picture_box_does_not_refuse_pdf_x1a() {
     );
     let _ = doc;
 }
+
+// --- drop shadows -----------------------------------------------------------
+
+fn with_shadow(
+    mut doc: ResolvedDocument,
+    shadow: tessera_document::shadow::Shadow,
+) -> ResolvedDocument {
+    for item in &mut doc.items {
+        item.shadow = Some(shadow.clone());
+    }
+    doc
+}
+
+#[test]
+fn a_drop_shadow_is_written_into_the_pdf() {
+    // It was not, and the reason was honest: PDF has no blur operator, and the
+    // softness has to arrive as pixels. The writer could not embed an image at
+    // all until now.
+    let doc = with_shadow(
+        black_rect(rect(60.0, 60.0, 80.0, 40.0)),
+        tessera_document::shadow::Shadow::TYPICAL,
+    );
+
+    let bytes = tessera_pdf::export(&doc).expect("export");
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("/SMask"), "the shadow carries no soft mask");
+    assert!(text.contains("/DeviceGray"), "the mask is not greyscale");
+    assert!(text.contains("/Sh0 Do"), "the shadow is never drawn");
+}
+
+#[test]
+fn the_shadow_is_drawn_before_the_shape_that_casts_it() {
+    // It is behind the shape by definition. Drawing it afterwards would put it
+    // over the fill, which is not a subtle error.
+    let doc = with_shadow(
+        black_rect(rect(60.0, 60.0, 80.0, 40.0)),
+        tessera_document::shadow::Shadow::TYPICAL,
+    );
+
+    let bytes = tessera_pdf::export(&doc).expect("export");
+    let text = String::from_utf8_lossy(&bytes);
+    let shadow_at = text.find("/Sh0 Do").expect("the shadow");
+    let fill_at = text
+        .find(" re\n")
+        .or_else(|| text.find(" re "))
+        .expect("the rectangle");
+    assert!(
+        shadow_at < fill_at,
+        "the shadow is drawn over the shape rather than behind it"
+    );
+}
+
+#[test]
+fn a_document_with_no_shadows_carries_no_masks() {
+    // Every object here costs a press something to process. Writing an empty
+    // one for a document that casts no shadow is ink-free paint in the file.
+    let doc = black_rect(rect(10.0, 10.0, 50.0, 50.0));
+    let bytes = tessera_pdf::export(&doc).expect("export");
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(!text.contains("/Sh0 Do"));
+}
+
+#[test]
+fn a_hard_shadow_still_gets_written() {
+    // Zero blur is a real thing to want rather than a degenerate case.
+    let hard = tessera_document::shadow::Shadow {
+        blur: 0.0,
+        ..tessera_document::shadow::Shadow::TYPICAL
+    };
+    let doc = with_shadow(black_rect(rect(10.0, 10.0, 50.0, 50.0)), hard);
+
+    let bytes = tessera_pdf::export(&doc).expect("export");
+    assert!(String::from_utf8_lossy(&bytes).contains("/Sh0 Do"));
+}

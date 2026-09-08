@@ -1193,8 +1193,28 @@ What is owed, stated rather than ticked:
     catches it has to probe a press *narrower* than the source, because sRGB
     content proofed for a wider space is correctly left alone; a saturated green
     proofed for a one-ink press must come back neutral.
-- [~] Linear and radial gradients; drop shadow; multiply, screen and overlay
-  blending — **all three are on screen; the shadow is not in the PDF.**
+- [x] Linear and radial gradients; drop shadow; multiply, screen and overlay
+  blending — **all three on screen and in the PDF.**
+  - A shadow in a PDF is pixels, because PDF has no blur operator and a gaussian
+    of a rectangle is not any gradient PDF can express. It waited for the writer
+    to be able to embed an image at all.
+  - Written as an image of the shadow's colour wearing its softness as an
+    `/SMask`, **not** as a luminosity soft mask — that is the other way to do it
+    and needs a transparency group and an `/ExtGState` to hang it on, for the
+    same picture. This reuses the path placed artwork already goes through,
+    which is the path that is already tested.
+  - Three box blurs rather than a gaussian: indistinguishable at the sizes a
+    mask needs, and each pass is a running sum, so a 144-point blur costs what a
+    2-point one does.
+  - The mask is built at two samples a point, not at the artwork's resolution. A
+    shadow is a soft edge with no detail in it, and a mask at 300ppi for a
+    full-page frame is a nine-megapixel greyscale image describing a gradient.
+  - It is bigger than the shape it belongs to, by the blur's reach on every
+    side. A mask that stopped at the edge would clip the shadow into the one
+    thing it must not have.
+  - The shadow's alpha is folded into the mask rather than written as a separate
+    graphics state: coverage and opacity multiply, so doing it once is the same
+    result with one object instead of two.
   - The shadow is drawn **behind the object and outside its composite group**. A
     shadow inside the group would be faded by the object’s own opacity, so a 50%
     object would cast a 25% shadow — and it is the object that is translucent,
