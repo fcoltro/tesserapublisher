@@ -144,42 +144,72 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
         .inner_margin(egui::Margin::symmetric(Theme::SPACE_1 as i8, 2))
         .fill(Theme::panel_bg_alt())
         .show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                for (slot, title) in stack.panels.iter().enumerate() {
-                    // A shut panel keeps its tab. Closing a panel is not the
-                    // same as taking it out of the layout, and a tab that
-                    // disappeared would mean reopening it from the Window menu
-                    // and finding it somewhere else.
-                    let open = open_by_title(state, title);
-                    let showing = slot == stack.active && open;
+            // **A tab bar scrolls; it does not wrap.** Wrapped, egui put the
+            // tab that did not fit on a line of its own — and with almost no
+            // width left it wrapped *inside the word*, one letter per line, so
+            // "Preflight" became nine rows and the bar grew nine rows tall,
+            // pushing the panel's own contents down behind it.
+            egui::ScrollArea::horizontal()
+                .id_salt(("tabs", region, at))
+                .auto_shrink([false, true])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        // Belt as well as braces: a horizontal layout is enough to stop
+                        // the row wrapping, and this stops any single label breaking
+                        // even if one is given less room than its own text.
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                        for (slot, title) in stack.panels.iter().enumerate() {
+                            // A shut panel keeps its tab. Closing a panel is not the
+                            // same as taking it out of the layout, and a tab that
+                            // disappeared would mean reopening it from the Window menu
+                            // and finding it somewhere else.
+                            let open = open_by_title(state, title);
+                            let showing = slot == stack.active && open;
 
-                    let response = ui
-                        .dnd_drag_source(
-                            egui::Id::new(("tab", region, at, title)),
-                            Dragged(title.clone()),
-                            |ui| {
-                                let label = egui::RichText::new(title).color(if open {
-                                    Theme::text_primary()
-                                } else {
-                                    Theme::text_muted()
-                                });
-                                // The click is read from the drag source's
-                                // own response, outside this closure: a label
-                                // inside a drag source reports the press, not
-                                // whether the gesture turned out to be a click.
-                                let _ = ui.selectable_label(showing, label);
-                            },
-                        )
-                        .response;
+                            let response = ui
+                                .dnd_drag_source(
+                                    egui::Id::new(("tab", region, at, title)),
+                                    Dragged(title.clone()),
+                                    |ui| {
+                                        // **The showing tab is named; the rest are
+                                        // their icons.** Six titles is about 330 points
+                                        // of text in a 292-point rail, so spelling them
+                                        // all out means scrolling the bar to reach the
+                                        // last one every single time. Naming only the
+                                        // one you are in is what a narrow tab bar does,
+                                        // and the name of the panel you are looking at
+                                        // is the one you least need told.
+                                        let tint = if open {
+                                            Theme::text_primary()
+                                        } else {
+                                            Theme::text_muted()
+                                        };
+                                        // The click is read from the drag source's own
+                                        // response, outside this closure: a label inside
+                                        // a drag source reports the press, not whether
+                                        // the gesture turned out to be a click.
+                                        let _ = if showing {
+                                            ui.selectable_label(
+                                                true,
+                                                egui::RichText::new(title).color(tint),
+                                            )
+                                        } else {
+                                            tab_icon(ui, title, tint)
+                                        };
+                                    },
+                                )
+                                .response;
 
-                    if response.clicked() {
-                        chose = Some((slot, title.clone()));
-                    }
-                    if let Some(payload) = response.dnd_release_payload::<Dragged>() {
-                        dropped = Some((payload.0.clone(), slot));
-                    }
-                }
-            });
+                            if response.clicked() {
+                                chose = Some((slot, title.clone()));
+                            }
+                            if let Some(payload) = response.dnd_release_payload::<Dragged>() {
+                                dropped = Some((payload.0.clone(), slot));
+                            }
+                        }
+                    });
+                });
         })
         .response;
 
@@ -242,6 +272,24 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
         });
 }
 
+/// One tab drawn as its icon, for a panel that is not the one showing.
+///
+/// The name is on the hover, because an icon nobody recognises is a button
+/// nobody presses — and the icons here are the rail's own, so somebody who has
+/// used the collapsed rail already knows them.
+fn tab_icon(ui: &mut Ui, title: &str, tint: egui::Color32) -> egui::Response {
+    let size = egui::vec2(22.0, 18.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
+    }
+    if let Some(dock) = dock_by_title(title) {
+        crate::icons::paint(ui.painter(), rect.shrink(3.0), dock.icon(), tint);
+    }
+    response.on_hover_text(title)
+}
+
 fn stack_mut(
     state: &mut TesseraApp,
     region: Region,
@@ -293,6 +341,43 @@ fn edge_target(ui: &mut Ui, state: &mut TesseraApp, region: Region) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn every_dock_has_an_icon_to_be_a_tab_with() {
+        // Inactive tabs are drawn as their icon and nothing else. A dock whose
+        // icon did not resolve would be a blank clickable square, which is
+        // worse than a name that does not fit.
+        for dock in Dock::ALL {
+            let outlines = dock.icon().paths();
+            assert!(
+                !outlines.is_empty(),
+                "{} has no icon to be a tab with",
+                dock.title()
+            );
+        }
+    }
+
+    #[test]
+    fn the_titles_do_not_fit_a_rail_spelled_out() {
+        // The reason only the showing tab is named. If this ever stops being
+        // true the icons could go, and this says so rather than leaving the
+        // decision as a comment nobody rechecks.
+        //
+        // **The padding is most of it**, which is what the first version of
+        // this test got wrong: the words alone come to about 264 points and
+        // would fit, but every tab is a button with padding on both sides and
+        // a gap to the next one, and that is another 130.
+        let words: f32 = Dock::ALL.iter().map(|d| d.title().len() as f32 * 6.0).sum();
+        let padding = Dock::ALL.len() as f32 * Theme::SPACE_2 * 2.0;
+        let gaps = (Dock::ALL.len() - 1) as f32 * Theme::SPACE_2;
+        let needed = words + padding + gaps;
+
+        assert!(
+            needed > WIDTH,
+            "the titles now fit in {WIDTH} points ({needed} needed): naming \
+             every tab is back on the table"
+        );
+    }
     use super::*;
 
     #[test]
