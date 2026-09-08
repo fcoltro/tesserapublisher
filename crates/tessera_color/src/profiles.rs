@@ -549,6 +549,69 @@ fn describe(path: &Path) -> Option<Installed> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_bundled_press_profiles_make_real_conversions() {
+        // **The test the vendored files exist for.** Everything about CMYK
+        // export and soft proofing was code with no press data behind it until
+        // the profiles were downloaded; this is what turns that from a claim
+        // into something checked.
+        //
+        // Skipped rather than failed where they are absent: a checkout without
+        // them still builds and still runs, and `tools/vendor-profiles.py` is
+        // how they arrive.
+        let press: Vec<_> = bundled()
+            .into_iter()
+            .filter(|b| b.space == "CMYK")
+            .collect();
+        if press.is_empty() {
+            return;
+        }
+
+        for profile in press {
+            let bytes = std::fs::read(&profile.path).expect("read");
+            let loaded = crate::managed::OutputProfile::from_bytes(bytes)
+                .unwrap_or_else(|e| panic!("{} would not load: {e}", profile.name));
+
+            let conversion = loaded
+                .ink_for_screen_colour(crate::managed::Rendering::default())
+                .unwrap_or_else(|e| panic!("{} makes no conversion: {e}", profile.name));
+
+            // Four inks, and a mid grey must land somewhere with ink in it. A
+            // transform that answered all zeroes would be a profile loaded and
+            // doing nothing, which is the failure that looks like success.
+            let inks = conversion.apply([0.5, 0.5, 0.5]);
+            assert!(
+                inks.iter().any(|v| *v > 0.01),
+                "{} converts mid grey to no ink at all",
+                profile.name
+            );
+            assert!(
+                inks.iter().all(|v| v.is_finite()),
+                "{} produced a non-finite ink value",
+                profile.name
+            );
+        }
+    }
+
+    #[test]
+    fn every_bundled_profile_agrees_with_the_manifest() {
+        // `bundled` skips a row whose file disagrees with the space it claims,
+        // so a mislabelled profile is silently absent rather than wrong. This
+        // is the other half: if the files are there, they are all there.
+        let found = bundled();
+        if found.is_empty() {
+            return;
+        }
+        assert!(
+            found.iter().any(|b| b.space == "RGB"),
+            "no RGB profile survived the manifest check"
+        );
+        assert!(
+            found.iter().any(|b| b.space == "CMYK"),
+            "no CMYK profile survived the manifest check"
+        );
+    }
     use super::*;
     use crate::managed::OutputProfile;
 

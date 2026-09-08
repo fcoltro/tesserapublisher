@@ -32,17 +32,17 @@
 # how Krita, Scribus, GIMP and darktable each handle this.
 
 # --- The screen. Copy, distribute, embed, use and sell without restriction.
-sRGB2014.icc	RGB	icc	sRGB (ICC 2014)	https://registry.color.org/profiles/sRGB2014.icc
-sRGB_v4_ICC_preference.icc	RGB	icc	sRGB v4 preference	https://registry.color.org/profiles/sRGB_v4_ICC_preference.icc
+sRGB2014.icc	RGB	icc	sRGB (ICC 2014)	https://registry.color.org/rgb-registry/profiles/sRGB2014.icc
+sRGB_v4_ICC_preference.icc	RGB	icc	sRGB v4 preference	https://registry.color.org/rgb-registry/profiles/sRGB_v4_ICC_preference.icc
 
 # --- The presses. CGATS.21-2 / ISO 15339 reference printing conditions: seven
 # characterised CMYK conditions from newsprint to premium coated, published
 # through the ICC registry. These are the freely shareable answer to the CMYK
 # list, and CRPC6 is the one nearest the coated stock most work is printed on.
-CGATS21_CRPC1.icc	CMYK	idealliance-crpc	CRPC1 - cold-set news	https://www.color.org/profiles/CGATS21_CRPC1.icc
-CGATS21_CRPC2.icc	CMYK	idealliance-crpc	CRPC2 - heat-set, uncoated	https://www.color.org/profiles/CGATS21_CRPC2.icc
-CGATS21_CRPC3.icc	CMYK	idealliance-crpc	CRPC3 - heat-set, coated	https://www.color.org/profiles/CGATS21_CRPC3.icc
-CGATS21_CRPC4.icc	CMYK	idealliance-crpc	CRPC4 - sheet-fed, uncoated	https://www.color.org/profiles/CGATS21_CRPC4.icc
-CGATS21_CRPC5.icc	CMYK	idealliance-crpc	CRPC5 - sheet-fed, coated	https://www.color.org/profiles/CGATS21_CRPC5.icc
-CGATS21_CRPC6.icc	CMYK	idealliance-crpc	CRPC6 - premium coated	https://www.color.org/profiles/CGATS21_CRPC6.icc
-CGATS21_CRPC7.icc	CMYK	idealliance-crpc	CRPC7 - extra-large gamut	https://www.color.org/profiles/CGATS21_CRPC7.icc
+CGATS21_CRPC1.icc	CMYK	idealliance-crpc	CRPC1 - cold-set news	https://registry.color.org/profile-registry/profiles/CGATS21_CRPC1.icc
+CGATS21_CRPC2.icc	CMYK	idealliance-crpc	CRPC2 - heat-set, uncoated	https://registry.color.org/profile-registry/profiles/CGATS21_CRPC2.icc
+CGATS21_CRPC3.icc	CMYK	idealliance-crpc	CRPC3 - heat-set, coated	https://registry.color.org/profile-registry/profiles/CGATS21_CRPC3.icc
+CGATS21_CRPC4.icc	CMYK	idealliance-crpc	CRPC4 - sheet-fed, uncoated	https://registry.color.org/profile-registry/profiles/CGATS21_CRPC4.icc
+CGATS21_CRPC5.icc	CMYK	idealliance-crpc	CRPC5 - sheet-fed, coated	https://registry.color.org/profile-registry/profiles/CGATS21_CRPC5.icc
+CGATS21_CRPC6.icc	CMYK	idealliance-crpc	CRPC6 - premium coated	https://registry.color.org/profile-registry/profiles/CGATS21_CRPC6.icc
+CGATS21_CRPC7.icc	CMYK	idealliance-crpc	CRPC7 - extra-large gamut	https://registry.color.org/profile-registry/profiles/CGATS21_CRPC7.icc

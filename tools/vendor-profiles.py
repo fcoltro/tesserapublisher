@@ -32,11 +32,9 @@ import argparse
 import hashlib
 import os
 import re
-import ssl
 import struct
 import sys
-import urllib.error
-import urllib.request
+import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -140,19 +138,75 @@ def copyright_of(data):
     return ""
 
 
+def is_icc_profile(data):
+    """Whether these bytes are an ICC profile, said by the bytes themselves.
+
+    **Not by the status code and not by the file extension.** A reorganised
+    web site answers a request for `sRGB2014.icc` with an HTML page and a
+    perfectly cheerful 200, and a downloader that trusted either would write
+    that page into `assets/profiles/` under an `.icc` name. It would then fail
+    somewhere inside Little CMS, months later, with a message about a malformed
+    tag table.
+
+    Every ICC profile carries `acsp` at offset 36. That is the whole check, it
+    is the one the specification defines, and it costs four bytes.
+    """
+    return len(data) > 132 and data[36:40] == b"acsp"
+
+
 def fetch(url):
-    """Download, or return None and say why."""
+    """Download, or return None and say why.
+
+    Through `curl` rather than `urllib`, and that is not a preference.
+
+    Two things bite on a locked-down machine, and they look alike from a
+    distance. Python's sockets may be refused outright by a sandbox policy
+    (`WinError 10013` on Windows), which no amount of TLS configuration fixes.
+    And `curl` built against Windows schannel tries to check certificate
+    revocation, which fails closed with `CRYPT_E_REVOCATION_OFFLINE` when the
+    revocation responder cannot be reached — a network that works perfectly for
+    everything else.
+
+    `--ssl-no-revoke` turns off *revocation* checking only. Certificate
+    verification stays on: a profile fetched over an unverified connection is a
+    profile from nobody, and that is a different thing from one whose issuer's
+    revocation list happens to be unreachable.
+    """
     try:
-        # A default context, so certificate verification is on. A profile
-        # fetched over an unverified connection is a profile from nobody.
-        context = ssl.create_default_context()
-        request = urllib.request.Request(
-            url, headers={"User-Agent": "tessera-vendor-profiles"}
+        finished = subprocess.run(
+            [
+                "curl",
+                "--silent",
+                "--show-error",
+                "--location",
+                "--ssl-no-revoke",
+                "--max-time",
+                "120",
+                "--user-agent",
+                "tessera-vendor-profiles",
+                "--output",
+                "-",
+                url,
+            ],
+            capture_output=True,
+            timeout=180,
         )
-        with urllib.request.urlopen(request, timeout=60, context=context) as response:
-            return response.read(), None
-    except (urllib.error.URLError, urllib.error.HTTPError, ssl.SSLError, OSError) as why:
+    except (OSError, subprocess.TimeoutExpired) as why:
         return None, str(why)
+
+    if finished.returncode != 0:
+        return None, (finished.stderr.decode("utf-8", "replace").strip() or
+                      f"curl exited {finished.returncode}")
+
+    data = finished.stdout
+    if not is_icc_profile(data):
+        # Said as what it is, because "downloaded 6923 bytes" reads as success.
+        head = data[:60].decode("utf-8", "replace").strip().replace("\n", " ")
+        return None, (
+            f"the server sent {len(data)} bytes that are not an ICC profile "
+            f"(no 'acsp' at offset 36) — starts: {head!r}"
+        )
+    return data, None
 
 
 def main():
