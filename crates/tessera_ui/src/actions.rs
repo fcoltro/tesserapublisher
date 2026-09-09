@@ -602,6 +602,18 @@ pub fn all() -> &'static [Action] {
             PickTool(Tool::DirectSelect),
         ),
         a("Zoom tool", Some("Z"), Group::Tool, PickTool(Tool::Zoom)),
+        a(
+            "Polygon tool",
+            Some("G"),
+            Group::Tool,
+            PickTool(Tool::Polygon),
+        ),
+        a(
+            "Scissors tool",
+            Some("C"),
+            Group::Tool,
+            PickTool(Tool::Scissors),
+        ),
     ];
     LIST
 }

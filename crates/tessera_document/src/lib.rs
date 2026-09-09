@@ -22,6 +22,7 @@ pub mod nodes;
 pub mod object_style;
 pub mod paint;
 pub mod path;
+pub mod polygon;
 pub mod shadow;
 
 pub use document::{Document, StoryMap, ZMove};

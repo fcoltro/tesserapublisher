@@ -719,6 +719,8 @@ mod tests {
             recovery_seconds: 11,
             export_presets: crate::view::export_dialog::Preset::usual(),
             docking: crate::docking::Docking::default(),
+            polygon_sides: 6,
+            polygon_inset: 0.0,
             shortcuts: crate::keys::Bindings::default(),
             workspaces: crate::workspace::Workspace::usual(),
             workspace: None,

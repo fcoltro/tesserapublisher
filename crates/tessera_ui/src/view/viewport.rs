@@ -584,6 +584,22 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
         Tool::Pen => pen_gesture(ui, response, rect, state),
         Tool::DirectSelect => direct_gesture(ui, response, rect, state),
         Tool::Zoom => zoom_gesture(ui, response, rect, state),
+        Tool::Scissors => {
+            if response.clicked()
+                && let Some(pos) = response.interact_pointer_pos()
+            {
+                // Selection first, so a click on an unselected path cuts it
+                // rather than doing nothing: `segment_at` only looks at what is
+                // selected, and requiring two clicks to cut once would be a
+                // rule nobody could see.
+                if super::anchors::segment_at(state, rect, pos).is_none()
+                    && let Some(hit) = frame_at(state, rect, pos)
+                {
+                    state.active_mut().selection.set(hit);
+                }
+                super::anchors::cut_at(state, rect, pos);
+            }
+        }
         t if t.draws() => {
             let shift = ui.input(|i| i.modifiers.shift);
             draw_gesture(response, rect, state, shift);
@@ -1288,6 +1304,8 @@ fn canvas_cursor(
             Cursor::new(Icon::Crosshair)
         }
         Tool::Zoom => Cursor::new(Icon::ZoomIn),
+        Tool::Polygon => Cursor::new(Icon::Crosshair),
+        Tool::Scissors => Cursor::new(Icon::Crosshair),
         // The pointer over an anchor is the anchor's own business; away from
         // one it is still the tool that picks parts.
         Tool::DirectSelect => Cursor::new(Icon::Crosshair),
@@ -1779,7 +1797,27 @@ fn draw_gesture(
             }
             // None of these draws a frame by dragging. Listed rather than
             // caught by a wildcard, so a new drawing tool has to answer here.
-            Tool::Select | Tool::DirectSelect | Tool::Hand | Tool::Pen | Tool::Zoom => {}
+            Tool::Polygon => {
+                let path = tessera_document::polygon::path(
+                    tessera_geometry::DocRect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: bounds.width,
+                        height: bounds.height,
+                    },
+                    state.prefs.polygon_sides,
+                    state.prefs.polygon_inset,
+                );
+                apply(state, Command::AddPath(bounds, path));
+            }
+            // None of these draws a frame by dragging. Listed rather than
+            // caught by a wildcard, so a new drawing tool has to answer here.
+            Tool::Select
+            | Tool::DirectSelect
+            | Tool::Hand
+            | Tool::Pen
+            | Tool::Scissors
+            | Tool::Zoom => {}
         }
     }
 }

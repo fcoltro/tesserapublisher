@@ -147,6 +147,19 @@ pub struct Preferences {
     #[serde(default = "crate::workspace::Workspace::usual")]
     pub workspaces: Vec<crate::workspace::Workspace>,
 
+    /// How many sides the polygon tool draws.
+    ///
+    /// A preference rather than a dialog on every use: somebody drawing
+    /// hexagons is drawing hexagons all afternoon, and a box asking how many
+    /// sides each time is a box they dismiss without reading by the third one.
+    #[serde(default = "default_polygon_sides")]
+    pub polygon_sides: u32,
+
+    /// How far the inner points of a star are pulled in, as a share of the
+    /// radius. Zero is a plain polygon.
+    #[serde(default)]
+    pub polygon_inset: f64,
+
     /// Shortcuts anybody has changed from the ones this build ships.
     #[serde(default)]
     pub shortcuts: crate::keys::Bindings,
@@ -170,6 +183,11 @@ pub struct Preferences {
 
 fn yes() -> bool {
     true
+}
+
+/// Six, which is the polygon anybody draws without being asked.
+fn default_polygon_sides() -> u32 {
+    6
 }
 
 /// Long enough not to intrude, short enough that a crash costs seconds.
@@ -199,6 +217,8 @@ impl Default for Preferences {
             recovery_seconds: default_recovery_seconds(),
             export_presets: crate::view::export_dialog::Preset::usual(),
             docking: crate::docking::Docking::default(),
+            polygon_sides: default_polygon_sides(),
+            polygon_inset: 0.0,
             shortcuts: crate::keys::Bindings::default(),
             workspaces: crate::workspace::Workspace::usual(),
             workspace: None,
@@ -402,6 +422,8 @@ mod tests {
             recovery_seconds: 42,
             export_presets: crate::view::export_dialog::Preset::usual(),
             docking: crate::docking::Docking::default(),
+            polygon_sides: 6,
+            polygon_inset: 0.0,
             shortcuts: crate::keys::Bindings::default(),
             workspaces: crate::workspace::Workspace::usual(),
             workspace: None,

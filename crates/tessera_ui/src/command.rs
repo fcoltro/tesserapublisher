@@ -301,6 +301,17 @@ pub enum Command {
         blend: tessera_document::blending::Blending,
     },
 
+    /// A new path frame wearing another frame's fill and stroke.
+    ///
+    /// What the scissors need: a cut is not a restyling, and somebody who cuts
+    /// a red line expects two red lines. Taking the look from a frame rather
+    /// than passing it in keeps one description of it \— the frame's.
+    AddPathLike {
+        bounds: tessera_geometry::DocRect,
+        path: kurbo::BezPath,
+        from: FrameId,
+    },
+
     /// Replace a path frame's outline.
     ///
     /// The whole path in one command rather than one per anchor: dragging a
@@ -1206,6 +1217,23 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::UnthreadFrame { id } => {
             state.active_mut().document_mut().unthread(id);
+        }
+
+        Command::AddPathLike { bounds, path, from } => {
+            let look = state
+                .active()
+                .document()
+                .frame(from)
+                .map(|f| (f.fill.clone(), f.stroke.clone(), f.blend));
+            add(state, bounds, FrameKind::Path(path), Color::BLACK);
+            if let Some((fill, stroke, blend)) = look
+                && let Some(id) = state.active().selection.single()
+                && let Some(made) = state.active_mut().document_mut().frame_mut(id)
+            {
+                made.fill = fill;
+                made.stroke = stroke;
+                made.blend = blend;
+            }
         }
 
         Command::SetPath { id, path } => {

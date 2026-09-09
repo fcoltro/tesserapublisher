@@ -226,6 +226,79 @@ fn start_of(elements: &[PathEl], at: usize) -> Option<Point> {
     }
 }
 
+/// Cut a path at a point, giving back what is either side of it.
+///
+/// **What comes back depends on whether the path was closed**, and the
+/// difference is the whole of what scissors do:
+///
+/// - An *open* path cut in the middle becomes two open paths.
+/// - A *closed* path cut anywhere becomes one open path, starting and ending at
+///   the cut. There is only one piece, because going round the other way is the
+///   same piece.
+///
+/// Returns `None` where there is nothing to cut: at an end of an open path,
+/// where one side would be a single point.
+pub fn cut(path: &BezPath, at: usize, t: f64) -> Option<(BezPath, Option<BezPath>)> {
+    // Splitting first means the cut lands on an anchor, and everything after
+    // this is a question of which anchors go where.
+    let split = insert_anchor(path, at, t)?;
+    let elements: Vec<PathEl> = split.elements().to_vec();
+    // `insert_anchor` puts the new point at `at`, so the second half begins
+    // there and the first half ends there.
+    let cut_at = at;
+
+    if is_closed(&elements) {
+        // Re-walk from the cut, all the way round, and stop. The `ClosePath`
+        // goes: the shape is open now, and leaving it would draw a line back
+        // across whatever was just separated.
+        let body: Vec<PathEl> = elements
+            .iter()
+            .copied()
+            .filter(|el| !matches!(el, PathEl::ClosePath))
+            .collect();
+        let mut out = Vec::with_capacity(body.len());
+
+        let start = point_of(body.get(cut_at)?)?;
+        out.push(PathEl::MoveTo(start));
+        // Everything after the cut, then everything up to it — which is the
+        // same loop, started somewhere else.
+        for step in 1..body.len() {
+            let from = (cut_at + step) % body.len();
+            let element = body.get(from)?;
+            out.push(match element {
+                PathEl::MoveTo(p) => PathEl::LineTo(*p),
+                other => *other,
+            });
+        }
+        // And back to where the cut was made, closing the walk without closing
+        // the shape.
+        out.push(PathEl::LineTo(start));
+        return Some((BezPath::from_vec(out), None));
+    }
+
+    // An open path: everything up to the cut, and everything from it.
+    let head: Vec<PathEl> = elements[..=cut_at].to_vec();
+    let tail_start = point_of(elements.get(cut_at)?)?;
+    let mut tail = vec![PathEl::MoveTo(tail_start)];
+    tail.extend_from_slice(&elements[cut_at + 1..]);
+
+    // A piece with one point is not a path. That is what cutting at an end
+    // would give, and it is why cutting there is refused rather than done.
+    if head.len() < 2 || tail.len() < 2 {
+        return None;
+    }
+    Some((BezPath::from_vec(head), Some(BezPath::from_vec(tail))))
+}
+
+fn point_of(element: &PathEl) -> Option<Point> {
+    match element {
+        PathEl::MoveTo(p) | PathEl::LineTo(p) => Some(*p),
+        PathEl::CurveTo(_, _, p) => Some(*p),
+        PathEl::QuadTo(_, p) => Some(*p),
+        PathEl::ClosePath => None,
+    }
+}
+
 /// Turn a corner into a smooth point, or a smooth one back into a corner.
 ///
 /// Smoothing gives the anchor two handles along the line joining its
@@ -407,6 +480,56 @@ mod tests {
         line.move_to(Point::new(0.0, 0.0));
         line.line_to(Point::new(100.0, 0.0));
         assert!(insert_anchor(&line, 0, 0.5).is_none());
+    }
+
+    #[test]
+    fn cutting_an_open_path_gives_two_paths() {
+        let mut line = BezPath::new();
+        line.move_to(Point::new(0.0, 0.0));
+        line.line_to(Point::new(100.0, 0.0));
+        line.line_to(Point::new(100.0, 100.0));
+
+        let (head, tail) = cut(&line, 1, 0.5).expect("cut");
+        let tail = tail.expect("an open path cuts into two");
+
+        assert_eq!(anchors(&head).len(), 2);
+        assert_eq!(anchors(&tail).len(), 3);
+        // The cut is in the same place on both sides. A gap here is a hairline
+        // nobody sees until it is printed.
+        assert_eq!(
+            anchors(&head).last().expect("end").point,
+            anchors(&tail).first().expect("start").point
+        );
+    }
+
+    #[test]
+    fn cutting_a_closed_path_gives_one_open_one() {
+        // There is only one piece, because going round the other way is the
+        // same piece. A closed shape cut once is a shape that is now open.
+        let (opened, second) = cut(&triangle(), 1, 0.5).expect("cut");
+        assert!(second.is_none(), "a closed path cut into two");
+        assert!(
+            !matches!(opened.elements().last(), Some(PathEl::ClosePath)),
+            "the cut path is still closed"
+        );
+    }
+
+    #[test]
+    fn a_cut_closed_path_keeps_all_its_points() {
+        // Four, because the cut itself adds one: three corners plus where the
+        // scissors went in, which is now both the start and the end.
+        let (opened, _) = cut(&triangle(), 1, 0.5).expect("cut");
+        assert_eq!(anchors(&opened).len(), 5);
+    }
+
+    #[test]
+    fn cutting_at_an_end_is_refused() {
+        // One side would be a single point, which is not a path.
+        let mut line = BezPath::new();
+        line.move_to(Point::new(0.0, 0.0));
+        line.line_to(Point::new(100.0, 0.0));
+        assert!(cut(&line, 1, 1.0).is_none());
+        assert!(cut(&line, 1, 0.0).is_none());
     }
 
     #[test]

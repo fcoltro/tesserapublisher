@@ -228,8 +228,38 @@ Making the skeleton pleasant to use. No new file-format surface area.
     square, which is exactly what every document written before it meant. A step
     that touched every frame to write the value it would already read as could
     only introduce a bug.
-- [ ] Direct-select and zoom tools; add, delete and convert anchor points;
+- [x] Direct-select and zoom tools; add, delete and convert anchor points;
   polygon; scissors.
+  - **The arithmetic has no screen in it.** `document::anchors` and
+    `document::polygon` are the model — twenty-eight tests, none needing a GPU —
+    and the view is only pixels: where an anchor sits, which one is under the
+    pointer, how big a target it gets.
+  - An anchor is addressed by its **element index**, not its ordinal. "The third
+    point" stops meaning anything the moment a path is edited: delete one and
+    every selection past it silently refers to something else.
+  - Corner or smooth is **measured from the geometry, never stored**. A flag
+    that disagreed with the shape would be a second answer to a question the
+    path already answers, and the one that draws would win while the one that is
+    stored decided what editing did.
+  - **Adding a point does not move the curve.** A line splits into two lines and
+    a cubic into the two de Casteljau gives, which together trace exactly what
+    the one traced. Inserting a midpoint would pull the curve onto the chord
+    under the pointer — the shape would change in the act of preparing to change
+    it.
+  - Direct select is its own tool rather than a modifier on Select. The two
+    answer different questions — "which object" and "which part of it" — and one
+    tool guessing between them would guess wrong at the worst moment. It falls
+    through to ordinary selection away from an anchor, so choosing a path to
+    edit does not take two tool changes.
+  - A polygon is a `FrameKind::Path`, not a new kind of frame: the direct-select
+    tool drags its corners, the scissors cut it, and it exports through exactly
+    one code path.
+  - **Cutting a closed path opens it; cutting an open one divides it.** There is
+    only one piece in the first case, because going round the other way is the
+    same piece. Both halves keep the fill and stroke of the original — a cut is
+    not a restyling.
+  - The zoom tool zooms about the pointer, so what somebody is looking at stays
+    where it is.
 
 ---
 

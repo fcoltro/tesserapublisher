@@ -269,6 +269,44 @@ pub fn convert_picked(state: &mut TesseraApp) {
     }
 }
 
+/// Cut the path under the pointer where it was clicked.
+///
+/// A closed path opens; an open one becomes two. The second piece is a new
+/// frame with the same fill and stroke as the first, because a cut is not a
+/// restyling — somebody who cuts a red line expects two red lines.
+pub fn cut_at(state: &mut TesseraApp, canvas: Rect, pos: egui::Pos2) {
+    let Some((id, at, t)) = segment_at(state, canvas, pos) else {
+        return;
+    };
+    let Some(path) = path_of(state, id) else {
+        return;
+    };
+    let Some((head, tail)) = tessera_document::anchors::cut(&path, at, t) else {
+        state.status = Some(crate::app::Status::info(
+            "There is nothing to cut there: a piece would be a single point.",
+        ));
+        return;
+    };
+
+    crate::command::apply(state, crate::command::Command::SetPath { id, path: head });
+    let Some(tail) = tail else {
+        // A closed path opened rather than divided. One piece, and it is the
+        // one that was already there.
+        return;
+    };
+    let Some(frame) = state.active().document().frame(id).cloned() else {
+        return;
+    };
+    crate::command::apply(
+        state,
+        crate::command::Command::AddPathLike {
+            bounds: frame.bounds,
+            path: tail,
+            from: id,
+        },
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,6 +477,112 @@ mod tests {
         convert_picked(&mut state);
         let back = tessera_document::anchors::anchors(&path_of(&state, id).expect("path"));
         assert_eq!(back[1].kind, tessera_document::anchors::Kind::Corner);
+    }
+
+    #[test]
+    fn cutting_an_open_path_leaves_two_frames() {
+        let mut state = TesseraApp::headless();
+        with_path(&mut state);
+        let before = state.active().document().frames.len();
+
+        let all = onscreen(&state, canvas());
+        let middle = all[0].1.at.lerp(all[1].1.at, 0.5);
+        cut_at(&mut state, canvas(), middle);
+
+        assert_eq!(state.active().document().frames.len(), before + 1);
+    }
+
+    #[test]
+    fn both_halves_of_a_cut_keep_the_look_of_the_original() {
+        // A cut is not a restyling. Somebody who cuts a red line expects two
+        // red lines.
+        let mut state = TesseraApp::headless();
+        let id = with_path(&mut state);
+        crate::command::apply(
+            &mut state,
+            crate::command::Command::SetFill {
+                id,
+                paint: tessera_document::paint::Paint::Solid(tessera_color::Color::Rgb {
+                    r: 1.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 1.0,
+                }),
+            },
+        );
+        let wanted = state
+            .active()
+            .document()
+            .frame(id)
+            .expect("frame")
+            .fill
+            .clone();
+
+        let all = onscreen(&state, canvas());
+        let middle = all[0].1.at.lerp(all[1].1.at, 0.5);
+        cut_at(&mut state, canvas(), middle);
+
+        let fills: Vec<_> = state
+            .active()
+            .document()
+            .frames
+            .values()
+            .map(|f| f.fill.clone())
+            .collect();
+        assert_eq!(fills.len(), 2);
+        assert!(
+            fills.iter().all(|f| *f == wanted),
+            "a half came out a different colour"
+        );
+    }
+
+    #[test]
+    fn cutting_a_closed_path_opens_it_rather_than_dividing_it() {
+        // There is only one piece: going round the other way is the same piece.
+        let mut state = TesseraApp::headless();
+        let mut closed = kurbo::BezPath::new();
+        closed.move_to((0.0, 0.0));
+        closed.line_to((60.0, 0.0));
+        closed.line_to((30.0, 50.0));
+        closed.close_path();
+        crate::command::apply(
+            &mut state,
+            crate::command::Command::AddPath(
+                tessera_geometry::DocRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 60.0,
+                    height: 50.0,
+                },
+                closed,
+            ),
+        );
+        let id = state.active().selection.as_slice()[0];
+        let before = state.active().document().frames.len();
+
+        let all = onscreen(&state, canvas());
+        let middle = all[0].1.at.lerp(all[1].1.at, 0.5);
+        cut_at(&mut state, canvas(), middle);
+
+        assert_eq!(
+            state.active().document().frames.len(),
+            before,
+            "a closed path was divided into two"
+        );
+        let after = path_of(&state, id).expect("path");
+        assert!(
+            !matches!(after.elements().last(), Some(kurbo::PathEl::ClosePath)),
+            "the path is still closed"
+        );
+    }
+
+    #[test]
+    fn cutting_nowhere_near_a_path_does_nothing() {
+        let mut state = TesseraApp::headless();
+        with_path(&mut state);
+        let before = state.active().document().frames.len();
+        cut_at(&mut state, canvas(), egui::pos2(880.0, 690.0));
+        assert_eq!(state.active().document().frames.len(), before);
     }
 
     #[test]

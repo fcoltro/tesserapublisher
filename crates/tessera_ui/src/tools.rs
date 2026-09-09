@@ -22,6 +22,10 @@ pub enum Tool {
     Text,
     /// Draws a picture box: a container to place artwork into.
     Graphic,
+    /// Drags out a regular polygon, or a star when its inset is above zero.
+    Polygon,
+    /// Cuts a path where it is clicked.
+    Scissors,
     Hand,
     /// Click to zoom in, hold Alt to zoom out, drag to zoom to what was
     /// dragged around.
@@ -39,6 +43,8 @@ impl Tool {
             Self::Pen => "Pen",
             Self::Text => "Text",
             Self::Graphic => "Picture box",
+            Self::Polygon => "Polygon",
+            Self::Scissors => "Scissors",
             Self::Hand => "Hand",
             Self::Zoom => "Zoom",
         }
@@ -54,6 +60,8 @@ impl Tool {
             Self::Pen => crate::icons::Icon::Pen,
             Self::Text => crate::icons::Icon::Text,
             Self::Graphic => crate::icons::Icon::TextFrame,
+            Self::Polygon => crate::icons::Icon::Ellipse,
+            Self::Scissors => crate::icons::Icon::NoFill,
             Self::Hand => crate::icons::Icon::Hand,
             Self::Zoom => crate::icons::Icon::ZoomIn,
         }
@@ -66,7 +74,12 @@ impl Tool {
     pub fn draws(self) -> bool {
         matches!(
             self,
-            Self::Rectangle | Self::Ellipse | Self::Line | Self::Text | Self::Graphic
+            Self::Rectangle
+                | Self::Ellipse
+                | Self::Line
+                | Self::Text
+                | Self::Graphic
+                | Self::Polygon
         )
     }
 
@@ -85,11 +98,14 @@ impl Tool {
             // F, as InDesign's frame tool is.
             Self::Graphic => egui::Key::F,
             Self::Hand => egui::Key::H,
+            // G and C, as InDesign has them.
+            Self::Polygon => egui::Key::G,
+            Self::Scissors => egui::Key::C,
             Self::Zoom => egui::Key::Z,
         }
     }
 
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 12] = [
         Self::Select,
         Self::DirectSelect,
         Self::Rectangle,
@@ -98,6 +114,8 @@ impl Tool {
         Self::Pen,
         Self::Text,
         Self::Graphic,
+        Self::Polygon,
+        Self::Scissors,
         Self::Hand,
         Self::Zoom,
     ];

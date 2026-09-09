@@ -45,6 +45,48 @@ const _: () = assert!(HEIGHT >= PROXY);
 // tall enough for the full one would put a band of chrome across the window.
 const _: () = assert!(PROXY < crate::view::panels::PROXY);
 
+/// How many sides the next polygon has, and how deep a star it is.
+///
+/// Written straight to the preferences, which is where they live: somebody
+/// drawing hexagons is drawing hexagons all afternoon, and a tool that forgot
+/// between drags would be one they fought.
+fn polygon_options(ui: &mut Ui, state: &mut TesseraApp) {
+    use tessera_document::polygon::{FEWEST_SIDES, MOST_SIDES};
+
+    let mut sides = f64::from(state.prefs.polygon_sides);
+    label(ui, "Sides");
+    if ui
+        .add(
+            egui::DragValue::new(&mut sides)
+                .range(f64::from(FEWEST_SIDES)..=f64::from(MOST_SIDES))
+                .speed(0.15)
+                .fixed_decimals(0),
+        )
+        .changed()
+    {
+        state.prefs.polygon_sides = sides.round() as u32;
+        crate::prefs::remember(state);
+    }
+
+    // As a percentage, because "how far in" is a proportion and nobody thinks
+    // about it in points.
+    let mut inset = state.prefs.polygon_inset * 100.0;
+    label(ui, "Star");
+    if ui
+        .add(
+            egui::DragValue::new(&mut inset)
+                .range(0.0..=95.0)
+                .suffix("%")
+                .speed(0.5)
+                .fixed_decimals(0),
+        )
+        .changed()
+    {
+        state.prefs.polygon_inset = inset / 100.0;
+        crate::prefs::remember(state);
+    }
+}
+
 /// What the bar is describing right now.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Subject {
@@ -93,6 +135,15 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
         // What the row is about, at the left end, always.
         label(ui, subject.name());
         separator(ui);
+
+        // A tool with options of its own says so here, before the selection
+        // does. The polygon's sides decide what the *next* drag draws, so they
+        // belong with the tool rather than with whatever happens to be
+        // selected — which may be nothing at all.
+        if state.active_tool == crate::tools::Tool::Polygon {
+            polygon_options(ui, state);
+            separator(ui);
+        }
 
         match subject {
             Subject::Object => object(ui, state),
