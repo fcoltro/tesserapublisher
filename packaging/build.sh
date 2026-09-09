@@ -91,11 +91,12 @@ case "$kind" in
     # so candle never has to guess what a relative path is relative to — and
     # the layout it installs is the layout `bundled_directory` looks for.
     stage_shared "$root/target/release"
-    # The .wxs is named. cargo-wix looks in the *package* directory by default
-    # and this one is shared packaging rather than a property of the crate.
+    # No path given: the .wxs lives at apps/tessera_app/wix/main.wxs, which
+    # is where cargo-wix looks. Its positional argument is a Cargo.toml, not
+    # a wxs, so following the tool's own convention beats passing flags to
+    # fight it.
     cargo wix --package tessera_app --nocapture --no-build \
-      --output "$out/$name-$version-x86_64.msi" \
-      "$root/packaging/windows/main.wxs"
+      --output "$out/$name-$version-x86_64.msi"
     ;;
 
   *)
