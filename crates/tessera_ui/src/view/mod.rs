@@ -6,6 +6,7 @@
 //! `Ui`, so the whole window is one tree.
 
 pub mod ambient;
+pub mod anchors;
 pub mod canvas_toolbar;
 pub mod control;
 pub mod docks;

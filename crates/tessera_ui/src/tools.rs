@@ -7,6 +7,14 @@ use tessera_geometry::{DocPoint, DocRect};
 pub enum Tool {
     #[default]
     Select,
+    /// Picks the parts of a thing rather than the thing: an anchor point on a
+    /// path, or one object inside a group.
+    ///
+    /// Separate from Select rather than a modifier on it, as every drawing tool
+    /// has it. The two answer different questions — "which object" and "which
+    /// part of it" — and a single tool that guessed between them from what the
+    /// pointer happened to be over would guess wrong at the worst moment.
+    DirectSelect,
     Rectangle,
     Ellipse,
     Line,
@@ -15,12 +23,16 @@ pub enum Tool {
     /// Draws a picture box: a container to place artwork into.
     Graphic,
     Hand,
+    /// Click to zoom in, hold Alt to zoom out, drag to zoom to what was
+    /// dragged around.
+    Zoom,
 }
 
 impl Tool {
     pub fn label(self) -> &'static str {
         match self {
             Self::Select => "Select",
+            Self::DirectSelect => "Direct select",
             Self::Rectangle => "Rectangle",
             Self::Ellipse => "Ellipse",
             Self::Line => "Line",
@@ -28,12 +40,14 @@ impl Tool {
             Self::Text => "Text",
             Self::Graphic => "Picture box",
             Self::Hand => "Hand",
+            Self::Zoom => "Zoom",
         }
     }
 
     pub fn icon(self) -> crate::icons::Icon {
         match self {
             Self::Select => crate::icons::Icon::Select,
+            Self::DirectSelect => crate::icons::Icon::Crosshair,
             Self::Rectangle => crate::icons::Icon::Rectangle,
             Self::Ellipse => crate::icons::Icon::Ellipse,
             Self::Line => crate::icons::Icon::Line,
@@ -41,6 +55,7 @@ impl Tool {
             Self::Text => crate::icons::Icon::Text,
             Self::Graphic => crate::icons::Icon::TextFrame,
             Self::Hand => crate::icons::Icon::Hand,
+            Self::Zoom => crate::icons::Icon::ZoomIn,
         }
     }
 
@@ -60,6 +75,8 @@ impl Tool {
     pub fn shortcut(self) -> egui::Key {
         match self {
             Self::Select => egui::Key::V,
+            // A, as InDesign's direct selection tool is.
+            Self::DirectSelect => egui::Key::A,
             Self::Rectangle => egui::Key::M,
             Self::Ellipse => egui::Key::L,
             Self::Line => egui::Key::Backslash,
@@ -68,11 +85,13 @@ impl Tool {
             // F, as InDesign's frame tool is.
             Self::Graphic => egui::Key::F,
             Self::Hand => egui::Key::H,
+            Self::Zoom => egui::Key::Z,
         }
     }
 
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 10] = [
         Self::Select,
+        Self::DirectSelect,
         Self::Rectangle,
         Self::Ellipse,
         Self::Line,
@@ -80,6 +99,7 @@ impl Tool {
         Self::Text,
         Self::Graphic,
         Self::Hand,
+        Self::Zoom,
     ];
 }
 
@@ -88,6 +108,8 @@ impl Tool {
 pub enum DragKind {
     /// Drawing a new frame.
     Draw,
+    /// Moving one anchor point of a path.
+    Anchor,
     /// Rubber-band selection over empty canvas.
     Marquee,
     /// Moving the selection.

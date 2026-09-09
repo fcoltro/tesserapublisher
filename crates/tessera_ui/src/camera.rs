@@ -35,6 +35,16 @@ pub fn zoom_to_fit(view: &mut ViewTransform, page: DocRect, width: f32, height: 
     view.pan.y = page.y - (f64::from(height) / view.zoom - page.height) / 2.0;
 }
 
+/// Fit an arbitrary rectangle, which is what the zoom tool's drag asks for.
+///
+/// `zoom_to_fit` in terms of any rectangle rather than a page. Written as one
+/// call to the other rather than the same four lines twice: the margin, the
+/// clamp and the centring are one fact about how this application frames
+/// things, and two copies of it drift.
+pub fn zoom_to(view: &mut ViewTransform, area: DocRect, width: f32, height: f32) {
+    zoom_to_fit(view, area, width, height);
+}
+
 pub fn pan_by(view: &mut ViewTransform, screen_dx: f32, screen_dy: f32) {
     view.pan.x -= f64::from(screen_dx) / view.zoom;
     view.pan.y -= f64::from(screen_dy) / view.zoom;

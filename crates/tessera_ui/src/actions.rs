@@ -594,6 +594,14 @@ pub fn all() -> &'static [Action] {
             PickTool(Tool::Graphic),
         ),
         a("Hand tool", Some("H"), Group::Tool, PickTool(Tool::Hand)),
+        // A and Z, as InDesign has them.
+        a(
+            "Direct select tool",
+            Some("A"),
+            Group::Tool,
+            PickTool(Tool::DirectSelect),
+        ),
+        a("Zoom tool", Some("Z"), Group::Tool, PickTool(Tool::Zoom)),
     ];
     LIST
 }

@@ -582,6 +582,8 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
             }
         }
         Tool::Pen => pen_gesture(ui, response, rect, state),
+        Tool::DirectSelect => direct_gesture(ui, response, rect, state),
+        Tool::Zoom => zoom_gesture(ui, response, rect, state),
         t if t.draws() => {
             let shift = ui.input(|i| i.modifiers.shift);
             draw_gesture(response, rect, state, shift);
@@ -1269,7 +1271,9 @@ fn canvas_cursor(
                 );
             }
             DragKind::Move { .. } => return Cursor::new(Icon::Move),
-            DragKind::Draw | DragKind::Marquee => {}
+            // An anchor drag keeps the crosshair it started with; a draw or a
+            // marquee has no cursor of its own.
+            DragKind::Anchor | DragKind::Draw | DragKind::Marquee => {}
         }
     }
 
@@ -1283,6 +1287,10 @@ fn canvas_cursor(
         Tool::Rectangle | Tool::Ellipse | Tool::Line | Tool::Graphic => {
             Cursor::new(Icon::Crosshair)
         }
+        Tool::Zoom => Cursor::new(Icon::ZoomIn),
+        // The pointer over an anchor is the anchor's own business; away from
+        // one it is still the tool that picks parts.
+        Tool::DirectSelect => Cursor::new(Icon::Crosshair),
         Tool::Select => match grab_at(state, rect, pos) {
             Some((id, grab)) => grip_cursor(state, id, &grab),
             None => match move_target_at(state, rect, pos) {
@@ -1290,6 +1298,111 @@ fn canvas_cursor(
                 _ => Cursor::new(Icon::Select),
             },
         },
+    }
+}
+
+// --- direct selection --------------------------------------------------------
+
+/// Picking and dragging one anchor of a path.
+///
+/// **Falls through to the ordinary selection when no anchor is hit.** A tool
+/// that did nothing away from an anchor would mean choosing a path to edit
+/// required switching tools twice: once to select it, once to edit it.
+fn direct_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
+    if response.drag_started()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        match super::anchors::at(state, rect, pos) {
+            Some(picked) => {
+                state.picked_anchor = Some(picked);
+                state.drag = Some(Drag::new(doc_pos(state, rect, pos), DragKind::Anchor));
+            }
+            // No anchor under the pointer: the gesture belongs to whatever the
+            // select tool would have done with it.
+            None => {
+                state.picked_anchor = None;
+                select_gesture(ui, response, rect, state);
+                return;
+            }
+        }
+    }
+
+    if response.dragged()
+        && matches!(state.drag.as_ref().map(|d| &d.kind), Some(DragKind::Anchor))
+        && let Some((id, at)) = state.picked_anchor
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        // Against the *previous* pointer position rather than the drag's
+        // origin, because each frame applies its own delta to a path that has
+        // already moved. Measuring from the start would apply the whole
+        // displacement again every frame.
+        let now = doc_pos(state, rect, pos);
+        if let Some(drag) = state.drag.as_mut() {
+            let (dx, dy) = (now.x - drag.current.x, now.y - drag.current.y);
+            drag.current = now;
+            if dx != 0.0 || dy != 0.0 {
+                super::anchors::nudge(state, id, at, dx, dy);
+            }
+        }
+    }
+
+    if response.drag_stopped() {
+        state.drag = None;
+    }
+
+    // A click that hit nothing clears the picked anchor, so the next arrow key
+    // does not move a point somebody has stopped thinking about.
+    if response.clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        state.picked_anchor = super::anchors::at(state, rect, pos);
+        if state.picked_anchor.is_none() {
+            select_gesture(ui, response, rect, state);
+        }
+    }
+}
+
+// --- zoom --------------------------------------------------------------------
+
+/// Click to zoom in, Alt to zoom out, drag to zoom to what was dragged around.
+fn zoom_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
+    const STEP: f64 = 1.6;
+
+    if response.drag_started()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        state.drag = Some(Drag::new(doc_pos(state, rect, pos), DragKind::Marquee));
+    }
+
+    if response.drag_stopped()
+        && let Some(drag) = state.drag.take()
+    {
+        let area = drag.rect();
+        // A drag too small to be a rectangle was a click that wobbled, and
+        // zooming to a two-point box would leave somebody at 4000% with no
+        // idea where they are.
+        if area.width > 4.0 && area.height > 4.0 {
+            camera::zoom_to(
+                &mut state.active_mut().view,
+                area,
+                rect.width(),
+                rect.height(),
+            );
+            return;
+        }
+    }
+
+    if response.clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        // About the pointer, so the thing under it stays under it. Zooming
+        // about the centre makes somebody chase what they were looking at.
+        let out = ui.input(|i| i.modifiers.alt);
+        camera::zoom_about(
+            &mut state.active_mut().view,
+            local(rect, pos),
+            if out { 1.0 / STEP } else { STEP },
+        );
     }
 }
 
@@ -1410,8 +1523,11 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
                     state.active_mut().selection.replace_all(caught);
                 }
             }
-            // Owned by `transform_gesture`, which returned before this.
-            DragKind::Scale { .. } | DragKind::Rotate { .. } | DragKind::Draw => {}
+            // Owned by their own gestures, which returned before this.
+            DragKind::Scale { .. }
+            | DragKind::Rotate { .. }
+            | DragKind::Draw
+            | DragKind::Anchor => {}
         }
     }
 
@@ -1633,7 +1749,9 @@ fn draw_gesture(
                     start_editing(state, id);
                 }
             }
-            Tool::Select | Tool::Hand | Tool::Pen => {}
+            // None of these draws a frame by dragging. Listed rather than
+            // caught by a wildcard, so a new drawing tool has to answer here.
+            Tool::Select | Tool::DirectSelect | Tool::Hand | Tool::Pen | Tool::Zoom => {}
         }
     }
 }
@@ -1872,6 +1990,9 @@ fn draw_overlays(
     }
 
     super::ports::draw(state, rect, &painter, overset);
+    if state.active_tool == Tool::DirectSelect {
+        super::anchors::draw(state, rect, &painter);
+    }
     super::ports::draw_loading(ui, state, rect);
     snap_indicator(state, rect, &painter);
     thread_connectors(state, rect, &painter);
@@ -2052,9 +2173,12 @@ fn draw_overlays(
                     egui::StrokeKind::Middle,
                 );
             }
-            // A scale or rotate in progress already shows itself: the frame
-            // is being updated live, so there is nothing extra to draw.
-            DragKind::Move { .. } | DragKind::Scale { .. } | DragKind::Rotate { .. } => {}
+            // These already show themselves: the frame, or the path, is
+            // updated live, so there is nothing extra to draw over it.
+            DragKind::Move { .. }
+            | DragKind::Scale { .. }
+            | DragKind::Rotate { .. }
+            | DragKind::Anchor => {}
         }
     }
 

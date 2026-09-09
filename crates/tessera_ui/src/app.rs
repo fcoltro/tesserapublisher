@@ -307,6 +307,12 @@ pub struct TesseraApp {
     /// cannot leave is worse than a menu item that needs two frames selected.
     pub loading_thread: Option<FrameId>,
 
+    /// The anchor point being worked on, if the direct-select tool has one.
+    ///
+    /// The frame and the path element, because an index alone means nothing
+    /// once there is more than one path on the page.
+    pub picked_anchor: Option<(FrameId, usize)>,
+
     /// The New Document dialog, and what it is currently asking for.
     pub new_document: crate::view::new_document::NewDocument,
 
@@ -433,6 +439,7 @@ impl TesseraApp {
             ground: None,
             snapped_to: None,
             loading_thread: None,
+            picked_anchor: None,
             new_document: crate::view::new_document::NewDocument::default(),
             step: crate::view::step_repeat::StepWindow::default(),
             editing_master: None,

@@ -301,6 +301,16 @@ pub enum Command {
         blend: tessera_document::blending::Blending,
     },
 
+    /// Replace a path frame's outline.
+    ///
+    /// The whole path in one command rather than one per anchor: dragging a
+    /// point is one gesture and has to be one undo entry, and the path is small
+    /// enough that carrying all of it costs less than describing the change.
+    SetPath {
+        id: FrameId,
+        path: kurbo::BezPath,
+    },
+
     /// Cut a frame's corners, or square them again.
     ///
     /// The whole of the corners in one command, as the shadow is: rounding four
@@ -1196,6 +1206,14 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::UnthreadFrame { id } => {
             state.active_mut().document_mut().unthread(id);
+        }
+
+        Command::SetPath { id, path } => {
+            if let Some(frame) = state.active_mut().document_mut().frame_mut(id)
+                && matches!(frame.kind, FrameKind::Path(_))
+            {
+                frame.kind = FrameKind::Path(path);
+            }
         }
 
         Command::SetCorners { id, corners } => {
