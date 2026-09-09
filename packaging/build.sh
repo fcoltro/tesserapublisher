@@ -95,15 +95,20 @@ case "$kind" in
     # is where cargo-wix looks. Its positional argument is a Cargo.toml, not
     # a wxs, so following the tool's own convention beats passing flags to
     # fight it.
-    # A Windows path for a Windows program. `$out` is a Git Bash path, and
-    # "Illegal characters in path" is what light.exe says about `/d/a/...`,
-    # which is not a diagnosis anybody guesses from the message.
-    win_out="$out"
-    if command -v cygpath >/dev/null 2>&1; then
-      win_out=$(cygpath -w "$out")
+    # **No --output.** light.exe is a Windows program and every path this
+    # script holds is a Git Bash one; "Illegal characters in path" is what
+    # WiX says about `/d/a/...`, and translating with cygpath did not settle
+    # it either. So cargo-wix writes wherever it likes, under target/wix,
+    # and the file is moved by the shell — which is the one tool here that
+    # has never had an opinion about the path format.
+    cargo wix --package tessera_app --nocapture --no-build
+
+    built=$(find "$root/target/wix" -name "*.msi" -newer "$binary" | head -1)
+    if [ -z "$built" ]; then
+      echo "cargo-wix reported success and produced no .msi" >&2
+      exit 1
     fi
-    cargo wix --package tessera_app --nocapture --no-build \
-      --output "$win_out\\$slug-$version-x86_64.msi"
+    mv "$built" "$out/$slug-$version-x86_64.msi"
     ;;
 
   *)
