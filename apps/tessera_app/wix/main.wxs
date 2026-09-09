@@ -38,27 +38,36 @@
           <Component Id="Binary" Guid="*">
             <File Id="exe"
                   Name="tessera-publisher.exe"
-                  Source="$(var.CargoTargetBinDir)\tessera_app.exe"
+                  Source="$(var.CargoTargetBinDir)	essera_app.exe"
                   KeyPath="yes">
-
-              <!-- The association. `ProgId` gives the extension a name, the
-                   name gets an icon and a verb, and the verb is what runs
-                   when a document is double-clicked. All four are needed;
-                   three of them produce an extension Windows knows about and
-                   will not open. -->
+              <!-- Not advertised. An advertised shortcut needs the feature to
+                   allow advertising, and this one does not: advertising exists
+                   to install a feature on first use, and there is one feature
+                   here that is always installed. -->
               <Shortcut Id="StartMenu"
                         Directory="ProgramMenuFolder"
                         Name="Tessera Publisher"
-                        WorkingDirectory="APPLICATIONFOLDER"
-                        Advertise="yes"/>
-              <ProgId Id="Tessera.Document"
-                      Description="Tessera document"
-                      Icon="exe">
-                <Extension Id="tessera" ContentType="application/x-tessera-document">
-                  <Verb Id="open" Command="Open" Argument="&quot;%1&quot;"/>
-                </Extension>
-              </ProgId>
+                        WorkingDirectory="APPLICATIONFOLDER"/>
             </File>
+
+            <!-- The association, and it is a sibling of the file rather than a
+                 child of it: WiX allows `ProgId` under a Component, a Class or
+                 an Advertise, and not under a `File`.
+
+                 `ProgId` gives the extension a name, the extension gives the
+                 name a verb, and the verb is what runs when a document is
+                 double-clicked. All three are needed; two of them produce an
+                 extension Windows knows about and will not open. `TargetFile`
+                 says which binary, which an advertised verb would have taken
+                 from its component and a plain one has to be told. -->
+            <ProgId Id="Tessera.Document" Description="Tessera document">
+              <Extension Id="tessera" ContentType="application/x-tessera-document">
+                <Verb Id="open"
+                      Command="Open"
+                      TargetFile="exe"
+                      Argument="&quot;%1&quot;"/>
+              </Extension>
+            </ProgId>
           </Component>
 
           <!-- The colour profiles, in the directory `bundled_directory` looks
