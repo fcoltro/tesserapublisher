@@ -516,6 +516,22 @@ pub fn apply(ctx: &Context) {
         style.visuals.widgets.hovered.bg_fill = Theme::selected_bg();
         style.visuals.widgets.active.bg_fill = Theme::accent();
 
+        // **And `weak_bg_fill`, which is the one buttons actually use.** egui
+        // paints a button — and a `DragValue`, which is a button — from
+        // `weak_bg_fill`; `bg_fill` is the stronger one, for a checkbox's tick
+        // or a selected row. Setting only `bg_fill` left every numeric field in
+        // the interface painted in egui's own default, so the light theme drew
+        // dark boxes with dark text in them and the fields could not be read.
+        //
+        // Both are set to the same values, because a field and a filled
+        // component reading differently is a distinction nothing here wants.
+        style.visuals.widgets.noninteractive.weak_bg_fill = Theme::panel_bg();
+        style.visuals.widgets.inactive.weak_bg_fill = Theme::field_bg();
+        style.visuals.widgets.hovered.weak_bg_fill = Theme::selected_bg();
+        style.visuals.widgets.active.weak_bg_fill = Theme::accent();
+        style.visuals.widgets.open.weak_bg_fill = Theme::field_bg();
+        style.visuals.widgets.open.bg_fill = Theme::field_bg();
+
         // Lines: quiet, and one weight. Step 7 bounds a control; step 6 is
         // for grouping inside a surface and is drawn by hand where it is
         // wanted rather than by every widget.
@@ -576,6 +592,40 @@ pub fn apply(ctx: &Context) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_number_in_a_field_can_be_read_in_both_themes() {
+        // The bug this replaces was invisible to every other test here: the
+        // palette was right, the contrast between its own colours was right,
+        // and the fields still came out dark on dark — because egui paints a
+        // button, and a `DragValue` is a button, from `weak_bg_fill` rather
+        // than `bg_fill`, and only `bg_fill` was being set.
+        //
+        // Asserting the palette relationship does not catch that on its own.
+        // What it does catch is the other half: that the colour chosen for a
+        // field is one its text can be read on, in whichever theme.
+        for (name, p) in [("dark", Palette::DARK), ("light", Palette::LIGHT)] {
+            let ratio = contrast_ratio(p.step(12), p.field_bg);
+            assert!(
+                ratio >= 4.5,
+                "{name}: a value in a field reads at {ratio:.2}:1"
+            );
+        }
+    }
+
+    #[test]
+    fn a_field_is_told_apart_from_the_panel_behind_it() {
+        // A control the same value as its surround is identified only by its
+        // border, and a border loud enough to do that alone is a border you
+        // notice all day.
+        for (name, p) in [("dark", Palette::DARK), ("light", Palette::LIGHT)] {
+            assert_ne!(
+                p.field_bg,
+                p.step(2),
+                "{name}: a field is the same colour as the panel"
+            );
+        }
+    }
 
     #[test]
     fn selected_text_stays_readable() {
