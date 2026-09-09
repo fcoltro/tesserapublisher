@@ -156,6 +156,119 @@ pub fn nudge(state: &mut TesseraApp, id: FrameId, at: usize, dx: f64, dy: f64) {
     crate::command::apply(state, crate::command::Command::SetPath { id, path: moved });
 }
 
+/// The point on a selected path nearest a screen position.
+///
+/// Returns the frame, which element the point lies on, and how far along it —
+/// exactly what `insert_anchor` asks for. `None` when nothing is near enough, so
+/// a double-click on empty canvas is not read as "add a point somewhere".
+pub fn segment_at(
+    state: &TesseraApp,
+    canvas: Rect,
+    pos: egui::Pos2,
+) -> Option<(FrameId, usize, f64)> {
+    use kurbo::{ParamCurve, ParamCurveNearest};
+
+    let mut best: Option<(FrameId, usize, f64, f64)> = None;
+
+    for id in state.active().selection.as_slice() {
+        let (Some(path), Some(frame)) = (path_of(state, *id), state.active().document().frame(*id))
+        else {
+            continue;
+        };
+
+        // The pointer, brought into the path's own space, rather than every
+        // segment brought out into the screen's. One point through two
+        // transforms beats a few hundred through one, and the answer is the
+        // same.
+        let doc = state
+            .active()
+            .view
+            .screen_to_doc(tessera_geometry::ScreenPoint {
+                x: pos.x - canvas.min.x,
+                y: pos.y - canvas.min.y,
+            });
+        let local = frame.transform.inverse().apply(doc);
+        let want = kurbo::Point::new(local.x - frame.bounds.x, local.y - frame.bounds.y);
+
+        // `segments` skips the opening `MoveTo`, so the nth segment ends at
+        // element n + 1 — which is the index `insert_anchor` wants.
+        for (nth, segment) in path.segments().enumerate() {
+            let near = segment.nearest(want, 0.05);
+            let away = (segment.eval(near.t) - want).hypot();
+            if best.as_ref().is_none_or(|(_, _, _, best)| away < *best) {
+                best = Some((*id, nth + 1, near.t, away));
+            }
+        }
+    }
+
+    // In document points, scaled by the zoom, so the reach is the same distance
+    // on screen whatever the magnification.
+    let reach = f64::from(REACH) / state.active().view.zoom;
+    best.filter(|(_, _, _, away)| *away <= reach)
+        .map(|(id, at, t, _)| (id, at, t))
+}
+
+/// Add an anchor where the pointer is, on the segment it is over.
+pub fn add_at(state: &mut TesseraApp, canvas: Rect, pos: egui::Pos2) {
+    let Some((id, at, t)) = segment_at(state, canvas, pos) else {
+        return;
+    };
+    let Some(path) = path_of(state, id) else {
+        return;
+    };
+    let Some(grown) = tessera_document::anchors::insert_anchor(&path, at, t) else {
+        return;
+    };
+    crate::command::apply(state, crate::command::Command::SetPath { id, path: grown });
+    // The new point is the one being worked on, which is what somebody who has
+    // just made it expects to drag next.
+    state.picked_anchor = Some((id, at));
+}
+
+/// Remove the anchor being worked on.
+pub fn remove_picked(state: &mut TesseraApp) {
+    let Some((id, at)) = state.picked_anchor else {
+        return;
+    };
+    let Some(path) = path_of(state, id) else {
+        return;
+    };
+    match tessera_document::anchors::remove_anchor(&path, at) {
+        Some(shortened) => {
+            crate::command::apply(
+                state,
+                crate::command::Command::SetPath {
+                    id,
+                    path: shortened,
+                },
+            );
+            state.picked_anchor = None;
+        }
+        // Refused, and said so: a path needs two points, and a Delete that
+        // does nothing without explanation reads as a key that has stopped
+        // working.
+        None => {
+            state.status = Some(crate::app::Status::info(
+                "A path needs at least two points. Delete the whole path instead.",
+            ));
+        }
+    }
+}
+
+/// Turn the anchor being worked on from a corner into a smooth point, or back.
+pub fn convert_picked(state: &mut TesseraApp) {
+    let Some((id, at)) = state.picked_anchor else {
+        return;
+    };
+    let Some(path) = path_of(state, id) else {
+        return;
+    };
+    let turned = tessera_document::anchors::convert_anchor(&path, at);
+    if turned != path {
+        crate::command::apply(state, crate::command::Command::SetPath { id, path: turned });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,6 +366,79 @@ mod tests {
         assert_eq!(after[0].point, before[0].point, "another anchor moved");
         assert_eq!(after[1].point.x, before[1].point.x + 10.0);
         assert_eq!(after[2].point, before[2].point, "another anchor moved");
+    }
+
+    #[test]
+    fn a_point_is_added_on_the_segment_under_the_pointer() {
+        let mut state = TesseraApp::headless();
+        let id = with_path(&mut state);
+        let before = tessera_document::anchors::anchors(&path_of(&state, id).expect("path")).len();
+
+        let all = onscreen(&state, canvas());
+        let middle = all[0].1.at.lerp(all[1].1.at, 0.5);
+        add_at(&mut state, canvas(), middle);
+
+        let after = tessera_document::anchors::anchors(&path_of(&state, id).expect("path")).len();
+        assert_eq!(after, before + 1);
+    }
+
+    #[test]
+    fn a_click_on_empty_canvas_adds_nothing() {
+        // Otherwise a miss puts a point on whichever segment happened to be
+        // nearest, however far away that was.
+        let mut state = TesseraApp::headless();
+        let id = with_path(&mut state);
+        let before = tessera_document::anchors::anchors(&path_of(&state, id).expect("path")).len();
+
+        add_at(&mut state, canvas(), egui::pos2(880.0, 690.0));
+        let after = tessera_document::anchors::anchors(&path_of(&state, id).expect("path")).len();
+        assert_eq!(after, before, "a point was added from nowhere");
+    }
+
+    #[test]
+    fn removing_the_last_but_one_point_is_refused_out_loud() {
+        // A Delete that does nothing without explanation reads as a key that
+        // has stopped working.
+        let mut state = TesseraApp::headless();
+        let mut line = kurbo::BezPath::new();
+        line.move_to((0.0, 0.0));
+        line.line_to((50.0, 0.0));
+        crate::command::apply(
+            &mut state,
+            crate::command::Command::AddPath(
+                tessera_geometry::DocRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 50.0,
+                    height: 1.0,
+                },
+                line,
+            ),
+        );
+        let id = state.active().selection.as_slice()[0];
+        state.picked_anchor = Some((id, 1));
+
+        remove_picked(&mut state);
+        assert_eq!(
+            tessera_document::anchors::anchors(&path_of(&state, id).expect("path")).len(),
+            2
+        );
+        assert!(state.status.is_some(), "the refusal said nothing");
+    }
+
+    #[test]
+    fn converting_turns_a_corner_round_and_back() {
+        let mut state = TesseraApp::headless();
+        let id = with_path(&mut state);
+        state.picked_anchor = Some((id, 1));
+
+        convert_picked(&mut state);
+        let kinds = tessera_document::anchors::anchors(&path_of(&state, id).expect("path"));
+        assert_eq!(kinds[1].kind, tessera_document::anchors::Kind::Smooth);
+
+        convert_picked(&mut state);
+        let back = tessera_document::anchors::anchors(&path_of(&state, id).expect("path"));
+        assert_eq!(back[1].kind, tessera_document::anchors::Kind::Corner);
     }
 
     #[test]

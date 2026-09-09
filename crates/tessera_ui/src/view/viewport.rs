@@ -1350,15 +1350,43 @@ fn direct_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
         state.drag = None;
     }
 
-    // A click that hit nothing clears the picked anchor, so the next arrow key
-    // does not move a point somebody has stopped thinking about.
+    // A click that hit nothing clears the picked anchor, so the next Delete
+    // does not remove a point somebody has stopped thinking about.
     if response.clicked()
         && let Some(pos) = response.interact_pointer_pos()
     {
         state.picked_anchor = super::anchors::at(state, rect, pos);
-        if state.picked_anchor.is_none() {
-            select_gesture(ui, response, rect, state);
+        match state.picked_anchor {
+            // Alt on an anchor turns a corner into a smooth point and back,
+            // which is where every drawing tool puts it.
+            Some(_) if ui.input(|i| i.modifiers.alt) => {
+                super::anchors::convert_picked(state);
+            }
+            Some(_) => {}
+            None => select_gesture(ui, response, rect, state),
         }
+    }
+
+    // Double-clicking the path itself adds a point where the pointer is. Not a
+    // modifier on a single click: a single click on a path is how somebody
+    // *deselects* an anchor, and losing that to an accidental extra point
+    // would make the tool feel like it was fighting back.
+    if response.double_clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+        && super::anchors::at(state, rect, pos).is_none()
+    {
+        super::anchors::add_at(state, rect, pos);
+    }
+
+    // Delete takes the picked point out. The action table's `Delete` removes
+    // whole frames, and with an anchor in hand that is not what was meant.
+    if state.picked_anchor.is_some()
+        && ui.input_mut(|i| {
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
+                || i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
+        })
+    {
+        super::anchors::remove_picked(state);
     }
 }
 

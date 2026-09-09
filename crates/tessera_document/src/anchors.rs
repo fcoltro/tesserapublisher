@@ -170,6 +170,62 @@ pub fn remove_anchor(path: &BezPath, at: usize) -> Option<BezPath> {
     Some(BezPath::from_vec(elements))
 }
 
+/// Add an anchor partway along a segment, without changing the shape.
+///
+/// **The curve must not move.** Somebody adding a point is saying "I want a
+/// handle here", not "redraw this" — so a line is split into two lines and a
+/// cubic into the two cubics de Casteljau gives, which together trace exactly
+/// what the one traced. An implementation that simply inserted the midpoint
+/// would flatten the curve under the pointer, and the shape would change in the
+/// act of preparing to change it.
+///
+/// `at` is the element the new point goes inside, and `t` how far along it.
+pub fn insert_anchor(path: &BezPath, at: usize, t: f64) -> Option<BezPath> {
+    use kurbo::{CubicBez, Line, ParamCurve};
+
+    let elements: Vec<PathEl> = path.elements().to_vec();
+    let t = t.clamp(0.0, 1.0);
+    // The ends are already anchors. Splitting there would add a second point in
+    // the same place, which cannot be picked apart afterwards.
+    if !(0.001..=0.999).contains(&t) {
+        return None;
+    }
+
+    let from = start_of(&elements, at)?;
+    let mut out = elements.clone();
+
+    match elements.get(at)? {
+        PathEl::LineTo(to) => {
+            let line = Line::new(from, *to);
+            let (first, second) = (line.subsegment(0.0..t), line.subsegment(t..1.0));
+            out[at] = PathEl::LineTo(first.p1);
+            out.insert(at + 1, PathEl::LineTo(second.p1));
+        }
+        PathEl::CurveTo(a, b, to) => {
+            let curve = CubicBez::new(from, *a, *b, *to);
+            let first = curve.subsegment(0.0..t);
+            let second = curve.subsegment(t..1.0);
+            out[at] = PathEl::CurveTo(first.p1, first.p2, first.p3);
+            out.insert(at + 1, PathEl::CurveTo(second.p1, second.p2, second.p3));
+        }
+        // A `MoveTo` is not a segment, and a `ClosePath` is the implied line
+        // back to the start — splitting that would need the segment written out
+        // first, which is a change to the path's shape on disk for no gain.
+        _ => return None,
+    }
+    Some(BezPath::from_vec(out))
+}
+
+/// Where the segment ending at `at` begins.
+fn start_of(elements: &[PathEl], at: usize) -> Option<Point> {
+    match elements.get(at.checked_sub(1)?)? {
+        PathEl::MoveTo(p) | PathEl::LineTo(p) => Some(*p),
+        PathEl::CurveTo(_, _, p) => Some(*p),
+        PathEl::QuadTo(_, p) => Some(*p),
+        PathEl::ClosePath => None,
+    }
+}
+
 /// Turn a corner into a smooth point, or a smooth one back into a corner.
 ///
 /// Smoothing gives the anchor two handles along the line joining its
@@ -286,6 +342,71 @@ mod tests {
             Point::new(200.0, 0.0),
         );
         path
+    }
+
+    #[test]
+    fn adding_a_point_to_a_line_does_not_move_the_line() {
+        // Somebody adding a point is saying "I want a handle here", not
+        // "redraw this".
+        let mut line = BezPath::new();
+        line.move_to(Point::new(0.0, 0.0));
+        line.line_to(Point::new(100.0, 0.0));
+
+        let split = insert_anchor(&line, 1, 0.25).expect("split");
+        let found = anchors(&split);
+        assert_eq!(found.len(), 3);
+        assert_eq!(found[1].point, Point::new(25.0, 0.0));
+        assert_eq!(found[2].point, Point::new(100.0, 0.0), "the end moved");
+    }
+
+    #[test]
+    fn adding_a_point_to_a_curve_does_not_flatten_it() {
+        // **The trap.** Inserting the midpoint and calling it a day would pull
+        // the curve down onto the straight line under the pointer, so the shape
+        // would change in the act of preparing to change it. De Casteljau's
+        // split traces exactly what the original traced.
+        let mut curve = BezPath::new();
+        curve.move_to(Point::new(0.0, 0.0));
+        curve.curve_to(
+            Point::new(0.0, 100.0),
+            Point::new(100.0, 100.0),
+            Point::new(100.0, 0.0),
+        );
+
+        let split = insert_anchor(&curve, 1, 0.5).expect("split");
+        // The point halfway along this curve is well above the chord, and the
+        // chord's own midpoint is (50, 0). Landing there would be the bug.
+        let middle = anchors(&split)[1].point;
+        assert!(
+            middle.y > 60.0,
+            "the curve was flattened: the new point landed at {middle:?}"
+        );
+
+        // And the shape itself is unchanged, which is the real claim.
+        let before = kurbo::Shape::bounding_box(&curve);
+        let after = kurbo::Shape::bounding_box(&split);
+        assert!((before.x0 - after.x0).abs() < 0.01);
+        assert!((before.y0 - after.y0).abs() < 0.01);
+        assert!((before.x1 - after.x1).abs() < 0.01);
+        assert!((before.y1 - after.y1).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_point_cannot_be_added_on_top_of_an_existing_one() {
+        // Two anchors in the same place cannot be told apart afterwards.
+        let mut line = BezPath::new();
+        line.move_to(Point::new(0.0, 0.0));
+        line.line_to(Point::new(100.0, 0.0));
+        assert!(insert_anchor(&line, 1, 0.0).is_none());
+        assert!(insert_anchor(&line, 1, 1.0).is_none());
+    }
+
+    #[test]
+    fn a_move_is_not_a_segment_to_split() {
+        let mut line = BezPath::new();
+        line.move_to(Point::new(0.0, 0.0));
+        line.line_to(Point::new(100.0, 0.0));
+        assert!(insert_anchor(&line, 0, 0.5).is_none());
     }
 
     #[test]
