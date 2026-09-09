@@ -60,7 +60,7 @@ case "$kind" in
     desktop-file-validate "$app/usr/share/applications/$slug.desktop"
 
     if command -v appimagetool >/dev/null 2>&1; then
-      appimagetool "$app" "$out/$name-$version-x86_64.AppImage"
+      appimagetool "$app" "$out/$slug-$version-x86_64.AppImage"
       rm -rf "$app"
     else
       echo "appimagetool not found: leaving the AppDir for a machine that has it"
@@ -78,7 +78,7 @@ case "$kind" in
        "$app/Contents/Resources/$slug.png"
 
     hdiutil create -volname "$name" -srcfolder "$app" -ov -format UDZO \
-      "$out/$name-$version.dmg"
+      "$out/$slug-$version.dmg"
     rm -rf "$app"
     ;;
 
@@ -95,8 +95,15 @@ case "$kind" in
     # is where cargo-wix looks. Its positional argument is a Cargo.toml, not
     # a wxs, so following the tool's own convention beats passing flags to
     # fight it.
+    # A Windows path for a Windows program. `$out` is a Git Bash path, and
+    # "Illegal characters in path" is what light.exe says about `/d/a/...`,
+    # which is not a diagnosis anybody guesses from the message.
+    win_out="$out"
+    if command -v cygpath >/dev/null 2>&1; then
+      win_out=$(cygpath -w "$out")
+    fi
     cargo wix --package tessera_app --nocapture --no-build \
-      --output "$out/$name-$version-x86_64.msi"
+      --output "$win_out\\$slug-$version-x86_64.msi"
     ;;
 
   *)
