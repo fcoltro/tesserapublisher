@@ -600,6 +600,47 @@ mod tests {
     }
 
     #[test]
+    fn the_installer_carries_every_profile() {
+        // WiX has no way to say "this directory", so `main.wxs` names each file
+        // — and a component listing *some* of them produces an installer that
+        // carries some of the presses, which is worse than none because the
+        // ones missing are missing silently.
+        //
+        // Checked here rather than in packaging, because this is where anybody
+        // adding a profile is already working.
+        let wxs = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("packaging")
+            .join("windows")
+            .join("main.wxs");
+        let Ok(text) = std::fs::read_to_string(&wxs) else {
+            // No packaging in this checkout. Nothing to prove.
+            return;
+        };
+
+        for entry in std::fs::read_dir(checked_in())
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let path = entry.path();
+            if path.extension().is_none_or(|x| x != "icc") {
+                continue;
+            }
+            let name = path
+                .file_name()
+                .expect("a name")
+                .to_string_lossy()
+                .into_owned();
+            assert!(
+                text.contains(&name),
+                "{name} is checked in but the Windows installer does not carry it"
+            );
+        }
+    }
+
+    #[test]
     fn the_bundled_press_profiles_make_real_conversions() {
         // **The test the vendored files exist for.** Everything about CMYK
         // export and soft proofing was code with no press data behind it until

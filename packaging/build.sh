@@ -83,12 +83,19 @@ case "$kind" in
     ;;
 
   msi)
-    # cargo-wix drives the WiX toolset from packaging/windows/main.wxs.
     if ! command -v cargo-wix >/dev/null 2>&1; then
       cargo install cargo-wix --locked
     fi
-    cargo wix --package tessera_app --nocapture \
-      --output "$out/$name-$version-x86_64.msi"
+    # Staged beside the binary first. The .wxs sources them from
+    # `$(var.CargoTargetBinDir)`, which cargo-wix defines as an absolute path,
+    # so candle never has to guess what a relative path is relative to — and
+    # the layout it installs is the layout `bundled_directory` looks for.
+    stage_shared "$root/target/release"
+    # The .wxs is named. cargo-wix looks in the *package* directory by default
+    # and this one is shared packaging rather than a property of the crate.
+    cargo wix --package tessera_app --nocapture --no-build \
+      --output "$out/$name-$version-x86_64.msi" \
+      "$root/packaging/windows/main.wxs"
     ;;
 
   *)

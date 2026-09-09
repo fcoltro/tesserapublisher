@@ -63,10 +63,53 @@
 
           <!-- The colour profiles, in the directory `bundled_directory` looks
                in first. An install without them starts and quietly cannot
-               soft-proof or export PDF/X. -->
+               soft-proof or export PDF/X.
+
+               Every file is named. WiX has no way to say "this directory",
+               and a component listing some of them would produce an installer
+               that carried some of the presses — which is worse than none,
+               because the ones missing are missing silently.
+
+               Sourced from `$(var.CargoTargetBinDir)`, which cargo-wix defines
+               as an absolute path: `packaging/build.sh` stages the profiles
+               beside the binary before calling it, so candle does not have to
+               guess what a relative path is relative to.
+
+               This list is checked against the repository by
+               `the_installer_carries_every_profile`. -->
           <Directory Id="ProfilesFolder" Name="profiles">
             <Component Id="Profiles" Guid="*">
-              <File Id="manifest" Source="assets\profiles\manifest.tsv" KeyPath="yes"/>
+              <File Id="manifest"
+                    Name="manifest.tsv"
+                    Source="$(var.CargoTargetBinDir)\profiles\manifest.tsv"
+                    KeyPath="yes"/>
+              <File Id="icc0"
+                    Name="CGATS21_CRPC1.icc"
+                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC1.icc"/>
+              <File Id="icc1"
+                    Name="CGATS21_CRPC2.icc"
+                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC2.icc"/>
+              <File Id="icc2"
+                    Name="CGATS21_CRPC3.icc"
+                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC3.icc"/>
+              <File Id="icc3"
+                    Name="CGATS21_CRPC4.icc"
+                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC4.icc"/>
+              <File Id="icc4"
+                    Name="CGATS21_CRPC5.icc"
+                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC5.icc"/>
+              <File Id="icc5"
+                    Name="CGATS21_CRPC6.icc"
+                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC6.icc"/>
+              <File Id="icc6"
+                    Name="CGATS21_CRPC7.icc"
+                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC7.icc"/>
+              <File Id="icc7"
+                    Name="sRGB2014.icc"
+                    Source="$(var.CargoTargetBinDir)\profiles\sRGB2014.icc"/>
+              <File Id="icc8"
+                    Name="sRGB_v4_ICC_preference.icc"
+                    Source="$(var.CargoTargetBinDir)\profiles\sRGB_v4_ICC_preference.icc"/>
             </Component>
           </Directory>
         </Directory>
