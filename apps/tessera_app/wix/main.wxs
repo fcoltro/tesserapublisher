@@ -38,7 +38,7 @@
           <Component Id="Binary" Guid="*">
             <File Id="exe"
                   Name="tessera-publisher.exe"
-                  Source="$(var.CargoTargetBinDir)	essera_app.exe"
+                  Source="$(var.CargoTargetBinDir)\tessera_app.exe"
                   KeyPath="yes">
               <!-- Not advertised. An advertised shortcut needs the feature to
                    allow advertising, and this one does not: advertising exists

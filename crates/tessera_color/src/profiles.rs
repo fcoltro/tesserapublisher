@@ -600,6 +600,38 @@ mod tests {
     }
 
     #[test]
+    fn the_installer_has_no_control_characters_in_its_paths() {
+        // **A whole class of mistake, not one typo.** `\tessera_app.exe`
+        // written through anything that interprets escapes becomes a literal
+        // tab, and a tab is an illegal character in a Windows path — which WiX
+        // reports as "Illegal characters in path" with no indication of which
+        // path or which character. It cost six release runs to find by reading
+        // a stack trace.
+        //
+        // The file is indented with spaces throughout, so any tab in it is that
+        // mistake.
+        let Ok(text) = std::fs::read_to_string(installer()) else {
+            return;
+        };
+        assert!(
+            !text.contains('\t'),
+            "the installer definition contains a tab: a path escape was \
+             interpreted somewhere it should not have been"
+        );
+    }
+
+    /// The Windows installer definition.
+    fn installer() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("apps")
+            .join("tessera_app")
+            .join("wix")
+            .join("main.wxs")
+    }
+
+    #[test]
     fn the_installer_carries_every_profile() {
         // WiX has no way to say "this directory", so `main.wxs` names each file
         // — and a component listing *some* of them produces an installer that
@@ -608,14 +640,7 @@ mod tests {
         //
         // Checked here rather than in packaging, because this is where anybody
         // adding a profile is already working.
-        let wxs = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("apps")
-            .join("tessera_app")
-            .join("wix")
-            .join("main.wxs");
-        let Ok(text) = std::fs::read_to_string(&wxs) else {
+        let Ok(text) = std::fs::read_to_string(installer()) else {
             // No packaging in this checkout. Nothing to prove.
             return;
         };
