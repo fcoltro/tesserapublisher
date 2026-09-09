@@ -611,8 +611,9 @@ mod tests {
         let wxs = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..")
-            .join("packaging")
-            .join("windows")
+            .join("apps")
+            .join("tessera_app")
+            .join("wix")
             .join("main.wxs");
         let Ok(text) = std::fs::read_to_string(&wxs) else {
             // No packaging in this checkout. Nothing to prove.

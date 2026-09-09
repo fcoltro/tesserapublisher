@@ -40,7 +40,7 @@ exists inside CI can only be debugged by pushing.
 
 | | Icon | Association | Profiles |
 | --- | --- | --- | --- |
-| Windows | from the executable | `ProgId` + `Extension` + `Verb` in `main.wxs` | `profiles\` beside the exe |
+| Windows | from the executable | `ProgId` + `Extension` + `Verb` in `apps/tessera_app/wix/main.wxs` | `profiles\` beside the exe |
 | macOS | `Contents/Resources` | `CFBundleDocumentTypes` + an exported UTI | `Contents/Resources/profiles` |
 | Linux | hicolor 512×512 | `.desktop` **and** a MIME package | `profiles/` beside the binary |
 
