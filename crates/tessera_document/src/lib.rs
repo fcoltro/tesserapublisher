@@ -7,6 +7,7 @@
 //! serialize with serde for free — which is why the file format could land in
 //! milestone 0 at all.
 
+pub mod anchors;
 pub mod blending;
 pub mod corners;
 pub mod document;
