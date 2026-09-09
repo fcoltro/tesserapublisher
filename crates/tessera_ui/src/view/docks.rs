@@ -99,17 +99,24 @@ fn side(ui: &mut Ui, state: &mut TesseraApp, region: Region) {
                 },
             );
 
-            // The outer edge takes a drop as a new stack, so a side can be
-            // split without there being an existing stack to aim at.
-            edge_target(ui, state, region);
-
-            let room = ui.available_height();
+            // **Below the stacks, not above them.** The strip appears only
+            // while something is being dragged, so drawing it first meant it
+            // pushed everything down by its own height the moment a drag
+            // began — and the pointer that was over a tab found itself over
+            // the strip. Releasing dropped the panel into a new stack, which
+            // is what a plain click on a tab used to do.
+            //
+            // Its room is reserved whether it is drawn or not, so the stacks
+            // do not resize under the pointer either.
+            let room = (ui.available_height() - EDGE - Theme::SPACE_2).max(0.0);
             let each = room / showing.len() as f32;
             for at in showing {
                 ui.allocate_ui(egui::vec2(ui.available_width(), each), |ui| {
                     stack(ui, state, region, at);
                 });
             }
+
+            edge_target(ui, state, region);
         });
 }
 
@@ -167,39 +174,46 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
                             let open = open_by_title(state, title);
                             let showing = slot == stack.active && open;
 
-                            let response = ui
-                                .dnd_drag_source(
-                                    egui::Id::new(("tab", region, at, title)),
-                                    Dragged(title.clone()),
-                                    |ui| {
-                                        // **The showing tab is named; the rest are
-                                        // their icons.** Six titles is about 330 points
-                                        // of text in a 292-point rail, so spelling them
-                                        // all out means scrolling the bar to reach the
-                                        // last one every single time. Naming only the
-                                        // one you are in is what a narrow tab bar does,
-                                        // and the name of the panel you are looking at
-                                        // is the one you least need told.
-                                        let tint = if open {
-                                            Theme::text_primary()
-                                        } else {
-                                            Theme::text_muted()
-                                        };
-                                        // The click is read from the drag source's own
-                                        // response, outside this closure: a label inside
-                                        // a drag source reports the press, not whether
-                                        // the gesture turned out to be a click.
-                                        let _ = if showing {
-                                            ui.selectable_label(
-                                                true,
-                                                egui::RichText::new(title).color(tint),
-                                            )
-                                        } else {
-                                            tab_icon(ui, title, tint)
-                                        };
-                                    },
-                                )
-                                .response;
+                            // **The showing tab is named; the rest are their
+                            // icons.** Six titles is about four hundred points
+                            // of tab in a 292-point rail, so spelling them all
+                            // out means scrolling the bar to reach the last one
+                            // every time. The name of the panel you are looking
+                            // at is the one you least need told.
+                            let tint = if open {
+                                Theme::text_primary()
+                            } else {
+                                Theme::text_muted()
+                            };
+                            let response = {
+                                let drawn = if showing {
+                                    ui.selectable_label(
+                                        true,
+                                        egui::RichText::new(title).color(tint),
+                                    )
+                                } else {
+                                    tab_icon(ui, title, tint)
+                                };
+                                // Click *and* drag, so one widget answers both.
+                                drawn.interact(egui::Sense::click_and_drag())
+                            };
+
+                            // **The payload is raised on `drag_started`, not on
+                            // press.** `dnd_drag_source` makes a widget a drag
+                            // *handle*: it takes the grab cursor on hover and
+                            // raises a payload the instant the button goes
+                            // down. A tab is a button that can also be dragged,
+                            // and the difference was not cosmetic — the payload
+                            // brought up the drop strip, the strip pushed the
+                            // bar down by its own height, and the pointer that
+                            // was over a tab was over the strip instead. A
+                            // plain click then dropped the panel into a new
+                            // stack. `drag_started` is egui's own answer to
+                            // "has this moved far enough to be a drag", so a
+                            // click raises no payload at all.
+                            if response.drag_started() {
+                                egui::DragAndDrop::set_payload(ui.ctx(), Dragged(title.clone()));
+                            }
 
                             if response.clicked() {
                                 chose = Some((slot, title.clone()));
