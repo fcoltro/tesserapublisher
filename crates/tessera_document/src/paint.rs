@@ -190,6 +190,21 @@ impl Paint {
     /// Not a value for the paint — a gradient has none. The middle stop of a
     /// ramp is a fair thing to put on a 26-point proxy button, and the panel
     /// draws the real ramp where it has the room for it.
+    /// Every colour this paint names, in order.
+    ///
+    /// One for a solid, one per stop for a gradient. **A spot used only in the
+    /// middle of a ramp is still an ink somebody has to buy**, so anything
+    /// counting plates has to look at all of them rather than at whatever the
+    /// paint would show if asked for one colour.
+    pub fn colours(&self) -> Vec<Color> {
+        match self {
+            Paint::Solid(colour) => vec![colour.clone()],
+            Paint::Gradient(gradient) => {
+                gradient.stops().iter().map(|s| s.colour.clone()).collect()
+            }
+        }
+    }
+
     pub fn representative(&self) -> Color {
         match self {
             Self::Solid(colour) => colour.clone(),

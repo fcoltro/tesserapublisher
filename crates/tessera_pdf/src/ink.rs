@@ -16,13 +16,12 @@
 //! space are converted. Round-tripping CMYK through a profile and back would
 //! produce plausible numbers that are not the ones anybody asked for.
 //!
-//! ## A spot ink is written as its fallback, and that is a shortfall
+//! ## What this does with a spot ink
 //!
-//! A spot colour should separate onto its own plate, which in PDF means a
-//! Separation colour space and a tint transform. Until that exists a spot is
-//! written as the process mix that stands in for it — which prints, and prints
-//! about right, and is not what a spot is *for*. It is recorded rather than
-//! hidden: see the roadmap.
+//! Approximates it, and that is all it is for. A spot separates onto its own
+//! plate through `crate::separation`, and the mix computed here is the *tint
+//! transform*: what a proofing device shows when it cannot print the real ink.
+//! The plate is what a press reads.
 
 use pdf_writer::Content;
 use tessera_color::Color;
@@ -84,9 +83,8 @@ impl Ink {
             // who typed one must not be handed the other.
             Color::Cmyk { c, m, y, k, .. } => [*c, *m, *y, *k],
 
-            // A spot stands in for itself with a fallback, and the fallback is
-            // what reaches the press until Separation spaces exist. The tint
-            // multiplies the ink, which is what a tint plate is.
+            // The stand-in, at the tint asked for. This is what a proofing
+            // device shows; the press reads the separation instead.
             Color::Spot { fallback, tint, .. } => {
                 let base = self.to_cmyk(fallback, conversion);
                 base.map(|v| v * tint)

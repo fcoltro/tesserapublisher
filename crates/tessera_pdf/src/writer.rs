@@ -170,6 +170,7 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
     let shadings = collect_shadings(resolved, page, &mut alloc, &ink);
     let pictures = collect_pictures(resolved, &mut alloc, &ink);
     let shadows = collect_shadows(resolved, &mut alloc);
+    let plates = collect_plates(resolved, &ink, &mut alloc);
     let content = build_content(
         resolved,
         &Written {
@@ -179,6 +180,7 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
             shadings: &shadings,
             pictures: &pictures,
             shadows: &shadows,
+            plates: &plates,
             ink: &ink,
             resolved_page: &resolved_page,
             options,
@@ -301,6 +303,13 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
             }
             objects.finish();
         }
+        if !plates.is_empty() {
+            let mut spaces = resources.color_spaces();
+            for plate in &plates {
+                spaces.pair(Name(plate.resource.as_bytes()), plate.id);
+            }
+            spaces.finish();
+        }
         resources.finish();
         page_obj.finish();
     }
@@ -311,6 +320,7 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
     pdf.stream(content_id, &content);
     write_pictures(&mut pdf, &pictures);
     write_shadows(&mut pdf, &shadows);
+    write_plates(&mut pdf, &plates);
 
     for font in &fonts {
         write_font(&mut pdf, font);
@@ -457,6 +467,96 @@ fn write_path(content: &mut Content, path: &kurbo::BezPath, page: DocRect) {
                 content.close_path();
             }
         }
+    }
+}
+
+/// One spot ink, as the plate it will be printed on.
+struct Plate {
+    /// The colour space object.
+    id: Ref,
+    /// The tint transform: how much ink becomes what colour.
+    transform: Ref,
+    resource: String,
+    separation: crate::separation::Separation,
+}
+
+/// Every spot ink the document names, once each.
+///
+/// **Keyed on the ink's name**, because that is what a plate *is*. Two objects
+/// in the same spot at different tints are one plate at two strengths, and
+/// writing two colour spaces for them would tell the press to mount the same
+/// ink twice.
+fn collect_plates(
+    resolved: &ResolvedDocument,
+    ink: &Ink,
+    alloc: &mut impl FnMut() -> Ref,
+) -> Vec<Plate> {
+    let mut out: Vec<Plate> = Vec::new();
+
+    let mut note = |colour: &tessera_color::Color, out: &mut Vec<Plate>| {
+        let Some(separation) = crate::separation::spots_in(colour, ink) else {
+            return;
+        };
+        if out.iter().any(|p| p.separation.name == separation.name) {
+            return;
+        }
+        out.push(Plate {
+            id: alloc(),
+            transform: alloc(),
+            resource: format!("Sep{}", out.len()),
+            separation,
+        });
+    };
+
+    for item in &resolved.items {
+        // Fills, strokes and every stop of every gradient. A spot used only in
+        // the middle of a ramp is still an ink somebody has to buy.
+        // A path's fill is optional; a rectangle's and an ellipse's are not.
+        let (fill, stroke) = match &item.kind {
+            ResolvedKind::Rectangle { fill, stroke, .. }
+            | ResolvedKind::Ellipse { fill, stroke } => (Some(fill.clone()), stroke.as_ref()),
+            ResolvedKind::Path { fill, stroke, .. } => (fill.clone(), stroke.as_ref()),
+            _ => (None, None),
+        };
+        if let Some(fill) = fill {
+            for colour in fill.colours() {
+                note(&colour, &mut out);
+            }
+        }
+        if let Some(stroke) = stroke {
+            note(&stroke.color, &mut out);
+        }
+    }
+
+    out
+}
+
+/// Write each plate: its tint transform, then the space that names it.
+fn write_plates(pdf: &mut Pdf, plates: &[Plate]) {
+    for plate in plates {
+        // An exponential interpolation from no ink to full ink, with N = 1 —
+        // which is a straight line. A spot at forty per cent is forty per cent
+        // of the way from the paper to the ink, and anything else would be this
+        // exporter inventing a dot-gain curve it has no measurements for.
+        let none = plate.separation.alternate.none();
+        let full = plate.separation.alternate.full();
+        let mut function = pdf.exponential_function(plate.transform);
+        function
+            .domain([0.0, 1.0])
+            .c0(none.iter().copied())
+            .c1(full.iter().copied())
+            .n(1.0);
+        function.finish();
+
+        let mut space = pdf.indirect(plate.id).array();
+        space.item(Name(b"Separation"));
+        space.item(Name(plate.separation.name.as_bytes()));
+        space.item(match plate.separation.alternate {
+            crate::separation::Alternate::Rgb(_) => Name(b"DeviceRGB"),
+            crate::separation::Alternate::Cmyk(_) => Name(b"DeviceCMYK"),
+        });
+        space.item(plate.transform);
+        space.finish();
     }
 }
 
@@ -894,6 +994,7 @@ struct Written<'a> {
     shadings: &'a [Option<Shading>],
     pictures: &'a [Picture],
     shadows: &'a [Option<CastShadow>],
+    plates: &'a [Plate],
     ink: &'a Ink,
     resolved_page: &'a tessera_layout::ResolvedPage,
     options: &'a ExportOptions,
@@ -907,6 +1008,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
         shadings,
         pictures,
         shadows,
+        plates,
         ink,
         resolved_page,
         options,
@@ -1032,7 +1134,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                         content.restore_state();
                     }
                     None => {
-                        set_solid_fill(&mut content, fill, ink);
+                        set_solid_fill(&mut content, fill, ink, plates);
                         shape(&mut content, item.bounds);
                         content.fill_nonzero();
                     }
@@ -1042,7 +1144,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                     // The fill and the stroke follow different rectangles once
                     // the stroke is aligned inside or outside, so they cannot
                     // share one path.
-                    apply_stroke(&mut content, s, ink);
+                    apply_stroke(&mut content, s, ink, plates);
                     match outline {
                         // A cut corner strokes on its own centre line: offsetting
                         // a curved path is an offset curve, which is not a bezier
@@ -1068,13 +1170,13 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                         content.restore_state();
                     }
                     None => {
-                        set_solid_fill(&mut content, fill, ink);
+                        set_solid_fill(&mut content, fill, ink, plates);
                         ellipse_path(&mut content, page, item.bounds);
                         content.fill_nonzero();
                     }
                 }
                 if let Some(s) = stroke {
-                    apply_stroke(&mut content, s, ink);
+                    apply_stroke(&mut content, s, ink, plates);
                     ellipse_path(&mut content, page, offset_rect(item.bounds, s.offset()));
                     content.stroke();
                 }
@@ -1092,11 +1194,11 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                         content.shading(Name(sh.resource.as_bytes()));
                     }
                     (Some(f), _) => {
-                        set_solid_fill(&mut content, f, ink);
+                        set_solid_fill(&mut content, f, ink, plates);
                         content.fill_nonzero();
                     }
                     (None, Some(s)) => {
-                        apply_stroke(&mut content, s, ink);
+                        apply_stroke(&mut content, s, ink, plates);
                         content.stroke();
                     }
                     (None, None) => {
@@ -1135,8 +1237,17 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
 /// Colour, width, cap, join, miter limit and dash pattern. A stroke that
 /// exported as a bare width would not be the stroke that was on screen, which
 /// is the one thing this crate exists to prevent.
-fn apply_stroke(content: &mut Content, stroke: &Stroke, ink: &Ink) {
-    ink.set_stroke(content, &stroke.color);
+fn apply_stroke(content: &mut Content, stroke: &Stroke, ink: &Ink, plates: &[Plate]) {
+    match plate_for(&stroke.color, plates) {
+        Some(plate) => {
+            let tint = crate::separation::tint_of(&stroke.color).unwrap_or(1.0);
+            content.set_stroke_color_space(pdf_writer::types::ColorSpaceOperand::Named(Name(
+                plate.resource.as_bytes(),
+            )));
+            content.set_stroke_color([tint]);
+        }
+        None => ink.set_stroke(content, &stroke.color),
+    }
     content.set_line_width(stroke.width as f32);
     content.set_line_cap(match stroke.cap {
         LineCap::Butt => LineCapStyle::ButtCap,
@@ -1168,12 +1279,36 @@ fn apply_stroke(content: &mut Content, stroke: &Stroke, ink: &Ink) {
 /// back to the ramp’s representative colour rather than to black, so that if a
 /// gradient ever did arrive the page would be wrong in a way somebody notices
 /// rather than silently black.
-fn set_solid_fill(content: &mut Content, paint: &tessera_document::paint::Paint, ink: &Ink) {
+fn set_solid_fill(
+    content: &mut Content,
+    paint: &tessera_document::paint::Paint,
+    ink: &Ink,
+    plates: &[Plate],
+) {
     let colour = paint
         .solid()
         .cloned()
         .unwrap_or_else(|| paint.representative());
+    // A spot goes on its own plate: `/Sep0 cs 0.4 scn` rather than the process
+    // mix that approximates it. The approximation is still in the file, as the
+    // separation's tint transform, for anything that cannot print the real ink.
+    if let Some(plate) = plate_for(&colour, plates) {
+        let tint = crate::separation::tint_of(&colour).unwrap_or(1.0);
+        content.set_fill_color_space(pdf_writer::types::ColorSpaceOperand::Named(Name(
+            plate.resource.as_bytes(),
+        )));
+        content.set_fill_color([tint]);
+        return;
+    }
     ink.set_fill(content, &colour);
+}
+
+/// The plate a colour belongs to, if it names a spot ink.
+fn plate_for<'a>(colour: &tessera_color::Color, plates: &'a [Plate]) -> Option<&'a Plate> {
+    let tessera_color::Color::Spot { name, .. } = colour else {
+        return None;
+    };
+    plates.iter().find(|p| &p.separation.name == name)
 }
 
 fn offset_rect(bounds: DocRect, offset: f64) -> DocRect {

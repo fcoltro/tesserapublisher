@@ -1017,3 +1017,133 @@ fn a_hard_shadow_still_gets_written() {
     let bytes = tessera_pdf::export(&doc).expect("export");
     assert!(String::from_utf8_lossy(&bytes).contains("/Sh0 Do"));
 }
+
+// --- spot inks ---------------------------------------------------------------
+
+fn a_spot(tint: f32) -> Color {
+    Color::Spot {
+        name: "PANTONE 185 C".to_string(),
+        tint,
+        fallback: Box::new(Color::Cmyk {
+            c: 0.0,
+            m: 0.91,
+            y: 0.76,
+            k: 0.0,
+            a: 1.0,
+        }),
+    }
+}
+
+fn spot_rect(tint: f32) -> ResolvedDocument {
+    one(
+        ResolvedKind::Rectangle {
+            outline: None,
+            fill: Paint::Solid(a_spot(tint)),
+            stroke: None,
+        },
+        rect(10.0, 10.0, 80.0, 40.0),
+    )
+}
+
+#[test]
+fn a_spot_ink_gets_a_plate_of_its_own() {
+    // It was written as its process fallback, which prints something about the
+    // right colour on the wrong plates — silently turning a two-colour job into
+    // a four-colour one.
+    let bytes = tessera_pdf::export(&spot_rect(1.0)).expect("export");
+    let text = String::from_utf8_lossy(&bytes);
+
+    assert!(text.contains("/Separation"), "no separation colour space");
+    // **The name is escaped, and that is correct.** A PDF name cannot hold a
+    // space, so `PANTONE 185 C` is written `/PANTONE#20185#20C`. Asserting the
+    // raw string would have been checking the wrong layer — and "fixing" it by
+    // stripping spaces out of ink names would have produced a plate called
+    // PANTONE185C, which is not an ink any printer stocks.
+    assert!(
+        text.contains("PANTONE#20185#20C"),
+        "the plate is not named for its ink"
+    );
+    assert!(text.contains("/Sep0 cs"), "the plate is never used");
+}
+
+#[test]
+fn the_tint_is_what_reaches_the_page() {
+    // `/Sep0 cs 0.4 scn`: four tenths of the ink. The plate itself describes
+    // the ink at full strength, and each use picks its own point along that.
+    let bytes = tessera_pdf::export(&spot_rect(0.4)).expect("export");
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("0.4 scn"), "the tint did not reach the page");
+}
+
+#[test]
+fn one_ink_used_twice_is_one_plate() {
+    // Two objects in the same spot at different tints are one plate at two
+    // strengths. Two colour spaces would tell the press to mount the same ink
+    // twice.
+    let item = |bounds: DocRect, tint: f32| ResolvedItem {
+        frame: FrameId::default(),
+        transform: Transform::IDENTITY,
+        spread_area: None,
+        blend: tessera_document::blending::Blending::PLAIN,
+        shadow: None,
+        bounds,
+        kind: ResolvedKind::Rectangle {
+            outline: None,
+            fill: Paint::Solid(a_spot(tint)),
+            stroke: None,
+        },
+    };
+    let doc = ResolvedDocument {
+        pages: vec![resolved_page()],
+        items: vec![
+            item(rect(0.0, 0.0, 40.0, 40.0), 1.0),
+            item(rect(50.0, 0.0, 40.0, 40.0), 0.3),
+        ],
+    };
+
+    let bytes = tessera_pdf::export(&doc).expect("export");
+    let text = String::from_utf8_lossy(&bytes);
+    assert_eq!(
+        text.matches("/Separation").count(),
+        1,
+        "the same ink was mounted twice"
+    );
+}
+
+#[test]
+fn a_document_with_no_spots_writes_no_separations() {
+    // Every object in a PDF costs a press something to process.
+    let bytes = tessera_pdf::export(&black_rect(rect(10.0, 10.0, 50.0, 50.0))).expect("export");
+    assert!(!String::from_utf8_lossy(&bytes).contains("/Separation"));
+}
+
+#[test]
+fn a_spot_in_the_middle_of_a_gradient_still_gets_a_plate() {
+    // An ink used only in a ramp is still an ink somebody has to buy.
+    use tessera_document::paint::{Gradient, Ramp, Stop};
+
+    let ramp = Gradient::new(
+        Ramp::Linear { angle: 0.0 },
+        vec![
+            Stop {
+                at: 0.0,
+                colour: Color::BLACK,
+            },
+            Stop {
+                at: 1.0,
+                colour: a_spot(1.0),
+            },
+        ],
+    );
+    let doc = one(
+        ResolvedKind::Rectangle {
+            outline: None,
+            fill: Paint::Gradient(ramp),
+            stroke: None,
+        },
+        rect(10.0, 10.0, 80.0, 40.0),
+    );
+
+    let bytes = tessera_pdf::export(&doc).expect("export");
+    assert!(String::from_utf8_lossy(&bytes).contains("PANTONE#20185#20C"));
+}

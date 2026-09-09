@@ -1538,9 +1538,19 @@ licence to pass the font on. See the packaging item.
     per stop.
   - An unusable profile falls back to RGB rather than failing the export.
     Preflight has already said so, and a readable file beats no file.
-  - **A spot is written as its fallback, which is a shortfall.** It should
-    separate onto its own plate through a Separation space and a tint transform.
-    Recorded rather than hidden.
+  - **A spot separates onto its own plate.** A `/Separation` space named for the
+    ink, with a tint transform from the paper to the ink at full strength; each
+    use picks its own point along that with `/Sep0 cs 0.4 scn`. It used to be
+    written as its process fallback, which prints about the right colour on the
+    wrong plates and silently turns a two-colour job into a four-colour one.
+  - The plate describes the ink at **full strength**, whatever tint it happened
+    to be used at. Baking one use's tint into the plate would make every other
+    use of the same ink wrong, and wrong in proportion to how faint the first
+    one was.
+  - One ink used twice is one plate. Two colour spaces would tell the press to
+    mount the same ink twice.
+  - A spot used only in the middle of a gradient still gets a plate: an ink in a
+    ramp is still an ink somebody has to buy.
 - [x] `MediaBox`, `TrimBox`, `BleedBox`; crop, bleed and registration marks,
   and colour bars.
   - **A registration mark is 100% of every ink**, which is the only thing that
