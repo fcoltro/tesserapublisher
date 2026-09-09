@@ -86,39 +86,81 @@
 
                This list is checked against the repository by
                `the_installer_carries_every_profile`. -->
+          <!-- The colour profiles, in the directory `bundled_directory`
+               looks in first. An install without them starts and quietly
+               cannot soft-proof or export PDF/X.
+
+               **One component per file.** WiX will not generate a GUID for
+               a component holding several files unless its keypath is a
+               versioned one, and an ICC profile has no version resource:
+               "Create multiple components to use automatically generated
+               guids" is the error, and this is it done.
+
+               Every file is named, because WiX has no way to say "this
+               directory" — and a list carrying some of the presses is
+               worse than none, since the ones missing are missing
+               silently. `the_installer_carries_every_profile` holds this
+               list against the repository. -->
           <Directory Id="ProfilesFolder" Name="profiles">
-            <Component Id="Profiles" Guid="*">
-              <File Id="manifest"
+            <Component Id="Profile0" Guid="*">
+              <File Id="Profile0File"
                     Name="manifest.tsv"
                     Source="$(var.CargoTargetBinDir)\profiles\manifest.tsv"
                     KeyPath="yes"/>
-              <File Id="icc0"
+            </Component>
+            <Component Id="Profile1" Guid="*">
+              <File Id="Profile1File"
                     Name="CGATS21_CRPC1.icc"
-                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC1.icc"/>
-              <File Id="icc1"
+                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC1.icc"
+                    KeyPath="yes"/>
+            </Component>
+            <Component Id="Profile2" Guid="*">
+              <File Id="Profile2File"
                     Name="CGATS21_CRPC2.icc"
-                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC2.icc"/>
-              <File Id="icc2"
+                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC2.icc"
+                    KeyPath="yes"/>
+            </Component>
+            <Component Id="Profile3" Guid="*">
+              <File Id="Profile3File"
                     Name="CGATS21_CRPC3.icc"
-                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC3.icc"/>
-              <File Id="icc3"
+                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC3.icc"
+                    KeyPath="yes"/>
+            </Component>
+            <Component Id="Profile4" Guid="*">
+              <File Id="Profile4File"
                     Name="CGATS21_CRPC4.icc"
-                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC4.icc"/>
-              <File Id="icc4"
+                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC4.icc"
+                    KeyPath="yes"/>
+            </Component>
+            <Component Id="Profile5" Guid="*">
+              <File Id="Profile5File"
                     Name="CGATS21_CRPC5.icc"
-                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC5.icc"/>
-              <File Id="icc5"
+                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC5.icc"
+                    KeyPath="yes"/>
+            </Component>
+            <Component Id="Profile6" Guid="*">
+              <File Id="Profile6File"
                     Name="CGATS21_CRPC6.icc"
-                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC6.icc"/>
-              <File Id="icc6"
+                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC6.icc"
+                    KeyPath="yes"/>
+            </Component>
+            <Component Id="Profile7" Guid="*">
+              <File Id="Profile7File"
                     Name="CGATS21_CRPC7.icc"
-                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC7.icc"/>
-              <File Id="icc7"
+                    Source="$(var.CargoTargetBinDir)\profiles\CGATS21_CRPC7.icc"
+                    KeyPath="yes"/>
+            </Component>
+            <Component Id="Profile8" Guid="*">
+              <File Id="Profile8File"
                     Name="sRGB2014.icc"
-                    Source="$(var.CargoTargetBinDir)\profiles\sRGB2014.icc"/>
-              <File Id="icc8"
+                    Source="$(var.CargoTargetBinDir)\profiles\sRGB2014.icc"
+                    KeyPath="yes"/>
+            </Component>
+            <Component Id="Profile9" Guid="*">
+              <File Id="Profile9File"
                     Name="sRGB_v4_ICC_preference.icc"
-                    Source="$(var.CargoTargetBinDir)\profiles\sRGB_v4_ICC_preference.icc"/>
+                    Source="$(var.CargoTargetBinDir)\profiles\sRGB_v4_ICC_preference.icc"
+                    KeyPath="yes"/>
             </Component>
           </Directory>
         </Directory>
@@ -129,7 +171,16 @@
     <Feature Id="Complete" Level="1" Title="Tessera Publisher" Display="expand"
              ConfigurableDirectory="APPLICATIONFOLDER" AllowAdvertise="no" Absent="disallow">
       <ComponentRef Id="Binary"/>
-      <ComponentRef Id="Profiles"/>
+      <ComponentRef Id="Profile0"/>
+      <ComponentRef Id="Profile1"/>
+      <ComponentRef Id="Profile2"/>
+      <ComponentRef Id="Profile3"/>
+      <ComponentRef Id="Profile4"/>
+      <ComponentRef Id="Profile5"/>
+      <ComponentRef Id="Profile6"/>
+      <ComponentRef Id="Profile7"/>
+      <ComponentRef Id="Profile8"/>
+      <ComponentRef Id="Profile9"/>
     </Feature>
 
     <Icon Id="ProductIcon" SourceFile="$(var.CargoTargetBinDir)\tessera_app.exe"/>
