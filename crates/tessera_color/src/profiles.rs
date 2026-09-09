@@ -550,6 +550,55 @@ fn describe(path: &Path) -> Option<Installed> {
 #[cfg(test)]
 mod tests {
 
+    /// Where the repository keeps its profiles, from the crate's own location.
+    ///
+    /// Not `bundled_directory`, deliberately: that walks up from the *test
+    /// binary* and is the thing under test here. Asking it whether it works
+    /// would be asking it to mark its own paper.
+    fn checked_in() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("assets")
+            .join("profiles")
+    }
+
+    #[test]
+    fn profiles_in_the_repository_are_profiles_the_application_can_find() {
+        // **The hole this closes.** Every other profile test returns quietly
+        // when `bundled()` is empty, so a machine where the lookup fails looks
+        // exactly like one where all nine passed — and the machines that
+        // matter most are the ones nobody here runs by hand. If the files are
+        // checked in, they must be reachable, or CI is proving nothing about
+        // the platforms it was added for.
+        let vendored: Vec<_> = std::fs::read_dir(checked_in())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "icc"))
+            .collect();
+        if vendored.is_empty() {
+            // A checkout that has not run `tools/vendor-profiles.py`. Nothing
+            // to prove, and nothing to complain about.
+            return;
+        }
+
+        let found = bundled();
+        assert!(
+            !found.is_empty(),
+            "{} profiles are checked in and `bundled` found none: the lookup \
+             does not work on this platform",
+            vendored.len()
+        );
+        assert_eq!(
+            found.len(),
+            vendored.len(),
+            "{} profiles are checked in but only {} were usable",
+            vendored.len(),
+            found.len()
+        );
+    }
+
     #[test]
     fn the_bundled_press_profiles_make_real_conversions() {
         // **The test the vendored files exist for.** Everything about CMYK

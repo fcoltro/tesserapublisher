@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>Tessera Publisher</string>
+  <key>CFBundleDisplayName</key>
+  <string>Tessera Publisher</string>
+  <key>CFBundleIdentifier</key>
+  <string>org.tessera.publisher</string>
+  <key>CFBundleExecutable</key>
+  <string>tessera-publisher</string>
+  <key>CFBundleVersion</key>
+  <string>@VERSION@</string>
+  <key>CFBundleShortVersionString</key>
+  <string>@VERSION@</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>11.0</string>
+  <!-- Retina. Without it macOS scales a 1x window up and every hairline in the
+       interface becomes two soft pixels. -->
+  <key>NSHighResolutionCapable</key>
+  <true/>
+
+  <!-- The file association. `LSItemContentTypes` names the type; the type
+       itself is declared below, because macOS will not associate with a type
+       nothing has exported. -->
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Tessera document</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>org.tessera.document</string>
+      </array>
+    </dict>
+  </array>
+
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>org.tessera.document</string>
+      <key>UTTypeDescription</key>
+      <string>Tessera document</string>
+      <!-- Conforms to `public.data` rather than `public.json`. A Tessera file
+           is JSON on disk, and saying so would let anything that opens JSON
+           claim it — including text editors, which would then be offered
+           ahead of the application that made it. -->
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.data</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array>
+          <string>tessera</string>
+        </array>
+      </dict>
+    </dict>
+  </array>
+</dict>
+</plist>

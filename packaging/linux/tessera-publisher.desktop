@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Tessera Publisher
+GenericName=Desktop Publishing
+Comment=Lay out pages for print and screen
+Exec=tessera-publisher %f
+Icon=tessera-publisher
+Terminal=false
+Categories=Graphics;Publishing;2DGraphics;VectorGraphics;
+# The association. `%f` above is what makes a double-clicked document arrive as
+# an argument; without the MIME type here the file manager has nothing to
+# associate, and without `%f` it would open the application and not the file.
+MimeType=application/x-tessera-document;
+Keywords=layout;dtp;publishing;typesetting;print;
+StartupWMClass=tessera_app

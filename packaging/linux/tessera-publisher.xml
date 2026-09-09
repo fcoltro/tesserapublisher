@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The MIME type itself, which is a separate thing from the association: the
+  desktop knows what a .tessera file *is* from this, and which application
+  opens it from the .desktop file. Installed into
+  /usr/share/mime/packages and registered with update-mime-database.
+-->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-tessera-document">
+    <comment>Tessera document</comment>
+    <glob pattern="*.tessera"/>
+    <icon name="tessera-publisher"/>
+    <!-- Tessera documents are JSON, so a content sniffer would call them
+         application/json and win on weight alone. The glob is given a high
+         priority to say that the extension is the better answer here. -->
+    <glob-deleteall/>
+    <glob pattern="*.tessera" weight="80"/>
+  </mime-type>
+</mime-info>

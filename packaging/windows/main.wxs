@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="windows-1252"?>
+<!--
+  The Windows installer, for cargo-wix.
+
+  Two things beyond copying a binary in: the profiles travel beside it, and
+  .tessera is associated with it. Both are the difference between an
+  application that runs and one somebody can use.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="Tessera Publisher"
+           UpgradeCode="6F3A0C2E-7B41-4E2D-9C88-1B5A4E77D310"
+           Manufacturer="Tessera"
+           Language="1033"
+           Codepage="1252"
+           Version="$(var.Version)">
+
+    <Package Id="*"
+             Keywords="Installer"
+             Description="Tessera Publisher"
+             Manufacturer="Tessera"
+             InstallerVersion="450"
+             Languages="1033"
+             Compressed="yes"
+             InstallScope="perMachine"
+             SummaryCodepage="1252"/>
+
+    <!-- Upgrades replace rather than accumulate. Without this every version
+         installs beside the last one and the Start menu fills with them. -->
+    <MajorUpgrade Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="A newer version of Tessera Publisher is already installed."/>
+
+    <Media Id="1" Cabinet="media1.cab" EmbedCab="yes"/>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="APPLICATIONFOLDER" Name="Tessera Publisher">
+          <Component Id="Binary" Guid="*">
+            <File Id="exe"
+                  Name="tessera-publisher.exe"
+                  Source="$(var.CargoTargetBinDir)\tessera_app.exe"
+                  KeyPath="yes">
+
+              <!-- The association. `ProgId` gives the extension a name, the
+                   name gets an icon and a verb, and the verb is what runs
+                   when a document is double-clicked. All four are needed;
+                   three of them produce an extension Windows knows about and
+                   will not open. -->
+              <Shortcut Id="StartMenu"
+                        Directory="ProgramMenuFolder"
+                        Name="Tessera Publisher"
+                        WorkingDirectory="APPLICATIONFOLDER"
+                        Advertise="yes"/>
+              <ProgId Id="Tessera.Document"
+                      Description="Tessera document"
+                      Icon="exe">
+                <Extension Id="tessera" ContentType="application/x-tessera-document">
+                  <Verb Id="open" Command="Open" Argument="&quot;%1&quot;"/>
+                </Extension>
+              </ProgId>
+            </File>
+          </Component>
+
+          <!-- The colour profiles, in the directory `bundled_directory` looks
+               in first. An install without them starts and quietly cannot
+               soft-proof or export PDF/X. -->
+          <Directory Id="ProfilesFolder" Name="profiles">
+            <Component Id="Profiles" Guid="*">
+              <File Id="manifest" Source="assets\profiles\manifest.tsv" KeyPath="yes"/>
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder"/>
+    </Directory>
+
+    <Feature Id="Complete" Level="1" Title="Tessera Publisher" Display="expand"
+             ConfigurableDirectory="APPLICATIONFOLDER" AllowAdvertise="no" Absent="disallow">
+      <ComponentRef Id="Binary"/>
+      <ComponentRef Id="Profiles"/>
+    </Feature>
+
+    <Icon Id="ProductIcon" SourceFile="$(var.CargoTargetBinDir)\tessera_app.exe"/>
+    <Property Id="ARPPRODUCTICON" Value="ProductIcon"/>
+    <Property Id="ARPNOREPAIR" Value="yes" Secure="yes"/>
+  </Product>
+</Wix>
