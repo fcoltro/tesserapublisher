@@ -54,13 +54,6 @@ pub struct Palette {
     pub accent_hover: Color32,
     pub error: Color32,
     pub frame_edge: Color32,
-    /// The one colour that says which theme is on, used by the theme switch.
-    ///
-    /// Deliberately **not** the accent, and deliberately different in each
-    /// theme: a switch drawn in the accent looks like every other active
-    /// control, and the whole job of this one is to be recognisable at a
-    /// glance across a menu bar. Violet for night, amber for day.
-    pub mode_signal: Color32,
 }
 
 /// Which palette everything is drawn from at the moment.
@@ -123,7 +116,6 @@ impl Palette {
         accent_hover: Color32::from_rgb(0x7A, 0xA3, 0xF4),
         error: Color32::from_rgb(0xF0, 0x8C, 0x82),
         frame_edge: Color32::from_rgb(0x66, 0x66, 0x66),
-        mode_signal: Color32::from_rgb(0xA7, 0x8B, 0xFA),
     };
 
     pub const LIGHT: Self = Self {
@@ -156,7 +148,6 @@ impl Palette {
         // empty text frame is invisible without its edge, and it can sit in
         // either place.
         frame_edge: Color32::from_rgb(0x62, 0x62, 0x62),
-        mode_signal: Color32::from_rgb(0xD9, 0x7A, 0x06),
     };
 }
 
@@ -288,11 +279,6 @@ impl Theme {
     /// Labels and units. Step 11.
     pub fn text_muted() -> Color32 {
         palette().step(11)
-    }
-
-    /// The colour that says which theme is on. See `view::identity`.
-    pub fn mode_signal() -> Color32 {
-        palette().mode_signal
     }
 
     pub fn accent() -> Color32 {

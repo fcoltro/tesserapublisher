@@ -111,7 +111,18 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
         // image cache mutably and the resolved document borrows the
         // application. One clone a frame beats decoding a photograph a frame.
         let resolved = state.resolve_active().clone();
-        let resolved = &resolved;
+        // Nothing at all while the New Document dialog has its preview off: the
+        // document behind it is a placeholder nobody asked for, and drawing it
+        // is showing a page whose size somebody is in the middle of choosing.
+        let nothing = tessera_layout::resolve::ResolvedDocument {
+            pages: Vec::new(),
+            items: Vec::new(),
+        };
+        let resolved = if super::new_document::showing_nothing(state) {
+            &nothing
+        } else {
+            &resolved
+        };
         // A printing mode crops to what it reveals, so what is on screen is
         // what will come off the press.
         let clip = (!mode.shows_chrome())

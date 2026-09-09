@@ -86,6 +86,13 @@ pub struct NewDocument {
     pub intent: Intent,
     /// Effective resolution to warn below, in pixels per inch.
     pub minimum_ppi: f64,
+    /// Whether the page behind the dialog shows what it will make.
+    ///
+    /// On, as InDesign has it. A page size is hard to picture from two numbers
+    /// and easy to recognise on sight, and the commonest mistake this dialog can
+    /// let through \— landscape when portrait was meant, or a trim nothing will
+    /// fit on \— is one nobody makes twice after seeing it.
+    pub preview: bool,
 }
 
 impl Default for NewDocument {
@@ -103,6 +110,7 @@ impl Default for NewDocument {
             bleed: USUAL_BLEED_MM * MM,
             intent: Intent::Print,
             minimum_ppi: 300.0,
+            preview: true,
         }
     }
 }
@@ -128,6 +136,8 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
         return;
     }
 
+    sync_preview(state);
+
     let mut settings = state.new_document.clone();
     let mut make = false;
     let mut cancel = false;
@@ -145,6 +155,9 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
             ui.horizontal(|ui| {
                 make = ui.button("Create").clicked();
                 cancel = ui.button("Cancel").clicked();
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.checkbox(&mut settings.preview, "Preview");
+                });
             });
         });
 
@@ -319,6 +332,79 @@ fn press_name(settings: &NewDocument) -> Option<String> {
         .into_iter()
         .find(|b| b.path.file_name().is_some_and(|n| n == file))
         .map(|b| b.name)
+}
+
+/// Whether the canvas should show nothing at all.
+///
+/// The dialog is open and its preview is off, so the placeholder document
+/// behind it is not a document anybody asked for. Drawing it would be showing a
+/// page whose size somebody is in the middle of choosing.
+pub fn showing_nothing(state: &TesseraApp) -> bool {
+    state.new_document.open && !state.new_document.preview
+}
+
+/// Make the placeholder document match what the dialog is asking for.
+///
+/// **Written straight into the document, not through a command.** This is a
+/// preview of something that does not exist yet: it must not enter undo, must
+/// not make the document dirty, and must leave it recognisable as the untouched
+/// blank that `add_document` replaces when Create is finally pressed. A preview
+/// that dirtied the document would make Tessera ask whether to save a page
+/// somebody only looked at.
+pub fn sync_preview(state: &mut TesseraApp) {
+    if !state.new_document.open || !state.new_document.preview {
+        return;
+    }
+    // Only ever the placeholder. Somebody who opens File > New with work on
+    // screen must not watch that work resize under them.
+    if !state.active().current_path.is_none() || state.active().dirty {
+        return;
+    }
+    if !state.active().document().frames.is_empty() {
+        return;
+    }
+
+    let settings = state.new_document.clone();
+    let (width, height) = settings.page();
+    // undo-bracketed: nothing to bracket. This previews a document that does
+    // not exist yet — the placeholder is replaced wholesale when Create is
+    // pressed, and thrown away if it is not. Going through a command would put
+    // "resize a page nobody has made" into the undo history of the document
+    // that ends up being made, and would mark it dirty, so Tessera would ask
+    // whether to save a page somebody only looked at.
+    let document = state.active_mut().document_mut();
+
+    let already = document.setup.facing_pages == settings.facing_pages
+        && document.setup.margins == tessera_document::nodes::Margins::uniform(settings.margin)
+        && document.setup.bleed == tessera_document::nodes::Insets::uniform(settings.bleed);
+    let sized = document.pages.values().next().is_some_and(|p| {
+        (p.bounds.width - width).abs() < 0.01 && (p.bounds.height - height).abs() < 0.01
+    });
+    let counted = document.page_ids().count() == settings.pages as usize;
+    if already && sized && counted {
+        // Nothing changed. Rebuilding every frame would reflow the spreads
+        // sixty times a second for a page nobody is touching.
+        return;
+    }
+
+    document.setup.facing_pages = settings.facing_pages;
+    document.setup.margins = tessera_document::nodes::Margins::uniform(settings.margin);
+    document.setup.bleed = tessera_document::nodes::Insets::uniform(settings.bleed);
+    document.set_page_size(width, height);
+
+    while document.page_ids().count() > settings.pages as usize {
+        let Some(last) = document.page_ids().last() else {
+            break;
+        };
+        document.remove_page(last);
+    }
+    while document.page_ids().count() < settings.pages as usize {
+        document.add_page();
+    }
+    document.reflow_spreads();
+
+    // The camera, so a page that has just changed size is still on screen.
+    state.active_mut().fitted = false;
 }
 
 /// Build the document the dialog describes, and open it.

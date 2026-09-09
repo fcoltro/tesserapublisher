@@ -8,7 +8,7 @@
 //! The switch stays, because saying which theme is on is information rather
 //! than decoration.
 
-use egui::Ui;
+use egui::{Color32, Ui};
 
 use crate::app::TesseraApp;
 use crate::prefs::ThemeChoice;
@@ -26,7 +26,7 @@ use crate::theme::Theme;
 pub fn theme_switch(ui: &mut Ui, state: &mut TesseraApp) {
     let dark = state.prefs.theme == ThemeChoice::Dark;
 
-    let size = egui::vec2(38.0, 20.0);
+    let size = egui::vec2(46.0, 24.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     let response = response.on_hover_text(if dark {
         "Switch to the light theme"
@@ -44,9 +44,18 @@ pub fn theme_switch(ui: &mut Ui, state: &mut TesseraApp) {
         crate::prefs::remember(state);
     }
 
+    // **Monochrome, and inverted with the theme.** Step 1 is the palette's
+    // extreme and step 12 its opposite, in both directions — so the track is
+    // near-black on a dark theme and near-white on a light one, and the thumb
+    // is always the other. Nothing here is the accent: a switch drawn in it
+    // looks like every other active control on the bar, and this one has to be
+    // found at a glance across the width of a menu.
+    let track = crate::theme::palette().step(1);
+    let mark = crate::theme::palette().step(12);
+
     let painter = ui.painter();
     let radius = rect.height() / 2.0;
-    painter.rect_filled(rect, radius, Theme::panel_bg_alt());
+    painter.rect_filled(rect, radius, track);
     painter.rect_stroke(
         rect,
         radius,
@@ -54,44 +63,68 @@ pub fn theme_switch(ui: &mut Ui, state: &mut TesseraApp) {
         egui::StrokeKind::Inside,
     );
 
-    let inset = 2.0;
+    // The thumb sits on the side of the theme you are in; the icon shows on the
+    // other side, and it is the theme you would get. A switch whose only state
+    // is which end the thumb is at asks somebody to know which end means dark,
+    // and the answer is a coin toss until they try it.
+    let inset = 2.5;
     let thumb = radius - inset;
     let travel = rect.width() - rect.height();
-    let centre = egui::pos2(
-        rect.left() + radius + if dark { 0.0 } else { travel },
-        rect.center().y,
-    );
-    // **Drawn, not set in a glyph.** egui bundles a partial emoji font, and a
-    // crescent moon is outside the part it covers — the switch would have
-    // shown a replacement box on exactly the machines nobody tests on. Both
-    // shapes are circles anyway, which is cheaper than either a font or a pair
-    // of hand-written icon paths.
-    let ground = Theme::panel_bg_alt();
-    let signal = Theme::mode_signal();
-
-    if dark {
-        // A crescent: the thumb, with a second circle overdrawn in the pill’s
-        // own ground so the bite is taken out rather than painted on.
-        painter.circle_filled(centre, thumb, signal);
-        painter.circle_filled(
-            egui::pos2(centre.x + thumb * 0.55, centre.y - thumb * 0.30),
-            thumb * 0.82,
-            ground,
-        );
+    let (thumb_at, icon_at) = if dark {
+        (
+            egui::pos2(rect.left() + radius, rect.center().y),
+            egui::pos2(rect.right() - radius, rect.center().y),
+        )
     } else {
-        // A sun: a smaller disc, and eight rays that need the room the disc
-        // gives up. A full-size disc with rays reads as a gear.
-        let disc = thumb * 0.62;
-        painter.circle_filled(centre, disc, signal);
-        for step in 0..8 {
-            let angle = std::f32::consts::TAU * step as f32 / 8.0;
-            let (sin, cos) = angle.sin_cos();
-            let out = egui::vec2(cos, sin);
-            painter.line_segment(
-                [centre + out * (disc + 1.4), centre + out * (thumb + 0.4)],
-                egui::Stroke::new(1.4, signal),
-            );
-        }
+        (
+            egui::pos2(rect.left() + radius + travel, rect.center().y),
+            egui::pos2(rect.left() + radius, rect.center().y),
+        )
+    };
+
+    painter.circle_filled(thumb_at, thumb, mark);
+    if dark {
+        moon(painter, icon_at, thumb * 0.72, mark, track);
+    } else {
+        sun(painter, icon_at, thumb * 0.62, mark);
+    }
+}
+
+/// A crescent, drawn rather than set in a glyph.
+///
+/// egui bundles a partial emoji font and a crescent moon is outside the part it
+/// covers, so a glyph would have shown a replacement box on exactly the
+/// machines nobody tests on. The bite is a second disc in the colour behind it,
+/// which is why the ground has to be passed in.
+fn moon(painter: &egui::Painter, at: egui::Pos2, radius: f32, ink: Color32, ground: Color32) {
+    painter.circle_filled(at, radius, ink);
+    painter.circle_filled(
+        egui::pos2(at.x + radius * 0.55, at.y - radius * 0.30),
+        radius * 0.85,
+        ground,
+    );
+    // Two small stars, which is what makes it read as night rather than as a
+    // crescent of something else at this size.
+    for (dx, dy, size) in [(1.25, -0.55, 0.16), (1.05, 0.45, 0.11)] {
+        painter.circle_filled(
+            egui::pos2(at.x + radius * dx, at.y + radius * dy),
+            radius * size,
+            ink,
+        );
+    }
+}
+
+/// A disc with rays.
+fn sun(painter: &egui::Painter, at: egui::Pos2, radius: f32, ink: Color32) {
+    painter.circle_filled(at, radius, ink);
+    for step in 0..8 {
+        let angle = std::f32::consts::TAU * step as f32 / 8.0;
+        let (sin, cos) = angle.sin_cos();
+        let out = egui::vec2(cos, sin);
+        painter.line_segment(
+            [at + out * (radius + 2.0), at + out * (radius + 4.4)],
+            egui::Stroke::new(1.5, ink),
+        );
     }
 }
 
@@ -99,25 +132,42 @@ pub fn theme_switch(ui: &mut Ui, state: &mut TesseraApp) {
 mod tests {
 
     #[test]
-    fn the_switch_is_not_drawn_in_the_accent() {
-        // Its whole job is being findable across a menu bar of accent-coloured
-        // active controls. Drawn in the accent it is one of them.
+    fn the_switch_is_monochrome_in_both_themes() {
+        // Nothing here is the accent. A switch drawn in it looks like every
+        // other active control on the bar, and this one has to be found at a
+        // glance across the width of a menu.
         for palette in [crate::theme::Palette::DARK, crate::theme::Palette::LIGHT] {
-            assert_ne!(
-                palette.mode_signal, palette.accent,
-                "the theme switch is drawn in the accent"
+            for part in [palette.step(1), palette.step(12)] {
+                assert_ne!(part, palette.accent, "the switch is drawn in the accent");
+            }
+        }
+    }
+
+    #[test]
+    fn the_thumb_and_the_track_are_opposites() {
+        // The whole of what makes it readable: a near-white thumb on a
+        // near-black track, and the other way round in the other theme. Two
+        // colours a few steps apart would be a switch you have to look for.
+        for palette in [crate::theme::Palette::DARK, crate::theme::Palette::LIGHT] {
+            let track = palette.step(1);
+            let mark = palette.step(12);
+            let apart = crate::theme::contrast_ratio(track, mark);
+            assert!(
+                apart > 12.0,
+                "the thumb reads at only {apart:.1}:1 against its track"
             );
         }
     }
 
     #[test]
-    fn each_theme_signals_differently() {
-        // The colour is half the answer to "which theme am I in". Two themes
-        // signalling in one colour leaves only the thumb's position, which is
-        // the thing nobody can read without trying it.
-        assert_ne!(
-            crate::theme::Palette::DARK.mode_signal,
-            crate::theme::Palette::LIGHT.mode_signal
+    fn the_two_themes_invert_each_other() {
+        // Dark's track is near-black and light's is near-white, which is what
+        // makes the switch itself say which theme is on before the icon does.
+        let dark = crate::theme::Palette::DARK.step(1);
+        let light = crate::theme::Palette::LIGHT.step(1);
+        assert!(
+            crate::theme::contrast_ratio(dark, light) > 12.0,
+            "both themes draw the same track"
         );
     }
 }
