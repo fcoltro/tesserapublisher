@@ -6,10 +6,15 @@ free, and genuinely cross-platform.
 Linux is a first-class target rather than an afterthought. The absence of a
 serious DTP application on Linux is the reason this project exists.
 
-> **Status: rebuilding from zero.** This repository currently holds the design
-> and the implementation plan, and no application code. The previous
-> Tauri + Svelte implementation was discarded in full on 2026-09-01; the
-> rebuild is clean-room and reuses none of it.
+> **Status: milestones 0 to 7 are built.** Tessera lays out pages, sets and
+> threads type, places artwork, manages colour through real press profiles,
+> preflights a job and exports PDF/X. Milestone 8 — installers, signing and
+> documentation — is under way. The previous Tauri + Svelte implementation was
+> discarded in full on 2026-09-01; this rebuild is clean-room and reuses none
+> of it.
+>
+> What is not yet true is recorded rather than glossed: see the `[~]` and `[ ]`
+> entries in the [roadmap](ROADMAP.md), each of which states its own shortfall.
 
 ## Architecture
 
@@ -36,6 +41,11 @@ There is no webview and no TypeScript.
 - **[InDesign parity](docs/INDESIGN-PARITY.md)** — every element of an
   InDesign window, read against this codebase, priced as a model gap or a
   missing surface, and assigned to a milestone.
+- **[Using Tessera](docs/USING.md)** — for somebody who has opened it and wants
+  to lay something out: the tools and their keys, threading, colour, preflight
+  and what Tessera refuses to claim on your behalf.
+- **[Releasing](docs/RELEASING.md)** — how an installer is built, what each
+  platform carries, and why signing is not done by CI.
 - **[Roadmap](ROADMAP.md)** — milestones 0 through 8. Each states its
   acceptance criteria as sentences a person can perform, not as a list of
   components that exist.
@@ -76,8 +86,10 @@ than one, is worth a paragraph:
   here is proofed against the same bytes the next application will use.
 - **The free CMYK presses are the CGATS.21-2 reference printing conditions**,
   seven of them from cold-set news to premium coated, published through the ICC
-  registry and granted for sharing. The script fetches those. They may not be
-  *sold*, so a build that will be — or a distribution package that requires the
+  registry and granted for sharing. **These are checked in**, so a normal
+  checkout already has them and the script is only needed to refresh them. They
+  may not be *sold*, so a build that will be — or a distribution package that
+  requires the
   freedom to — runs `--skip idealliance-crpc` and relies on the discovered
   profiles instead, which is what Scribus does.
 - **Nothing fetched is committed.** The repository carries URLs and licence terms,
