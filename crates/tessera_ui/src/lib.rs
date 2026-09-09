@@ -26,6 +26,7 @@ pub mod softproof;
 pub mod theme;
 pub mod tools;
 pub mod transform;
+pub mod update;
 pub mod view;
 pub mod workspace;
 

@@ -147,6 +147,10 @@ pub struct Preferences {
     #[serde(default = "crate::workspace::Workspace::usual")]
     pub workspaces: Vec<crate::workspace::Workspace>,
 
+    /// Whether Tessera looks for a newer version, and when it last did.
+    #[serde(default)]
+    pub updates: crate::update::Checking,
+
     /// How many sides the polygon tool draws.
     ///
     /// A preference rather than a dialog on every use: somebody drawing
@@ -217,6 +221,7 @@ impl Default for Preferences {
             recovery_seconds: default_recovery_seconds(),
             export_presets: crate::view::export_dialog::Preset::usual(),
             docking: crate::docking::Docking::default(),
+            updates: crate::update::Checking::default(),
             polygon_sides: default_polygon_sides(),
             polygon_inset: 0.0,
             shortcuts: crate::keys::Bindings::default(),
@@ -422,6 +427,7 @@ mod tests {
             recovery_seconds: 42,
             export_presets: crate::view::export_dialog::Preset::usual(),
             docking: crate::docking::Docking::default(),
+            updates: crate::update::Checking::default(),
             polygon_sides: 6,
             polygon_inset: 0.0,
             shortcuts: crate::keys::Bindings::default(),

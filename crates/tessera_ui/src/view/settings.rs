@@ -164,7 +164,10 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| match state.settings.page {
-                    Page::General => general(ui, state),
+                    Page::General => {
+                        general(ui, state);
+                        updates(ui, state);
+                    }
                     Page::Appearance => appearance(ui, state),
                     Page::Workspaces => workspaces(ui, state),
                     Page::Shortcuts => shortcuts(ui, state),
@@ -203,6 +206,7 @@ fn restore(state: &mut TesseraApp) {
         Page::General => {
             state.prefs.unit = fresh.unit;
             state.prefs.snapping = fresh.snapping;
+            state.prefs.updates.enabled = fresh.updates.enabled;
         }
         Page::Appearance => {
             state.prefs.theme = fresh.theme;
@@ -545,6 +549,28 @@ fn captured(ui: &Ui) -> Option<Captured> {
     })
 }
 
+/// Whether Tessera looks for a newer version.
+///
+/// One switch, on the General page, because there is one decision here: a check
+/// is a request to a server carrying an implicit "somebody is using this, now",
+/// and anybody who would rather not send that should not have to find out it is
+/// happening.
+fn updates(ui: &mut Ui, state: &mut TesseraApp) {
+    heading(ui, "Updates");
+    let mut on = state.prefs.updates.enabled;
+    if ui
+        .checkbox(&mut on, "Look for new versions")
+        .on_hover_text("Once a day. Tessera never installs anything on its own.")
+        .changed()
+    {
+        state.prefs.updates.enabled = on;
+    }
+    note(
+        ui,
+        "Tessera tells you a newer version exists and where to get it.          Downloading and installing it stays yours.",
+    );
+}
+
 fn colour(ui: &mut Ui, state: &mut TesseraApp) {
     heading(ui, "Artwork resolution");
     let mut ppi = state.prefs.minimum_ppi;
@@ -719,6 +745,7 @@ mod tests {
             recovery_seconds: 11,
             export_presets: crate::view::export_dialog::Preset::usual(),
             docking: crate::docking::Docking::default(),
+            updates: crate::update::Checking::default(),
             polygon_sides: 6,
             polygon_inset: 0.0,
             shortcuts: crate::keys::Bindings::default(),
