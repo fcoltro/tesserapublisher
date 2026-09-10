@@ -78,6 +78,41 @@ Never "done" until shipping; re-checked at the close of every milestone.
   Retrofitting this costs many times what designing for it does, and a
   publishing tool that a screen reader cannot describe is not finished.
   Re-checked at the close of every milestone.
+
+  **2026-09-10 — the interface chrome now is; the canvas is not.** Every
+  hand-built control in the panels carries a name, and the ones that toggle
+  report which way they are set. This was worse than "unnamed" before it was
+  looked at: a response built from `allocate_exact_size` never enters the
+  accessibility tree *at all* unless something gives it a `WidgetInfo`, so the
+  tools, the panel tabs, the section disclosures, the layer rows, the reference
+  proxy and the swatches were invisible to a screen reader rather than merely
+  anonymous. Painted text does not help — `Painter::text` puts glyphs on screen
+  and nothing in the widget tree, which is why a layer row reading "Artwork" and
+  a header reading "Geometry" both arrived nameless.
+
+  Named through two functions in `icons.rs` and only those, so a control's
+  tooltip and its spoken name cannot drift apart: `named` for icon-only controls
+  where the tooltip is the only affordance either way, `reads_as` for controls
+  whose name is painted and would be repeated by a tooltip an inch from itself.
+
+  `no_control_in_the_docked_panels_reaches_a_screen_reader_unnamed` reads the
+  real AccessKit tree rather than asserting the source says what it says, and it
+  earned its keep immediately by catching two unnamed combo boxes — all twelve
+  now take the name of the field beside them. Keyboard focus was **already**
+  working (`Sense::click` is enough in egui); the Tab test is a guard against
+  losing it, not evidence of a fix, and the difference was established by taking
+  the naming out and running it again.
+
+  **Still owed, and neither is an oversight:**
+
+  - **The layers panel's eye and lock.** They are hit-tested as zones inside the
+    row's own response because the row drags to reorder, so giving each its own
+    means reworking that interaction — not something to do without seeing it.
+  - **The canvas.** Objects on the page are not in the accessibility tree in any
+    form, and what a screen reader should make of a page of frames is a design
+    question, not a missing call. This is the half that would cost most to
+    retrofit, which is precisely what the requirement warns about.
+  - **Nobody has run a screen reader against any of it.**
 - [x] **Performance is measured, not asserted.** A guard over a 500-frame
   document holds resolve and scene-build time under one whole frame. Baseline
   on the development machine, 2026-09-03: **0.41 ms**, roughly fifty times

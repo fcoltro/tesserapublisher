@@ -28,11 +28,16 @@ pub fn theme_switch(ui: &mut Ui, state: &mut TesseraApp) {
 
     let size = egui::vec2(46.0, 24.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-    let response = response.on_hover_text(if dark {
-        "Switch to the light theme"
-    } else {
-        "Switch to the dark theme"
-    });
+    let response = crate::icons::named_toggle(
+        response,
+        if dark {
+            "Switch to the light theme"
+        } else {
+            "Switch to the dark theme"
+        },
+        egui::WidgetType::Checkbox,
+        dark,
+    );
 
     if response.clicked() {
         state.prefs.theme = if dark {

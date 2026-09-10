@@ -247,14 +247,24 @@ fn general(ui: &mut Ui, state: &mut TesseraApp) {
     heading(ui, "Measurements");
     let mut unit = state.prefs.unit;
     crate::view::panels::field(ui, "Units", |ui| {
-        egui::ComboBox::from_id_salt("prefs-unit")
-            .selected_text(crate::view::panels::unit_name(unit))
-            .width(ui.available_width())
-            .show_ui(ui, |ui| {
-                for choice in tessera_geometry::Unit::ALL {
-                    ui.selectable_value(&mut unit, choice, crate::view::panels::unit_name(choice));
-                }
-            });
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt("prefs-unit")
+                .selected_text(crate::view::panels::unit_name(unit))
+                .width(ui.available_width())
+                .show_ui(ui, |ui| {
+                    for choice in tessera_geometry::Unit::ALL {
+                        ui.selectable_value(
+                            &mut unit,
+                            choice,
+                            crate::view::panels::unit_name(choice),
+                        );
+                    }
+                })
+                .response,
+            "Units",
+            egui::WidgetType::ComboBox,
+            None,
+        );
     });
     state.prefs.unit = unit;
     note(

@@ -114,10 +114,13 @@ fn masters(ui: &mut Ui, state: &mut TesseraApp) {
             egui::TextStyle::Body.resolve(ui.style()),
             Theme::text_muted(),
         );
-        if response
-            .on_hover_text("Build this page on no parent")
-            .clicked()
-        {
+        let response = crate::icons::named_toggle(
+            response,
+            "Build this page on no parent",
+            egui::WidgetType::RadioButton,
+            applied.is_none(),
+        );
+        if response.clicked() {
             detach = true;
         }
     }
@@ -172,6 +175,15 @@ fn masters(ui: &mut Ui, state: &mut TesseraApp) {
             Theme::text_muted(),
         );
 
+        // The row's name and its item count are both painted, so neither is in
+        // the widget tree. The name is what identifies the row; whether *this*
+        // page is built on it is what the row is for.
+        let response = crate::icons::reads_as(
+            response,
+            &master.name,
+            egui::WidgetType::RadioButton,
+            Some(on_this_page),
+        );
         let response = response
             .on_hover_text("Click to build this page on it. Double-click to open and edit it.");
         if response.double_clicked() {

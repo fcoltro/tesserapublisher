@@ -38,6 +38,27 @@ impl Anchor {
         Anchor::BottomRight,
     ];
 
+    /// What this anchor is called.
+    ///
+    /// On the type because it is a fact about the anchor, not about the proxy
+    /// that draws it. The reference proxy is nine identical squares, and
+    /// without these it reaches a screen reader as nine identical nameless
+    /// controls — one of which silently decides what every scale and rotation
+    /// in the document holds still.
+    pub fn label(self) -> &'static str {
+        match self {
+            Anchor::TopLeft => "Top left",
+            Anchor::TopCentre => "Top centre",
+            Anchor::TopRight => "Top right",
+            Anchor::MiddleLeft => "Middle left",
+            Anchor::Centre => "Centre",
+            Anchor::MiddleRight => "Middle right",
+            Anchor::BottomLeft => "Bottom left",
+            Anchor::BottomCentre => "Bottom centre",
+            Anchor::BottomRight => "Bottom right",
+        }
+    }
+
     /// Where this anchor sits in a given rectangle.
     pub fn in_rect(self, rect: DocRect) -> DocPoint {
         let (fx, fy) = self.fractions();

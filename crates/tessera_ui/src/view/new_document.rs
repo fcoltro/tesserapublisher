@@ -189,27 +189,33 @@ fn body(ui: &mut Ui, settings: &mut NewDocument, unit: tessera_geometry::Unit) {
         .to_string();
     let mut chosen = None;
     field(ui, "Size", |ui| {
-        egui::ComboBox::from_id_salt("new-page-preset")
-            .selected_text(shown)
-            .show_ui(ui, |ui| {
-                for preset in PagePreset::ALL {
-                    let (w, h) = preset.size();
-                    if ui
-                        .selectable_label(settings.preset == Some(preset), preset.name())
-                        // The measurements, so somebody who does not recognise
-                        // "Demy octavo" can still tell whether it is the one.
-                        .on_hover_text(format!(
-                            "{:.1} × {:.1} {}",
-                            unit.from_points(w),
-                            unit.from_points(h),
-                            unit.suffix().trim()
-                        ))
-                        .clicked()
-                    {
-                        chosen = Some(preset);
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt("new-page-preset")
+                .selected_text(shown)
+                .show_ui(ui, |ui| {
+                    for preset in PagePreset::ALL {
+                        let (w, h) = preset.size();
+                        if ui
+                            .selectable_label(settings.preset == Some(preset), preset.name())
+                            // The measurements, so somebody who does not recognise
+                            // "Demy octavo" can still tell whether it is the one.
+                            .on_hover_text(format!(
+                                "{:.1} × {:.1} {}",
+                                unit.from_points(w),
+                                unit.from_points(h),
+                                unit.suffix().trim()
+                            ))
+                            .clicked()
+                        {
+                            chosen = Some(preset);
+                        }
                     }
-                }
-            });
+                })
+                .response,
+            "Size",
+            egui::WidgetType::ComboBox,
+            None,
+        );
     });
     if let Some(preset) = chosen {
         settings.take(preset);

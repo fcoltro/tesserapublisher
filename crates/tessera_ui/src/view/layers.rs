@@ -228,6 +228,20 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
     // guess made from pointer movement here.
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, ROW), Sense::click_and_drag());
+    // The row's name is painted, so nothing in the widget tree carries it, and
+    // "active" is the whole reason somebody clicks a layer row. Both said here.
+    //
+    // **The eye and the lock are still unnamed**, and that is a known gap rather
+    // than an oversight: they are hit-tested as zones inside *this* response
+    // because the row itself drags to reorder, so giving each its own would mean
+    // reworking the interaction — which is not something to do blind. Written up
+    // in the roadmap under the accessibility requirement.
+    let response = crate::icons::reads_as(
+        response,
+        &name,
+        egui::WidgetType::SelectableLabel,
+        Some(active),
+    );
 
     // The zones, laid out left to right.
     let eye = Rect::from_min_size(rect.min, Vec2::new(SWITCH, ROW));

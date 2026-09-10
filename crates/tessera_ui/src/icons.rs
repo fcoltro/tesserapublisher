@@ -565,6 +565,67 @@ impl Icon {
 ///
 /// The icon is scaled uniformly from its 24-unit grid, so the stroke stays
 /// proportional and the shape never distorts.
+/// Give an icon-only control the name it is known by.
+///
+/// **The tooltip and the accessible name are one fact.** An icon says nothing
+/// on its own: somebody who can see it gets the tooltip, and everybody else
+/// gets whatever `WidgetInfo` carries — which, before this, was nothing at all,
+/// so every tool, every panel tab and every glyph button announced itself as
+/// "button" and stopped. That is worse than silence: it is a control a person
+/// can reach, focus and press without ever learning what it does.
+///
+/// Set in two places they drift, and the one that drifts is always the one
+/// nobody can see. So there is one function, and it is the only way an
+/// icon-only control in Tessera gets a name.
+pub fn named(response: egui::Response, name: impl Into<String>) -> egui::Response {
+    let name = name.into();
+    let enabled = response.enabled();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &name));
+    response.on_hover_text(name)
+}
+
+/// The same, for a control that is open or shut, on or off.
+///
+/// `selected` rather than `labeled`: a screen reader says "expanded" or
+/// "collapsed" from it, and a disclosure whose state is not announced is one
+/// somebody has to press to find out about — which is how you close the section
+/// you were trying to open.
+pub fn named_toggle(
+    response: egui::Response,
+    name: impl Into<String>,
+    kind: egui::WidgetType,
+    on: bool,
+) -> egui::Response {
+    let name = name.into();
+    let enabled = response.enabled();
+    response.widget_info(|| egui::WidgetInfo::selected(kind, enabled, on, &name));
+    response.on_hover_text(name)
+}
+
+/// Name a control that already shows its name, but *paints* it.
+///
+/// **Painted text is visible and not readable.** `Painter::text` puts glyphs on
+/// the screen and nothing in the widget tree, so a layer row showing "Artwork"
+/// and a section header reading "Geometry" both reach a screen reader as
+/// nameless. They need the name and emphatically not a tooltip — one repeating
+/// a word already on screen an inch away is noise for everybody who can see it.
+///
+/// `on` says whether the control is a toggle, and if so which way it is set.
+pub fn reads_as(
+    response: egui::Response,
+    name: impl Into<String>,
+    kind: egui::WidgetType,
+    on: Option<bool>,
+) -> egui::Response {
+    let name = name.into();
+    let enabled = response.enabled();
+    response.widget_info(|| match on {
+        Some(on) => egui::WidgetInfo::selected(kind, enabled, on, &name),
+        None => egui::WidgetInfo::labeled(kind, enabled, &name),
+    });
+    response
+}
+
 pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
     paint_rotated(painter, rect, icon, color, 0.0, 1.0);
 }

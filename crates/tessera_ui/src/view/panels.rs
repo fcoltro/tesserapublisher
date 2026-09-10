@@ -54,7 +54,15 @@ fn tool_button(ui: &mut Ui, tool: Tool, active: bool) -> egui::Response {
     let inset = Theme::TOOL_SIZE * 0.22;
     crate::icons::paint(ui.painter(), rect.shrink(inset), tool.icon(), fg);
 
-    response.on_hover_text(format!("{} ({:?})", tool.label(), tool.shortcut()))
+    // Selected rather than merely labelled: which tool is *active* is the one
+    // thing a strip of identical squares does not say out loud, and a person
+    // choosing a tool needs to know they already have it.
+    crate::icons::named_toggle(
+        response,
+        format!("{} ({:?})", tool.label(), tool.shortcut()),
+        egui::WidgetType::RadioButton,
+        active,
+    )
 }
 
 // --- inspector ---------------------------------------------------------
@@ -311,7 +319,7 @@ fn glyph_button(ui: &mut Ui, icon: crate::icons::Icon, tip: &str) -> egui::Respo
             .rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
     }
     crate::icons::paint(ui.painter(), rect.shrink(3.0), icon, Theme::text_primary());
-    response.on_hover_text(tip)
+    crate::icons::named(response, tip)
 }
 
 /// How big the proxy is where there is room for it.
@@ -347,6 +355,12 @@ pub fn reference_proxy_sized(ui: &mut Ui, anchor: &mut Anchor, side: f32) -> boo
             Vec2::splat(step),
         );
         let response = ui.interact(cell, ui.id().with(("anchor", i)), Sense::click());
+        let response = crate::icons::reads_as(
+            response,
+            candidate.label(),
+            egui::WidgetType::RadioButton,
+            Some(*candidate == *anchor),
+        );
         if response.clicked() {
             *anchor = *candidate;
             changed = true;
@@ -1242,7 +1256,7 @@ pub(crate) fn icon_button(
     };
     crate::icons::paint(ui.painter(), rect.shrink(4.0), icon, tint);
 
-    response.on_hover_text(tooltip).clicked()
+    crate::icons::named_toggle(response, tooltip, egui::WidgetType::Button, active).clicked()
 }
 
 /// [`group_label`], for another module in the view.
@@ -1399,15 +1413,21 @@ fn object_style_section(
 
     let mut chosen = frame.style;
     field(ui, "Style", |ui| {
-        egui::ComboBox::from_id_salt(("object-style", id))
-            .selected_text(current)
-            .width(ui.available_width())
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut chosen, None, "None");
-                for (style, name) in &listed {
-                    ui.selectable_value(&mut chosen, Some(*style), name);
-                }
-            });
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt(("object-style", id))
+                .selected_text(current)
+                .width(ui.available_width())
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut chosen, None, "None");
+                    for (style, name) in &listed {
+                        ui.selectable_value(&mut chosen, Some(*style), name);
+                    }
+                })
+                .response,
+            "Style",
+            egui::WidgetType::ComboBox,
+            None,
+        );
     });
 
     if chosen != frame.style {
@@ -1500,14 +1520,20 @@ fn effects_section(
     // learn a code for something they use rarely.
     let before = blend.mode;
     field(ui, "Blend", |ui| {
-        egui::ComboBox::from_id_salt(("blend-mode", id))
-            .selected_text(blend.mode.label())
-            .width(ui.available_width())
-            .show_ui(ui, |ui| {
-                for mode in BlendMode::ALL {
-                    ui.selectable_value(&mut blend.mode, mode, mode.label());
-                }
-            });
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt(("blend-mode", id))
+                .selected_text(blend.mode.label())
+                .width(ui.available_width())
+                .show_ui(ui, |ui| {
+                    for mode in BlendMode::ALL {
+                        ui.selectable_value(&mut blend.mode, mode, mode.label());
+                    }
+                })
+                .response,
+            "Blend",
+            egui::WidgetType::ComboBox,
+            None,
+        );
     });
     changed |= blend.mode != before;
 
@@ -2094,6 +2120,17 @@ pub(crate) fn section_heading_with(
         Theme::text_primary(),
     );
 
+    // **Painted text is invisible to a screen reader.** The title above goes
+    // straight to the painter, so nothing in the widget tree carries it — a
+    // disclosure that reveals half the inspector announced itself as an unnamed
+    // button. It says its own name and whether it is open.
+    let response = crate::icons::reads_as(
+        response,
+        title,
+        egui::WidgetType::CollapsingHeader,
+        Some(open),
+    );
+
     if response.clicked() { !open } else { open }
 }
 
@@ -2624,18 +2661,24 @@ fn family_picker(
     let mut chosen = None;
     field(ui, "Family", |ui| {
         let label = shown.unwrap_or("Mixed");
-        egui::ComboBox::from_id_salt("family")
-            .selected_text(label)
-            .show_ui(ui, |ui| {
-                for family in state.shaper.families() {
-                    if ui
-                        .selectable_label(shown == Some(family.as_str()), family)
-                        .clicked()
-                    {
-                        chosen = Some(family.clone());
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt("family")
+                .selected_text(label)
+                .show_ui(ui, |ui| {
+                    for family in state.shaper.families() {
+                        if ui
+                            .selectable_label(shown == Some(family.as_str()), family)
+                            .clicked()
+                        {
+                            chosen = Some(family.clone());
+                        }
                     }
-                }
-            });
+                })
+                .response,
+            "Family",
+            egui::WidgetType::ComboBox,
+            None,
+        );
     });
 
     for family in missing {
@@ -2692,18 +2735,24 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
     // no preset matching looks like.
     let current = PagePreset::matching(width, height);
     let mut wanted = None;
-    egui::ComboBox::from_id_salt("page-preset")
-        .selected_text(current.map_or("Custom", PagePreset::name))
-        .show_ui(ui, |ui| {
-            for preset in PagePreset::ALL {
-                if ui
-                    .selectable_label(current == Some(preset), preset.name())
-                    .clicked()
-                {
-                    wanted = Some(preset);
+    crate::icons::reads_as(
+        egui::ComboBox::from_id_salt("page-preset")
+            .selected_text(current.map_or("Custom", PagePreset::name))
+            .show_ui(ui, |ui| {
+                for preset in PagePreset::ALL {
+                    if ui
+                        .selectable_label(current == Some(preset), preset.name())
+                        .clicked()
+                    {
+                        wanted = Some(preset);
+                    }
                 }
-            }
-        });
+            })
+            .response,
+        "Page size",
+        egui::WidgetType::ComboBox,
+        None,
+    );
     if let Some(preset) = wanted {
         // Applied in the orientation the page already has, so choosing A4 for
         // a landscape document does not silently turn it upright.
@@ -2934,14 +2983,20 @@ fn output_intent_controls(ui: &mut Ui, state: &mut TesseraApp) {
 
     let before = intent.rendering;
     field(ui, "Intent", |ui| {
-        egui::ComboBox::from_id_salt("output-intent-rendering")
-            .selected_text(intent.rendering.label())
-            .width(ui.available_width())
-            .show_ui(ui, |ui| {
-                for rendering in Rendering::ALL {
-                    ui.selectable_value(&mut intent.rendering, rendering, rendering.label());
-                }
-            });
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt("output-intent-rendering")
+                .selected_text(intent.rendering.label())
+                .width(ui.available_width())
+                .show_ui(ui, |ui| {
+                    for rendering in Rendering::ALL {
+                        ui.selectable_value(&mut intent.rendering, rendering, rendering.label());
+                    }
+                })
+                .response,
+            "Rendering intent",
+            egui::WidgetType::ComboBox,
+            None,
+        );
     });
 
     let changed = intent.rendering != before;
@@ -2976,42 +3031,48 @@ fn profile_picker(ui: &mut Ui, state: &mut TesseraApp, current: Option<&str>) {
     let mut chosen: Option<crate::catalogue::Choice> = None;
 
     field(ui, "Profile", |ui| {
-        egui::ComboBox::from_id_salt("output-intent-profile")
-            .selected_text(current.unwrap_or("Choose..."))
-            .width(ui.available_width())
-            .show_ui(ui, |ui| {
-                let mut heading = "";
-                for choice in &choices {
-                    // Grouped by where it came from, because "built in" and "on
-                    // this machine" are different promises: one is always there,
-                    // the other depends on what is installed.
-                    let group = match choice {
-                        crate::catalogue::Choice::Standard(_) => "Standard spaces",
-                        crate::catalogue::Choice::Bundled(_) => "Shipped with Tessera",
-                        crate::catalogue::Choice::Installed(_) => "On this machine",
-                    };
-                    if group != heading {
-                        if !heading.is_empty() {
-                            ui.separator();
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt("output-intent-profile")
+                .selected_text(current.unwrap_or("Choose..."))
+                .width(ui.available_width())
+                .show_ui(ui, |ui| {
+                    let mut heading = "";
+                    for choice in &choices {
+                        // Grouped by where it came from, because "built in" and "on
+                        // this machine" are different promises: one is always there,
+                        // the other depends on what is installed.
+                        let group = match choice {
+                            crate::catalogue::Choice::Standard(_) => "Standard spaces",
+                            crate::catalogue::Choice::Bundled(_) => "Shipped with Tessera",
+                            crate::catalogue::Choice::Installed(_) => "On this machine",
+                        };
+                        if group != heading {
+                            if !heading.is_empty() {
+                                ui.separator();
+                            }
+                            ui.colored_label(Theme::text_muted(), group);
+                            heading = group;
                         }
-                        ui.colored_label(Theme::text_muted(), group);
-                        heading = group;
-                    }
 
-                    // The space beside the name, because that is the thing a
-                    // person is choosing on: a CMYK entry is a press and an RGB
-                    // one is not.
-                    let label = format!("{}  · {}", choice.label(), choice.space());
-                    let selected = current == Some(choice.label().as_str());
-                    let mut response = ui.selectable_label(selected, label);
-                    if let crate::catalogue::Choice::Standard(standard) = choice {
-                        response = response.on_hover_text(standard.purpose());
+                        // The space beside the name, because that is the thing a
+                        // person is choosing on: a CMYK entry is a press and an RGB
+                        // one is not.
+                        let label = format!("{}  · {}", choice.label(), choice.space());
+                        let selected = current == Some(choice.label().as_str());
+                        let mut response = ui.selectable_label(selected, label);
+                        if let crate::catalogue::Choice::Standard(standard) = choice {
+                            response = response.on_hover_text(standard.purpose());
+                        }
+                        if response.clicked() {
+                            chosen = Some(choice.clone());
+                        }
                     }
-                    if response.clicked() {
-                        chosen = Some(choice.clone());
-                    }
-                }
-            });
+                })
+                .response,
+            "Output profile",
+            egui::WidgetType::ComboBox,
+            None,
+        );
     });
 
     if let Some(choice) = chosen {
@@ -3214,24 +3275,30 @@ fn style_rows(ui: &mut Ui, state: &mut TesseraApp, story: StoryId, target: std::
             .and_then(|id| paragraphs.iter().find(|(p, _)| *p == id))
             .map_or("None", |(_, name)| name.as_str())
             .to_string();
-        egui::ComboBox::from_id_salt("paragraph-style")
-            .selected_text(label)
-            .show_ui(ui, |ui| {
-                if ui
-                    .selectable_label(paragraph_style.is_none(), "None")
-                    .clicked()
-                {
-                    attach_paragraph = Some(None);
-                }
-                for (id, name) in &paragraphs {
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt("paragraph-style")
+                .selected_text(label)
+                .show_ui(ui, |ui| {
                     if ui
-                        .selectable_label(paragraph_style == Some(*id), name)
+                        .selectable_label(paragraph_style.is_none(), "None")
                         .clicked()
                     {
-                        attach_paragraph = Some(Some(*id));
+                        attach_paragraph = Some(None);
                     }
-                }
-            });
+                    for (id, name) in &paragraphs {
+                        if ui
+                            .selectable_label(paragraph_style == Some(*id), name)
+                            .clicked()
+                        {
+                            attach_paragraph = Some(Some(*id));
+                        }
+                    }
+                })
+                .response,
+            "Paragraph style",
+            egui::WidgetType::ComboBox,
+            None,
+        );
         define_paragraph = icon_button(
             ui,
             crate::icons::Icon::Plus,
@@ -3275,24 +3342,30 @@ fn style_rows(ui: &mut Ui, state: &mut TesseraApp, story: StoryId, target: std::
             .and_then(|id| characters.iter().find(|(c, _)| *c == id))
             .map_or("None", |(_, name)| name.as_str())
             .to_string();
-        egui::ComboBox::from_id_salt("character-style")
-            .selected_text(label)
-            .show_ui(ui, |ui| {
-                if ui
-                    .selectable_label(character_style.is_none(), "None")
-                    .clicked()
-                {
-                    attach_character = Some(None);
-                }
-                for (id, name) in &characters {
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt("character-style")
+                .selected_text(label)
+                .show_ui(ui, |ui| {
                     if ui
-                        .selectable_label(character_style == Some(*id), name)
+                        .selectable_label(character_style.is_none(), "None")
                         .clicked()
                     {
-                        attach_character = Some(Some(*id));
+                        attach_character = Some(None);
                     }
-                }
-            });
+                    for (id, name) in &characters {
+                        if ui
+                            .selectable_label(character_style == Some(*id), name)
+                            .clicked()
+                        {
+                            attach_character = Some(Some(*id));
+                        }
+                    }
+                })
+                .response,
+            "Character style",
+            egui::WidgetType::ComboBox,
+            None,
+        );
         define_character = icon_button(
             ui,
             crate::icons::Icon::Plus,
@@ -3523,6 +3596,165 @@ fn page_navigator(ui: &mut Ui, state: &mut TesseraApp) {
 
 #[cfg(test)]
 mod tests {
+    /// Draw something in a context that is building an accessibility tree, and
+    /// hand back what a screen reader would be given.
+    ///
+    /// **The tree is the evidence.** Asserting that `widget_info` is *called*
+    /// would be asserting that the source says what it says; this asks egui what
+    /// it actually built, which is the thing a screen reader reads.
+    fn accessibility_tree(draw: impl FnMut(&mut Ui)) -> Vec<(String, Option<String>)> {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        // `run_ui` rather than `run`: egui 0.35 hands the application a root
+        // `Ui` and panels nest inside it, which is the same shape `view::show`
+        // is built around.
+        let output = ctx.run_ui(egui::RawInput::default(), draw);
+        let update = output
+            .platform_output
+            .accesskit_update
+            .expect("accessibility was enabled, so there is a tree");
+        update
+            .nodes
+            .iter()
+            .map(|(_, node)| {
+                (
+                    format!("{:?}", node.role()),
+                    node.label().map(ToString::to_string),
+                )
+            })
+            .collect()
+    }
+
+    /// The roles a person can reach, focus and act on.
+    const INTERACTIVE: [&str; 5] = ["Button", "RadioButton", "CheckBox", "ComboBox", "Link"];
+
+    #[test]
+    fn every_tool_tells_a_screen_reader_its_name() {
+        // **Nothing in Tessera did this before, and it was worse than expected.**
+        // Removing the naming and running this again finds *zero* interactive
+        // nodes, not a dozen unnamed ones: a response built by hand out of
+        // `allocate_exact_size` never enters the accessibility tree at all
+        // unless something gives it a `WidgetInfo`. So every tool, every panel
+        // tab and every section disclosure was not merely anonymous to a screen
+        // reader — it was invisible to one.
+        let mut state = TesseraApp::headless();
+        let named = accessibility_tree(|ui| tool_strip(ui, &mut state));
+
+        let interactive: Vec<_> = named
+            .iter()
+            .filter(|(role, _)| INTERACTIVE.contains(&role.as_str()))
+            .collect();
+
+        // Counted, so that this fails loudly rather than quietly checking
+        // nothing if egui's roles are ever renamed. A test that silently
+        // inspects an empty list is not evidence.
+        assert_eq!(
+            interactive.len(),
+            Tool::ALL.len(),
+            "expected one reachable control per tool, found {interactive:?}"
+        );
+
+        for (role, label) in interactive {
+            let label = label.as_deref().unwrap_or("");
+            assert!(
+                !label.is_empty(),
+                "a {role} reached the accessibility tree with no name"
+            );
+        }
+    }
+
+    #[test]
+    fn no_control_in_the_docked_panels_reaches_a_screen_reader_unnamed() {
+        // Broader than the tool strip, and the guard that matters: this fails
+        // the day somebody adds a hand-built clickable widget and forgets to
+        // name it. `allocate_exact_size` plus a painter is how most of this
+        // interface is drawn, and nothing about that spelling makes a name
+        // appear — which is exactly why every one of them was missing.
+        let mut state = TesseraApp::headless();
+        let named = accessibility_tree(|ui| {
+            crate::view::docks::show(ui, &mut state);
+            tool_strip(ui, &mut state);
+        });
+
+        let interactive: Vec<_> = named
+            .iter()
+            .filter(|(role, _)| INTERACTIVE.contains(&role.as_str()))
+            .collect();
+
+        // More than the tools alone, or the docked panels contributed nothing
+        // and this is quietly checking the same strip twice.
+        assert!(
+            interactive.len() > Tool::ALL.len(),
+            "the docked panels put no reachable control in the tree: {interactive:?}"
+        );
+
+        let nameless: Vec<_> = interactive
+            .iter()
+            .filter(|(_, label)| label.as_deref().unwrap_or("").is_empty())
+            .collect();
+        assert!(
+            nameless.is_empty(),
+            "{} control(s) reached the accessibility tree with no name: {nameless:?}",
+            nameless.len()
+        );
+    }
+
+    #[test]
+    fn tab_reaches_the_tools_from_the_keyboard() {
+        // The other half of the requirement: named is not the same as
+        // reachable. A control a screen reader can describe and a keyboard
+        // cannot get to is one it can only describe.
+        //
+        // **This passed before the names were added**, because `Sense::click()`
+        // is enough to make a widget focusable in egui — so it is a guard
+        // against losing that, not evidence of having fixed it. Checked by
+        // removing the naming and running it again, which is the only way to
+        // know which of the two a green test is.
+        let mut state = TesseraApp::headless();
+        let ctx = egui::Context::default();
+
+        // One frame to lay the strip out — nothing is focusable before it
+        // exists — then a Tab into it.
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| tool_strip(ui, &mut state));
+
+        let mut input = egui::RawInput::default();
+        input.events.push(egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::default(),
+        });
+        let _ = ctx.run_ui(input, |ui| tool_strip(ui, &mut state));
+
+        assert!(
+            ctx.memory(|m| m.focused()).is_some(),
+            "Tab reached nothing: the tool strip cannot be entered from the              keyboard, whatever its controls are called"
+        );
+    }
+
+    #[test]
+    fn a_tool_says_whether_it_is_the_one_in_use() {
+        // A strip of identical squares does not say which one is active, and
+        // that is the one thing somebody choosing a tool needs to know. The
+        // pointer is the tool a fresh application starts in.
+        let mut state = TesseraApp::headless();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| tool_strip(ui, &mut state));
+        let update = output.platform_output.accesskit_update.expect("a tree");
+        let toggled = update
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.toggled().is_some())
+            .count();
+        assert_eq!(
+            toggled,
+            Tool::ALL.len(),
+            "a tool that does not report whether it is selected leaves somebody              pressing keys to find out which one they are in"
+        );
+    }
+
     use super::*;
     use tessera_document::nodes::{Frame, FrameKind};
     use tessera_geometry::{DocRect, Transform};

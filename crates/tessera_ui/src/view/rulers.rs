@@ -327,19 +327,25 @@ pub fn unit_selector(ui: &mut Ui, state: &mut TesseraApp) {
     let current = state.prefs.unit;
     let mut chosen = current;
 
-    egui::ComboBox::from_id_salt("ruler-unit")
-        .width(THICKNESS * 2.4)
-        .selected_text(current.suffix())
-        .show_ui(ui, |ui| {
-            for unit in Unit::ALL {
-                if ui
-                    .selectable_label(unit == current, unit.suffix())
-                    .clicked()
-                {
-                    chosen = unit;
+    crate::icons::reads_as(
+        egui::ComboBox::from_id_salt("ruler-unit")
+            .width(THICKNESS * 2.4)
+            .selected_text(current.suffix())
+            .show_ui(ui, |ui| {
+                for unit in Unit::ALL {
+                    if ui
+                        .selectable_label(unit == current, unit.suffix())
+                        .clicked()
+                    {
+                        chosen = unit;
+                    }
                 }
-            }
-        });
+            })
+            .response,
+        "Ruler units",
+        egui::WidgetType::ComboBox,
+        None,
+    );
 
     if chosen != current {
         state.prefs.unit = chosen;

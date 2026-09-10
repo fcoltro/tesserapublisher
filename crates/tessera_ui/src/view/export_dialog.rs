@@ -152,14 +152,20 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
     // they do not read.
     let mut standard = state.export.standard;
     crate::view::panels::field(ui, "Standard", |ui| {
-        egui::ComboBox::from_id_salt("export-standard")
-            .selected_text(standard.label())
-            .width(ui.available_width())
-            .show_ui(ui, |ui| {
-                for choice in Standard::ALL {
-                    ui.selectable_value(&mut standard, choice, choice.label());
-                }
-            });
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt("export-standard")
+                .selected_text(standard.label())
+                .width(ui.available_width())
+                .show_ui(ui, |ui| {
+                    for choice in Standard::ALL {
+                        ui.selectable_value(&mut standard, choice, choice.label());
+                    }
+                })
+                .response,
+            "Standard",
+            egui::WidgetType::ComboBox,
+            None,
+        );
     });
     state.export.standard = standard;
 

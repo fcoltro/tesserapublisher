@@ -176,7 +176,7 @@ fn icon_button(ui: &mut Ui, icon: Icon, tip: &str) -> egui::Response {
     }
     // Inset so the 24-unit grid does not touch the button's edge.
     crate::icons::paint(ui.painter(), rect.shrink(4.0), icon, Theme::text_primary());
-    response.on_hover_text(tip)
+    crate::icons::named(response, tip)
 }
 
 #[cfg(test)]

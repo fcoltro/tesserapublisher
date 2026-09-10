@@ -112,6 +112,15 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, swatch: &Swatch) {
             ),
             egui::StrokeKind::Inside,
         );
+        // The name is edited in place further down the row, where a text field
+        // carries it into the widget tree. The block itself is the *control*,
+        // and a coloured square says nothing at all without this.
+        let response = crate::icons::reads_as(
+            response,
+            &swatch.name,
+            egui::WidgetType::SelectableLabel,
+            Some(chosen),
+        );
         if response.clicked() {
             state.swatches_window.chosen = Some(swatch.name.clone());
         }

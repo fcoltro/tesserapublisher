@@ -308,7 +308,7 @@ fn tab_icon(ui: &mut Ui, title: &str, tint: egui::Color32) -> egui::Response {
     if let Some(dock) = dock_by_title(title) {
         crate::icons::paint(ui.painter(), rect.shrink(3.0), dock.icon(), tint);
     }
-    response.on_hover_text(title)
+    crate::icons::named(response, title)
 }
 
 fn stack_mut(
