@@ -151,6 +151,14 @@ pub struct Preferences {
     #[serde(default)]
     pub updates: crate::update::Checking,
 
+    /// Whether the first-run tour has been offered.
+    ///
+    /// Set when it *starts*, not when it finishes. A tour recorded on completion
+    /// would come back tomorrow for anybody who quit halfway through — which is
+    /// the group least likely to want it again.
+    #[serde(default)]
+    pub tour_seen: bool,
+
     /// How many sides the polygon tool draws.
     ///
     /// A preference rather than a dialog on every use: somebody drawing
@@ -222,6 +230,7 @@ impl Default for Preferences {
             export_presets: crate::view::export_dialog::Preset::usual(),
             docking: crate::docking::Docking::default(),
             updates: crate::update::Checking::default(),
+            tour_seen: false,
             polygon_sides: default_polygon_sides(),
             polygon_inset: 0.0,
             shortcuts: crate::keys::Bindings::default(),
@@ -428,6 +437,7 @@ mod tests {
             export_presets: crate::view::export_dialog::Preset::usual(),
             docking: crate::docking::Docking::default(),
             updates: crate::update::Checking::default(),
+            tour_seen: false,
             polygon_sides: 6,
             polygon_inset: 0.0,
             shortcuts: crate::keys::Bindings::default(),

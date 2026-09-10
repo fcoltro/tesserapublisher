@@ -68,6 +68,11 @@ fn main() -> eframe::Result<()> {
             // document that appears without being asked for has already made
             // all three on somebody's behalf.
             app.ask_what_to_make();
+            // And on a first run, offer to say where everything is. Offered
+            // rather than started: it waits until the dialog above has been
+            // dealt with, because a tour of the interface behind a modal is a
+            // tour of something nobody can look at.
+            app.offer_tour_on_first_run();
 
             Ok(Box::new(app) as Box<dyn eframe::App>)
         }),

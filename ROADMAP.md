@@ -1744,7 +1744,15 @@ milestone the layout is fixed: a tool strip, one inspector, and the canvas.
   client and the decisions have tests. It tells and never installs. The
   preference had existed since milestone 7 with nothing reading it, which is a
   switch that lies about what it does.
-- [ ] User documentation and a first-run tour.
+- [ ] User documentation and a first-run tour. `docs/USING.md` is written and
+  the tour is built — five cards about *where things are*, in
+  `crates/tessera_ui/src/tour.rs` with its card in `view/tour.rs`, offered once
+  on a first run and available from Help ever after. Each step names a place and
+  the panels say where they are as they draw, so a rearranged rail moves the
+  tour with it and a closed panel makes its step skip rather than point at
+  nothing. **Left open because nobody has seen it.** The card's placement is
+  arithmetic and tested; whether it reads well on screen is not something a test
+  can say.
 
 ---
 

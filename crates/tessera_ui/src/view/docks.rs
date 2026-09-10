@@ -85,7 +85,7 @@ fn side(ui: &mut Ui, state: &mut TesseraApp, region: Region) {
         Region::Right => Panel::right(id),
     };
 
-    panel
+    let showing_panel = panel
         .default_size(WIDTH)
         .min_size(NARROWEST)
         .frame(crate::view::glass::panel_frame(state))
@@ -118,6 +118,13 @@ fn side(ui: &mut Ui, state: &mut TesseraApp, region: Region) {
 
             edge_target(ui, state, region);
         });
+
+    // The tour points at whichever side is open, and the last one drawn wins if
+    // both are. One rect for "the panels": a tour that ringed two things at once
+    // would be pointing at nothing in particular.
+    state
+        .tour
+        .mark(crate::tour::Spot::Rail, showing_panel.response.rect);
 }
 
 /// Whether anything in this stack is open, and so worth room.

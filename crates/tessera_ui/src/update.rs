@@ -91,7 +91,7 @@ pub enum Found {
 }
 
 /// What the application remembers between checks.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Checking {
     /// Whether to check at all.
     ///
@@ -115,6 +115,22 @@ pub struct Checking {
 
 fn yes() -> bool {
     true
+}
+
+/// **Written out rather than derived.** A derived `Default` gives `false`, and
+/// `#[serde(default = "yes")]` gives `true` — so a machine with an empty
+/// preferences file checked for updates while one with *no* file did not, and
+/// "Restore defaults" in the preferences window quietly switched checking off.
+/// Two descriptions of one default, disagreeing, and neither visible from the
+/// other. Both now read `yes()`.
+impl Default for Checking {
+    fn default() -> Checking {
+        Checking {
+            enabled: yes(),
+            last_checked: 0,
+            seen: None,
+        }
+    }
 }
 
 impl Checking {
@@ -487,8 +503,16 @@ mod tests {
     fn it_is_on_unless_somebody_turns_it_off() {
         // An opt-in check is one nobody opts into, and the people who most need
         // to hear about a fix are the ones who never open preferences.
-        let fresh: Checking = serde_json::from_str("{}").expect("read");
-        assert!(fresh.enabled);
+        //
+        // **Both ways of arriving at a fresh one.** These disagreed: `Default`
+        // was derived and gave `false` while the serde default gave `true`, so
+        // an install with no preferences file never checked, and "Restore
+        // defaults" turned checking off. Nothing pointed at either, because each
+        // was right about itself.
+        let from_a_file: Checking = serde_json::from_str("{}").expect("read");
+        assert!(from_a_file.enabled);
+        assert!(Checking::default().enabled);
+        assert_eq!(from_a_file, Checking::default());
     }
 
     #[test]

@@ -411,6 +411,9 @@ pub struct TesseraApp {
     /// has already put it away.
     pub update_check: crate::update::Check,
 
+    /// The first-run tour, and where it has got to.
+    pub tour: crate::tour::Tour,
+
     /// What the application remembers between runs.
     ///
     /// Defaults here rather than being read from disk, because `headless` is
@@ -469,6 +472,7 @@ impl TesseraApp {
             palette: crate::view::palette::Palette::default(),
             prefs: crate::prefs::Preferences::default(),
             update_check: crate::update::Check::default(),
+            tour: crate::tour::Tour::default(),
         }
     }
 
@@ -488,6 +492,17 @@ impl TesseraApp {
     {
         self.update_check =
             crate::update::Check::begin(&self.prefs.updates, crate::update::now(), fetch);
+    }
+
+    /// Offer the tour, if this is a first run.
+    ///
+    /// Offered rather than started: it waits for the New Document dialog to be
+    /// dealt with, because a tour of the interface behind a modal is a tour of
+    /// something nobody can look at.
+    pub fn offer_tour_on_first_run(&mut self) {
+        if !self.prefs.tour_seen {
+            self.tour.offer();
+        }
     }
 
     /// Take the check's answer if it has arrived.

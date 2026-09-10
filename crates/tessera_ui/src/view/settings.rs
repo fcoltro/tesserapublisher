@@ -729,8 +729,17 @@ mod tests {
 
     #[test]
     fn restoring_every_page_in_turn_restores_everything() {
-        // The pages must between them cover the whole of `Preferences`, or a
-        // setting exists that can be changed and never put back.
+        // Every *setting* must be on some page, or one exists that can be
+        // changed and never put back.
+        //
+        // Not every field of `Preferences` is a setting. Some record what
+        // happened — when a version check last ran, what it found, whether the
+        // tour has been offered — and "restore defaults" must not touch those:
+        // un-seeing a tour or forgetting this morning's check are not things
+        // anybody asks for by pressing a button labelled "put things back to
+        // normal". Those fields are set to non-defaults below and expected to
+        // survive, which is what makes the rest of this assertion mean
+        // something.
         let mut state = TesseraApp::headless();
         state.prefs = Preferences {
             version: Preferences::PATH_VERSION,
@@ -745,7 +754,12 @@ mod tests {
             recovery_seconds: 11,
             export_presets: crate::view::export_dialog::Preset::usual(),
             docking: crate::docking::Docking::default(),
-            updates: crate::update::Checking::default(),
+            updates: crate::update::Checking {
+                enabled: false,
+                last_checked: 1_700_000_000,
+                seen: Some("9.9.9".to_string()),
+            },
+            tour_seen: true,
             polygon_sides: 6,
             polygon_inset: 0.0,
             shortcuts: crate::keys::Bindings::default(),
@@ -760,7 +774,17 @@ mod tests {
 
         assert_eq!(
             state.prefs,
-            Preferences::default(),
+            Preferences {
+                // Restored: it is a switch somebody chose.
+                updates: crate::update::Checking {
+                    enabled: true,
+                    // Kept: these are what a check *found*, not what anybody set.
+                    last_checked: 1_700_000_000,
+                    seen: Some("9.9.9".to_string()),
+                },
+                tour_seen: true,
+                ..Preferences::default()
+            },
             "a setting is reachable but not restorable, so it is on no page"
         );
     }

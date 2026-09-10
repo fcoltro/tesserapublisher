@@ -28,10 +28,11 @@ pub enum Group {
     Type,
     Layout,
     Window,
+    Help,
 }
 
 impl Group {
-    pub const ALL: [Group; 11] = [
+    pub const ALL: [Group; 12] = [
         Group::File,
         Group::Edit,
         Group::Object,
@@ -43,6 +44,7 @@ impl Group {
         Group::Type,
         Group::Layout,
         Group::Window,
+        Group::Help,
     ];
 
     /// The submenu this group nests in, if any.
@@ -82,6 +84,7 @@ impl Group {
             Group::Type => Some("Type"),
             Group::Layout => Some("Layout"),
             Group::Window => Some("Window"),
+            Group::Help => Some("Help"),
             Group::Tool => None,
         }
     }
@@ -91,6 +94,7 @@ impl Group {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Run {
     OpenSettings,
+    ShowTour,
     Package,
     TogglePreflight,
     ToggleStyles,
@@ -151,6 +155,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::Package
         | Run::Place
         | Run::OpenSettings
+        | Run::ShowTour
         | Run::ChooseOutputIntent
         | Run::TogglePreflight
         | Run::ToggleStyles
@@ -553,6 +558,11 @@ pub fn all() -> &'static [Action] {
         // last in that menu because it is the one entry there that is not an
         // edit to the document.
         a("Preferences...", Some("Ctrl+,"), Group::Edit, OpenSettings),
+        // Under Help, and reachable always rather than only on a first run. A
+        // tour somebody skipped in their first minute is a tour they can never
+        // get back, and the minute they skipped it in is the one they knew least
+        // about whether they wanted it.
+        a("Take the tour", None, Group::Help, ShowTour),
         // Under View, because a soft proof is a way of *looking* at the document.
         // Choosing the press is under View too rather than under File: the
         // decision is inseparable from seeing its effect, and separating them
@@ -662,6 +672,7 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         }
         Run::Place => crate::file_ops::place(state),
         Run::OpenSettings => state.settings.open = true,
+        Run::ShowTour => state.tour.begin(),
         Run::TogglePreflight => {
             state.preflight.open = !state.preflight.open;
             // Opening a panel in a collapsed rail would open nothing a person

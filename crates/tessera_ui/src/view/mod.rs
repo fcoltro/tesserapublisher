@@ -28,6 +28,7 @@ pub mod step_repeat;
 pub mod styles;
 pub mod swatches;
 pub mod text_edit;
+pub mod tour;
 pub mod vello_host;
 pub mod viewport;
 
@@ -65,6 +66,10 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
         );
     }
 
+    // Before any panel says where it is. A spot kept from the previous frame is
+    // a spot the tour still believes in after the panel has closed.
+    state.tour.forget_spots();
+
     accelerators(ui, state);
 
     Panel::top("menu").show(ui, |ui| menu_bar(ui, state));
@@ -84,10 +89,13 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     document_tabs::confirm_close(ui.ctx(), state);
     name_workspace(ui.ctx(), state);
 
-    Panel::top("control")
+    let control_bar = Panel::top("control")
         .exact_size(control::HEIGHT)
         .resizable(false)
         .show(ui, |ui| control::show(ui, state));
+    state
+        .tour
+        .mark(crate::tour::Spot::Control, control_bar.response.rect);
 
     // Above everything, so it can be reached from anywhere.
     palette::show(ui, state);
@@ -100,15 +108,18 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     step_repeat::show(ui.ctx(), state);
     styles::editor(ui.ctx(), state);
 
-    Panel::bottom("status")
+    let status = Panel::bottom("status")
         .exact_size(24.0)
         .resizable(false)
         .show(ui, |ui| panels::status_bar(ui, state));
+    state
+        .tour
+        .mark(crate::tour::Spot::Status, status.response.rect);
 
     // The tools, beside the page. **Not over it.** Chrome that floats over the
     // document is chrome that covers the thing being worked on, and the glass is
     // for showing the interface’s own ground through — not the page.
-    Panel::left("tools")
+    let tools = Panel::left("tools")
         .exact_size(Theme::TOOL_SIZE + Theme::SPACING_LG)
         .frame(glass::panel_frame(state))
         .resizable(false)
@@ -116,6 +127,9 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
             glass::behind(ui, state, glass::Edge::Right);
             panels::tool_strip(ui, state);
         });
+    state
+        .tour
+        .mark(crate::tour::Spot::Tools, tools.response.rect);
 
     // The rail. Every panel docks here; nothing floats *loose*. Collapsed, it is
     // a strip of icons rather than nothing at all: a panel you cannot see should
@@ -132,7 +146,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     } else {
         // Collapsed: a strip of icons rather than nothing at all. A panel you
         // cannot see should still be somewhere you can find.
-        Panel::right("rail-strip")
+        let strip = Panel::right("rail-strip")
             .exact_size(rail::STRIP)
             .resizable(false)
             .frame(glass::panel_frame(state))
@@ -140,6 +154,13 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
                 glass::behind(ui, state, glass::Edge::Left);
                 rail::strip(ui, state);
             });
+        // Collapsed is still where the panels are, so the tour points at the
+        // strip rather than skipping the step. "Drag a tab" reads oddly at a
+        // column of icons, but a step that vanishes when somebody collapses the
+        // rail teaches them the panels are gone.
+        state
+            .tour
+            .mark(crate::tour::Spot::Rail, strip.response.rect);
     }
 
     // A newer version, if a check found one and nobody has put the notice away.
@@ -257,6 +278,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
             }
 
             let canvas = ui.available_rect_before_wrap();
+            state.tour.mark(crate::tour::Spot::Canvas, canvas);
             viewport::show(ui, frame, state);
 
             if state.screen_mode.shows_chrome() {
@@ -271,6 +293,11 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
             // viewport, so the backdrop it paints was rendered this frame rather
             // than last.
         });
+
+    // Last, because every spot it can point at has now said where it is. Earlier
+    // and it would be reading the previous frame's rectangles, which is a card
+    // that visibly lags the panel it is describing.
+    tour::show(ui, state);
 }
 
 /// The menu bar, built from the one action list.
@@ -285,7 +312,9 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
     // Menu order, not group order: Arrange, Transform and Align sit inside
     // Object as submenus, and Tool has no menu at all — picking a tool is not
     // a menu command in any layout tool.
-    const MENUS: [&str; 7] = ["File", "Edit", "Layout", "Object", "Type", "View", "Window"];
+    const MENUS: [&str; 8] = [
+        "File", "Edit", "Layout", "Object", "Type", "View", "Window", "Help",
+    ];
 
     let mut chosen = None;
     let mut wanted: Option<String> = None;
