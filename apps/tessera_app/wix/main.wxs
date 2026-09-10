@@ -39,16 +39,7 @@
             <File Id="exe"
                   Name="tessera-publisher.exe"
                   Source="$(var.CargoTargetBinDir)\tessera_app.exe"
-                  KeyPath="yes">
-              <!-- Not advertised. An advertised shortcut needs the feature to
-                   allow advertising, and this one does not: advertising exists
-                   to install a feature on first use, and there is one feature
-                   here that is always installed. -->
-              <Shortcut Id="StartMenu"
-                        Directory="ProgramMenuFolder"
-                        Name="Tessera Publisher"
-                        WorkingDirectory="APPLICATIONFOLDER"/>
-            </File>
+                  KeyPath="yes"/>
 
             <!-- The association, and it is a sibling of the file rather than a
                  child of it: WiX allows `ProgId` under a Component, a Class or
@@ -74,33 +65,19 @@
                in first. An install without them starts and quietly cannot
                soft-proof or export PDF/X.
 
-               Every file is named. WiX has no way to say "this directory",
-               and a component listing some of them would produce an installer
-               that carried some of the presses — which is worse than none,
-               because the ones missing are missing silently.
+               **One component per file, and every file named.** WiX will not
+               generate a GUID for a component holding several files unless its
+               keypath is a versioned one, and an ICC profile has no version
+               resource. And there is no way to say "this directory" at all, so
+               a list is the only option — a list carrying some of the presses
+               would be worse than none, because the ones missing are missing
+               silently. `the_installer_carries_every_profile` holds this list
+               against the repository.
 
                Sourced from `$(var.CargoTargetBinDir)`, which cargo-wix defines
                as an absolute path: `packaging/build.sh` stages the profiles
                beside the binary before calling it, so candle does not have to
-               guess what a relative path is relative to.
-
-               This list is checked against the repository by
-               `the_installer_carries_every_profile`. -->
-          <!-- The colour profiles, in the directory `bundled_directory`
-               looks in first. An install without them starts and quietly
-               cannot soft-proof or export PDF/X.
-
-               **One component per file.** WiX will not generate a GUID for
-               a component holding several files unless its keypath is a
-               versioned one, and an ICC profile has no version resource:
-               "Create multiple components to use automatically generated
-               guids" is the error, and this is it done.
-
-               Every file is named, because WiX has no way to say "this
-               directory" — and a list carrying some of the presses is
-               worse than none, since the ones missing are missing
-               silently. `the_installer_carries_every_profile` holds this
-               list against the repository. -->
+               guess what a relative path is relative to. -->
           <Directory Id="ProfilesFolder" Name="profiles">
             <Component Id="Profile0" Guid="*">
               <File Id="Profile0File"
@@ -165,12 +142,34 @@
           </Directory>
         </Directory>
       </Directory>
-      <Directory Id="ProgramMenuFolder"/>
+      <Directory Id="ProgramMenuFolder">
+        <!-- **A component of its own, keyed on the registry.** A non-advertised
+             shortcut in a per-machine component fails ICE43 and ICE57: the
+             shortcut is per-user data and the file it points at is per-machine,
+             so the component would have two owners and no honest keypath. An
+             HKCU value is the keypath Windows expects here, and it is what
+             tells the installer whether *this* user has the shortcut. -->
+        <Component Id="StartMenuShortcut" Guid="*">
+          <Shortcut Id="StartMenu"
+                    Name="Tessera Publisher"
+                    Description="Lay out pages for print and screen"
+                    Target="[APPLICATIONFOLDER]tessera-publisher.exe"
+                    WorkingDirectory="APPLICATIONFOLDER"/>
+          <RemoveFolder Id="RemoveProgramMenuFolder" On="uninstall"/>
+          <RegistryValue Root="HKCU"
+                         Key="Software\Tessera\Publisher"
+                         Name="installed"
+                         Type="integer"
+                         Value="1"
+                         KeyPath="yes"/>
+        </Component>
+      </Directory>
     </Directory>
 
     <Feature Id="Complete" Level="1" Title="Tessera Publisher" Display="expand"
              ConfigurableDirectory="APPLICATIONFOLDER" AllowAdvertise="no" Absent="disallow">
       <ComponentRef Id="Binary"/>
+      <ComponentRef Id="StartMenuShortcut"/>
       <ComponentRef Id="Profile0"/>
       <ComponentRef Id="Profile1"/>
       <ComponentRef Id="Profile2"/>

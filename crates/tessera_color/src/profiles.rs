@@ -632,6 +632,43 @@ mod tests {
     }
 
     #[test]
+    fn every_installer_shortcut_is_keyed_on_the_registry() {
+        // **ICE43 and ICE57, which only a release build runs.** A
+        // non-advertised shortcut is per-user data; the executable it points at
+        // is per-machine. Put both in one component and Windows has no honest
+        // answer to "is this installed for this user", so the validator refuses
+        // the package — after candle and light have otherwise succeeded, which
+        // means a green local build and a failed release.
+        //
+        // The rule the ICEs enforce: a component holding a shortcut is keyed on
+        // an HKCU value, not on a file.
+        let Ok(text) = std::fs::read_to_string(installer()) else {
+            return;
+        };
+
+        let mut shortcuts = 0;
+        for component in text.split("<Component ").skip(1) {
+            let component = component
+                .split_once("</Component>")
+                .map_or(component, |(inside, _)| inside);
+            if !component.contains("<Shortcut") {
+                continue;
+            }
+            shortcuts += 1;
+            assert!(
+                component.contains("<RegistryValue") && component.contains("Root=\"HKCU\""),
+                "a component with a shortcut is keyed on a file, not on an \
+                 HKCU value: ICE43 and ICE57 will refuse the package"
+            );
+        }
+        assert_eq!(
+            shortcuts, 1,
+            "the installer should place exactly one shortcut; a count of zero \
+             means an install with nothing in the Start menu"
+        );
+    }
+
+    #[test]
     fn the_installer_carries_every_profile() {
         // WiX has no way to say "this directory", so `main.wxs` names each file
         // — and a component listing *some* of them produces an installer that
