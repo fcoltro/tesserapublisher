@@ -64,6 +64,92 @@ jobs:
           path: packaging/out/*
           if-no-files-found: error
 
+  # The release itself. **Without this the tag built three installers into a
+  # workflow run and stopped there** — run artifacts expire, need a GitHub
+  # account to download, and are not something anybody can be pointed at. A
+  # release somebody cannot download is not a release.
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    # Only for a tag. `workflow_dispatch` exists to exercise the packaging
+    # without cutting a release, and it must not cut one by accident.
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # Refused rather than published half-built. A release page carrying two of
+      # three platforms is one people on the third quietly conclude is unsupported.
+      - name: Check all three installers arrived
+        run: |
+          ls -la dist
+          for ext in msi dmg AppImage; do
+            if ! ls dist/*."$ext" >/dev/null 2>&1; then
+              echo "No .$ext in dist: refusing to publish a partial release" >&2
+              exit 1
+            fi
+          done
+
+      # Anything with a suffix — alpha, beta, rc — is a prerelease. That is not
+      # cosmetic: `/releases/latest` skips prereleases, and the update check in
+      # apps/tessera_app/src/releases.rs skips them again, so tagging an alpha
+      # cannot tell everybody on a stable build to install it.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          pre=""
+          case "$TAG" in
+            *-alpha*|*-beta*|*-rc*) pre="--prerelease" ;;
+          esac
+
+          cat > notes.md <<'NOTES'
+          ## Not signed, and not yet verified by hand
+
+          These builds carry no code-signing certificate, because signing needs
+          one belonging to a person rather than to a repository. What that means
+          when you install:
+
+          - **Windows** — SmartScreen will warn. "More info" then "Run anyway".
+          - **macOS** — Gatekeeper will refuse a double-click. Right-click the
+            application and choose Open, once.
+          - **Linux** — nothing to do; an AppImage runs as downloaded.
+
+          `docs/RELEASING.md` records what is owed here and who can do it.
+
+          ## What is actually proven
+
+          The headless test suite passes on Windows, macOS and Linux, and the
+          three installers are built by CI from this tag. That is compilation
+          and behaviour that a test can reach.
+
+          It is **not** a claim that the application has been used. The GPU
+          render tests are skipped by default, so nothing that reaches the
+          screen is covered; the first-run tour, the update notice and the
+          input-method composition preview have never been looked at on a
+          screen; and no screen reader has been run against the interface.
+          Hand checks are owed for most milestones.
+
+          This is why it is an alpha. Please report what you find.
+
+          ## What is in it
+
+          Page layout with frames, text on a real shaping engine, paragraph and
+          character styles, parent pages and threading, grids and guides,
+          swatches with spot inks, ICC soft proofing against nine bundled press
+          profiles, preflight, and PDF/X export with crop marks, bleed and
+          separations.
+          NOTES
+
+          gh release create "$TAG" --title "Tessera Publisher $TAG" --notes-file notes.md $pre dist/*
+
   # Signing and notarization are **not** done here, and that is deliberate
   # rather than forgotten. Both need certificates that belong to a person or an
   # organisation, not to a repository, and a workflow that pretended to sign

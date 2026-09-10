@@ -4,7 +4,21 @@
 
 A tag. `packaging/build.sh` turns a release build into an installer, the
 `Release` workflow runs it on all three platforms when a `v*` tag is pushed, and
-the artefacts come back attached to that run.
+a final job collects the three and creates the GitHub release with them attached.
+
+That last job is the point. The workflow originally stopped at the run's
+artifacts, which expire, need a GitHub account to download, and are not
+something anybody can be pointed at — a release nobody can download is not a
+release. It refuses to publish unless all three installers arrived, because a
+release page carrying two of three platforms is one people on the third quietly
+conclude is unsupported.
+
+**A tag with a suffix is a prerelease.** `-alpha`, `-beta` and `-rc` all set
+`--prerelease`, and that is not cosmetic: GitHub's `/releases/latest` skips
+prereleases, and `apps/tessera_app/src/releases.rs` skips them again, so tagging
+an alpha cannot tell everybody on a stable build to install it. Two independent
+refusals, because this is the kind of mistake nobody notices until several
+hundred people have been told to downgrade their working copy.
 
 Installers are built from a tag and never from a branch, because a build
 somebody can download has to correspond to a commit somebody can name. "The
