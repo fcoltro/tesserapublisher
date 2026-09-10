@@ -480,8 +480,8 @@ impl Story {
     /// Inserting inside a run extends it. Inserting at a boundary joins the
     /// run to the **left** — what every editor does, and what makes typing
     /// after a bold word continue bold.
-    /// A copy with `text` inserted at `at`, for showing something that is not
-    /// part of the document.
+    /// A copy with `replacing` swapped for `text`, for showing something that
+    /// is not part of the document.
     ///
     /// **A copy, on purpose.** What an input method is composing belongs to the
     /// input method until it is committed. Written into the story it would be
@@ -489,11 +489,23 @@ impl Story {
     /// yet to end up in a file — so the composition is spliced into a copy that
     /// lives as long as it takes to lay one frame out.
     ///
-    /// The inserted text takes the formatting at `at`, which is what
+    /// The inserted text takes the formatting where it lands, which is what
     /// `insert_text` does and what "in the frame's own font" means.
-    pub fn with_provisional(&self, at: usize, text: &str) -> Story {
+    ///
+    /// **A range rather than a point**, because an input method composing over
+    /// a selection replaces it — that is what `EditBuffer::insert` does on
+    /// commit. Splicing at the caret instead left the selected text on screen
+    /// with the composition beside it, so the preview showed one thing and
+    /// committing produced another. An empty range is a caret, and needs no
+    /// special case.
+    pub fn with_provisional(&self, replacing: Range<usize>, text: &str) -> Story {
         let mut shown = self.clone();
-        shown.insert_text(at.min(shown.text.len()), text);
+        let start = replacing.start.min(shown.text.len());
+        let end = replacing.end.clamp(start, shown.text.len());
+        if start < end {
+            shown.delete_range(start..end);
+        }
+        shown.insert_text(start, text);
         shown
     }
 
@@ -1225,7 +1237,7 @@ mod provisional_tests {
         // story would be undoable, autosaved and savable — three ways for text
         // nobody has chosen yet to end up in a file.
         let story = Story::new("nihon");
-        let shown = story.with_provisional(2, "XX");
+        let shown = story.with_provisional(2..2, "XX");
         assert_eq!(story.text, "nihon");
         assert_eq!(shown.text, "niXXhon");
         assert!(shown.runs_are_sound());
@@ -1244,17 +1256,43 @@ mod provisional_tests {
                 ..Default::default()
             },
         );
-        let shown = story.with_provisional(3, "ZZ");
+        let shown = story.with_provisional(3..3, "ZZ");
         let run = shown.run_at(3).expect("the run the splice landed in");
         assert_eq!(run.local.weight, Some(700));
         assert!(shown.runs_are_sound());
     }
 
     #[test]
+    fn a_splice_over_a_range_replaces_it() {
+        // **What committing actually does.** An input method composing over a
+        // selection replaces it, so the preview has to as well — splicing at the
+        // caret left the selected text on screen with the composition beside it,
+        // and committing then produced something the preview never showed.
+        let story = Story::new("nihon");
+        let shown = story.with_provisional(0..2, "XX");
+        assert_eq!(story.text, "nihon", "the story was altered");
+        assert_eq!(shown.text, "XXhon");
+        assert!(shown.runs_are_sound());
+    }
+
+    #[test]
+    fn a_splice_over_a_backwards_or_overlong_range_does_not_panic() {
+        // A range from a buffer that has since shrunk, or a cursor dragged
+        // right-to-left. Neither is a reason to bring the application down.
+        let story = Story::new("ab");
+        assert_eq!(story.with_provisional(1..99, "Z").text, "aZ");
+        // Built rather than written: `2..0` spelled out is an empty range
+        // clippy will not have, and rightly — it is bad *input* here, not
+        // something to iterate.
+        let backwards = Range { start: 2, end: 0 };
+        assert_eq!(story.with_provisional(backwards, "Z").text, "abZ");
+    }
+
+    #[test]
     fn a_splice_past_the_end_lands_at_the_end() {
         // A caret position from a buffer that has since shrunk must not panic.
         let story = Story::new("ab");
-        assert_eq!(story.with_provisional(99, "!").text, "ab!");
+        assert_eq!(story.with_provisional(99..99, "!").text, "ab!");
     }
 }
 

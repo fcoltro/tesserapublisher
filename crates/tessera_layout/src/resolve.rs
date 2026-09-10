@@ -152,8 +152,12 @@ pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Composing {
     pub story: StoryId,
-    /// Where it sits, as a byte offset into the stored story.
-    pub at: usize,
+    /// What it stands in for, as a byte range of the stored story.
+    ///
+    /// Empty at a bare caret. A composition begun with text selected replaces
+    /// that text, which is what committing does — so the preview has to show
+    /// the same thing, or it is showing a result that will not happen.
+    pub replacing: std::ops::Range<usize>,
     pub text: String,
 }
 
@@ -174,8 +178,13 @@ pub fn resolve_composing(
         Scope::Master(id) => doc.pages_of_master(id),
     };
     // Spliced once, here, and lent to every frame below.
-    let spliced = composing
-        .and_then(|c| Some((c.story, doc.story(c.story)?.with_provisional(c.at, &c.text))));
+    let spliced = composing.and_then(|c| {
+        Some((
+            c.story,
+            doc.story(c.story)?
+                .with_provisional(c.replacing.clone(), &c.text),
+        ))
+    });
     let composed = spliced.as_ref().map(|(id, story)| (*id, story));
     resolve_pages(doc, shaper, &shown, composed)
 }

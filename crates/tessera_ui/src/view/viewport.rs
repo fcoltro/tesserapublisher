@@ -298,6 +298,14 @@ pub struct CaretOnPage {
     ///
     /// Empty unless something is being composed.
     pub composing: Vec<tessera_text::TextRect>,
+    /// The clause inside that composition the input method is converting now.
+    ///
+    /// Drawn as a heavier underline over the lighter one. Japanese and Chinese
+    /// are converted a clause at a time, and with one weight for the whole
+    /// composition nothing on screen says which part the candidate window is
+    /// offering candidates for. Empty when the platform did not say, which many
+    /// input methods never do.
+    pub clause: Vec<tessera_text::TextRect>,
 }
 
 /// Measure them.
@@ -320,7 +328,7 @@ fn caret_geometry(state: &mut TesseraApp) -> Option<CaretOnPage> {
     // the composition, so a caret measured without it would sit where the caret
     // was before the composition started — several characters to the left of the
     // text being typed, which looks like a broken caret rather than a preview.
-    let Some((at, text)) = buffer.composing() else {
+    let Some((replacing, text)) = buffer.composing() else {
         let geometry = shaper.caret_geometry(
             buffer.story(),
             open.document(),
@@ -332,10 +340,14 @@ fn caret_geometry(state: &mut TesseraApp) -> Option<CaretOnPage> {
             frame: *id,
             geometry,
             composing: Vec::new(),
+            clause: Vec::new(),
         });
     };
 
-    let shown = buffer.story().with_provisional(at, text);
+    // The same replacement the layout made, so the caret and the underline are
+    // measured against the text the canvas is actually showing.
+    let shown = buffer.story().with_provisional(replacing.clone(), text);
+    let at = replacing.start;
     let after = at + text.len();
     // At the end of the composition, which is where the next character will go.
     let geometry = shaper.caret_geometry(
@@ -352,22 +364,38 @@ fn caret_geometry(state: &mut TesseraApp) -> Option<CaretOnPage> {
     // line, which is exactly what an underline needs and what the selection
     // highlight already knows how to produce. No new machinery for a second way
     // of saying "these bytes are here".
-    let composing = shaper
-        .caret_geometry(
-            &shown,
-            open.document(),
-            width,
-            tessera_text::edit::TextCursor {
-                position: after,
-                anchor: at,
-            },
-            CARET_PX,
-        )
-        .selection;
+    let mut extent = |from: usize, to: usize| {
+        shaper
+            .caret_geometry(
+                &shown,
+                open.document(),
+                width,
+                tessera_text::edit::TextCursor {
+                    position: to,
+                    anchor: from,
+                },
+                CARET_PX,
+            )
+            .selection
+    };
+    let composing = extent(at, after);
+    // The clause the input method is converting *now*, if it said. Its range is
+    // relative to the composition, so it is offset by wherever the composition
+    // landed — and clamped, because a stale range from a composition that has
+    // since shortened would otherwise reach past the end of the story.
+    let clause = buffer
+        .composing_clause()
+        .map(|c| {
+            let start = at + c.start.min(text.len());
+            let end = at + c.end.min(text.len());
+            extent(start, end)
+        })
+        .unwrap_or_default();
     Some(CaretOnPage {
         frame: *id,
         geometry,
         composing,
+        clause,
     })
 }
 
@@ -2405,7 +2433,17 @@ fn draw_overlays(
         for r in &caret.composing {
             painter.line_segment(
                 [local(r.x0, r.y1), local(r.x1, r.y1)],
-                Stroke::new(CARET_PX, readable),
+                Stroke::new(CARET_PX, readable.gamma_multiply(0.55)),
+            );
+        }
+        // The clause being converted, heavier and at full strength, over the
+        // lighter rule. Both are drawn: the thin one says how far the
+        // composition runs, the thick one says which part of it the candidate
+        // window belongs to, and neither answers the other's question.
+        for r in &caret.clause {
+            painter.line_segment(
+                [local(r.x0, r.y1), local(r.x1, r.y1)],
+                Stroke::new(CARET_PX * 2.0, readable),
             );
         }
 
@@ -2717,6 +2755,93 @@ mod tests {
             before.x0,
             after.x0
         );
+    }
+
+    #[test]
+    fn the_converting_clause_is_underlined_apart_from_the_rest() {
+        // Two rules, answering two questions: the light one says how far the
+        // composition runs, the heavy one says which part of it the candidate
+        // window belongs to. One weight for both answers neither.
+        let (mut state, id) = a_text_frame(200.0, "nihon");
+        let story = match state.active().document().frame(id).expect("frame").kind {
+            tessera_document::nodes::FrameKind::Text { story, .. } => story,
+            _ => panic!("a text frame"),
+        };
+        let content = state
+            .active()
+            .document()
+            .story(story)
+            .cloned()
+            .unwrap_or_default();
+        let mut buffer = tessera_text::edit::EditBuffer::new(content);
+        buffer.set_cursor(5);
+        buffer.set_ime_preedit(Some("gonokuni".to_string()));
+        buffer.set_ime_clause(Some(0..2));
+        state.active_mut().editing = Some((id, buffer));
+
+        let caret = caret_geometry(&mut state).expect("a caret");
+        assert!(!caret.composing.is_empty(), "the composition has no extent");
+        assert!(
+            !caret.clause.is_empty(),
+            "the converting clause has no extent"
+        );
+
+        // The clause is a part of the composition, so it cannot be wider.
+        let span =
+            |rects: &[tessera_text::TextRect]| rects.iter().map(|r| r.x1 - r.x0).sum::<f64>();
+        assert!(
+            span(&caret.clause) < span(&caret.composing),
+            "the clause is not narrower than the composition it sits inside"
+        );
+    }
+
+    #[test]
+    fn a_composition_replacing_a_selection_is_measured_where_it_will_land() {
+        // **The assertion has to be the caret's position, not the absence of a
+        // selection wash.** The wash was already absent before this was fixed,
+        // because the caret is measured with a collapsed cursor either way — so
+        // checking for it would have passed against the bug.
+        //
+        // What was wrong is where the caret *sat*. Composing "b" over a selected
+        // "quick" used to lay out "the quickb fox" and put the caret after that
+        // `b`, well to the right of where committing would leave it. It now lays
+        // out "the b fox".
+        let (mut state, id) = a_text_frame(200.0, "the quick fox");
+        let story = match state.active().document().frame(id).expect("frame").kind {
+            tessera_document::nodes::FrameKind::Text { story, .. } => story,
+            _ => panic!("a text frame"),
+        };
+        let content = state
+            .active()
+            .document()
+            .story(story)
+            .cloned()
+            .unwrap_or_default();
+
+        // Where a caret sits at the end of the selection, with nothing composed.
+        let mut plain = tessera_text::edit::EditBuffer::new(content.clone());
+        plain.set_cursor(9);
+        state.active_mut().editing = Some((id, plain));
+        let reference = caret_geometry(&mut state)
+            .expect("a caret")
+            .geometry
+            .caret
+            .expect("a caret rectangle");
+
+        let mut buffer = tessera_text::edit::EditBuffer::new(content);
+        buffer.select(4..9);
+        buffer.set_ime_preedit(Some("b".to_string()));
+        state.active_mut().editing = Some((id, buffer));
+        let composing = caret_geometry(&mut state).expect("a caret");
+        let after = composing.geometry.caret.expect("a caret rectangle");
+
+        assert!(
+            after.x0 < reference.x0,
+            "the caret is at {} — right of {}, so the selection is still laid              out and the composition was put after it",
+            after.x0,
+            reference.x0
+        );
+        assert!(!composing.composing.is_empty());
     }
 
     #[test]

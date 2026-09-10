@@ -710,6 +710,28 @@ unverified one.
   Tessera in exactly the languages it is for. **Nobody has typed Japanese at
   it.** The decision is tested; that the platform does the right thing with it
   is the acceptance line below.
+- [x] The clause being converted is underlined apart from the rest. **Found by
+  reading the code rather than by any checkbox**: the handler destructured
+  `Preedit { text, .. }`, and that `..` discarded `active_range_chars` — the one
+  thing that says which clause the candidate window is offering candidates for.
+  Japanese and Chinese are converted a clause at a time, so with one underline
+  for the whole composition nothing on screen distinguishes the part being
+  worked on. Two rules now answer two questions: a light one for how far the
+  composition runs, a heavy one for which part of it is live. The platform
+  reports the range in *characters* and it is converted to bytes once on
+  arrival — two units in one struct is how off-by-one bugs are made — and a
+  range that does not land on a character boundary is dropped rather than
+  guessed at, because an underline under half a word is worse than one under all
+  of it.
+- [x] A composition begun over a selection previews what committing will do.
+  **The preview and the result disagreed.** The composition was spliced at the
+  caret while the selection stayed laid out, so replacing a selected word showed
+  the new text beside the old one — and committing then deleted the selection
+  and put the text where it had been. `Story::with_provisional` now takes a
+  *range* rather than a point, which is the same operation `EditBuffer::insert`
+  performs on commit; an empty range is a caret and needs no special case. The
+  test asserts where the caret **sits**, because the obvious assertion — that no
+  selection wash is drawn — was already true against the bug.
 - [ ] **Verified on Windows**, with Linux and macOS recorded as unverified
   until someone has done it.
 
@@ -1482,7 +1504,7 @@ application.
 > have it RIP correctly. Package the document and get one folder holding the
 > file, its links and its fonts.
 
-**Nine of ten items performed, and what is owed is not more code.**
+**Nine of eleven items performed, and what is owed is not more code.**
 
 *"Have it RIP correctly"* needs a commercial printer and a press. *"Open it in
 Acrobat’s output preview"* needs Acrobat. Both are a person’s job, and ticking
@@ -1622,6 +1644,11 @@ licence to pass the font on. See the packaging item.
     cut through by the trim.
   - No colour bar in an RGB export. There are no plates to measure, and a
     printer seeing one would reasonably assume the file was separated.
+- [ ] **Acrobat's output preview**: separations, trim and bleed boxes, and the
+  embedded output intent, confirmed by eye. Named in the acceptance sentence
+  above and, until now, tracked by nothing — the prose said it was owed and no
+  box counted it, so it did not appear anywhere as outstanding. Needs Acrobat
+  and a person.
 - [ ] Font subsetting verified by RIP, not only by Acrobat. **Cannot be done
   here.** It needs a real RIP and a real press, which is a person with hardware
   rather than a test. Left open on purpose: ticking it on the strength of

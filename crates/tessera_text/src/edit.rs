@@ -31,11 +31,25 @@ pub struct EditBuffer {
     ///
     /// Not part of the story until commit — which is what keeps text nobody has
     /// chosen yet out of undo, the autosave and the file. It is *shown* by
-    /// splicing it into a copy at the caret: [`Story::with_provisional`] makes
-    /// the copy, `tessera_layout::resolve::Composing` carries the request, and
-    /// the underline that marks it as provisional is drawn beside the caret in
-    /// `tessera_ui::view::viewport`. Read through [`EditBuffer::composing`].
+    /// splicing it into a copy over the selection: [`Story::with_provisional`]
+    /// makes the copy, `tessera_layout::resolve::Composing` carries the request,
+    /// and the underline that marks it as provisional is drawn beside the caret
+    /// in `tessera_ui::view::viewport`. Read through [`EditBuffer::composing`].
     ime_preedit: Option<String>,
+    /// The clause inside the composition the input method is converting now, as
+    /// a byte range within `ime_preedit`.
+    ///
+    /// **Japanese and Chinese are converted a clause at a time.** A whole
+    /// sentence is composed, then each clause in turn is offered candidates,
+    /// and the platform says which one by marking a range. Without it the whole
+    /// composition carries one underline and nothing on screen says which part
+    /// the candidate window belongs to — which is the difference between a
+    /// preview somebody can convert against and a preview they cannot.
+    ///
+    /// The platform reports it in *characters*; it is stored here in bytes,
+    /// converted once on arrival, because everything else in this module counts
+    /// bytes and two units in one struct is how off-by-one bugs are made.
+    ime_active: Option<Range<usize>>,
     /// Formatting chosen at a caret, waiting for text to apply it to.
     ///
     /// Character formatting needs a range and a caret is not one. Applying it
@@ -56,6 +70,7 @@ impl EditBuffer {
                 anchor: 0,
             },
             ime_preedit: None,
+            ime_active: None,
             pending: crate::story::CharacterFormat::default(),
         }
     }
@@ -138,7 +153,6 @@ impl EditBuffer {
         };
     }
 
-    /// Insert text, replacing any selection. Also commits an IME composition.
     /// Merge character formatting into a range of the buffer's own story.
     ///
     /// The buffer owns a story the document also holds, and the two are kept
@@ -229,8 +243,14 @@ impl EditBuffer {
         self.story.clear_paragraph_style_link(range, id, format);
     }
 
+    /// Insert text, replacing any selection. Also commits an IME composition.
+    ///
+    /// The order matters and is the whole of what a commit means: the
+    /// composition is dropped, the selection it stood in for is deleted, and
+    /// the text lands where the selection was — which is exactly the picture
+    /// [`EditBuffer::composing`] was showing while it was being composed.
     pub fn insert(&mut self, text: &str) {
-        self.ime_preedit = None;
+        self.set_ime_preedit(None);
         self.delete_selection();
         // Where the text lands, taken before the caret moves past it.
         let at = self.cursor.position;
@@ -292,16 +312,57 @@ impl EditBuffer {
 
     pub fn set_ime_preedit(&mut self, text: Option<String>) {
         self.ime_preedit = text.filter(|t| !t.is_empty());
+        if self.ime_preedit.is_none() {
+            // A clause of a composition that is gone would be a range into
+            // nothing, and the next composition would inherit it.
+            self.ime_active = None;
+        }
     }
 
-    /// What is being composed, and where it sits in the story.
+    /// Say which clause the input method is converting.
     ///
-    /// `None` when nothing is, so the ordinary case costs nothing. The caret's
-    /// position is where it goes: an input method composes at the caret, and
-    /// the range it occupies once spliced is `at..at + text.len()`.
-    pub fn composing(&self) -> Option<(usize, &str)> {
+    /// Takes the range in **characters**, as the platform reports it, and
+    /// converts once. Anything that does not land on a character boundary of
+    /// the current composition is dropped rather than guessed at: an underline
+    /// under the wrong half of a word is worse than one under all of it.
+    pub fn set_ime_clause(&mut self, chars: Option<Range<usize>>) {
+        self.ime_active = chars.and_then(|chars| {
+            let text = self.ime_preedit.as_deref()?;
+            let byte = |at: usize| {
+                if at == text.chars().count() {
+                    Some(text.len())
+                } else {
+                    text.char_indices().nth(at).map(|(b, _)| b)
+                }
+            };
+            let (start, end) = (byte(chars.start)?, byte(chars.end)?);
+            (start < end).then_some(start..end)
+        });
+    }
+
+    /// What is being composed, and what it stands in for.
+    ///
+    /// `None` when nothing is, so the ordinary case costs nothing. The range is
+    /// the selection the composition replaces — empty at a bare caret, which
+    /// needs no special case — and once spliced the composition occupies
+    /// `range.start .. range.start + text.len()`.
+    pub fn composing(&self) -> Option<(Range<usize>, &str)> {
         let text = self.ime_preedit.as_deref()?;
-        Some((self.cursor.position.min(self.story.text.len()), text))
+        let at = self
+            .selection_range()
+            .unwrap_or(self.cursor.position..self.cursor.position);
+        let end = self.story.text.len();
+        Some((at.start.min(end)..at.end.min(end), text))
+    }
+
+    /// The clause being converted, as a byte range within the composition.
+    ///
+    /// Relative to the composition, not to the story, so the caller adds
+    /// wherever the composition landed. `None` when the platform did not say —
+    /// which many input methods never do, and a whole-composition underline is
+    /// the right answer then.
+    pub fn composing_clause(&self) -> Option<Range<usize>> {
+        self.ime_active.clone()
     }
 
     pub fn ime_preedit(&self) -> Option<&str> {
@@ -342,6 +403,105 @@ impl EditBuffer {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn composing_over_a_selection_previews_what_committing_will_do() {
+        // **The preview and the result used to disagree.** The composition was
+        // spliced at the caret while the selection stayed on screen, so
+        // replacing a selected word showed the new text *beside* the old one —
+        // and committing then deleted the selection and put the text where it
+        // had been. A preview of a result that will not happen.
+        let mut buffer = EditBuffer::new(Story::new("the quick fox"));
+        buffer.select(4..9); // "quick"
+        assert_eq!(buffer.selection_range(), Some(4..9));
+
+        buffer.set_ime_preedit(Some("brown".to_string()));
+        let (replacing, text) = buffer.composing().expect("a composition");
+        assert_eq!(replacing, 4..9, "the composition does not stand in for it");
+
+        let shown = buffer.story().with_provisional(replacing, text);
+        assert_eq!(shown.text, "the brown fox");
+
+        // And committing produces exactly that.
+        buffer.insert("brown");
+        assert_eq!(buffer.story().text, "the brown fox");
+        assert_eq!(
+            buffer.ime_preedit(),
+            None,
+            "the composition outlived commit"
+        );
+    }
+
+    #[test]
+    fn composing_at_a_bare_caret_replaces_nothing() {
+        // The ordinary case, and it needs no special path: an empty range at
+        // the caret is the same operation as a replacement.
+        let mut buffer = EditBuffer::new(Story::new("nihon"));
+        buffer.set_cursor(5);
+        buffer.set_ime_preedit(Some("go".to_string()));
+        let (replacing, text) = buffer.composing().expect("a composition");
+        assert!(replacing.is_empty());
+        assert_eq!(
+            buffer.story().with_provisional(replacing, text).text,
+            "nihongo"
+        );
+    }
+
+    #[test]
+    fn the_clause_being_converted_arrives_in_bytes() {
+        // The platform counts characters; everything here counts bytes. Two
+        // units in one struct is how off-by-one bugs are made, so it converts
+        // once on arrival — and the case that matters is text where the two
+        // disagree, which is every language an input method exists for.
+        let mut buffer = EditBuffer::new(Story::default());
+        buffer.set_ime_preedit(Some("にほんご".to_string()));
+        buffer.set_ime_clause(Some(1..3));
+        // Three-byte characters: characters 1..3 are bytes 3..9.
+        assert_eq!(buffer.composing_clause(), Some(3..9));
+    }
+
+    #[test]
+    fn a_clause_running_to_the_end_is_kept() {
+        // The end index is one past the last character, which `nth` cannot
+        // reach — the first version of this dropped every clause that ran to
+        // the end of the composition, which is most of them.
+        let mut buffer = EditBuffer::new(Story::default());
+        buffer.set_ime_preedit(Some("にほん".to_string()));
+        buffer.set_ime_clause(Some(0..3));
+        assert_eq!(buffer.composing_clause(), Some(0..9));
+    }
+
+    #[test]
+    fn a_clause_that_makes_no_sense_is_dropped_rather_than_guessed_at() {
+        // An underline under the wrong half of a word is worse than one under
+        // all of it.
+        let mut buffer = EditBuffer::new(Story::default());
+        buffer.set_ime_preedit(Some("にほん".to_string()));
+        // Built rather than written as literals: `2..1` and `0..0` spelled out
+        // are what clippy calls an empty range that will yield no values, and it
+        // is right — these are here as bad *input*, not as things to iterate.
+        let nonsense = [
+            Range { start: 9, end: 12 },
+            Range { start: 2, end: 1 },
+            Range { start: 0, end: 0 },
+        ];
+        for nonsense in nonsense {
+            buffer.set_ime_clause(Some(nonsense.clone()));
+            assert_eq!(buffer.composing_clause(), None, "{nonsense:?} was believed");
+        }
+    }
+
+    #[test]
+    fn a_clause_does_not_outlive_the_composition_it_indexes() {
+        // Otherwise it is a range into nothing, and the next composition
+        // inherits an underline belonging to the last one.
+        let mut buffer = EditBuffer::new(Story::default());
+        buffer.set_ime_preedit(Some("にほん".to_string()));
+        buffer.set_ime_clause(Some(0..3));
+        buffer.set_ime_preedit(None);
+        assert_eq!(buffer.composing_clause(), None);
+    }
+
     use super::*;
     use crate::story::Story;
 

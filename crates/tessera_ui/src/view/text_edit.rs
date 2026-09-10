@@ -64,9 +64,19 @@ pub fn handle_events(ui: &Ui, buffer: &mut EditBuffer) -> bool {
                     changed = true;
                 }
             }
-            Event::Ime(ImeEvent::Preedit { text, .. }) => {
+            Event::Ime(ImeEvent::Preedit {
+                text,
+                active_range_chars,
+            }) => {
                 // An empty preedit means the IME was dismissed.
                 buffer.set_ime_preedit(Some(text));
+                // **The clause being converted, which used to be thrown away.**
+                // Japanese and Chinese are converted a clause at a time; this is
+                // the platform saying which one the candidate window is offering
+                // candidates for. Set after the text, because it is a range into
+                // it. `Enabled` and `Disabled` stay ignored — egui deprecated
+                // both and no longer sends them.
+                buffer.set_ime_clause(active_range_chars);
             }
             Event::Ime(ImeEvent::Commit(text)) => {
                 buffer.insert(&text);
@@ -162,6 +172,46 @@ mod tests {
         );
         assert_eq!(buffer.ime_preedit(), Some("に"));
         assert_eq!(buffer.story().text, "");
+    }
+
+    #[test]
+    fn the_clause_being_converted_survives_the_event() {
+        // **It was discarded.** The handler destructured
+        // `Preedit { text, .. }`, and that `..` threw away the one thing that
+        // says which clause the candidate window is offering candidates for.
+        // Japanese converts a clause at a time; without this the whole
+        // composition carries one underline and nothing distinguishes the part
+        // being worked on.
+        let mut buffer = EditBuffer::new(Story::default());
+        run_with_events(
+            vec![Event::Ime(ImeEvent::Preedit {
+                text: "にほんご".to_string(),
+                active_range_chars: Some(0..2),
+            })],
+            &mut buffer,
+        );
+        assert_eq!(buffer.ime_preedit(), Some("にほんご"));
+        assert_eq!(
+            buffer.composing_clause(),
+            Some(0..6),
+            "the active clause did not survive the event"
+        );
+    }
+
+    #[test]
+    fn an_ime_that_says_nothing_about_clauses_still_composes() {
+        // Many input methods never report one, and a whole-composition
+        // underline is the right answer then — not a missing preview.
+        let mut buffer = EditBuffer::new(Story::default());
+        run_with_events(
+            vec![Event::Ime(ImeEvent::Preedit {
+                text: "ni".to_string(),
+                active_range_chars: None,
+            })],
+            &mut buffer,
+        );
+        assert_eq!(buffer.ime_preedit(), Some("ni"));
+        assert_eq!(buffer.composing_clause(), None);
     }
 
     #[test]

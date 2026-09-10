@@ -196,13 +196,13 @@ fn composing(
     editing: Option<&(tessera_document::ids::FrameId, EditBuffer)>,
 ) -> Option<tessera_layout::resolve::Composing> {
     let (id, buffer) = editing?;
-    let (at, text) = buffer.composing()?;
+    let (replacing, text) = buffer.composing()?;
     let tessera_document::nodes::FrameKind::Text { story, .. } = document.frame(*id)?.kind else {
         return None;
     };
     Some(tessera_layout::resolve::Composing {
         story,
-        at,
+        replacing,
         text: text.to_string(),
     })
 }

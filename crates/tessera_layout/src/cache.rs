@@ -204,7 +204,7 @@ mod tests {
         let revision = doc.revision();
         let composing = Composing {
             story,
-            at: 2,
+            replacing: 2..2,
             text: "hongo".to_string(),
         };
         let composed = glyphs(cache.get_composing(
