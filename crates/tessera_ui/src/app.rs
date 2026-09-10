@@ -414,6 +414,10 @@ pub struct TesseraApp {
     /// The first-run tour, and where it has got to.
     pub tour: crate::tour::Tour,
 
+    /// What the platform has been told about the caret, so an input method can
+    /// put its candidate window there.
+    pub ime: crate::ime::Ime,
+
     /// What the application remembers between runs.
     ///
     /// Defaults here rather than being read from disk, because `headless` is
@@ -473,6 +477,7 @@ impl TesseraApp {
             prefs: crate::prefs::Preferences::default(),
             update_check: crate::update::Check::default(),
             tour: crate::tour::Tour::default(),
+            ime: crate::ime::Ime::default(),
         }
     }
 

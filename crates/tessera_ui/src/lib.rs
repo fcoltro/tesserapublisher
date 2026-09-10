@@ -14,6 +14,7 @@ pub mod cursor;
 pub mod docking;
 pub mod file_ops;
 pub mod icons;
+pub mod ime;
 pub mod keys;
 pub mod open_document;
 pub mod package;

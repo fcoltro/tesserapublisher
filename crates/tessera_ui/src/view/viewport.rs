@@ -172,6 +172,14 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // Worked out here, where the shaper is reachable: `draw_overlays` takes
     // the application immutably, and asking whether a story outgrows its frame
     // means laying it out.
+    // Where the candidate window goes. Told here rather than inside the drawing,
+    // because the platform needs it whether the chrome is showing or not: an
+    // input method in preview mode is still an input method.
+    let where_the_caret_is = caret
+        .as_ref()
+        .and_then(|(id, geometry)| caret_on_screen(state, rect, *id, geometry));
+    state.ime.follow(ui.ctx(), where_the_caret_is);
+
     let overset = overset_frames(state);
     if state.screen_mode.shows_chrome() {
         draw_overlays(ui, rect, state, caret.as_ref(), &overset);
@@ -368,6 +376,39 @@ fn is_text(state: &TesseraApp, id: FrameId) -> bool {
         state.active().document().frame(id).map(|f| &f.kind),
         Some(tessera_document::nodes::FrameKind::Text { .. })
     )
+}
+
+/// The caret's rectangle in screen pixels, for the platform's candidate window.
+///
+/// The bounding box of the four corners, not a transformed rectangle: a caret in
+/// a rotated frame is a leaning sliver, and `IMERect` takes an axis-aligned
+/// rectangle. The box around it is the closest true thing to say, and it errs
+/// towards a candidate window slightly clear of the text rather than over it.
+fn caret_on_screen(
+    state: &TesseraApp,
+    rect: Rect,
+    id: tessera_document::ids::FrameId,
+    geometry: &tessera_text::CaretGeometry,
+) -> Option<egui::Rect> {
+    let caret = geometry.caret?;
+    let frame = state.active().document().frame(id)?;
+    let bounds = frame.bounds;
+    let corner = |x: f64, y: f64| {
+        to_screen_pos(
+            state,
+            rect,
+            frame.transform.apply(DocPoint {
+                x: bounds.x + x,
+                y: bounds.y + y,
+            }),
+        )
+    };
+    Some(egui::Rect::from_points(&[
+        corner(caret.x0, caret.y0),
+        corner(caret.x1, caret.y0),
+        corner(caret.x1, caret.y1),
+        corner(caret.x0, caret.y1),
+    ]))
 }
 
 /// A document point on screen.

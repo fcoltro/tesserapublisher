@@ -651,8 +651,26 @@ unverified one.
 > floating box over the top of it. Commit it and find the text where the
 > preview was.
 
-- [ ] Composition preview rendered on canvas, in the frame.
-- [ ] Candidate window positioned against the caret.
+- [ ] Composition preview rendered on canvas, in the frame. The preedit has
+  reached `EditBuffer` since milestone 2 and is drawn nowhere — `ime_preedit()`
+  is called by nothing outside its own tests, and the comment beside the field
+  says "it is drawn (underlined)", which is a claim with no code under it. So a
+  Japanese typist composing sees the candidate window and an unchanged page.
+  What it needs: `resolve` taking a provisional splice of the story at the
+  caret, and `ResolveCache` taking that splice into its **key** — the document's
+  revision does not move while composing, so a cache keyed on revision alone
+  serves the layout from before the preedit and then keeps serving it. The
+  underline belongs with the caret and the selection highlight, drawn as
+  editing feedback rather than as character formatting, because that is what it
+  is.
+- [x] Candidate window positioned against the caret. `crates/tessera_ui/src/ime.rs`
+  sends `IMEAllowed` while a caret is live and `IMERect` where it is — the
+  bounding box of the caret's four transformed corners, so a rotated frame is
+  not a special case. Both only on a change: `IMEAllowed` sent every frame
+  abandons a composition in progress on some platforms, which would break
+  Tessera in exactly the languages it is for. **Nobody has typed Japanese at
+  it.** The decision is tested; that the platform does the right thing with it
+  is the acceptance line below.
 - [ ] **Verified on Windows**, with Linux and macOS recorded as unverified
   until someone has done it.
 
