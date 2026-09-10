@@ -45,6 +45,9 @@ impl eframe::App for TesseraApp {
         // Rides on a frame that was going to be drawn anyway; asks for none
         // of its own.
         self.autosave_if_due();
+        // Likewise: the answer to a version check arrives on whatever frame
+        // it arrives on, and taking it costs a `try_recv` on the rest.
+        self.settle_update_check();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {

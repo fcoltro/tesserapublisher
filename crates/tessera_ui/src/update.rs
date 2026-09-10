@@ -140,6 +140,120 @@ impl Checking {
     }
 }
 
+/// Now, as seconds since the epoch.
+///
+/// Zero if the clock is set before 1970, which is a machine whose clock cannot
+/// be trusted to measure a day anyway — and zero makes a check due, which
+/// errs towards asking rather than towards silently never asking again.
+pub fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
+}
+
+/// A check running on a thread of its own, and what it found.
+///
+/// **On a thread, because the alternative is a frozen window.** A release feed
+/// is a request to a server that may be slow, unreachable, or behind a captive
+/// portal that answers eventually; any of those blocking the frame would make
+/// the application appear to hang on launch, which is a worse first impression
+/// than being a version behind.
+///
+/// The notice outlives the answer: `found` is kept so the bar can stay up until
+/// somebody deals with it, rather than appearing for the one frame the answer
+/// arrived in.
+#[derive(Default)]
+pub struct Check {
+    /// The thread's answer, while it is still coming.
+    from: Option<std::sync::mpsc::Receiver<Found>>,
+    /// What it found, once.
+    found: Option<Found>,
+    /// Whether the notice has been dismissed.
+    ///
+    /// Not written to preferences. `Checking::seen` already records the version
+    /// that was found, so a dismissal that outlived the session would need to
+    /// agree with it about *which* version was dismissed — two places holding
+    /// one fact. Within a session this is enough; across sessions the daily
+    /// interval is what stops it being a nag.
+    dismissed: bool,
+}
+
+impl Check {
+    /// Start a check, if one is due.
+    ///
+    /// `fetch` returns the newest version and where to get it. It is supplied
+    /// by the caller rather than written here so that this crate needs no HTTP
+    /// client for one request a day — and so that everything that can be wrong
+    /// in a way nobody notices stays in a module with tests.
+    ///
+    /// Nothing is started when a check is not due, which includes the case of
+    /// it being switched off. That is the switch doing what it says.
+    pub fn begin<F>(checking: &Checking, now: u64, fetch: F) -> Check
+    where
+        F: FnOnce() -> Option<(String, String)> + Send + 'static,
+    {
+        if !checking.due(now) {
+            return Check::default();
+        }
+        let running = Version::running();
+        let (to, from) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let found = match fetch() {
+                Some((latest, url)) => compare(&latest, &url, running),
+                None => Found::Unknown,
+            };
+            // The receiver is gone if the application closed while the request
+            // was in flight. A check nobody is waiting for is not a failure.
+            let _ = to.send(found);
+        });
+        Check {
+            from: Some(from),
+            found: None,
+            dismissed: false,
+        }
+    }
+
+    /// Take the answer if it has arrived, and record that a check happened.
+    ///
+    /// Returns whether `checking` changed, so the caller knows whether the
+    /// preferences are worth writing. Called every frame; does nothing on
+    /// almost all of them.
+    pub fn settle(&mut self, checking: &mut Checking, now: u64) -> bool {
+        use std::sync::mpsc::TryRecvError;
+        let Some(from) = self.from.as_ref() else {
+            return false;
+        };
+        let found = match from.try_recv() {
+            Ok(found) => found,
+            Err(TryRecvError::Empty) => return false,
+            // The thread went away without answering. That is `Unknown` — and
+            // recording it stops this polling a dead channel forever.
+            Err(TryRecvError::Disconnected) => Found::Unknown,
+        };
+        self.from = None;
+        checking.checked(now, &found);
+        self.found = Some(found);
+        true
+    }
+
+    /// The newer version to tell somebody about, if there is one they have not
+    /// dismissed.
+    pub fn newer(&self) -> Option<(Version, &str)> {
+        if self.dismissed {
+            return None;
+        }
+        match self.found.as_ref()? {
+            Found::Newer { version, url } => Some((*version, url)),
+            _ => None,
+        }
+    }
+
+    /// Put the notice away for this session.
+    pub fn dismiss(&mut self) {
+        self.dismissed = true;
+    }
+}
+
 /// Read what a release feed said.
 ///
 /// Takes the text rather than a URL, so the decision is testable and the fetch
@@ -169,6 +283,97 @@ mod tests {
             minor,
             patch,
         }
+    }
+
+    /// Poll until the check settles, or give up.
+    ///
+    /// **A deadline rather than a number of attempts.** `try_recv` is fast
+    /// enough that ten thousand of them finish before the operating system has
+    /// scheduled the thread at all, so the first version of this failed on a
+    /// fast machine and would have passed on a slow one — exactly backwards for
+    /// a test about a thread.
+    fn settled(check: &mut Check, checking: &mut Checking, now: u64) -> bool {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if check.settle(checking, now) {
+                return true;
+            }
+            std::thread::yield_now();
+        }
+        false
+    }
+
+    #[test]
+    fn a_check_that_is_not_due_starts_no_thread() {
+        // **The switch has to actually do something.** A preference stored and
+        // never read is the failure this whole wiring exists to fix, so the
+        // off position is checked here rather than assumed.
+        let off = Checking {
+            enabled: false,
+            ..Default::default()
+        };
+        // Long past the interval, so the *only* reason nothing happens is the
+        // switch. A `now` inside the first day would have passed this test
+        // whether the switch worked or not.
+        let now = BETWEEN_CHECKS.as_secs() * 10;
+        let mut check = Check::begin(&off, now, || {
+            panic!("a check was made with the setting switched off")
+        });
+        let mut checking = off.clone();
+        assert!(!check.settle(&mut checking, now));
+        assert_eq!(checking, off);
+        assert!(check.newer().is_none());
+    }
+
+    #[test]
+    fn a_newer_version_arrives_and_is_remembered() {
+        let mut checking = Checking {
+            enabled: true,
+            ..Default::default()
+        };
+        // Past the interval. A fresh `Checking` has `last_checked` at zero, so
+        // a `now` inside the first day is *not* due — which is the module being
+        // right and cost this test one run to notice.
+        let now = BETWEEN_CHECKS.as_secs() + 9_000;
+        let mut check = Check::begin(&checking, now, || {
+            Some(("99.0.0".to_string(), "https://example/releases".to_string()))
+        });
+
+        assert!(
+            settled(&mut check, &mut checking, now),
+            "the answer never arrived"
+        );
+
+        assert_eq!(checking.last_checked, now);
+        assert_eq!(checking.seen.as_deref(), Some("99.0.0"));
+        let (version, url) = check.newer().expect("a newer version");
+        assert_eq!(version, v(99, 0, 0));
+        assert_eq!(url, "https://example/releases");
+
+        check.dismiss();
+        assert!(
+            check.newer().is_none(),
+            "a dismissed notice came back in the same session"
+        );
+    }
+
+    #[test]
+    fn a_fetch_that_answers_nothing_is_unknown_and_still_counts() {
+        let mut checking = Checking {
+            enabled: true,
+            ..Default::default()
+        };
+        let now = BETWEEN_CHECKS.as_secs() + 7_000;
+        let mut check = Check::begin(&checking, now, || None);
+        assert!(
+            settled(&mut check, &mut checking, now),
+            "the answer never arrived"
+        );
+        assert_eq!(checking.last_checked, now);
+        assert!(check.newer().is_none());
+        // And it stops asking. A settled check that kept returning `true` would
+        // write the preferences every frame for the rest of the session.
+        assert!(!check.settle(&mut checking, now + 1_000));
     }
 
     #[test]

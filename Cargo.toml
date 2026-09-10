@@ -65,6 +65,13 @@ serde      = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 zip        = "8"
 
+# One HTTP request a day, for the version check, and nothing else in the
+# workspace reaches the network. `platform-verifier` rather than a bundled root
+# store: a machine behind a corporate proxy trusts that proxy through the
+# operating system, and a client carrying its own roots fails there in a way
+# nobody can fix from inside the application.
+ureq       = { version = "3", default-features = false, features = ["rustls", "platform-verifier", "gzip"] }
+
 # Assets and export.
 flate2     = "1"
 image      = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

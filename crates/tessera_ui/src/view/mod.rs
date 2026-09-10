@@ -142,6 +142,53 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
             });
     }
 
+    // A newer version, if a check found one and nobody has put the notice away.
+    //
+    // A strip rather than a dialog: an update is news, not a decision to be
+    // made before carrying on, and a modal on launch is a modal in the way of
+    // whatever somebody opened the application to do. It has to be dismissible,
+    // because a notice that cannot be put away is a notice that gets ignored
+    // along with everything else in the same place.
+    if let Some((version, url)) = state.update_check.newer() {
+        let url = url.to_string();
+        let mut dismiss = false;
+        Panel::top("newer-version")
+            .exact_size(26.0)
+            .resizable(false)
+            .show(ui, |ui| {
+                ui.horizontal_centered(|ui| {
+                    ui.colored_label(Theme::accent(), "\u{2191}");
+                    ui.colored_label(
+                        Theme::text_primary(),
+                        format!(
+                            "Tessera {}.{}.{} is available.",
+                            version.major, version.minor, version.patch
+                        ),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Dismiss first in a right-to-left layout, so it ends up
+                        // rightmost — where a control that closes something
+                        // belongs.
+                        if ui.button("Not now").clicked() {
+                            dismiss = true;
+                        }
+                        if ui.button("Get it").on_hover_text(&url).clicked() {
+                            // The browser, not a download. Tessera never
+                            // installs anything on its own, and the release page
+                            // is where the notes and the checksums are.
+                            ui.ctx().open_url(egui::OpenUrl::new_tab(&url));
+                            dismiss = true;
+                        }
+                    });
+                });
+            });
+        // Outside the closure: `newer()` borrows the check for as long as `url`
+        // is alive, and dismissing needs it mutably.
+        if dismiss {
+            state.update_check.dismiss();
+        }
+    }
+
     // A mode you cannot see is a mode you get stuck in. InDesign shows the
     // same bar for the same reason.
     if let Some(master) = state.editing_master {

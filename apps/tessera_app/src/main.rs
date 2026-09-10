@@ -7,6 +7,7 @@
 
 mod icon;
 mod platform;
+mod releases;
 
 use tessera_ui::TesseraApp;
 
@@ -54,6 +55,11 @@ fn main() -> eframe::Result<()> {
 
             let mut app = TesseraApp::headless();
             app.load_preferences();
+            // After the preferences, because the switch deciding whether to
+            // look for a newer version is one of them. On a thread of its own,
+            // so a slow server delays nothing — and the fetch is passed in
+            // because `tessera_ui` deliberately has no HTTP client.
+            app.begin_update_check(releases::newest);
             // Before the first frame: work from a session that did not close
             // is offered rather than quietly discarded.
             tessera_ui::recovery::offer_pending(&mut app);

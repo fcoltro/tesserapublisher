@@ -403,6 +403,14 @@ pub struct TesseraApp {
     /// The command palette's own state.
     pub palette: crate::view::palette::Palette,
 
+    /// The version check, and the notice it produced.
+    ///
+    /// Not in preferences: what a check *found* is about this session, while
+    /// `prefs.updates` is what survives between them. Keeping them apart is
+    /// what stops a notice being shown again on the next launch after somebody
+    /// has already put it away.
+    pub update_check: crate::update::Check,
+
     /// What the application remembers between runs.
     ///
     /// Defaults here rather than being read from disk, because `headless` is
@@ -460,6 +468,39 @@ impl TesseraApp {
             recovery: crate::recovery::Recovery::default(),
             palette: crate::view::palette::Palette::default(),
             prefs: crate::prefs::Preferences::default(),
+            update_check: crate::update::Check::default(),
+        }
+    }
+
+    /// Start looking for a newer version, if it is time to.
+    ///
+    /// `fetch` is the one part that reaches the network, and it belongs to the
+    /// caller: `tessera_ui` would otherwise need an HTTP client for one request
+    /// a day, and the parts of this that can be wrong without anybody noticing
+    /// — which version is newer, and whether to ask at all — are in
+    /// [`crate::update`] where they are tested.
+    ///
+    /// Called after [`TesseraApp::load_preferences`], because the switch that
+    /// decides whether to check at all is one of the preferences.
+    pub fn begin_update_check<F>(&mut self, fetch: F)
+    where
+        F: FnOnce() -> Option<(String, String)> + Send + 'static,
+    {
+        self.update_check =
+            crate::update::Check::begin(&self.prefs.updates, crate::update::now(), fetch);
+    }
+
+    /// Take the check's answer if it has arrived.
+    ///
+    /// Rides on a frame that was going to be drawn anyway. The preferences are
+    /// written only when something changed, which is once a day at most —
+    /// writing them every frame would turn a version check into disc traffic.
+    pub(crate) fn settle_update_check(&mut self) {
+        if self
+            .update_check
+            .settle(&mut self.prefs.updates, crate::update::now())
+        {
+            crate::prefs::remember(self);
         }
     }
 

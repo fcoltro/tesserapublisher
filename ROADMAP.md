@@ -1722,13 +1722,28 @@ milestone the layout is fixed: a tool strip, one inspector, and the canvas.
 > platform expects, launch it, and open a `.tessera` file by double-clicking
 > it in the file manager.
 
-- [ ] AppImage or Flatpak, MSI, DMG, built by CI.
-- [ ] File-type association and application icon on each platform.
+- [x] AppImage or Flatpak, MSI, DMG, built by CI. All three come out of
+  `.github/workflows/release.yml`; the run that first produced all three was
+  34420481293. Nine WiX faults stood between the first green Linux build and the
+  first MSI, every one of them invisible outside a Windows release build — which
+  is the argument for having the workflow rather than a document describing how
+  to package by hand.
+- [ ] File-type association and application icon on each platform. **Declared,
+  not verified.** The `ProgId`/`Extension`/`Verb`, the
+  `CFBundleDocumentTypes` UTI and the `.desktop` plus MIME package are all in
+  `packaging/`, and `desktop-file-validate` runs on the Linux one. Nothing has
+  double-clicked a `.tessera` file on any of the three, which is what the
+  acceptance sentence asks for.
 - [ ] **Linux verified interactively** — Wayland and X11, fractional scaling,
   IME, native dialogs.
 - [ ] **macOS verified interactively** — Retina, menu bar conventions, IME.
 - [ ] Signing and notarization where the platform requires it.
-- [ ] Automatic update check.
+- [x] Automatic update check. Once a day, on a thread, comparing versions in
+  `crates/tessera_ui/src/update.rs` and fetching in
+  `apps/tessera_app/src/releases.rs` — apart, so the library needs no HTTP
+  client and the decisions have tests. It tells and never installs. The
+  preference had existed since milestone 7 with nothing reading it, which is a
+  switch that lies about what it does.
 - [ ] User documentation and a first-run tour.
 
 ---
