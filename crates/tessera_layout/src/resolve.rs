@@ -6,12 +6,13 @@
 
 use tessera_color::Color;
 use tessera_document::document::Document;
-use tessera_document::ids::FrameId;
+use tessera_document::ids::{FrameId, StoryId};
 use tessera_document::nodes::{FrameKind, Stroke};
 use tessera_document::paint::Paint;
 use tessera_document::path::fit_to_bounds;
 use tessera_geometry::{DocRect, Transform};
 use tessera_text::shape::{ShapedText, Shaper};
+use tessera_text::story::Story as TextStory;
 
 pub use tessera_document::document::StoryMap;
 
@@ -140,13 +141,60 @@ pub fn resolve(doc: &Document, shaper: &mut Shaper) -> ResolvedDocument {
     resolve_scope(doc, shaper, Scope::Document)
 }
 
+/// Text an input method is composing, to be laid out but not stored.
+///
+/// A request rather than a story: the splice is made once inside
+/// [`resolve_composing`], so every frame threaded through the same story sees
+/// the same text — including the frames *before* the one being typed in, whose
+/// job is to say how far into the story this one starts. Splicing per frame
+/// would let those two disagree, and threaded text would jump by the length of
+/// the composition on the frame the caret is in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Composing {
+    pub story: StoryId,
+    /// Where it sits, as a byte offset into the stored story.
+    pub at: usize,
+    pub text: String,
+}
+
 /// Resolve what `scope` is looking at.
 pub fn resolve_scope(doc: &Document, shaper: &mut Shaper, scope: Scope) -> ResolvedDocument {
+    resolve_composing(doc, shaper, scope, None)
+}
+
+/// The same, showing text an input method has not committed yet.
+pub fn resolve_composing(
+    doc: &Document,
+    shaper: &mut Shaper,
+    scope: Scope,
+    composing: Option<&Composing>,
+) -> ResolvedDocument {
     let shown: Vec<tessera_document::ids::PageId> = match scope {
         Scope::Document => doc.page_ids().collect(),
         Scope::Master(id) => doc.pages_of_master(id),
     };
-    resolve_pages(doc, shaper, &shown)
+    // Spliced once, here, and lent to every frame below.
+    let spliced = composing
+        .and_then(|c| Some((c.story, doc.story(c.story)?.with_provisional(c.at, &c.text))));
+    let composed = spliced.as_ref().map(|(id, story)| (*id, story));
+    resolve_pages(doc, shaper, &shown, composed)
+}
+
+/// The story to lay out: the document's own, unless something is being composed
+/// into it.
+///
+/// One function, so that every place needing a story asks the same question. Two
+/// places reading `doc.story` directly is how the frame being typed in came to
+/// show the composition while the frame before it in the thread did not.
+fn story_of<'a>(
+    doc: &'a Document,
+    composed: Option<(StoryId, &'a TextStory)>,
+    id: StoryId,
+) -> Option<&'a TextStory> {
+    match composed {
+        Some((composing, story)) if composing == id => Some(story),
+        _ => doc.story(id),
+    }
 }
 
 /// Resolve exactly these pages, and what they inherit.
@@ -154,10 +202,11 @@ pub fn resolve_scope(doc: &Document, shaper: &mut Shaper, scope: Scope) -> Resol
 /// The scope has already been turned into a list of pages by the time this
 /// runs, which is the whole of the difference between looking at the document
 /// and looking at one parent.
-fn resolve_pages(
-    doc: &Document,
+fn resolve_pages<'a>(
+    doc: &'a Document,
     shaper: &mut Shaper,
     shown: &[tessera_document::ids::PageId],
+    composed: Option<(StoryId, &'a TextStory)>,
 ) -> ResolvedDocument {
     let pages = shown
         .iter()
@@ -192,7 +241,7 @@ fn resolve_pages(
                 let Some(frame) = doc.frame(leaf) else {
                     continue;
                 };
-                let Some(mut resolved) = resolve_one(doc, shaper, leaf, frame) else {
+                let Some(mut resolved) = resolve_one(doc, shaper, leaf, frame, composed) else {
                     continue;
                 };
                 resolved.transform = Transform::translate(dx, dy).then(resolved.transform);
@@ -214,7 +263,7 @@ fn resolve_pages(
             continue;
         }
         let Some(frame) = doc.frame(id) else { continue };
-        if let Some(item) = resolve_one(doc, shaper, id, frame) {
+        if let Some(item) = resolve_one(doc, shaper, id, frame, composed) {
             items.push(item);
         }
     }
@@ -303,7 +352,12 @@ fn obstacles_for(
 ///
 /// A frame that is not threaded returns zero without laying anything out,
 /// which is every frame in most documents.
-fn story_starts_at(doc: &Document, shaper: &mut Shaper, frame: FrameId) -> usize {
+fn story_starts_at<'a>(
+    doc: &'a Document,
+    shaper: &mut Shaper,
+    frame: FrameId,
+    composed: Option<(StoryId, &'a TextStory)>,
+) -> usize {
     let chain = doc.thread_of(frame);
     let Some(at) = chain.iter().position(|f| *f == frame) else {
         return 0;
@@ -320,7 +374,7 @@ fn story_starts_at(doc: &Document, shaper: &mut Shaper, frame: FrameId) -> usize
         let FrameKind::Text { story, layout } = &before.kind else {
             continue;
         };
-        let Some(text) = doc.story(*story) else {
+        let Some(text) = story_of(doc, composed, *story) else {
             continue;
         };
 
@@ -359,11 +413,12 @@ fn story_starts_at(doc: &Document, shaper: &mut Shaper, frame: FrameId) -> usize
 /// a page's own is — the difference between them is where it lands, not what
 /// it is. `None` for a frame that draws nothing: a group, or a text frame
 /// whose story has gone.
-fn resolve_one(
-    doc: &Document,
+fn resolve_one<'a>(
+    doc: &'a Document,
     shaper: &mut Shaper,
     id: FrameId,
     frame: &tessera_document::nodes::Frame,
+    composed: Option<(StoryId, &'a TextStory)>,
 ) -> Option<ResolvedItem> {
     let kind = match &frame.kind {
         FrameKind::Rectangle => ResolvedKind::Rectangle {
@@ -421,7 +476,7 @@ fn resolve_one(
             // not a blank frame. Skipping it silently would hide the
             // breakage; milestone 6's preflight reports it. For now it
             // simply does not paint, which is visible.
-            let story = doc.story(*story)?;
+            let story = story_of(doc, composed, *story)?;
             // The document is what resolves named styles, so it is what
             // the shaper is handed.
             //
@@ -478,7 +533,7 @@ fn resolve_one(
             // flows into it, in which case the frames before it are laid out
             // to find out how much they hold — the answer depends on their
             // measures, so there is no shortcut past doing it.
-            let from = story_starts_at(doc, shaper, id);
+            let from = story_starts_at(doc, shaper, id, composed);
 
             // The grid is measured from the top of the **page**, so two
             // frames on the same page line up. The text crate has no notion of

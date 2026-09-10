@@ -3411,6 +3411,72 @@ mod tests {
     }
 
     #[test]
+    fn a_composition_is_laid_out_without_reaching_the_document() {
+        // **The end of the whole path.** An input method's preedit reached
+        // `EditBuffer` from milestone 2 onwards and was drawn nowhere: nothing
+        // outside `edit.rs` read it, so somebody composing Japanese saw a
+        // candidate window and an unchanged page. This is the proof it now
+        // arrives on the canvas — and that it still does not touch the document,
+        // which is what keeps unchosen text out of undo, the autosave and the
+        // file.
+        let (mut state, id, story) = a_text_frame("nihon");
+        start_editing(&mut state, id, story);
+        let revision = state.active().document().revision();
+
+        let plain = laid_out_glyphs(&mut state);
+
+        let Some((_, buffer)) = state.active_mut().editing.as_mut() else {
+            panic!("editing")
+        };
+        buffer.set_cursor(5);
+        buffer.set_ime_preedit(Some("go".to_string()));
+
+        let composing = laid_out_glyphs(&mut state);
+        assert!(
+            composing > plain,
+            "the composition was not laid out: {composing} glyphs with it,              {plain} without"
+        );
+        assert_eq!(
+            state.active().document().story(story).expect("story").text,
+            "nihon",
+            "the composition reached the document"
+        );
+        assert_eq!(
+            state.active().document().revision(),
+            revision,
+            "composing moved the revision, so it is undoable"
+        );
+
+        // Withdrawn — the input method was dismissed — and the page goes back.
+        let Some((_, buffer)) = state.active_mut().editing.as_mut() else {
+            panic!("editing")
+        };
+        buffer.set_ime_preedit(None);
+        assert_eq!(
+            laid_out_glyphs(&mut state),
+            plain,
+            "the composition stayed on the page after being withdrawn"
+        );
+    }
+
+    /// How many glyphs the canvas would draw, laid out the way it lays them out.
+    fn laid_out_glyphs(state: &mut TesseraApp) -> usize {
+        let key = state.active;
+        let TesseraApp {
+            documents, shaper, ..
+        } = state;
+        documents[key]
+            .resolve(shaper)
+            .items
+            .iter()
+            .map(|item| match &item.kind {
+                tessera_layout::resolve::ResolvedKind::Text { shaped, .. } => shaped.glyph_count(),
+                _ => 0,
+            })
+            .sum()
+    }
+
+    #[test]
     fn formatting_while_a_caret_is_live_reaches_the_buffer_too() {
         // The buffer's copy of the story is written over the document's on
         // every keystroke. Formatting that reached only the document would be

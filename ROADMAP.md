@@ -651,18 +651,22 @@ unverified one.
 > floating box over the top of it. Commit it and find the text where the
 > preview was.
 
-- [ ] Composition preview rendered on canvas, in the frame. The preedit has
-  reached `EditBuffer` since milestone 2 and is drawn nowhere — `ime_preedit()`
-  is called by nothing outside its own tests, and the comment beside the field
-  says "it is drawn (underlined)", which is a claim with no code under it. So a
-  Japanese typist composing sees the candidate window and an unchanged page.
-  What it needs: `resolve` taking a provisional splice of the story at the
-  caret, and `ResolveCache` taking that splice into its **key** — the document's
-  revision does not move while composing, so a cache keyed on revision alone
-  serves the layout from before the preedit and then keeps serving it. The
-  underline belongs with the caret and the selection highlight, drawn as
-  editing feedback rather than as character formatting, because that is what it
-  is.
+- [x] Composition preview rendered on canvas, in the frame. Spliced into a
+  *copy* of the story at the caret by `Story::with_provisional`, requested by
+  `tessera_layout::resolve::Composing`, and underlined beside the caret rather
+  than formatted — the underline is editing feedback, like the selection wash,
+  not character formatting. Three things had to be true and only the first is
+  obvious: the following text has to move aside, the caret has to sit at the end
+  of the composition rather than at its start, and the composition must not
+  reach the document, undo, the autosave or the file. The splice is made once
+  per resolve and lent to every frame, so threaded text does not see a story of
+  two different lengths. **`ResolveCache` takes the composition into its key**,
+  which is the part that would have failed silently: the revision does not move
+  while somebody composes, so a cache keyed on the revision alone would serve
+  the layout from before the composition and go on serving it until the text was
+  committed. Left unticked for a fortnight as "a claim with no code under it" —
+  the comment beside `EditBuffer::ime_preedit` said it was drawn underlined, and
+  nothing outside that module read the field.
 - [x] Candidate window positioned against the caret. `crates/tessera_ui/src/ime.rs`
   sends `IMEAllowed` while a caret is live and `IMERect` where it is — the
   bounding box of the caret's four transformed corners, so a rotated frame is

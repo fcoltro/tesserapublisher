@@ -177,7 +177,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // input method in preview mode is still an input method.
     let where_the_caret_is = caret
         .as_ref()
-        .and_then(|(id, geometry)| caret_on_screen(state, rect, *id, geometry));
+        .and_then(|caret| caret_on_screen(state, rect, caret));
     state.ime.follow(ui.ctx(), where_the_caret_is);
 
     let overset = overset_frames(state);
@@ -288,14 +288,25 @@ fn hit_tolerance(state: &TesseraApp) -> f64 {
     f64::from(HIT_TOLERANCE_PX) / state.active().view.zoom.max(f64::EPSILON)
 }
 
-/// Where the caret and the selection sit for the frame being edited, in the
-/// frame's own local points.
+/// Where the caret, its selection and any composition sit for the frame being
+/// edited, in the frame's own local points.
+pub struct CaretOnPage {
+    pub frame: FrameId,
+    pub geometry: tessera_text::CaretGeometry,
+    /// One rectangle per line the input method's composition covers, for the
+    /// underline that marks it as not yet committed.
+    ///
+    /// Empty unless something is being composed.
+    pub composing: Vec<tessera_text::TextRect>,
+}
+
+/// Measure them.
 ///
 /// The fields are borrowed separately because the shaper needs `&mut` while
 /// the buffer it is laying out is read through `&`. The shaper belongs to the
 /// application and the buffer to the open document, so the split is between
 /// two disjoint fields of `TesseraApp` and the borrow checker can see it.
-fn caret_geometry(state: &mut TesseraApp) -> Option<(FrameId, tessera_text::CaretGeometry)> {
+fn caret_geometry(state: &mut TesseraApp) -> Option<CaretOnPage> {
     let key = state.active;
     let TesseraApp {
         documents, shaper, ..
@@ -303,14 +314,61 @@ fn caret_geometry(state: &mut TesseraApp) -> Option<(FrameId, tessera_text::Care
     let open = &documents[key];
     let (id, buffer) = open.editing.as_ref()?;
     let frame = open.document().frame(*id)?;
+    let width = frame.bounds.width;
+
+    // **Measured against the text as shown, not as stored.** The canvas lays out
+    // the composition, so a caret measured without it would sit where the caret
+    // was before the composition started — several characters to the left of the
+    // text being typed, which looks like a broken caret rather than a preview.
+    let Some((at, text)) = buffer.composing() else {
+        let geometry = shaper.caret_geometry(
+            buffer.story(),
+            open.document(),
+            width,
+            buffer.cursor(),
+            CARET_PX,
+        );
+        return Some(CaretOnPage {
+            frame: *id,
+            geometry,
+            composing: Vec::new(),
+        });
+    };
+
+    let shown = buffer.story().with_provisional(at, text);
+    let after = at + text.len();
+    // At the end of the composition, which is where the next character will go.
     let geometry = shaper.caret_geometry(
-        buffer.story(),
+        &shown,
         open.document(),
-        frame.bounds.width,
-        buffer.cursor(),
+        width,
+        tessera_text::edit::TextCursor {
+            position: after,
+            anchor: after,
+        },
         CARET_PX,
     );
-    Some((*id, geometry))
+    // The composition's own extent, asked for as a selection: one rectangle per
+    // line, which is exactly what an underline needs and what the selection
+    // highlight already knows how to produce. No new machinery for a second way
+    // of saying "these bytes are here".
+    let composing = shaper
+        .caret_geometry(
+            &shown,
+            open.document(),
+            width,
+            tessera_text::edit::TextCursor {
+                position: after,
+                anchor: at,
+            },
+            CARET_PX,
+        )
+        .selection;
+    Some(CaretOnPage {
+        frame: *id,
+        geometry,
+        composing,
+    })
 }
 
 /// The byte offset in the story being edited that `pos` lands on.
@@ -384,14 +442,9 @@ fn is_text(state: &TesseraApp, id: FrameId) -> bool {
 /// a rotated frame is a leaning sliver, and `IMERect` takes an axis-aligned
 /// rectangle. The box around it is the closest true thing to say, and it errs
 /// towards a candidate window slightly clear of the text rather than over it.
-fn caret_on_screen(
-    state: &TesseraApp,
-    rect: Rect,
-    id: tessera_document::ids::FrameId,
-    geometry: &tessera_text::CaretGeometry,
-) -> Option<egui::Rect> {
-    let caret = geometry.caret?;
-    let frame = state.active().document().frame(id)?;
+fn caret_on_screen(state: &TesseraApp, rect: Rect, at: &CaretOnPage) -> Option<egui::Rect> {
+    let caret = at.geometry.caret?;
+    let frame = state.active().document().frame(at.frame)?;
     let bounds = frame.bounds;
     let corner = |x: f64, y: f64| {
         to_screen_pos(
@@ -2044,7 +2097,7 @@ fn draw_overlays(
     ui: &Ui,
     rect: Rect,
     state: &TesseraApp,
-    caret: Option<&(FrameId, tessera_text::CaretGeometry)>,
+    caret: Option<&CaretOnPage>,
     overset: &[FrameId],
 ) {
     let painter = ui.painter_at(rect);
@@ -2291,9 +2344,10 @@ fn draw_overlays(
 
     // The caret and its selection, in the frame's own space and then turned
     // with it — so editing a rotated frame is not a special case.
-    if let Some((id, geometry)) = caret
-        && let Some(frame) = state.active().document().frame(*id)
+    if let Some(caret) = caret
+        && let Some(frame) = state.active().document().frame(caret.frame)
     {
+        let geometry = &caret.geometry;
         let bounds = frame.bounds;
         // The caret is measured inside the text, which is laid out in the
         // frame's own space -- so it is placed the same way the frame is.
@@ -2322,18 +2376,16 @@ fn draw_overlays(
             ));
         }
 
-        // Drawn as a segment with a fixed screen width rather than as the
-        // rectangle parley returns: a caret measured in document points
-        // thins away to nothing as you zoom out.
-        if let Some(c) = geometry.caret
-            && ui.input(|i| i.time).rem_euclid(1.0) < 0.5
-        {
-            // Against whatever is actually behind it: the frame's own fill
-            // over the page. A text frame's fill is clear by default, so the
-            // usual answer is the white page — and a caret in a black box has
-            // to be the other one, which is the case this exists for.
+        // Against whatever is actually behind it: the frame's own fill over the
+        // page. A text frame's fill is clear by default, so the usual answer is
+        // the white page — and a caret in a black box has to be the other one,
+        // which is the case this exists for.
+        //
+        // Worked out once, because the composition's underline has to be
+        // readable on the same ground the caret does.
+        let readable = {
             let [r, g, b, a] = frame.fill.representative().to_rgb_f32();
-            let behind = crate::theme::composite(
+            crate::theme::readable_on(crate::theme::composite(
                 egui::Color32::from_rgba_unmultiplied(
                     (r * 255.0) as u8,
                     (g * 255.0) as u8,
@@ -2341,12 +2393,32 @@ fn draw_overlays(
                     (a * 255.0) as u8,
                 ),
                 egui::Color32::WHITE,
-            );
+            ))
+        };
 
+        // The composition, underlined. **Not highlighted** — a selection wash
+        // over text somebody is in the middle of choosing would hide the
+        // characters they are choosing between, which is the one thing they are
+        // looking at. An underline is what every input method on every platform
+        // draws, and it is drawn here rather than as character formatting because
+        // it is editing feedback: it belongs with the caret, not in the story.
+        for r in &caret.composing {
+            painter.line_segment(
+                [local(r.x0, r.y1), local(r.x1, r.y1)],
+                Stroke::new(CARET_PX, readable),
+            );
+        }
+
+        // Drawn as a segment with a fixed screen width rather than as the
+        // rectangle parley returns: a caret measured in document points
+        // thins away to nothing as you zoom out.
+        if let Some(c) = geometry.caret
+            && ui.input(|i| i.time).rem_euclid(1.0) < 0.5
+        {
             let x = (c.x0 + c.x1) / 2.0;
             painter.line_segment(
                 [local(x, c.y0), local(x, c.y1)],
-                Stroke::new(CARET_PX, crate::theme::readable_on(behind)),
+                Stroke::new(CARET_PX, readable),
             );
         }
         ui.ctx()
@@ -2593,6 +2665,58 @@ mod tests {
             },
         );
         (state, id)
+    }
+
+    #[test]
+    fn a_composition_is_measured_where_it_is_drawn_and_marked_as_provisional() {
+        // Two separate things, and the second is the one worth a test: laying the
+        // composition out is what makes the following text move aside, and
+        // underlining it is what says the characters are not chosen yet. Without
+        // the underline a preedit is indistinguishable from committed text, and
+        // pressing Escape appears to delete something somebody typed.
+        let (mut state, id) = a_text_frame(200.0, "nihon");
+        let story = match state.active().document().frame(id).expect("frame").kind {
+            tessera_document::nodes::FrameKind::Text { story, .. } => story,
+            _ => panic!("a text frame"),
+        };
+        let content = state
+            .active()
+            .document()
+            .story(story)
+            .cloned()
+            .unwrap_or_default();
+        let mut buffer = tessera_text::edit::EditBuffer::new(content);
+        buffer.set_cursor(5);
+        state.active_mut().editing = Some((id, buffer));
+
+        let plain = caret_geometry(&mut state).expect("a caret");
+        assert!(
+            plain.composing.is_empty(),
+            "nothing is being composed, so nothing should be underlined"
+        );
+        let before = plain.geometry.caret.expect("a caret rectangle");
+
+        let Some((_, buffer)) = state.active_mut().editing.as_mut() else {
+            panic!("editing")
+        };
+        buffer.set_ime_preedit(Some("gonokuni".to_string()));
+
+        let composing = caret_geometry(&mut state).expect("a caret");
+        assert!(
+            !composing.composing.is_empty(),
+            "the composition has no extent, so nothing would be underlined"
+        );
+        // Past where it was: the caret sits at the end of the composition, which
+        // is where the next character goes. Measured against the story without
+        // the composition it would sit at its start — several characters to the
+        // left of the text being typed.
+        let after = composing.geometry.caret.expect("a caret rectangle");
+        assert!(
+            after.x0 > before.x0,
+            "the caret did not move past the composition: {} then {}",
+            before.x0,
+            after.x0
+        );
     }
 
     #[test]

@@ -480,6 +480,23 @@ impl Story {
     /// Inserting inside a run extends it. Inserting at a boundary joins the
     /// run to the **left** — what every editor does, and what makes typing
     /// after a bold word continue bold.
+    /// A copy with `text` inserted at `at`, for showing something that is not
+    /// part of the document.
+    ///
+    /// **A copy, on purpose.** What an input method is composing belongs to the
+    /// input method until it is committed. Written into the story it would be
+    /// undoable, autosaved and savable — three ways for text nobody has chosen
+    /// yet to end up in a file — so the composition is spliced into a copy that
+    /// lives as long as it takes to lay one frame out.
+    ///
+    /// The inserted text takes the formatting at `at`, which is what
+    /// `insert_text` does and what "in the frame's own font" means.
+    pub fn with_provisional(&self, at: usize, text: &str) -> Story {
+        let mut shown = self.clone();
+        shown.insert_text(at.min(shown.text.len()), text);
+        shown
+    }
+
     pub fn insert_text(&mut self, at: usize, text: &str) {
         if text.is_empty() {
             return;
@@ -1196,6 +1213,49 @@ fn shrink<T>(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod provisional_tests {
+    use super::*;
+
+    #[test]
+    fn a_provisional_splice_leaves_the_story_alone() {
+        // **The whole point of it being a copy.** A composition written into the
+        // story would be undoable, autosaved and savable — three ways for text
+        // nobody has chosen yet to end up in a file.
+        let story = Story::new("nihon");
+        let shown = story.with_provisional(2, "XX");
+        assert_eq!(story.text, "nihon");
+        assert_eq!(shown.text, "niXXhon");
+        assert!(shown.runs_are_sound());
+    }
+
+    #[test]
+    fn a_splice_takes_the_formatting_it_lands_in() {
+        // "In the frame's own font" is what the acceptance sentence asks for, and
+        // this is what makes it true: the composition inherits the run at the
+        // caret rather than arriving as plain text.
+        let mut story = Story::new("abcdef");
+        story.apply_character_format(
+            0..6,
+            &CharacterFormat {
+                weight: Some(700),
+                ..Default::default()
+            },
+        );
+        let shown = story.with_provisional(3, "ZZ");
+        let run = shown.run_at(3).expect("the run the splice landed in");
+        assert_eq!(run.local.weight, Some(700));
+        assert!(shown.runs_are_sound());
+    }
+
+    #[test]
+    fn a_splice_past_the_end_lands_at_the_end() {
+        // A caret position from a buffer that has since shrunk must not panic.
+        let story = Story::new("ab");
+        assert_eq!(story.with_provisional(99, "!").text, "ab!");
+    }
 }
 
 #[cfg(test)]

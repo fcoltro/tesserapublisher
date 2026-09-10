@@ -28,7 +28,13 @@ pub struct EditBuffer {
     story: Story,
     cursor: TextCursor,
     /// Text the platform's input method is composing but has not committed.
-    /// It is drawn (underlined) but is not part of the story until commit.
+    ///
+    /// Not part of the story until commit — which is what keeps text nobody has
+    /// chosen yet out of undo, the autosave and the file. It is *shown* by
+    /// splicing it into a copy at the caret: [`Story::with_provisional`] makes
+    /// the copy, `tessera_layout::resolve::Composing` carries the request, and
+    /// the underline that marks it as provisional is drawn beside the caret in
+    /// `tessera_ui::view::viewport`. Read through [`EditBuffer::composing`].
     ime_preedit: Option<String>,
     /// Formatting chosen at a caret, waiting for text to apply it to.
     ///
@@ -286,6 +292,16 @@ impl EditBuffer {
 
     pub fn set_ime_preedit(&mut self, text: Option<String>) {
         self.ime_preedit = text.filter(|t| !t.is_empty());
+    }
+
+    /// What is being composed, and where it sits in the story.
+    ///
+    /// `None` when nothing is, so the ordinary case costs nothing. The caret's
+    /// position is where it goes: an input method composes at the caret, and
+    /// the range it occupies once spliced is `at..at + text.len()`.
+    pub fn composing(&self) -> Option<(usize, &str)> {
+        let text = self.ime_preedit.as_deref()?;
+        Some((self.cursor.position.min(self.story.text.len()), text))
     }
 
     pub fn ime_preedit(&self) -> Option<&str> {

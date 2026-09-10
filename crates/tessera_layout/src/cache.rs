@@ -18,7 +18,7 @@
 use tessera_document::document::Document;
 use tessera_text::shape::Shaper;
 
-use crate::resolve::{self, ResolvedDocument};
+use crate::resolve::{self, Composing, ResolvedDocument};
 
 #[derive(Debug, Default)]
 pub struct ResolveCache {
@@ -28,6 +28,16 @@ pub struct ResolveCache {
     /// nothing about the document, so the revision alone would hand back the
     /// document's own layout and the canvas would not move.
     scope: Option<resolve::Scope>,
+    /// What was being composed when that answer was resolved.
+    ///
+    /// **Part of the key, because the revision cannot be.** An input method's
+    /// composition is not in the document — that is the point of it — so the
+    /// revision does not move while somebody composes. A cache keyed on the
+    /// revision alone would hand back the layout from before the composition
+    /// started and go on handing it back for every keystroke of it, so the page
+    /// would not change until the text was committed. Which is the one moment
+    /// somebody does not need to see it.
+    composing: Option<Composing>,
     resolved: ResolvedDocument,
     resolves: u64,
 }
@@ -45,11 +55,26 @@ impl ResolveCache {
         shaper: &mut Shaper,
         scope: resolve::Scope,
     ) -> &ResolvedDocument {
+        self.get_composing(document, shaper, scope, None)
+    }
+
+    /// The same, showing text an input method has not committed yet.
+    pub fn get_composing(
+        &mut self,
+        document: &Document,
+        shaper: &mut Shaper,
+        scope: resolve::Scope,
+        composing: Option<&Composing>,
+    ) -> &ResolvedDocument {
         let revision = document.revision();
-        if self.at != Some(revision) || self.scope != Some(scope) {
-            self.resolved = resolve::resolve_scope(document, shaper, scope);
+        if self.at != Some(revision)
+            || self.scope != Some(scope)
+            || self.composing.as_ref() != composing
+        {
+            self.resolved = resolve::resolve_composing(document, shaper, scope, composing);
             self.at = Some(revision);
             self.scope = Some(scope);
+            self.composing = composing.cloned();
             self.resolves += 1;
         }
         &self.resolved
@@ -135,6 +160,89 @@ mod tests {
             },
         );
         (doc, id)
+    }
+
+    #[test]
+    fn a_composition_is_resolved_even_though_the_revision_has_not_moved() {
+        // **The bug this key exists to prevent.** An input method's composition
+        // is not in the document, so the revision does not move while somebody
+        // composes. Keyed on the revision alone, this would hand back the layout
+        // from before the composition and go on handing it back for every
+        // keystroke — so the page would change only when the text was committed,
+        // which is the one moment nobody needs to see it.
+        use tessera_text::story::Story;
+
+        let mut doc = Document::new();
+        let story = doc.add_story(Story::new("ni"));
+        let layer = doc.default_layer().expect("layer");
+        let id = doc.add_frame(
+            layer,
+            Frame {
+                bounds: DocRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 400.0,
+                    height: 200.0,
+                },
+                kind: FrameKind::text(story),
+                transform: Transform::IDENTITY,
+                fill: Paint::Solid(Color::BLACK),
+                stroke: None,
+                wrap: tessera_document::nodes::TextWrap::None,
+                blend: tessera_document::blending::Blending::PLAIN,
+                corners: tessera_document::corners::Corners::SQUARE,
+                shadow: None,
+                style: None,
+            },
+        );
+        let _ = id;
+
+        let mut shaper = Shaper::new();
+        let mut cache = ResolveCache::default();
+        let plain = glyphs(cache.get(&doc, &mut shaper));
+
+        let revision = doc.revision();
+        let composing = Composing {
+            story,
+            at: 2,
+            text: "hongo".to_string(),
+        };
+        let composed = glyphs(cache.get_composing(
+            &doc,
+            &mut shaper,
+            resolve::Scope::Document,
+            Some(&composing),
+        ));
+
+        assert_eq!(
+            doc.revision(),
+            revision,
+            "composing must not touch the document"
+        );
+        assert!(
+            composed > plain,
+            "the composition was not laid out: {composed} glyphs with it,              {plain} without"
+        );
+
+        // And it goes away again, rather than sticking until something else
+        // happens to move the revision.
+        assert_eq!(
+            glyphs(cache.get(&doc, &mut shaper)),
+            plain,
+            "the composition stayed after it was withdrawn"
+        );
+    }
+
+    /// How many glyphs the whole answer holds.
+    fn glyphs(resolved: &ResolvedDocument) -> usize {
+        resolved
+            .items
+            .iter()
+            .map(|item| match &item.kind {
+                resolve::ResolvedKind::Text { shaped, .. } => shaped.glyph_count(),
+                _ => 0,
+            })
+            .sum()
     }
 
     #[test]

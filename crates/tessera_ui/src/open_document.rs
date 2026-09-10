@@ -103,7 +103,7 @@ impl OpenDocument {
     /// the shaper are borrowed at once, and only inside this module are they
     /// disjoint fields the borrow checker can see apart.
     pub fn resolve<'a>(&'a mut self, shaper: &mut Shaper) -> &'a ResolvedDocument {
-        self.resolved.get(&self.document, shaper)
+        self.resolve_scope(shaper, tessera_layout::resolve::Scope::Document)
     }
 
     /// The same, for what the canvas is currently looking at.
@@ -112,7 +112,13 @@ impl OpenDocument {
         shaper: &mut Shaper,
         scope: tessera_layout::resolve::Scope,
     ) -> &'a ResolvedDocument {
-        self.resolved.get_scope(&self.document, shaper, scope)
+        // Derived here rather than passed in, because this is the one place
+        // that holds the edit buffer and the layout at once. A caller that had to
+        // supply it would be a caller that could forget to — and forgetting
+        // means a composition that is typed and never appears.
+        let composing = composing(&self.document, self.editing.as_ref());
+        self.resolved
+            .get_composing(&self.document, shaper, scope, composing.as_ref())
     }
 
     // The operations below pair the document with one of its neighbours —
@@ -178,4 +184,25 @@ impl Default for OpenDocument {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// What an input method is composing into the story being edited, if anything.
+///
+/// The frame being edited names a story; the buffer says what is being composed
+/// and where. Neither alone is enough, which is why this is a function rather
+/// than a field.
+fn composing(
+    document: &Document,
+    editing: Option<&(tessera_document::ids::FrameId, EditBuffer)>,
+) -> Option<tessera_layout::resolve::Composing> {
+    let (id, buffer) = editing?;
+    let (at, text) = buffer.composing()?;
+    let tessera_document::nodes::FrameKind::Text { story, .. } = document.frame(*id)?.kind else {
+        return None;
+    };
+    Some(tessera_layout::resolve::Composing {
+        story,
+        at,
+        text: text.to_string(),
+    })
 }
