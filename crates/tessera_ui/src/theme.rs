@@ -50,6 +50,13 @@ pub struct Palette {
     pub accent: Color32,
     pub accent_hover: Color32,
     pub error: Color32,
+    /// The counterpart to `error`: a state that is right rather than wrong.
+    ///
+    /// Green because that is the one hue a reader takes as "nothing to do
+    /// here" without being told, and it has to be told apart from `error` by
+    /// hue alone — the two appear in the same 13-point square, never side by
+    /// side, so shape and position carry nothing.
+    pub ok: Color32,
     pub frame_edge: Color32,
 }
 
@@ -112,6 +119,7 @@ impl Palette {
         accent: Color32::from_rgb(0x5B, 0x8D, 0xEF),
         accent_hover: Color32::from_rgb(0x7A, 0xA3, 0xF4),
         error: Color32::from_rgb(0xF0, 0x8C, 0x82),
+        ok: Color32::from_rgb(0x2E, 0x9E, 0x5B),
         frame_edge: Color32::from_rgb(0x66, 0x66, 0x66),
     };
 
@@ -141,6 +149,9 @@ impl Palette {
         accent: Color32::from_rgb(0x2C, 0x5F, 0xC4),
         accent_hover: Color32::from_rgb(0x23, 0x4E, 0xA6),
         error: Color32::from_rgb(0xA8, 0x24, 0x18),
+        // Darker than the dark theme's green rather than lighter: this one is
+        // read against white paper, and it carries a white tick.
+        ok: Color32::from_rgb(0x1E, 0x7A, 0x44),
         // Dark enough to read on the pasteboard as well as on paper: an
         // empty text frame is invisible without its edge, and it can sit in
         // either place.
@@ -301,6 +312,10 @@ impl Theme {
     }
     pub fn error() -> Color32 {
         palette().error
+    }
+    /// A state that needs nothing done to it.
+    pub fn ok() -> Color32 {
+        palette().ok
     }
 
     // --- surfaces ------------------------------------------------------

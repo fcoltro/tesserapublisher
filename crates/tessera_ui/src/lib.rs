@@ -37,6 +37,15 @@ pub use app::{Status, TesseraApp};
 pub use command::{Command, apply};
 pub use tools::Tool;
 
+/// The artwork extensions `Place` will open.
+///
+/// **One list.** The file dialog's filter and anything that checks a dropped
+/// path have to agree, and the way they stop agreeing is by being written out
+/// twice. Every one of these decodes through the same call in `tessera_render`
+/// and `tessera_pdf`, so a format added here is added to the screen and to the
+/// export at once.
+pub const PLACEABLE: &[&str] = &["png", "jpg", "jpeg", "tif", "tiff", "webp", "bmp", "gif"];
+
 /// The `eframe::App` implementation.
 ///
 /// eframe 0.35 has no `update` method: it is `logic` (which may not paint)

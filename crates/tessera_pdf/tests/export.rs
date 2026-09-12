@@ -128,6 +128,7 @@ fn a_text_frame_embeds_a_subsetted_font() {
         ResolvedKind::Text {
             shaped,
             color: Color::BLACK,
+            overset_lines: 0,
         },
         rect(20.0, 20.0, 400.0, 40.0),
     ))
@@ -160,6 +161,7 @@ fn text_is_positioned_by_the_same_glyphs_the_renderer_drew() {
         ResolvedKind::Text {
             shaped,
             color: Color::BLACK,
+            overset_lines: 0,
         },
         rect(20.0, 20.0, 400.0, 40.0),
     ))
@@ -185,6 +187,7 @@ fn an_empty_text_frame_exports_without_a_font() {
         ResolvedKind::Text {
             shaped,
             color: Color::BLACK,
+            overset_lines: 0,
         },
         rect(20.0, 20.0, 400.0, 40.0),
     ))
@@ -240,6 +243,7 @@ fn several_items_all_reach_the_content_stream() {
                 kind: ResolvedKind::Text {
                     shaped,
                     color: Color::BLACK,
+                    overset_lines: 0,
                 },
             },
         ],
@@ -345,6 +349,7 @@ fn a_document_with_two_text_sizes_sets_the_font_more_than_once() {
         ResolvedKind::Text {
             shaped,
             color: Color::BLACK,
+            overset_lines: 0,
         },
         rect(10.0, 10.0, 300.0, 80.0),
     ))
@@ -387,6 +392,7 @@ fn a_glyph_width_is_normalised_against_its_own_run() {
             ResolvedKind::Text {
                 shaped,
                 color: Color::BLACK,
+                overset_lines: 0,
             },
             rect(10.0, 10.0, 300.0, 80.0),
         ))

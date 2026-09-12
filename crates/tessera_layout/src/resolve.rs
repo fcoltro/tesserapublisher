@@ -35,6 +35,19 @@ pub enum ResolvedKind {
     Text {
         shaped: ShapedText,
         color: Color,
+        /// Lines this frame could not fit.
+        ///
+        /// **Handed out rather than recomputed.** The flow pass is the only
+        /// thing that knows: it alone accounts for where the frame starts in a
+        /// thread, its columns, the objects the text runs around and the
+        /// baseline grid. Anyone measuring the whole story against one frame's
+        /// height gets a different — and wrong — answer, which is what the
+        /// overset mark used to be drawn from.
+        ///
+        /// Non-zero on every frame of a thread except the last, because
+        /// passing text on is what the rest of the chain is for. Whether that
+        /// counts as *overset* is the caller's question, not this one's.
+        overset_lines: usize,
     },
     /// A path in frame-local coordinates. Consumers translate by
     /// [`ResolvedItem::bounds`]'s origin.
@@ -575,6 +588,7 @@ fn resolve_one<'a>(
             ResolvedKind::Text {
                 shaped: flowed.text,
                 color: colour,
+                overset_lines: flowed.overset_lines,
             }
         }
     };

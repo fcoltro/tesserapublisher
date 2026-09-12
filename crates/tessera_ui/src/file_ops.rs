@@ -296,7 +296,7 @@ pub fn choose_output_intent(state: &mut crate::app::TesseraApp) {
 
 fn pick_artwork() -> Option<PathBuf> {
     rfd::FileDialog::new()
-        .add_filter("Images", &["png", "jpg", "jpeg"])
+        .add_filter("Images", crate::PLACEABLE)
         .pick_file()
 }
 

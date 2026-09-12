@@ -74,7 +74,11 @@ ureq       = { version = "3", default-features = false, features = ["rustls", "p
 
 # Assets and export.
 flate2     = "1"
-image      = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# TIFF is the one that matters for print: it is what a scanner writes and
+# what a repro house sends. The rest cost a feature flag each, and every
+# one of them decodes through the same `load_from_memory` call, so the
+# screen and the PDF gain them together.
+image      = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "webp", "bmp", "gif"] }
 pdf-writer = "0.15"
 subsetter  = "0.2"
 rfd        = "0.17"

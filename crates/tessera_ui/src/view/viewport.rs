@@ -625,9 +625,9 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
         return;
     }
 
-    camera_input(ui, response, rect, state);
+    camera_input(ui, response, rect, state, true);
 
-    if panning(ui) {
+    if panning(ui, true) {
         return; // panning, never draw or select
     }
 
@@ -691,9 +691,9 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
 fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
     // Panning and zooming keep working while editing; losing them the moment
     // a caret appears would be its own bug.
-    camera_input(ui, response, rect, state);
+    camera_input(ui, response, rect, state, false);
 
-    if panning(ui) {
+    if panning(ui, false) {
         return; // panning, never move the caret or the frame
     }
 
@@ -883,29 +883,39 @@ fn finish_editing(state: &mut TesseraApp) {
 /// outgrows its box depends on the measure, the leading and every run's size.
 fn overset_frames(state: &mut TesseraApp) -> Vec<FrameId> {
     use tessera_document::nodes::FrameKind;
+    use tessera_layout::resolve::ResolvedKind;
 
+    // **Asked of the layout pass, never measured again here.**
+    //
+    // This used to shape the whole story and compare it to one frame's height,
+    // which is the wrong question twice over. A frame in a thread renders only
+    // its own portion, so the whole story is taller than it by definition and
+    // every threaded frame reported itself overset — the mark appeared on
+    // frames with inches of empty space in them. Columns, text wrap and the
+    // baseline grid all change how much fits, and none of them were accounted
+    // for either. `flow` is the only thing that knows, so it is what is asked.
     let key = state.active;
-    let TesseraApp {
-        documents, shaper, ..
-    } = state;
-    let open = &documents[key];
-    let doc = open.document();
+    let overflowing: Vec<FrameId> = state
+        .resolve_active()
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ResolvedKind::Text { overset_lines, .. } if *overset_lines > 0 => Some(item.frame),
+            _ => None,
+        })
+        .collect();
 
-    doc.paint_order()
+    // A frame that passes its overflow on has not lost it. Only the end of a
+    // chain can be overset, which is the whole meaning of the mark: copy is
+    // here, and there is nowhere for it to go.
+    let doc = state.documents[key].document();
+    overflowing
         .into_iter()
         .filter(|id| {
-            let Some(frame) = doc.frame(*id) else {
-                return false;
-            };
-            let FrameKind::Text { story, .. } = frame.kind else {
-                return false;
-            };
-            let Some(story) = doc.story(story) else {
-                return false;
-            };
-            // A hair of tolerance: a story that exactly fills its frame is not
-            // overset, and floating point should not decide otherwise.
-            shaper.shape(story, doc, frame.bounds.width).height > frame.bounds.height + 0.5
+            !matches!(
+                doc.frame(*id).map(|f| &f.kind),
+                Some(FrameKind::Text { layout, .. }) if layout.next.is_some()
+            )
         })
         .collect()
 }
@@ -927,53 +937,75 @@ fn overset_frames(state: &mut TesseraApp) -> Vec<FrameId> {
 /// frame to the head of the next says which way the text runs, which is the
 /// question a connector answers.
 fn thread_connectors(state: &TesseraApp, rect: Rect, painter: &egui::Painter) {
-    if state.active().selection.is_empty() {
+    use super::ports;
+
+    // Printing modes show what comes off the press, and a connector does not.
+    if !state.screen_mode.shows_chrome() {
         return;
     }
-    let doc = state.active().document();
-    let view = state.active().view;
 
-    // Every chain any selected frame belongs to, without drawing one twice
-    // when two frames of the same chain are both selected.
+    let doc = state.active().document();
+
+    // **Every chain on the spread, faintly; the selected one at full strength.**
+    //
+    // A thread the user has not clicked on is still something they need to
+    // know is there — it is the difference between a chain and three frames
+    // that happen to sit near each other, and clicking each frame in turn to
+    // find out is not a way to read a layout. Drawn at a fifth so it reads as
+    // an annotation rather than as artwork, and so several chains crossing a
+    // page do not become the loudest thing on it.
     let mut shown: Vec<tessera_document::ids::FrameId> = Vec::new();
-    for id in state.active().selection.as_slice() {
-        if shown.contains(id) {
+    let selected = state.active().selection.as_slice();
+
+    for id in doc.paint_order() {
+        if shown.contains(&id) {
             continue;
         }
-        let chain = doc.thread_of(*id);
+        let chain = doc.thread_of(id);
         if chain.len() < 2 {
             continue;
         }
         shown.extend(chain.iter().copied());
 
+        let live = chain.iter().any(|f| selected.contains(f));
+        let stroke = egui::Stroke::new(
+            if live { 1.0 } else { 1.2 },
+            if live {
+                Theme::accent()
+            } else {
+                Theme::accent().gamma_multiply(0.2)
+            },
+        );
+
         for pair in chain.windows(2) {
-            let (Some(from), Some(to)) = (doc.visual_bounds(pair[0]), doc.visual_bounds(pair[1]))
-            else {
+            // **The ports themselves**, not the middle of an edge. The out port
+            // is where the gesture started and the in port is where it was
+            // dropped, so the finished link joins the two controls the user
+            // actually touched; anchoring it to the centre of the bottom edge
+            // drew a line from a place nothing had ever been.
+            let (Some(from), Some(to)) = (
+                ports::port_rect(state, rect, pair[0], ports::Port::Out),
+                ports::port_rect(state, rect, pair[1], ports::Port::In),
+            ) else {
                 continue;
             };
-            // Out of the bottom of one and into the top of the next, which is
-            // the direction the text runs.
-            let start = view.doc_to_screen(DocPoint {
-                x: from.x + from.width / 2.0,
-                y: from.y + from.height,
-            });
-            let end = view.doc_to_screen(DocPoint {
-                x: to.x + to.width / 2.0,
-                y: to.y,
-            });
-            let (start, end) = (
-                rect.min + egui::vec2(start.x, start.y),
-                rect.min + egui::vec2(end.x, end.y),
-            );
+            let (start, end) = (from.center(), to.center());
 
-            let stroke = egui::Stroke::new(1.0, Theme::accent());
-            painter.line_segment([start, end], stroke);
-            // A blob at each end, so a connector that runs off the edge of the
-            // canvas still says which frames it joins.
-            painter.circle_filled(start, 3.0, Theme::accent());
-            painter.circle_filled(end, 3.0, Theme::accent());
+            // The same curve the preview drew, from the same function.
+            //
+            // **No blobs at the ends.** They were there to say which frames a
+            // connector joins when it runs off the canvas — but a port is now
+            // drawn at each end, which says it better and says what kind of
+            // end it is. An accent dot centred on the out port covered the
+            // white arrow inside it exactly.
+            painter.add(ports::connector(start, end, stroke));
         }
     }
+}
+
+/// Whether this point is on an out port, which outranks the grip beneath it.
+fn on_a_port(state: &TesseraApp, rect: Rect, pos: egui::Pos2) -> bool {
+    super::ports::out_port_at(state, rect, pos).is_some()
 }
 
 /// A click that belongs to threading rather than to selection.
@@ -1080,6 +1112,27 @@ fn settle(
     dy: f64,
     held_off: bool,
 ) -> (f64, f64) {
+    // **Measured from where the gesture began**, never from the preview the
+    // last pointer move wrote into the document.
+    //
+    // `dx`/`dy` are the whole delta from the start of the drag, but
+    // `visual_bounds` below reads each frame's *current* transform — and the
+    // live move writes `origin.then(delta)` into that transform on every
+    // frame. Without putting them back first, the landing rectangle is the
+    // previous preview plus the whole delta a second time, so it runs away
+    // from the pointer and never comes within the threshold of anything. That
+    // is what made snapping look switched off while the preference said it was
+    // on: the arithmetic was right and it was being handed the wrong rectangle.
+    //
+    // undo-bracketed: preview only, and the caller writes the real placement
+    // over the top of this on the same frame. The gesture reaches the undo
+    // stack once, as a `TranslateSelection` in `drag_stopped`.
+    for (id, origin) in origins {
+        if let Some(f) = state.active_mut().document_mut().frame_mut(*id) {
+            f.transform = *origin;
+        }
+    }
+
     if !state.prefs.snapping || held_off {
         state.snapped_to = None;
         return (dx, dy);
@@ -1135,12 +1188,28 @@ fn settle(
 ///
 /// Checked once, here, rather than by teaching a dozen `dragged()` calls which
 /// button they meant.
-fn panning(ui: &Ui) -> bool {
-    ui.input(|i| i.key_down(egui::Key::Space) || i.pointer.button_down(egui::PointerButton::Middle))
+/// `space_pans` is false while a caret is live. **Space is a character before
+/// it is a gesture.** Holding it to pan is a convention borrowed from tools
+/// where the pointer is never inside a paragraph; here, taking it meant
+/// `editing_input` returned before the keystroke ever reached the buffer, so
+/// every word ran into the next one and only the middle button was left to pan
+/// with. The middle button works during an edit because no character is spelled
+/// with it.
+fn panning(ui: &Ui, space_pans: bool) -> bool {
+    ui.input(|i| {
+        (space_pans && i.key_down(egui::Key::Space))
+            || i.pointer.button_down(egui::PointerButton::Middle)
+    })
 }
 
-fn camera_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
-    let space_held = ui.input(|i| i.key_down(egui::Key::Space));
+fn camera_input(
+    ui: &Ui,
+    response: &egui::Response,
+    rect: Rect,
+    state: &mut TesseraApp,
+    space_pans: bool,
+) {
+    let space_held = space_pans && ui.input(|i| i.key_down(egui::Key::Space));
 
     if response.dragged_by(egui::PointerButton::Middle)
         || (space_held && response.dragged_by(egui::PointerButton::Primary))
@@ -1322,9 +1391,22 @@ fn canvas_cursor(
         pos
     };
 
-    // Spacebar pans whatever tool is chosen, so it has to say so.
-    if ui.input(|i| i.key_down(egui::Key::Space)) {
+    // Spacebar pans whatever tool is chosen, so it has to say so — but not
+    // while a caret is live, where space is the character it has always been.
+    if state.active().editing.is_none() && ui.input(|i| i.key_down(egui::Key::Space)) {
         return Cursor::new(if held { Icon::Grab } else { Icon::Hand });
+    }
+
+    // Threading, said twice: once while a port is loaded and the next click
+    // will land the text somewhere, and once on the port itself, which is a
+    // four-pixel target sitting inside a frame that would otherwise just be
+    // selected. Without this the only thing distinguishing the control from
+    // the corner it hides in is knowing it is there.
+    if state.loading_thread.is_some() {
+        return Cursor::new(Icon::Link2);
+    }
+    if state.active().editing.is_none() && super::ports::out_port_at(state, rect, pos).is_some() {
+        return Cursor::new(Icon::Link2);
     }
 
     // While editing, the pointer is a text cursor over the frame being edited
@@ -1662,8 +1744,10 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
         && let Some(pos) = response.interact_pointer_pos()
         // A click that began on a grip changed nothing and selected nothing;
         // without this it would fall through and reselect whatever the handle
-        // happens to be sitting over.
-        && press_pos(ui, response).is_none_or(|p| grab_at(state, rect, p).is_none())
+        // happens to be sitting over. **A port is not a grip**, even where the
+        // two overlap: the port is asked first, below.
+        && press_pos(ui, response)
+            .is_none_or(|p| grab_at(state, rect, p).is_none() || on_a_port(state, rect, p))
         && !threading_click(state, rect, pos)
     {
         match frame_at(state, rect, pos) {
@@ -1691,6 +1775,11 @@ fn transform_gesture(
     if response.drag_started()
         && state.drag.is_none()
         && let Some(pos) = press_pos(ui, response)
+        // **The port wins where it overlaps a grip.** A grip can be grabbed
+        // anywhere along the frame's edge; a port is one thirteen-point square
+        // and is the only way to start a thread, so it is the one that cannot
+        // afford to lose the press.
+        && !on_a_port(state, rect, pos)
         && let Some((id, grab)) = grab_at(state, rect, pos)
         && let Some((bounds, placement)) = presented(state, id)
     {
@@ -2131,7 +2220,6 @@ fn draw_overlays(
         ));
     }
 
-    super::ports::draw(state, rect, &painter, overset);
     if state.active_tool == Tool::DirectSelect {
         super::anchors::draw(state, rect, &painter);
     }
@@ -2190,6 +2278,15 @@ fn draw_overlays(
             painter.line_segment([c - egui::vec2(arm, -arm), c + egui::vec2(arm, -arm)], hair);
         }
     }
+
+    // **Last of everything drawn on a frame.** A port is the smallest control
+    // in the application and the only route to threading, so nothing may be
+    // painted over it. It used to go on before the connectors and before the
+    // selection handles, both of which land on the same few pixels: the
+    // spline's end sits exactly on the out port by construction, and the
+    // corner handle is its nearest neighbour. The white arrow inside a joined
+    // port disappeared under them.
+    super::ports::draw(state, rect, &painter, overset);
 
     // Ruler guides, under the objects and above the page: they describe the
     // page rather than sitting on it.
@@ -2632,6 +2729,198 @@ mod tests {
         assert_eq!(centre_grab_at(&state, rect, now), Some(id), "where it is");
     }
 
+    // --- space is a character, not only a gesture ---------------------------
+
+    /// Run one frame of `editing_input` over a canvas, with `input` delivered.
+    fn one_editing_frame(state: &mut TesseraApp, input: egui::RawInput) {
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(input, |ui| {
+            let (rect, response) =
+                ui.allocate_exact_size(egui::vec2(400.0, 400.0), egui::Sense::click_and_drag());
+            editing_input(ui, &response, rect, state);
+        });
+    }
+
+    #[test]
+    fn a_space_typed_into_a_story_is_a_space() {
+        // The bug: `panning` was true whenever the space key was down, and
+        // `editing_input` returns early while panning — so the keystroke never
+        // reached the buffer and words ran together. Space pans only when no
+        // caret is live.
+        let (mut state, id) = a_text_frame(200.0, "one");
+        start_editing(&mut state, id);
+        let before = state
+            .active()
+            .editing
+            .as_ref()
+            .unwrap()
+            .1
+            .story()
+            .text
+            .clone();
+
+        one_editing_frame(
+            &mut state,
+            egui::RawInput {
+                events: vec![
+                    egui::Event::Key {
+                        key: egui::Key::Space,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                    egui::Event::Text(" ".into()),
+                ],
+                ..Default::default()
+            },
+        );
+
+        let after = state
+            .active()
+            .editing
+            .as_ref()
+            .unwrap()
+            .1
+            .story()
+            .text
+            .clone();
+        assert_eq!(
+            after.len(),
+            before.len() + 1,
+            "the space never arrived: {after:?}"
+        );
+        assert!(
+            after.contains(' '),
+            "a space is what should have arrived: {after:?}"
+        );
+    }
+
+    #[test]
+    fn space_still_pans_when_no_caret_is_live() {
+        // The convention is kept everywhere it does not collide with typing.
+        assert!(
+            !panning_with_space_down(false),
+            "a caret makes space a character"
+        );
+        assert!(panning_with_space_down(true), "otherwise it still pans");
+    }
+
+    /// `panning` over a context whose space key is held.
+    fn panning_with_space_down(space_pans: bool) -> bool {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::Space,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let mut held = false;
+        let _ = ctx.run_ui(input, |ui| held = panning(ui, space_pans));
+        held
+    }
+
+    // --- snapping -----------------------------------------------------------
+
+    /// Two rectangles, the second of them the one being dragged.
+    fn two_rects() -> (TesseraApp, FrameId, FrameId) {
+        use crate::command::{Command, apply};
+
+        let mut state = TesseraApp::headless();
+        apply(
+            &mut state,
+            Command::AddRectangle(DocRect {
+                x: 100.0,
+                y: 100.0,
+                width: 80.0,
+                height: 60.0,
+            }),
+        );
+        let anchored = state.active().selection.single().expect("selected");
+        apply(
+            &mut state,
+            Command::AddRectangle(DocRect {
+                x: 300.0,
+                y: 300.0,
+                width: 80.0,
+                height: 60.0,
+            }),
+        );
+        let dragged = state.active().selection.single().expect("selected");
+        (state, anchored, dragged)
+    }
+
+    #[test]
+    fn a_drag_settles_onto_the_line_it_is_near() {
+        // The baseline the next test needs: with the object two points shy of
+        // the other's left edge, the move is stretched to land exactly on it.
+        let (mut state, _anchored, dragged) = two_rects();
+        let origins = vec![(
+            dragged,
+            state.active().document().frame(dragged).unwrap().transform,
+        )];
+
+        let (dx, _dy) = settle(&mut state, &origins, -202.0, 0.0, false);
+
+        assert_eq!(dx, -200.0, "should have been pulled onto x = 100");
+        assert!(state.snapped_to.is_some(), "and said so");
+    }
+
+    #[test]
+    fn snapping_measures_from_the_drag_origin_not_from_its_own_preview() {
+        // The bug: `settle` read each frame's *current* transform, but the live
+        // move writes the previous preview into that transform on every frame.
+        // From the second pointer move onward the landing rectangle was the
+        // preview plus the whole delta a second time, so it ran away from the
+        // pointer and caught nothing — snapping looked switched off while the
+        // preference said it was on.
+        let (mut state, _anchored, dragged) = two_rects();
+        let origins = vec![(
+            dragged,
+            state.active().document().frame(dragged).unwrap().transform,
+        )];
+
+        let first = settle(&mut state, &origins, -202.0, 0.0, false);
+
+        // Exactly what the live move does with the answer.
+        let by = tessera_geometry::Transform::translate(first.0, first.1);
+        for (id, origin) in &origins {
+            state
+                .active_mut()
+                .document_mut()
+                .frame_mut(*id)
+                .unwrap()
+                .transform = origin.then(by);
+        }
+
+        // The same pointer position, so the same delta, and therefore the same
+        // answer. Before the fix this returned -2.0 and kept drifting.
+        let second = settle(&mut state, &origins, -202.0, 0.0, false);
+
+        assert_eq!(second, first, "the same gesture must settle the same way");
+        assert!(state.snapped_to.is_some(), "and must still be caught");
+    }
+
+    #[test]
+    fn the_preference_still_turns_snapping_off() {
+        let (mut state, _anchored, dragged) = two_rects();
+        let origins = vec![(
+            dragged,
+            state.active().document().frame(dragged).unwrap().transform,
+        )];
+        state.prefs.snapping = false;
+
+        assert_eq!(
+            settle(&mut state, &origins, -202.0, 0.0, false),
+            (-202.0, 0.0)
+        );
+        assert!(state.snapped_to.is_none());
+    }
+
     // --- text that does not fit ---------------------------------------------
 
     /// A text frame `height` tall holding `text`.
@@ -2867,6 +3156,111 @@ mod tests {
         assert!(
             overset_frames(&mut state).is_empty(),
             "a frame big enough for its copy is not overset"
+        );
+    }
+
+    #[test]
+    fn the_last_frame_of_a_thread_is_not_overset_when_the_rest_fits() {
+        // Reported from real use: a receiving frame with inches of empty space
+        // in it wore the red mark that means "copy is lost here".
+        //
+        // The cause was measuring the *whole* story against the frame. A
+        // threaded frame renders only its own portion, so the whole story is
+        // taller than it by definition and every chain reported every one of
+        // its frames overset. The flow pass already knew better and was not
+        // being asked.
+        use crate::command::{Command, apply};
+
+        let long = "the quick brown fox jumps over the lazy dog. ".repeat(12);
+        let (mut state, first) = a_text_frame(200.0, &long);
+
+        // The receiving frame is deliberately **smaller than the whole story
+        // and larger than the tail**. That band is the only place the two
+        // implementations disagree, so a test outside it would pass either way.
+        let whole = {
+            let key = state.active;
+            let TesseraApp {
+                documents, shaper, ..
+            } = &mut state;
+            let doc = documents[key].document();
+            let story = doc.stories.keys().next().expect("a story");
+            shaper
+                .shape(doc.story(story).expect("story"), doc, 200.0)
+                .height
+        };
+        let tail = 120.0;
+        assert!(
+            whole > tail,
+            "the fixture must be one the old measurement called overset"
+        );
+
+        apply(
+            &mut state,
+            Command::AddTextFrame(DocRect {
+                x: 300.0,
+                y: 0.0,
+                width: 200.0,
+                height: tail,
+            }),
+        );
+        let second = state.active().selection.single().expect("selected");
+        apply(
+            &mut state,
+            Command::ThreadFrames {
+                from: first,
+                to: second,
+            },
+        );
+
+        assert!(
+            overset_frames(&mut state).is_empty(),
+            "the chain holds all of its copy, so nothing is overset"
+        );
+    }
+
+    #[test]
+    fn a_frame_that_passes_its_text_on_is_not_overset() {
+        // The red `+` means copy has fallen off the end and is invisible. A
+        // frame whose overflow continues into the next frame of a thread has
+        // lost nothing, but this measured the whole story against one frame's
+        // height and so reported every frame of every chain as overset — the
+        // alarm fired on the frames that were working.
+        use crate::command::{Command, apply};
+
+        let long = "the quick brown fox jumps over the lazy dog. ".repeat(40);
+        let (mut state, first) = a_text_frame(30.0, &long);
+        assert_eq!(
+            overset_frames(&mut state),
+            vec![first],
+            "on its own it really is overset"
+        );
+
+        apply(
+            &mut state,
+            Command::AddTextFrame(DocRect {
+                x: 300.0,
+                y: 0.0,
+                width: 200.0,
+                height: 40.0,
+            }),
+        );
+        let second = state.active().selection.single().expect("selected");
+        apply(
+            &mut state,
+            Command::ThreadFrames {
+                from: first,
+                to: second,
+            },
+        );
+
+        let overset = overset_frames(&mut state);
+        assert!(
+            !overset.contains(&first),
+            "the sending frame has somewhere to put its overflow"
+        );
+        assert!(
+            overset.contains(&second),
+            "the last frame of the chain is still where the copy runs out"
         );
     }
 

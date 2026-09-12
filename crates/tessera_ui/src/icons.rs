@@ -100,6 +100,11 @@ pub enum Icon {
     EyeOff,
     Lock,
     Unlock,
+    /// Two fields that move together, and the same chain broken. Distinct from
+    /// [`Icon::Lock`], which is about permission rather than about linkage:
+    /// a locked layer cannot be touched, linked margins simply change as one.
+    Link2,
+    Unlink2,
 
     // The fill and stroke proxy, and the status bar's zoom.
     Swap,
@@ -144,7 +149,14 @@ impl Icon {
                 "M3 12 H16 M16 9 V15 M16 12 H21",
                 "M3 18 H10 M10 15 V21 M10 18 H21",
             ],
-            Self::Pages => &["M7 3 H21 V17 H7 Z", "M3 7 V21 H17"],
+            // lucide: file-text
+            Self::Pages => &[
+                "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z",
+                "M14 2v4a2 2 0 0 0 2 2h4",
+                "M16 13H8",
+                "M16 17H8",
+                "M10 9H8",
+            ],
             // A type specimen sheet: the panel contains text and object styles.
             Self::Styles => &[
                 "M4 3 H20 V21 H4 Z",
@@ -153,7 +165,14 @@ impl Icon {
                 "M8 18 H16",
             ],
             Self::Close => &["M5 5 L19 19", "M19 5 L5 19"],
-            Self::Preflight => &["M4 3 H20 V21 H4 Z", "M7 11 L11 15 L17 8"],
+            // lucide: list-checks
+            Self::Preflight => &[
+                "m3 17 2 2 4-4",
+                "m3 7 2 2 4-4",
+                "M13 6h8",
+                "M13 12h8",
+                "M13 18h8",
+            ],
             Self::Swatches => &[
                 "M3 3 H9 V18 A3 3 0 0 1 3 18 Z",
                 "M9 8 L14 3 L19 8 L9 18",
@@ -436,6 +455,14 @@ impl Icon {
                 "M5 11 h14 a2 2 0 0 1 2 2 v7 a2 2 0 0 1 -2 2 h-14 a2 2 0 0 1 -2 -2 v-7 a2 2 0 0 1 2 -2 z",
                 "M7 11V7a5 5 0 0 1 9.9-1",
             ],
+            // lucide: link-2
+            Self::Link2 => &[
+                "M9 17H7A5 5 0 0 1 7 7h2",
+                "M15 7h2a5 5 0 1 1 0 10h-2",
+                "M8 12 H16",
+            ],
+            // lucide: unlink-2 — link-2 without the bar joining the two rings.
+            Self::Unlink2 => &["M9 17H7A5 5 0 0 1 7 7h2", "M15 7h2a5 5 0 1 1 0 10h-2"],
             // lucide: trash-2
             Self::Trash => &[
                 "M10 11v6",
@@ -546,6 +573,8 @@ impl Icon {
             | Self::EyeOff
             | Self::Lock
             | Self::Unlock
+            | Self::Link2
+            | Self::Unlink2
             | Self::PictureFrame
             | Self::Polygon
             | Self::Scissors
@@ -844,7 +873,7 @@ pub fn paint_rotated(
 /// icon rather than returning nothing, so the cost of forgetting is a slower
 /// first draw instead of an invisible button; this list is the fast path, not
 /// the only one.
-pub const ALL: [Icon; 66] = [
+pub const ALL: [Icon; 68] = [
     Icon::Sun,
     Icon::Moon,
     Icon::DirectSelect,
@@ -905,6 +934,8 @@ pub const ALL: [Icon; 66] = [
     Icon::EyeOff,
     Icon::Lock,
     Icon::Unlock,
+    Icon::Link2,
+    Icon::Unlink2,
     Icon::Swap,
     Icon::NoFill,
     Icon::Blend,
@@ -967,6 +998,40 @@ mod tests {
                 .sum();
             assert!(segments > 0, "{icon:?} draws nothing");
         }
+    }
+
+    #[test]
+    fn the_panel_icons_are_the_lucide_glyphs_they_claim_to_be() {
+        // Pinned by shape rather than by name, because the name is what was
+        // wrong: `Pages` drew two offset sheets, which reads as "duplicate",
+        // and `Preflight` drew one tick on a sheet rather than a checklist.
+        // file-text has a folded corner and three lines of copy; list-checks
+        // has two ticks and three rules and no enclosing box at all.
+        assert_eq!(Icon::Pages.paths().len(), 5, "file-text has five subpaths");
+        assert_eq!(
+            Icon::Preflight.paths().len(),
+            5,
+            "list-checks has five subpaths"
+        );
+        assert!(
+            Icon::Preflight
+                .paths()
+                .iter()
+                .all(|d| !d.contains("H20 V21")),
+            "list-checks is not drawn inside a sheet"
+        );
+    }
+
+    #[test]
+    fn a_link_and_a_broken_link_differ_by_the_bar_between_them() {
+        // The whole of what distinguishes them, and the reason unlink-2 is
+        // derived from link-2 rather than drawn separately: the two rings are
+        // the same, and only the join says whether the fields move together.
+        let linked = Icon::Link2.paths();
+        let broken = Icon::Unlink2.paths();
+        assert_eq!(linked.len(), broken.len() + 1);
+        assert_eq!(&linked[..2], broken, "the rings are shared");
+        assert!(linked[2].contains("M8 12"), "the bar is the difference");
     }
 
     #[test]
@@ -1056,7 +1121,7 @@ mod tests {
         // fails this rather than shipping an invisible button.
         assert_eq!(
             ALL.len(),
-            66,
+            68,
             "an icon was added to the enum without being added to ALL"
         );
     }

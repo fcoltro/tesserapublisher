@@ -686,7 +686,7 @@ fn build_inner(
                 }
             }
 
-            ResolvedKind::Text { shaped, color } => {
+            ResolvedKind::Text { shaped, color, .. } => {
                 draw_text(&mut scene, transform, item.bounds, shaped, color, proof);
             }
         }
@@ -846,6 +846,7 @@ mod tests {
                     ResolvedKind::Text {
                         shaped,
                         color: Color::BLACK,
+                        overset_lines: 0,
                     },
                     page(),
                 ),
@@ -1456,6 +1457,7 @@ mod tests {
                 ResolvedKind::Text {
                     shaped,
                     color: Color::BLACK,
+                    overset_lines: 0,
                 },
                 DocRect {
                     x: 0.0,
@@ -1489,6 +1491,7 @@ mod tests {
                 ResolvedKind::Text {
                     shaped,
                     color: Color::BLACK,
+                    overset_lines: 0,
                 },
                 DocRect {
                     x: 0.0,

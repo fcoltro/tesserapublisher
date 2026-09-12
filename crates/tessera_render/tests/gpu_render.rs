@@ -360,6 +360,7 @@ fn text_puts_dark_pixels_on_the_page() {
                 kind: ResolvedKind::Text {
                     shaped,
                     color: Color::BLACK,
+                    overset_lines: 0,
                 },
             }],
         },

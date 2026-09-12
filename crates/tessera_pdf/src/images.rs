@@ -272,6 +272,43 @@ mod tests {
     }
 
     #[test]
+    fn every_placeable_format_reaches_the_page() {
+        // The formats are enabled by a Cargo feature, which is the kind of
+        // thing that silently stops being true: `default-features = false`
+        // means a dropped flag does not fail to compile, it fails to open a
+        // file. Each of these is written and read back through the same call
+        // the exporter uses.
+        //
+        // TIFF is the one that matters — it is what a scanner writes and what
+        // a repro house sends — and it was the reason the placeable list was
+        // two formats long for so little cause.
+        for (name, format) in [
+            ("wide.tiff", image::ImageFormat::Tiff),
+            ("wide.webp", image::ImageFormat::WebP),
+            ("wide.bmp", image::ImageFormat::Bmp),
+            ("wide.gif", image::ImageFormat::Gif),
+            ("wide.png", image::ImageFormat::Png),
+        ] {
+            let source = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+                6,
+                4,
+                image::Rgb([200, 40, 90]),
+            ));
+            let dir = std::env::temp_dir().join("tessera-pdf-images");
+            std::fs::create_dir_all(&dir).expect("dir");
+            let path = dir.join(name);
+            source
+                .save_with_format(&path, format)
+                .unwrap_or_else(|e| panic!("{name} could not be written: {e}"));
+
+            let ready =
+                prepare(&path).unwrap_or_else(|e| panic!("{name} could not be read back: {e:?}"));
+            assert_eq!(ready.width, 6, "{name} lost its width");
+            assert_eq!(ready.height, 4, "{name} lost its height");
+        }
+    }
+
+    #[test]
     fn converting_gives_four_components_a_pixel() {
         // Three would be an RGB image wearing a CMYK label, which a press would
         // read as a third of the picture.

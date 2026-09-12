@@ -1210,7 +1210,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                 content.restore_state();
             }
 
-            ResolvedKind::Text { shaped, color } => {
+            ResolvedKind::Text { shaped, color, .. } => {
                 draw_text(&mut content, page, item.bounds, shaped, color, fonts, ink)?;
             }
         }

@@ -438,14 +438,16 @@ pub fn transform_row(
     let h_changed = measure_inline(ui, "H", &mut bounds.height, unit);
 
     let mut chain = state.constrain_proportions;
-    // A padlock rather than InDesign's chain link, because there is no chain
-    // in the icon set and a locked ratio is what the control means.
+    // InDesign's chain link, now that the icon set has one. A padlock stood in
+    // while it did not, and a padlock means permission elsewhere in this
+    // application — a locked layer cannot be touched, whereas a constrained
+    // ratio is two fields moving together.
     if icon_button(
         ui,
         if chain {
-            crate::icons::Icon::Lock
+            crate::icons::Icon::Link2
         } else {
-            crate::icons::Icon::Unlock
+            crate::icons::Icon::Unlink2
         },
         "Constrain proportions",
         chain,
@@ -1856,9 +1858,9 @@ fn linked_group_heading(ui: &mut Ui, id: egui::Id, title: &str, default: bool) -
                 ui.painter(),
                 rect,
                 if linked {
-                    crate::icons::Icon::Lock
+                    crate::icons::Icon::Link2
                 } else {
-                    crate::icons::Icon::Unlock
+                    crate::icons::Icon::Unlink2
                 },
                 if linked {
                     Theme::text_primary()
