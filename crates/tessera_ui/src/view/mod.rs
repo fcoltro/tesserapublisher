@@ -12,6 +12,7 @@ pub mod control;
 pub mod docks;
 pub mod document_tabs;
 pub mod export_dialog;
+pub mod find;
 pub mod glass;
 pub mod identity;
 pub mod layers;
@@ -121,6 +122,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     new_document::show(ui.ctx(), state);
     step_repeat::show(ui.ctx(), state);
     styles::editor(ui.ctx(), state);
+    find::show(ui.ctx(), state);
 
     let status = Panel::bottom("status")
         .exact_size(28.0)

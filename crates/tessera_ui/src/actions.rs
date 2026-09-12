@@ -115,6 +115,7 @@ pub enum Run {
     ScreenMode(ScreenMode),
     ZoomToFit,
     StepAndRepeat,
+    FindAndChange,
 }
 
 /// When an action may be reached from the keyboard.
@@ -170,6 +171,10 @@ pub fn guard(run: Run) -> Guard {
 
         // Something has to be selected for these to mean anything.
         Run::StepAndRepeat => Guard::NeedsSelection,
+        // Opening a search box is not an edit and needs no selection. It is
+        // guarded against typing all the same: Ctrl+F inside the search box
+        // itself must not reopen the window under the caret.
+        Run::FindAndChange => Guard::NotWhileTyping,
         Run::Command(
             Cut
             | Copy
@@ -320,6 +325,14 @@ pub fn all() -> &'static [Action] {
             Some("Ctrl+Alt+U"),
             Group::Edit,
             Run::StepAndRepeat,
+        ),
+        // Ctrl+F, which is the shortcut this does in every application a
+        // person has ever used; there is nothing to be gained by differing.
+        a(
+            "Find and change\u{2026}",
+            Some("Ctrl+F"),
+            Group::Edit,
+            Run::FindAndChange,
         ),
         a("Delete", Some("Del"), Group::Edit, Command(Delete)),
         a(
@@ -765,6 +778,7 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         // Opens the box rather than doing anything: how many and how far are
         // the whole question, and guessing them would make a mess to undo.
         Run::StepAndRepeat => state.step.open = true,
+        Run::FindAndChange => state.find.open(),
         Run::ZoomToFit => state.active_mut().fitted = false,
         Run::Command(cmd) => {
             let command = match cmd {

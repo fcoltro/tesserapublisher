@@ -13,6 +13,7 @@ pub mod command;
 pub mod cursor;
 pub mod docking;
 pub mod file_ops;
+pub mod find;
 pub mod icons;
 pub mod ime;
 pub mod keys;

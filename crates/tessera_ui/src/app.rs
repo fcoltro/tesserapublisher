@@ -346,6 +346,8 @@ pub struct TesseraApp {
 
     /// The Step and Repeat box, and what it was last asked for.
     pub step: crate::view::step_repeat::StepWindow,
+    /// Find and Change. Modeless, so it is not in `modal_open`.
+    pub find: crate::view::find::FindWindow,
 
     /// The parent page being edited on its own, if any.
     ///
@@ -463,6 +465,7 @@ impl TesseraApp {
 
         Self {
             quit: crate::view::quit::Quit::default(),
+            find: crate::view::find::FindWindow::default(),
             documents,
             active,
             shaper: Shaper::new(),

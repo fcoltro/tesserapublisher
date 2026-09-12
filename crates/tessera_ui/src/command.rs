@@ -79,6 +79,20 @@ pub enum Command {
     /// property alone". That is what lets the inspector change one control
     /// without flattening the rest, and it is why the whole struct travels at
     /// once — one undo entry for one visit to the inspector.
+    /// Change every given range to the same text, as one undo entry.
+    ///
+    /// The edits must already be **back to front** within each story — see
+    /// [`crate::find::edits_for`], which is what builds them. Replacing left
+    /// to right moves every later offset by the difference in length, so the
+    /// second edit in a story would land in the wrong place.
+    ///
+    /// One command rather than one per hit because "change all" is one thing a
+    /// person did: undoing it should put the document back, not walk backwards
+    /// through four hundred separate changes.
+    ReplaceMatches {
+        edits: Vec<(StoryId, std::ops::Range<usize>, String)>,
+    },
+
     SetCharacterFormat {
         story: StoryId,
         range: std::ops::Range<usize>,
@@ -756,6 +770,28 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 // describing a length the text no longer has, which is
                 // corruption rather than a glitch and shows up far from here.
                 s.set_text(text);
+            }
+        }
+
+        Command::ReplaceMatches { edits } => {
+            for (story, range, with) in edits {
+                let Some(s) = state.active_mut().document_mut().story_mut(story) else {
+                    continue;
+                };
+                // A range that no longer fits is one the document changed
+                // under the search. Skipped rather than clamped: a clamped
+                // range would edit text nobody looked for.
+                if range.end > s.text.len()
+                    || !s.text.is_char_boundary(range.start)
+                    || !s.text.is_char_boundary(range.end)
+                {
+                    continue;
+                }
+                // Through the story's own operations, which carry the run
+                // table with them. Assigning the string would leave `runs`
+                // describing a length the text no longer has.
+                s.delete_range(range.clone());
+                s.insert_text(range.start, &with);
             }
         }
 
