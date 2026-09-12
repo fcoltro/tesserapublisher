@@ -2822,6 +2822,7 @@ mod tests {
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,
                 shadow: None,
+                anchor: None,
                 style: None,
             },
         );

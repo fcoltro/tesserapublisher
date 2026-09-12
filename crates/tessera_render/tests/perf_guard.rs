@@ -51,6 +51,7 @@ fn crowded_document() -> Document {
                 blend: tessera_document::blending::Blending::PLAIN,
                 corners: tessera_document::corners::Corners::SQUARE,
                 shadow: None,
+                anchor: None,
                 style: None,
             },
         );
@@ -152,6 +153,7 @@ fn wordy_document() -> Document {
                 blend: tessera_document::blending::Blending::PLAIN,
                 corners: tessera_document::corners::Corners::SQUARE,
                 shadow: None,
+                anchor: None,
                 style: None,
             },
         );

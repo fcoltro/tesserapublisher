@@ -1582,13 +1582,29 @@ impl Shaper {
         from: usize,
         obstacles: &[crate::wrap::Obstacle],
     ) -> ShapedText {
-        if obstacles.is_empty() {
+        self.shape_around_with_objects(story, styles, width, from, obstacles, &[])
+    }
+
+    /// The same, with room reserved for anchored objects.
+    ///
+    /// One entry point for both, because a frame can perfectly well have text
+    /// running round a picture beside it *and* a picture set into the copy.
+    pub fn shape_around_with_objects(
+        &mut self,
+        story: &Story,
+        styles: &dyn Styles,
+        width: f64,
+        from: usize,
+        obstacles: &[crate::wrap::Obstacle],
+        objects: &[InlineObject],
+    ) -> ShapedText {
+        if obstacles.is_empty() && objects.is_empty() {
             return self.shape_from(story, styles, width, from);
         }
         if from >= story.text.len() && from > 0 {
             return ShapedText::default();
         }
-        let placed = self.layout_paragraphs_around(story, styles, width, from, obstacles, &[]);
+        let placed = self.layout_paragraphs_around(story, styles, width, from, obstacles, objects);
         Self::assemble(story, styles, &placed)
     }
 

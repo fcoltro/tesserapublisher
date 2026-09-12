@@ -295,12 +295,88 @@ fn resolve_pages<'a>(
             continue;
         }
         let Some(frame) = doc.frame(id) else { continue };
+        // An anchored frame is placed by the text it sits in, below. Its own
+        // bounds say how big it is and nothing about where it goes, so drawing
+        // it here would put it wherever it was last left.
+        if frame.anchor.is_some() {
+            continue;
+        }
         if let Some(item) = resolve_one(doc, shaper, id, frame, composed) {
             items.push(item);
         }
     }
 
+    // After the hosts, because where an anchored object lands is not known
+    // until the text around it has been broken into lines.
+    let anchored = resolve_anchored(doc, shaper, composed, &items);
+    items.extend(anchored);
+
     ResolvedDocument { items, pages }
+}
+
+/// Resolve the frames anchored in text that has already been laid out.
+///
+/// **A second pass, after the hosts.** An anchored frame has no position of its
+/// own — where it lands is wherever its marker ended up, which is not known
+/// until the text around it has been broken into lines. So the hosts resolve
+/// first, and this reads the answer off them.
+///
+/// Nothing is drawn twice: an anchored frame is skipped by the ordinary walk,
+/// because the position it would be drawn at there is meaningless.
+fn resolve_anchored(
+    doc: &Document,
+    shaper: &mut Shaper,
+    composed: Option<(StoryId, &TextStory)>,
+    hosts: &[ResolvedItem],
+) -> Vec<ResolvedItem> {
+    let mut out = Vec::new();
+
+    for host in hosts {
+        let ResolvedKind::Text { shaped, .. } = &host.kind else {
+            continue;
+        };
+        let Some(FrameKind::Text { story, .. }) = doc.frame(host.frame).map(|f| &f.kind) else {
+            continue;
+        };
+        let Some(text) = doc.story(*story) else {
+            continue;
+        };
+        let markers = tessera_document::anchored::marker_offsets(&text.text);
+        if markers.is_empty() {
+            continue;
+        }
+        let anchors = doc.anchors_in(*story);
+
+        for placed in shaped.lines.iter().flat_map(|line| &line.objects) {
+            // The marker's index is what names the frame; the offset is only
+            // how the shaper reported it back.
+            let Some(index) = markers.iter().position(|at| *at == placed.at) else {
+                continue;
+            };
+            let Some(id) = anchors.frame_at(index) else {
+                continue;
+            };
+            let Some(frame) = doc.frame(id) else { continue };
+            let Some(mut item) = resolve_one(doc, shaper, id, frame, composed) else {
+                continue;
+            };
+
+            // From the frame's own origin to where the line put it, then
+            // through the host's transform — so an anchored picture in a
+            // rotated text frame rotates with it, which is what "anchored"
+            // has to mean or the two come apart.
+            let shift = Transform::translate(
+                host.bounds.x + placed.x - frame.bounds.x,
+                host.bounds.y + placed.y
+                    - frame.bounds.y
+                    - frame.anchor.map(|a| a.baseline_shift).unwrap_or(0.0),
+            );
+            item.transform = shift.then(host.transform);
+            item.spread_area = host.spread_area;
+            out.push(item);
+        }
+    }
+    out
 }
 
 /// A stroke with its colour resolved.
@@ -515,12 +591,15 @@ fn resolve_one<'a>(
             }
         }
 
-        FrameKind::Text { story, layout } => {
+        FrameKind::Text {
+            story: story_id,
+            layout,
+        } => {
             // A text frame whose story is missing is a broken document,
             // not a blank frame. Skipping it silently would hide the
             // breakage; milestone 6's preflight reports it. For now it
             // simply does not paint, which is visible.
-            let story = story_of(doc, composed, *story)?;
+            let story = story_of(doc, composed, *story_id)?;
             // The document is what resolves named styles, so it is what
             // the shaper is handed.
             //
@@ -604,7 +683,20 @@ fn resolve_one<'a>(
             // because "near" is relative to the frame doing the reading.
             let obstacles = obstacles_for(doc, id, frame, measure);
 
-            let shaped = shaper.shape_around(story, doc, measure, from, &obstacles);
+            // Room for anything anchored in this story. The boxes come from
+            // the anchored frames' own sizes, so a picture made larger pushes
+            // the copy aside the moment it is resized.
+            let anchored: Vec<tessera_text::shape::InlineObject> = doc
+                .inline_objects_of(*story_id)
+                .into_iter()
+                .map(|(at, _, width, height)| tessera_text::shape::InlineObject {
+                    at,
+                    width,
+                    height,
+                })
+                .collect();
+            let shaped =
+                shaper.shape_around_with_objects(story, doc, measure, from, &obstacles, &anchored);
             let flowed = tessera_text::shape::flow_on_grid(shaped, &boxes, vertical, grid);
 
             ResolvedKind::Text {
@@ -656,8 +748,182 @@ mod tests {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         }
+    }
+
+    // --- anchored objects ----------------------------------------------------
+
+    /// A text frame whose story carries one marker, and a frame anchored to it.
+    ///
+    /// Returns the document, the host, and the anchored frame.
+    fn a_text_frame_with_an_anchored_picture(
+        before: &str,
+        after: &str,
+        size: (f64, f64),
+    ) -> (Document, FrameId, FrameId) {
+        use tessera_document::anchored::{Anchored, MARKER};
+
+        let mut doc = Document::default();
+        let page = doc.page_ids().next().expect("a page");
+        let layer = doc.default_layer().expect("a layer");
+        let bounds = doc.pages[page].bounds;
+
+        let story = doc.add_story(Story::new(format!("{before}{MARKER}{after}")));
+        let host = doc.add_frame(layer, {
+            let mut f = rect(bounds.x + 20.0, bounds.y + 20.0, 300.0, 300.0);
+            f.kind = FrameKind::text(story);
+            f
+        });
+
+        let mut picture = rect(0.0, 0.0, size.0, size.1);
+        picture.anchor = Some(Anchored::new(story, 0));
+        let anchored = doc.add_frame(layer, picture);
+
+        (doc, host, anchored)
+    }
+
+    fn item_for(resolved: &ResolvedDocument, id: FrameId) -> Option<&ResolvedItem> {
+        resolved.items.iter().find(|i| i.frame == id)
+    }
+
+    #[test]
+    fn an_anchored_frame_lands_where_its_marker_is() {
+        let (doc, host, anchored) =
+            a_text_frame_with_an_anchored_picture("Some words ", " and more", (40.0, 20.0));
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+
+        let host_item = item_for(&resolved, host).expect("the host resolved");
+        let item = item_for(&resolved, anchored).expect("the anchored frame resolved");
+
+        // Its own bounds are at the origin; the transform is what places it.
+        let placed = item.transform.apply(tessera_geometry::DocPoint {
+            x: item.bounds.x,
+            y: item.bounds.y,
+        });
+        assert!(
+            placed.x > host_item.bounds.x,
+            "it must sit after the words before it, not at the frame's edge"
+        );
+        assert!(
+            placed.x < host_item.bounds.x + 300.0 && placed.y >= host_item.bounds.y,
+            "and inside the frame that hosts it: {placed:?}"
+        );
+    }
+
+    #[test]
+    fn an_anchored_frame_is_drawn_once_not_twice() {
+        // It is skipped by the ordinary walk and placed by its host. Resolved
+        // in both, it would paint at its stale position as well as its real
+        // one — two pictures where the document has one.
+        let (doc, _host, anchored) =
+            a_text_frame_with_an_anchored_picture("x ", " y", (30.0, 30.0));
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+
+        let count = resolved
+            .items
+            .iter()
+            .filter(|i| i.frame == anchored)
+            .count();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn the_text_makes_room_for_what_is_anchored_in_it() {
+        // The point of anchoring rather than merely positioning: the copy has
+        // to give way, or the picture is printed on top of the words.
+        // Text that already fills most of the measure, and an object nearly as
+        // wide as the whole of it: the copy has nowhere to go but down.
+        let (doc, host, _) = a_text_frame_with_an_anchored_picture(
+            "some words that already run most of the way across ",
+            " and a good deal more after it",
+            (260.0, 12.0),
+        );
+        let plain = {
+            let mut d = doc.clone();
+            // The same story with the marker's frame unanchored, so nothing is
+            // reserved for it.
+            let ids: Vec<FrameId> = d.frames.keys().collect();
+            for id in ids {
+                if let Some(f) = d.frames.get_mut(id) {
+                    f.anchor = None;
+                }
+            }
+            d
+        };
+
+        let mut shaper = Shaper::new();
+        let with = resolve(&doc, &mut shaper);
+        let without = resolve(&plain, &mut shaper);
+
+        let lines = |r: &ResolvedDocument| {
+            item_for(r, host)
+                .and_then(|i| match &i.kind {
+                    ResolvedKind::Text { shaped, .. } => Some(shaped.lines.len()),
+                    _ => None,
+                })
+                .unwrap_or(0)
+        };
+        assert!(
+            lines(&with) > lines(&without),
+            "a 150pt object in a 300pt measure must push the copy onto more lines: {} vs {}",
+            lines(&with),
+            lines(&without)
+        );
+    }
+
+    #[test]
+    fn an_anchored_frame_moves_when_the_copy_before_it_grows() {
+        // The whole reason to anchor rather than place: add a sentence above
+        // and the picture goes down the page with its paragraph.
+        let short = a_text_frame_with_an_anchored_picture("one line ", "", (20.0, 10.0));
+        let long = a_text_frame_with_an_anchored_picture(
+            "a much longer run of copy that will certainly take several lines \
+             before it ever reaches the marker at the end of it ",
+            "",
+            (20.0, 10.0),
+        );
+
+        let mut shaper = Shaper::new();
+        let y_of = |(doc, _host, anchored): &(Document, FrameId, FrameId), s: &mut Shaper| {
+            let resolved = resolve(doc, s);
+            let item = item_for(&resolved, *anchored).expect("resolved");
+            item.transform
+                .apply(tessera_geometry::DocPoint {
+                    x: item.bounds.x,
+                    y: item.bounds.y,
+                })
+                .y
+        };
+
+        let near = y_of(&short, &mut shaper);
+        let far = y_of(&long, &mut shaper);
+        assert!(
+            far > near,
+            "more copy above it must push it down the page: {far} vs {near}"
+        );
+    }
+
+    #[test]
+    fn a_story_with_no_markers_costs_nothing() {
+        let mut doc = Document::default();
+        let page = doc.page_ids().next().expect("a page");
+        let layer = doc.default_layer().expect("a layer");
+        let bounds = doc.pages[page].bounds;
+        let story = doc.add_story(Story::new("no anchors here at all"));
+        let host = doc.add_frame(layer, {
+            let mut f = rect(bounds.x, bounds.y, 200.0, 100.0);
+            f.kind = FrameKind::text(story);
+            f
+        });
+
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+        assert_eq!(resolved.items.len(), 1);
+        assert!(item_for(&resolved, host).is_some());
     }
 
     #[test]
@@ -769,6 +1035,7 @@ mod tests {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         }
     }

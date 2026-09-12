@@ -134,6 +134,7 @@ mod tests {
             blend: crate::blending::Blending::PLAIN,
             corners: crate::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         }
     }

@@ -1845,6 +1845,47 @@ impl Document {
         self.revision += 1;
     }
 
+    /// The frames anchored in a story, by marker index.
+    ///
+    /// Gathered from the frames rather than stored beside them: the frames are
+    /// where an anchor lives, and a second list would be a second answer that
+    /// could disagree with the first.
+    pub fn anchors_in(&self, story: StoryId) -> crate::anchored::Anchors {
+        let mut frames: Vec<(usize, FrameId)> = self
+            .frames
+            .iter()
+            .filter_map(|(id, frame)| {
+                frame
+                    .anchor
+                    .filter(|a| a.story == story)
+                    .map(|a| (a.index, id))
+            })
+            .collect();
+        frames.sort_by_key(|(index, _)| *index);
+        crate::anchored::Anchors { frames }
+    }
+
+    /// The boxes a story's anchored frames need reserving in the text.
+    ///
+    /// In marker order, each taking its size from the frame it belongs to. A
+    /// marker with no frame reserves nothing — the text closes over it, which
+    /// is the least wrong thing to do with a document that should not exist.
+    pub fn inline_objects_of(&self, story: StoryId) -> Vec<(usize, FrameId, f64, f64)> {
+        let Some(text) = self.story(story) else {
+            return Vec::new();
+        };
+        let anchors = self.anchors_in(story);
+        crate::anchored::marker_offsets(&text.text)
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, at)| {
+                let id = anchors.frame_at(index)?;
+                let frame = self.frame(id)?;
+                Some((at, id, frame.bounds.width, frame.bounds.height))
+            })
+            .collect()
+    }
+
     /// Take a story out, once nothing refers to it.
     ///
     /// Merging cells swallows their text, and a story no cell names is a leak:
@@ -2224,6 +2265,7 @@ impl Document {
             blend: crate::blending::Blending::PLAIN,
             corners: crate::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         });
 
@@ -2922,6 +2964,7 @@ mod tests {
             blend: crate::blending::Blending::PLAIN,
             corners: crate::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         }
     }
@@ -3081,6 +3124,7 @@ mod tests {
             blend: crate::blending::Blending::PLAIN,
             corners: crate::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         }
     }
@@ -3150,6 +3194,7 @@ mod tests {
             blend: crate::blending::Blending::PLAIN,
             corners: crate::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         }
     }
@@ -3176,6 +3221,7 @@ mod tests {
             blend: crate::blending::Blending::PLAIN,
             corners: crate::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         }
     }

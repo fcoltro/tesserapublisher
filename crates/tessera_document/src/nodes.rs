@@ -218,6 +218,14 @@ pub struct Frame {
     /// should not throw those away.
     #[serde(default)]
     pub shadow: Option<crate::shadow::Shadow>,
+    /// Where this frame is anchored in a story, if it is.
+    ///
+    /// An anchored frame has no position of its own: `bounds` gives its size
+    /// and the layout pass decides where it lands, from wherever its marker
+    /// ended up in the text. Moving it by dragging is therefore meaningless —
+    /// it moves when the copy moves, which is the whole point of anchoring it.
+    #[serde(default)]
+    pub anchor: Option<crate::anchored::Anchored>,
     /// The named appearance this object follows, if any.
     ///
     /// Only the reference is stored, never a copy of what the style says. The

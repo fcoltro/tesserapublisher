@@ -1887,6 +1887,7 @@ fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         },
     );
@@ -3353,6 +3354,7 @@ mod tests {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         };
         let a = state
@@ -4957,6 +4959,7 @@ mod tests {
                 blend: tessera_document::blending::Blending::PLAIN,
                 corners: tessera_document::corners::Corners::SQUARE,
                 shadow: None,
+                anchor: None,
                 style: None,
             },
         );
@@ -5308,6 +5311,7 @@ mod tests {
                 blend: tessera_document::blending::Blending::PLAIN,
                 corners: tessera_document::corners::Corners::SQUARE,
                 shadow: None,
+                anchor: None,
                 style: None,
             },
         );

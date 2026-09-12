@@ -498,6 +498,7 @@ mod tests {
             blend: Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         }
     }

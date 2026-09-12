@@ -62,6 +62,7 @@ fn a_document_with_a_rectangle_round_trips_exactly() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         },
     );
@@ -174,6 +175,7 @@ fn any_frame() -> impl Strategy<Value = Frame> {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         })
 }
@@ -227,6 +229,7 @@ fn text_survives_a_save_and_load() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         },
     );
@@ -277,6 +280,7 @@ fn a_version_1_document_still_opens() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         },
     );
@@ -358,6 +362,7 @@ fn a_placement_survives_a_save_and_load() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         },
     );
@@ -397,6 +402,7 @@ fn a_version_2_rotation_becomes_the_placement_that_means_the_same_thing() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         },
     );
@@ -578,6 +584,7 @@ fn a_version_four_document_still_opens_and_gains_no_setup_it_never_had() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         },
     );
@@ -617,13 +624,15 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_twenty() {
+fn the_format_version_is_twenty_one() {
     // A tripwire, not a fact worth asserting on its own: changing it means
     // stopping to ask whether a migration step is owed. Sometimes the answer is
     // no — version 19 added `corners`, whose default is exactly what older
-    // documents meant, and version 20 added a `Table` frame kind, which no
-    // older document can contain — and the point is that somebody had to answer.
-    assert_eq!(format::FORMAT_VERSION, 20);
+    // documents meant; 20 added a `Table` frame kind, which no older document
+    // can contain; 21 added `anchor`, whose default of `None` is what every
+    // frame written before anchoring meant — and the point is that somebody had
+    // to answer.
+    assert_eq!(format::FORMAT_VERSION, 21);
 }
 
 #[test]
@@ -662,6 +671,7 @@ fn a_table_survives_a_round_trip_with_its_spans_intact() {
         blend: tessera_document::blending::Blending::PLAIN,
         corners: tessera_document::corners::Corners::SQUARE,
         shadow: None,
+        anchor: None,
         style: None,
     };
     let json = serde_json::to_string(&frame).expect("writes");
@@ -694,6 +704,7 @@ fn a_frame_written_before_corners_reads_as_square() {
         blend: tessera_document::blending::Blending::PLAIN,
         corners: tessera_document::corners::Corners::SQUARE,
         shadow: None,
+        anchor: None,
         style: None,
     };
 
@@ -782,6 +793,7 @@ fn object_styles_and_the_objects_following_them_round_trip() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         },
     );
@@ -865,6 +877,7 @@ fn a_drop_shadow_round_trips() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: Some(shadow.clone()),
+            anchor: None,
             style: None,
         },
     );
@@ -920,6 +933,7 @@ fn a_gradient_fill_round_trips() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         },
     );
@@ -971,6 +985,7 @@ fn a_document_written_before_gradients_opens_with_its_colour_intact() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            anchor: None,
             style: None,
         },
     );
@@ -1020,6 +1035,7 @@ fn an_objects_opacity_and_blend_mode_round_trip() {
                 mode: BlendMode::Multiply,
             },
             shadow: None,
+            anchor: None,
             style: None,
         },
     );
@@ -1082,6 +1098,7 @@ fn placed_artwork_round_trips_as_a_link_rather_than_as_pixels() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            anchor: None,
             style: None,
         },
     );
@@ -1161,6 +1178,7 @@ fn swatches_and_the_objects_naming_them_round_trip() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            anchor: None,
             style: None,
         },
     );
@@ -1271,6 +1289,7 @@ fn a_version_nine_text_frame_opens_as_a_single_column() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            anchor: None,
             style: None,
         },
     );
@@ -1333,6 +1352,7 @@ fn a_columned_text_frame_round_trips() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            anchor: None,
             style: None,
         },
     );
@@ -1377,6 +1397,7 @@ fn a_version_eight_document_opens_with_no_masters_and_no_overrides() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            anchor: None,
             style: None,
         },
     );
@@ -1425,6 +1446,7 @@ fn a_master_and_its_overrides_survive_a_round_trip() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            anchor: None,
             style: None,
         },
     );
@@ -1491,6 +1513,7 @@ fn version_7_archive(path: &std::path::Path) -> serde_json::Value {
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,
                 shadow: None,
+                anchor: None,
                 style: None,
             },
         );
