@@ -37,7 +37,24 @@ tessera_pdf      = { path = "crates/tessera_pdf" }
 tessera_preflight = { path = "crates/tessera_preflight" }
 tessera_ui       = { path = "crates/tessera_ui" }
 
-# Interface. Pinned to 0.35 to match oxiDRAFT, the reference implementation.
+# Interface. Pinned to 0.35 to match oxiDRAFT, the reference implementation —
+# and now held there by something harder than a preference.
+#
+# **0.36 cannot be taken until vello ships on wgpu 30.** egui-wgpu 0.36 wants
+# wgpu 30; vello 0.10 is the newest vello and wants wgpu 29. Two majors of wgpu
+# cannot meet, and `view/vello_host.rs` hands egui's own `Device` straight to
+# vello's `Renderer::new` — that shared device is decision D2 and the reason a
+# panel and the page can be drawn in one frame. Tried on 2026-09-12: five type
+# errors, every one of them `expected eframe::wgpu::Device, found
+# vello::wgpu::Device`.
+#
+# There is a community fork (`netrender-vello`, "Vello 0.10 compatibility build
+# for wgpu 30") that exists precisely because of this. Not taken: the renderer
+# every page goes through is not a thing to run on an unofficial fork.
+#
+# Re-check when vello publishes past 0.10. Upgrading buys the font stack —
+# skrifa, read-fonts, font-types and harfrust are each in the tree twice
+# because epaint 0.35 pins older Linebender crates than parley 0.11 uses.
 egui      = "0.35"
 # Default features, deliberately. Turning them off drops x11, wayland,
 # default_fonts and winit/default -- which makes winit fail to compile on
