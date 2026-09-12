@@ -25,6 +25,33 @@ authors = ["Hailmary"]
 publish = false
 
 # Single source of truth for versions. A crate writes `serde.workspace = true`.
+#
+# ## Upgrading: newest is not the goal
+#
+# **The right version of a dependency is the one that shares with whatever else
+# already needs it, not the highest number.** Two semver-incompatible copies of
+# a crate are two different types to the compiler, so a version nothing else
+# agrees with costs compile time and binary size at best — and at worst cannot
+# be used at all, which is what happens the moment a type crosses a boundary
+# between crates.
+#
+# Both of those have already bitten here, and each is written up at the
+# dependency it concerns rather than only in a commit message:
+#
+#   * `pollster` is held at 0.4 because eframe pins 0.4. Asking for 1.0 adds a
+#     second copy beside it rather than replacing it.
+#   * `egui` is held at 0.35 because 0.36 moves to wgpu 30 while vello 0.10 is
+#     on wgpu 29, and this application hands egui's `Device` to vello. That one
+#     does not compile at all.
+#   * `resvg` is on 0.48 rather than something older *because* it shares kurbo
+#     0.13 with this workspace; an earlier pick of 0.45 dragged a second kurbo
+#     into every build and had to be undone.
+#
+# So: take patch and minor updates freely — `cargo update` is safe and was last
+# run clean. Before taking a **major**, check what it does to
+# `cargo tree --duplicates`, and be willing to conclude that staying put is the
+# better answer. A held version without a written reason is the thing to avoid,
+# not a held version.
 [workspace.dependencies]
 tessera_geometry = { path = "crates/tessera_geometry" }
 tessera_color    = { path = "crates/tessera_color" }
