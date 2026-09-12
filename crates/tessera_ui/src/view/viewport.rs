@@ -752,6 +752,23 @@ fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
     if !keys_are_ours(ui) {
         return;
     }
+
+    // **Tab belongs to the table, not to the buffer.** Consumed before the
+    // buffer is handed the events, or a tab character would be typed into the
+    // cell as well as moving out of it — and a tab in a cell is invisible,
+    // because a cell has no tab stops to land on.
+    if state.active().editing_cell.is_some() {
+        let (forward, back) = ui.input_mut(|i| {
+            (
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Tab),
+                i.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab),
+            )
+        });
+        if forward || back {
+            step_cell(state, back);
+            return;
+        }
+    }
     let Some((id, buffer)) = state.active_mut().editing.as_mut() else {
         return;
     };
@@ -768,8 +785,8 @@ fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
         // undo-bracketed: live update without an entry per keystroke. The
         // whole editing session became one undo step when it began, in
         // `begin_editing`.
-        if let Some(tessera_document::nodes::FrameKind::Text { story: target, .. }) =
-            state.active().document().frame(id).map(|f| f.kind.clone())
+        let cell = state.active().editing_cell;
+        if let Some(target) = editing_story(state, id, cell)
             && let Some(s) = state.active_mut().document_mut().story_mut(target)
         {
             *s = story;
@@ -875,6 +892,65 @@ fn guide_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
 
 fn finish_editing(state: &mut TesseraApp) {
     state.active_mut().editing = None;
+    state.active_mut().editing_cell = None;
+}
+
+/// The story keystrokes reach, for a frame and an optional cell.
+///
+/// **One function, used by both ends.** `start_editing` loads a buffer from it
+/// and `editing_input` writes the buffer back through it; if those two ever
+/// disagreed about which story is being edited, typing into a table would
+/// overwrite a different cell than the one under the caret — and the damage
+/// would be committed before anything looked wrong.
+pub(crate) fn editing_story(
+    state: &TesseraApp,
+    id: FrameId,
+    cell: Option<(usize, usize)>,
+) -> Option<tessera_document::ids::StoryId> {
+    use tessera_document::nodes::FrameKind;
+    match (state.active().document().frame(id).map(|f| &f.kind), cell) {
+        (Some(FrameKind::Text { story, .. }), _) => Some(*story),
+        (Some(FrameKind::Table(table)), Some((row, column))) => {
+            table.at(row, column)?.cell().map(|c| c.story)
+        }
+        _ => None,
+    }
+}
+
+/// The cell of a table frame under a point on screen, if any.
+///
+/// Asked of the laid-out table rather than of the model, because which cell a
+/// point falls in depends on row heights, and those are computed from the text
+/// — the model holds only their minimums.
+pub(crate) fn cell_at(
+    state: &mut TesseraApp,
+    rect: Rect,
+    id: FrameId,
+    pos: egui::Pos2,
+) -> Option<(usize, usize)> {
+    use tessera_layout::resolve::ResolvedKind;
+
+    let at = doc_pos(state, rect, pos);
+    let frame = state.active().document().frame(id)?;
+    let bounds = frame.bounds;
+    // Into the frame's own space, where the table's cells are described.
+    let local = frame.to_local(at);
+    let (x, y) = (local.x - bounds.x, local.y - bounds.y);
+
+    let resolved = state.resolve_active();
+    let item = resolved.items.iter().find(|i| i.frame == id)?;
+    let ResolvedKind::Table { laid, .. } = &item.kind else {
+        return None;
+    };
+    laid.cells
+        .iter()
+        .find(|c| {
+            x >= c.bounds.x
+                && x < c.bounds.x + c.bounds.width
+                && y >= c.bounds.y
+                && y < c.bounds.y + c.bounds.height
+        })
+        .map(|c| (c.row, c.column))
 }
 
 /// Every text frame holding more copy than it can show.
@@ -2078,7 +2154,77 @@ fn begin_text_edit(response: &egui::Response, rect: Rect, state: &mut TesseraApp
     };
     if is_text(state, id) {
         enter_text_edit(state, rect, pos, id);
+    } else if is_table(state, id)
+        && let Some(cell) = cell_at(state, rect, id, pos)
+    {
+        // Into the cell under the pointer, which is the only cell a person
+        // could have meant: a table is one frame, and entering it at "the
+        // first cell" would put the caret somewhere they did not click.
+        state.active_mut().selection.set(id);
+        start_editing_cell(state, id, Some(cell));
     }
+}
+
+/// Whether this frame is a table.
+fn is_table(state: &TesseraApp, id: FrameId) -> bool {
+    matches!(
+        state.active().document().frame(id).map(|f| &f.kind),
+        Some(tessera_document::nodes::FrameKind::Table(_))
+    )
+}
+
+/// Move the caret to the next cell, in reading order, wrapping at the end.
+///
+/// Tab, which is what a table is for: filling one in is a typing job, and
+/// reaching for the mouse between every cell makes it a clicking job. Covered
+/// slots are skipped — they hold no story, so there is nothing to type into.
+fn step_cell(state: &mut TesseraApp, back: bool) -> bool {
+    use tessera_document::nodes::FrameKind;
+
+    let Some((id, _)) = &state.active().editing else {
+        return false;
+    };
+    let id = *id;
+    let Some((row, column)) = state.active().editing_cell else {
+        return false;
+    };
+    let Some(FrameKind::Table(table)) = state.active().document().frame(id).map(|f| f.kind.clone())
+    else {
+        return false;
+    };
+
+    let (rows, columns) = (table.rows(), table.columns());
+    let total = rows * columns;
+    if total == 0 {
+        return false;
+    }
+    let start = row * columns + column;
+    // Every other slot in turn, so a table whose only typeable cell is the one
+    // we are in comes back to itself rather than looping forever.
+    for step in 1..=total {
+        let at = if back {
+            (start + total - step % total) % total
+        } else {
+            (start + step) % total
+        };
+        let (r, c) = (at / columns, at % columns);
+        if table.at(r, c).and_then(|s| s.cell()).is_some() {
+            finish_editing(state);
+            start_editing_cell(state, id, Some((r, c)));
+            // The whole cell, as Tab does in every table anybody has used:
+            // the next thing typed replaces what was there.
+            if let Some(story) = editing_story(state, id, Some((r, c)))
+                && let Some(text) = state.active().document().story(story)
+            {
+                let end = text.text.len();
+                if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+                    buffer.select(0..end);
+                }
+            }
+            return true;
+        }
+    }
+    false
 }
 
 /// Start editing `id` with the caret where the pointer is.
@@ -2097,9 +2243,17 @@ fn enter_text_edit(state: &mut TesseraApp, rect: Rect, pos: egui::Pos2, id: Fram
 }
 
 pub(crate) fn start_editing(state: &mut TesseraApp, id: FrameId) {
-    let story = match state.active().document().frame(id).map(|f| f.kind.clone()) {
-        Some(tessera_document::nodes::FrameKind::Text { story, .. }) => story,
-        _ => return,
+    start_editing_cell(state, id, None);
+}
+
+/// The same, into one cell of a table.
+pub(crate) fn start_editing_cell(
+    state: &mut TesseraApp,
+    id: FrameId,
+    cell: Option<(usize, usize)>,
+) {
+    let Some(story) = editing_story(state, id, cell) else {
+        return;
     };
     let content = state
         .active()
@@ -2113,6 +2267,7 @@ pub(crate) fn start_editing(state: &mut TesseraApp, id: FrameId) {
     // One undo entry covers the whole editing session, recorded up front.
     state.active_mut().record_history();
     state.active_mut().editing = Some((id, buffer));
+    state.active_mut().editing_cell = cell;
 }
 
 // --- overlays ---------------------------------------------------------------
@@ -2727,6 +2882,160 @@ mod tests {
         let now = to_screen_pos(&state, rect, DocPoint { x: 250.0, y: 120.0 });
         assert_eq!(centre_grab_at(&state, rect, was), None, "not where it was");
         assert_eq!(centre_grab_at(&state, rect, now), Some(id), "where it is");
+    }
+
+    // --- typing into a table -------------------------------------------------
+
+    /// A three-by-three table on the page, and the frame holding it.
+    fn a_table_frame() -> (TesseraApp, FrameId) {
+        use crate::command::{Command, apply};
+
+        let mut state = TesseraApp::headless();
+        apply(
+            &mut state,
+            Command::AddTable {
+                bounds: DocRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 300.0,
+                    height: 120.0,
+                },
+                rows: 3,
+                columns: 3,
+            },
+        );
+        let id = state.active().selection.single().expect("selected");
+        (state, id)
+    }
+
+    fn cell_text(state: &TesseraApp, id: FrameId, row: usize, column: usize) -> String {
+        let story = editing_story(state, id, Some((row, column))).expect("a story");
+        state
+            .active()
+            .document()
+            .story(story)
+            .expect("story")
+            .text
+            .clone()
+    }
+
+    #[test]
+    fn every_cell_of_a_new_table_has_a_story_of_its_own() {
+        // Two cells sharing one id would show the same text in both, and
+        // typing in either would edit the other. `heal` leaves a default id
+        // deliberately, so this is the assertion that the debt was paid.
+        use tessera_document::nodes::FrameKind;
+
+        let (state, id) = a_table_frame();
+        let Some(FrameKind::Table(table)) = state.active().document().frame(id).map(|f| &f.kind)
+        else {
+            panic!("a table");
+        };
+        let mut ids: Vec<_> = table.stories().collect();
+        let total = ids.len();
+        assert_eq!(total, 9);
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), total, "cells are sharing a story");
+    }
+
+    #[test]
+    fn typing_reaches_the_cell_the_caret_is_in() {
+        // The failure this guards: `start_editing` and the write-back
+        // disagreeing about which story is open, so typing in one cell
+        // overwrites another — committed before anything looks wrong.
+        let (mut state, id) = a_table_frame();
+        start_editing_cell(&mut state, id, Some((1, 2)));
+
+        let story = state
+            .active()
+            .editing
+            .as_ref()
+            .expect("editing")
+            .1
+            .story()
+            .clone();
+        assert!(story.text.is_empty());
+
+        let target = editing_story(&state, id, Some((1, 2))).expect("a story");
+        if let Some(s) = state.active_mut().document_mut().story_mut(target) {
+            *s = tessera_text::Story::new("in the middle");
+        }
+        assert_eq!(cell_text(&state, id, 1, 2), "in the middle");
+        assert_eq!(cell_text(&state, id, 0, 0), "", "no other cell may change");
+    }
+
+    #[test]
+    fn tab_walks_the_cells_in_reading_order_and_wraps() {
+        let (mut state, id) = a_table_frame();
+        start_editing_cell(&mut state, id, Some((0, 0)));
+
+        for expected in [(0, 1), (0, 2), (1, 0)] {
+            assert!(step_cell(&mut state, false));
+            assert_eq!(state.active().editing_cell, Some(expected));
+        }
+
+        // And back the other way.
+        assert!(step_cell(&mut state, true));
+        assert_eq!(state.active().editing_cell, Some((0, 2)));
+
+        // From the last cell, round to the first.
+        start_editing_cell(&mut state, id, Some((2, 2)));
+        assert!(step_cell(&mut state, false));
+        assert_eq!(state.active().editing_cell, Some((0, 0)));
+    }
+
+    #[test]
+    fn tab_skips_a_covered_slot() {
+        // A covered slot holds no story, so there is nothing to type into and
+        // stopping there would be a cell that swallows keystrokes.
+        use tessera_document::nodes::FrameKind;
+        use tessera_document::table::Span;
+
+        let (mut state, id) = a_table_frame();
+        if let Some(frame) = state.active_mut().document_mut().frame_mut(id)
+            && let FrameKind::Table(table) = &mut frame.kind
+        {
+            table.merge(
+                0,
+                0,
+                Span {
+                    columns: 2,
+                    rows: 1,
+                },
+            );
+        }
+
+        start_editing_cell(&mut state, id, Some((0, 0)));
+        assert!(step_cell(&mut state, false));
+        assert_eq!(
+            state.active().editing_cell,
+            Some((0, 2)),
+            "the covered slot at (0,1) must be stepped over"
+        );
+    }
+
+    #[test]
+    fn leaving_a_table_clears_the_cell_as_well() {
+        // A stale cell would send the next session's keystrokes into whatever
+        // slot happened to be remembered.
+        let (mut state, id) = a_table_frame();
+        start_editing_cell(&mut state, id, Some((2, 1)));
+        assert_eq!(state.active().editing_cell, Some((2, 1)));
+
+        finish_editing(&mut state);
+        assert!(state.active().editing.is_none());
+        assert!(state.active().editing_cell.is_none());
+    }
+
+    #[test]
+    fn a_text_frame_still_edits_with_no_cell_at_all() {
+        // The same path serves both, so the ordinary case has to keep working.
+        let (mut state, id) = a_text_frame(200.0, "words");
+        start_editing(&mut state, id);
+        assert!(state.active().editing.is_some());
+        assert_eq!(state.active().editing_cell, None);
+        assert!(editing_story(&state, id, None).is_some());
     }
 
     // --- space is a character, not only a gesture ---------------------------

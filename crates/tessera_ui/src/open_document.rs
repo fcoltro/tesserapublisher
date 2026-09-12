@@ -50,6 +50,15 @@ pub struct OpenDocument {
 
     /// The frame being edited on canvas, and its live buffer.
     pub editing: Option<(FrameId, EditBuffer)>,
+    /// Which cell of that frame, when it is a table.
+    ///
+    /// **Beside `editing` rather than inside it.** The frame is still the
+    /// thing being edited — it is what the selection shows, what the grips
+    /// resize and what `finish_editing` clears — and only the question of
+    /// *which story the keystrokes reach* has a second answer for a table.
+    /// Folding the cell into the pair would have rewritten every one of the
+    /// several dozen places that read `editing.0` to learn the frame.
+    pub editing_cell: Option<(usize, usize)>,
 
     pub current_path: Option<PathBuf>,
     pub dirty: bool,
@@ -75,6 +84,7 @@ impl OpenDocument {
             selection: Selection::default(),
             current_spread: 0,
             editing: None,
+            editing_cell: None,
             current_path: None,
             dirty: false,
             pen: None,

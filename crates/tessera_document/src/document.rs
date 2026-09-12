@@ -1845,6 +1845,15 @@ impl Document {
         self.revision += 1;
     }
 
+    /// Take a story out, once nothing refers to it.
+    ///
+    /// Merging cells swallows their text, and a story no cell names is a leak:
+    /// nothing can reach it, nothing draws it, and the file carries it forever.
+    /// The caller is the one that knows the reference has gone.
+    pub fn remove_story(&mut self, id: StoryId) -> Option<Story> {
+        self.stories.remove(id)
+    }
+
     pub fn add_story(&mut self, story: Story) -> StoryId {
         self.revision += 1;
         self.stories.insert(story)

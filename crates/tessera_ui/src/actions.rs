@@ -27,12 +27,13 @@ pub enum Group {
     Tool,
     Type,
     Layout,
+    Table,
     Window,
     Help,
 }
 
 impl Group {
-    pub const ALL: [Group; 12] = [
+    pub const ALL: [Group; 13] = [
         Group::File,
         Group::Edit,
         Group::Object,
@@ -43,6 +44,7 @@ impl Group {
         Group::Tool,
         Group::Type,
         Group::Layout,
+        Group::Table,
         Group::Window,
         Group::Help,
     ];
@@ -83,6 +85,7 @@ impl Group {
             Group::View => Some("View"),
             Group::Type => Some("Type"),
             Group::Layout => Some("Layout"),
+            Group::Table => Some("Table"),
             Group::Window => Some("Window"),
             Group::Help => Some("Help"),
             Group::Tool => None,
@@ -116,6 +119,17 @@ pub enum Run {
     ZoomToFit,
     StepAndRepeat,
     FindAndChange,
+    /// Draw a table into the frame the next drag makes, or ask how big.
+    InsertTable,
+    /// Add a row or column beside the cell being edited.
+    TableRow {
+        above: bool,
+    },
+    TableColumn {
+        before: bool,
+    },
+    MergeSelectedCells,
+    SplitSelectedCell,
 }
 
 /// When an action may be reached from the keyboard.
@@ -175,6 +189,15 @@ pub fn guard(run: Run) -> Guard {
         // guarded against typing all the same: Ctrl+F inside the search box
         // itself must not reopen the window under the caret.
         Run::FindAndChange => Guard::NotWhileTyping,
+        // Every one of these acts on the cell the caret is in, so unlike
+        // almost everything else in this list they are *only* useful while
+        // typing. `Always` rather than a guard that would switch them off at
+        // exactly the moment they apply.
+        Run::InsertTable => Guard::Always,
+        Run::TableRow { .. }
+        | Run::TableColumn { .. }
+        | Run::MergeSelectedCells
+        | Run::SplitSelectedCell => Guard::Always,
         Run::Command(
             Cut
             | Copy
@@ -334,6 +357,41 @@ pub fn all() -> &'static [Action] {
             Group::Edit,
             Run::FindAndChange,
         ),
+        // A menu of its own, as every layout tool gives it: the operations are
+        // about the grid rather than about the object, and filing them under
+        // Object would bury them among things that act on the frame.
+        a("Insert table", None, Group::Table, Run::InsertTable),
+        a(
+            "Insert row above",
+            None,
+            Group::Table,
+            Run::TableRow { above: true },
+        ),
+        a(
+            "Insert row below",
+            None,
+            Group::Table,
+            Run::TableRow { above: false },
+        ),
+        a(
+            "Insert column left",
+            None,
+            Group::Table,
+            Run::TableColumn { before: true },
+        ),
+        a(
+            "Insert column right",
+            None,
+            Group::Table,
+            Run::TableColumn { before: false },
+        ),
+        a(
+            "Merge with cell to the right",
+            None,
+            Group::Table,
+            Run::MergeSelectedCells,
+        ),
+        a("Split cell", None, Group::Table, Run::SplitSelectedCell),
         a("Delete", Some("Del"), Group::Edit, Command(Delete)),
         a(
             "Select all",
@@ -697,6 +755,18 @@ pub fn filtered(query: &str) -> Vec<&'static Action> {
 ///
 /// The one place a named action becomes work, so the palette and the menus
 /// cannot disagree about what a name means.
+/// The table cell the caret is in, if it is in one.
+///
+/// Every table command acts on it: there is no separate cell selection, so
+/// "the cell" means the one being typed in.
+fn editing_cell(
+    state: &crate::app::TesseraApp,
+) -> Option<(tessera_document::ids::FrameId, usize, usize)> {
+    let (id, _) = state.active().editing.as_ref()?;
+    let (row, column) = state.active().editing_cell?;
+    Some((*id, row, column))
+}
+
 pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
     use crate::command::{Command, apply};
 
@@ -779,6 +849,81 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         // the whole question, and guessing them would make a mess to undo.
         Run::StepAndRepeat => state.step.open = true,
         Run::FindAndChange => state.find.open(),
+        Run::InsertTable => {
+            // Into the type area of the first page, which is where a table
+            // belongs and saves a drag. Somewhere on the pasteboard would need
+            // moving before it could be worked on.
+            let bounds = state.first_page_bounds();
+            let area = tessera_geometry::DocRect {
+                x: bounds.x + bounds.width * 0.1,
+                y: bounds.y + bounds.height * 0.1,
+                width: bounds.width * 0.8,
+                height: bounds.height * 0.3,
+            };
+            crate::apply(
+                state,
+                crate::Command::AddTable {
+                    bounds: area,
+                    rows: 3,
+                    columns: 3,
+                },
+            );
+        }
+
+        Run::TableRow { above } => {
+            if let Some((id, row, _column)) = editing_cell(state) {
+                let at = if above { row } else { row + 1 };
+                crate::apply(
+                    state,
+                    crate::Command::TableRow {
+                        id,
+                        at,
+                        insert: true,
+                    },
+                );
+            }
+        }
+
+        Run::TableColumn { before } => {
+            if let Some((id, _row, column)) = editing_cell(state) {
+                let at = if before { column } else { column + 1 };
+                crate::apply(
+                    state,
+                    crate::Command::TableColumn {
+                        id,
+                        at,
+                        insert: true,
+                    },
+                );
+            }
+        }
+
+        Run::MergeSelectedCells => {
+            // The cell to the right, which is the merge somebody wants nine
+            // times out of ten and needs no second selection model to express.
+            // A rectangular cell selection is what this grows into.
+            if let Some((id, row, column)) = editing_cell(state) {
+                crate::apply(
+                    state,
+                    crate::Command::MergeCells {
+                        id,
+                        row,
+                        column,
+                        span: tessera_document::table::Span {
+                            columns: 2,
+                            rows: 1,
+                        },
+                    },
+                );
+            }
+        }
+
+        Run::SplitSelectedCell => {
+            if let Some((id, row, column)) = editing_cell(state) {
+                crate::apply(state, crate::Command::SplitCell { id, row, column });
+            }
+        }
+
         Run::ZoomToFit => state.active_mut().fitted = false,
         Run::Command(cmd) => {
             let command = match cmd {

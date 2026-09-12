@@ -29,6 +29,29 @@ pub enum Command {
     /// Bounds plus the path, in frame-local coordinates.
     AddPath(DocRect, kurbo::BezPath),
     AddTextFrame(DocRect),
+    /// Add or take away a row of a table.
+    TableRow {
+        id: FrameId,
+        at: usize,
+        insert: bool,
+    },
+    /// Add or take away a column of a table.
+    TableColumn {
+        id: FrameId,
+        at: usize,
+        insert: bool,
+    },
+    MergeCells {
+        id: FrameId,
+        row: usize,
+        column: usize,
+        span: tessera_document::table::Span,
+    },
+    SplitCell {
+        id: FrameId,
+        row: usize,
+        column: usize,
+    },
     /// A grid of empty cells filling `bounds`.
     ///
     /// The rows are a starting height; the layout pass grows them to whatever
@@ -668,6 +691,38 @@ fn editing_buffer_for(
     state.active_mut().editing.as_mut().map(|(_, b)| b)
 }
 
+/// Put a changed table back, giving every cell that needs one a real story.
+///
+/// `Table::heal` fills an orphaned slot with a cell carrying the default story
+/// id, which refers to nothing — it cannot mint one, because a node never
+/// reaches a document. This is where that debt is paid. Skipping it would
+/// leave several cells sharing one id, and typing in any of them would appear
+/// in all of them.
+fn finish_table_edit(
+    state: &mut crate::app::TesseraApp,
+    id: FrameId,
+    mut table: tessera_document::table::Table,
+) {
+    for (row, column) in table.cells_needing_a_story() {
+        let story = state
+            .active_mut()
+            .document_mut()
+            .add_story(Story::default());
+        if let Some(slot) = table.at_mut(row, column)
+            && let Some(cell) = slot.cell_mut()
+        {
+            cell.story = story;
+        }
+    }
+    debug_assert!(table.spans_are_sound(), "a table was left inconsistent");
+    if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
+        frame.kind = FrameKind::Table(table);
+    }
+    // The caret was in a cell that may no longer exist.
+    state.active_mut().editing = None;
+    state.active_mut().editing_cell = None;
+}
+
 pub fn apply(state: &mut TesseraApp, command: Command) {
     if command.mutates() {
         state.active_mut().record_history();
@@ -765,6 +820,74 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                     a: 0.0,
                 },
             );
+        }
+
+        Command::TableRow { id, at, insert } => {
+            let Some(FrameKind::Table(mut table)) =
+                state.active().document().frame(id).map(|f| f.kind.clone())
+            else {
+                return;
+            };
+            if insert {
+                table.insert_row(at, tessera_document::ids::StoryId::default);
+            } else if !table.remove_row(at) {
+                return;
+            }
+            finish_table_edit(state, id, table);
+        }
+
+        Command::TableColumn { id, at, insert } => {
+            let Some(FrameKind::Table(mut table)) =
+                state.active().document().frame(id).map(|f| f.kind.clone())
+            else {
+                return;
+            };
+            if insert {
+                // The new column takes the width of the one it is beside, so a
+                // table that filled its frame still roughly does.
+                let width = table
+                    .columns
+                    .get(at.saturating_sub(1))
+                    .copied()
+                    .unwrap_or(72.0);
+                table.insert_column(at, width, tessera_document::ids::StoryId::default);
+            } else if !table.remove_column(at) {
+                return;
+            }
+            finish_table_edit(state, id, table);
+        }
+
+        Command::MergeCells {
+            id,
+            row,
+            column,
+            span,
+        } => {
+            let Some(FrameKind::Table(mut table)) =
+                state.active().document().frame(id).map(|f| f.kind.clone())
+            else {
+                return;
+            };
+            let absorbed = table.merge(row, column, span);
+            if absorbed.is_empty() && !span.is_single() {
+                return; // refused: off the edge
+            }
+            // The stories the merge swallowed go with it. A story nothing
+            // refers to is a leak the file then carries forever.
+            for story in absorbed {
+                state.active_mut().document_mut().remove_story(story);
+            }
+            finish_table_edit(state, id, table);
+        }
+
+        Command::SplitCell { id, row, column } => {
+            let Some(FrameKind::Table(mut table)) =
+                state.active().document().frame(id).map(|f| f.kind.clone())
+            else {
+                return;
+            };
+            table.split(row, column, tessera_document::ids::StoryId::default);
+            finish_table_edit(state, id, table);
         }
 
         Command::AddTextFrame(bounds) => {
