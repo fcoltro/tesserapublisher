@@ -83,6 +83,156 @@ fn pixel(pixels: &[u8], x: usize, y: usize) -> [u8; 3] {
 
 #[test]
 #[ignore = "needs a GPU adapter; run with -- --ignored"]
+fn printing_clips_keep_all_pages_and_hide_artwork_between_spreads() {
+    use tessera_render::scene::{SceneOptions, build_scene_with};
+    let mut renderer = HeadlessRenderer::new(W, H).expect("adapter");
+    let mut doc = rect_doc(page(), Color::BLACK);
+    doc.pages = [(10.0, 10.0), (50.0, 10.0), (10.0, 55.0)]
+        .into_iter()
+        .map(|(x, y)| {
+            let bounds = DocRect {
+                x,
+                y,
+                width: 25.0,
+                height: 25.0,
+            };
+            let grow = |by| DocRect {
+                x: x - by,
+                y: y - by,
+                width: 25.0 + by * 2.0,
+                height: 25.0 + by * 2.0,
+            };
+            tessera_layout::ResolvedPage {
+                bounds,
+                margins: bounds,
+                bleed: grow(3.0),
+                slug: grow(6.0),
+                columns: vec![],
+            }
+        })
+        .collect();
+    for mode in 0..3 {
+        let clip = doc
+            .pages
+            .iter()
+            .map(|p| match mode {
+                0 => p.bounds,
+                1 => p.bleed,
+                _ => p.slug,
+            })
+            .collect();
+        let options = SceneOptions {
+            rules: false,
+            clip: Some(clip),
+        };
+        let scene = build_scene_with(&doc, ViewTransform::default(), options.clone());
+        let pixels = renderer.render(&scene).expect("render");
+        for (x, y) in [(20, 20), (60, 20), (20, 65)] {
+            assert_eq!(
+                pixel(&pixels, x, y),
+                [0, 0, 0],
+                "page missing in mode {mode}"
+            );
+        }
+        assert_eq!(
+            pixel(&pixels, 42, 20),
+            [255; 3],
+            "horizontal pasteboard leaked"
+        );
+        assert_eq!(
+            pixel(&pixels, 20, 45),
+            [255; 3],
+            "inter-spread pasteboard leaked"
+        );
+        assert_eq!(
+            pixel(&pixels, 8, 20),
+            if mode >= 1 { [0; 3] } else { [255; 3] }
+        );
+        assert_eq!(
+            pixel(&pixels, 5, 20),
+            if mode == 2 { [0; 3] } else { [255; 3] }
+        );
+
+        // Paper must extend to the revealed bleed/slug even without artwork.
+        let blank = ResolvedDocument {
+            items: vec![],
+            pages: doc.pages.clone(),
+        };
+        let mut background = vello::Scene::new();
+        background.fill(
+            vello::peniko::Fill::NonZero,
+            vello::kurbo::Affine::IDENTITY,
+            vello::peniko::color::palette::css::BLACK,
+            None,
+            &page().to_kurbo(),
+        );
+        background.append(
+            &build_scene_with(&blank, ViewTransform::default(), options),
+            None,
+        );
+        let pixels = renderer.render(&background).expect("paper");
+        assert_eq!(pixel(&pixels, 42, 20), [0; 3]);
+        assert_eq!(
+            pixel(
+                &pixels,
+                if mode == 2 {
+                    5
+                } else if mode == 1 {
+                    8
+                } else {
+                    20
+                },
+                20
+            ),
+            [255; 3]
+        );
+    }
+}
+
+#[test]
+#[ignore = "needs a GPU adapter; run with -- --ignored"]
+fn slug_boundary_is_blue_in_normal_and_absent_in_printing_modes() {
+    use tessera_render::scene::{SceneOptions, build_scene_with};
+    let mut renderer = HeadlessRenderer::new(W, H).expect("adapter");
+    let mut doc = empty_doc();
+    doc.pages[0].bounds = DocRect {
+        x: 20.0,
+        y: 20.0,
+        width: 40.0,
+        height: 40.0,
+    };
+    doc.pages[0].margins = doc.pages[0].bounds;
+    doc.pages[0].bleed = doc.pages[0].bounds;
+    doc.pages[0].slug = DocRect {
+        x: 10.0,
+        y: 10.0,
+        width: 60.0,
+        height: 60.0,
+    };
+    let pixels = renderer
+        .render(&build_scene(&doc, ViewTransform::default()))
+        .expect("normal");
+    let guide = pixel(&pixels, 10, 40);
+    assert!(
+        guide[2] > guide[0] + 20,
+        "slug boundary was not blue: {guide:?}"
+    );
+    for clip in [doc.pages[0].bounds, doc.pages[0].bleed, doc.pages[0].slug] {
+        let scene = build_scene_with(
+            &doc,
+            ViewTransform::default(),
+            SceneOptions {
+                rules: false,
+                clip: Some(vec![clip]),
+            },
+        );
+        let pixels = renderer.render(&scene).expect("printing mode");
+        assert_eq!(pixel(&pixels, 10, 40), [255; 3]);
+    }
+}
+
+#[test]
+#[ignore = "needs a GPU adapter; run with -- --ignored"]
 fn an_empty_page_renders_white() {
     let mut renderer = HeadlessRenderer::new(W, H).expect("adapter");
     let scene = build_scene(&empty_doc(), ViewTransform::default());

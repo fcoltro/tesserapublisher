@@ -5,11 +5,9 @@
 //! see that a second one existed, let alone reach it. Opening two files meant
 //! the first one silently became unreachable.
 //!
-//! ## Only when there is more than one
+//! ## Keep the document identity visible
 //!
-//! A bar showing a single tab is a row of chrome that answers a question nobody
-//! asked, on every document anybody ever opens. It appears when it means
-//! something and takes no room the rest of the time.
+//! A single tab still identifies the working document and its save state.
 //!
 //! ## The dirty mark is a dot, not an asterisk in the name
 //!
@@ -29,12 +27,8 @@ use crate::theme::Theme;
 /// "Annual-Report-2026-final-v4-APPROVED.tessera" pushes the other five off.
 const MOST_CHARACTERS: usize = 22;
 
-/// The bar, when there is more than one document open.
+/// Document identity and switching, inside the status bar.
 pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
-    if state.documents.len() < 2 {
-        return;
-    }
-
     // Read out first: acting on a click needs the application mutably, and the
     // list is borrowed from it.
     let tabs: Vec<(DocumentKey, String, bool)> = state
@@ -45,14 +39,28 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
 
     let mut choose = None;
     let mut close = None;
+    let remembered = ui.id().with("visible-document");
+    let reveal_active = ui.ctx().data_mut(|data| {
+        let previous = data.get_temp::<DocumentKey>(remembered);
+        data.insert_temp(remembered, state.active);
+        previous != Some(state.active)
+    });
 
     egui::ScrollArea::horizontal()
+        .id_salt("status-document-tabs")
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
         .auto_shrink([false, true])
         .show(ui, |ui| {
             ui.horizontal(|ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                ui.spacing_mut().button_padding.y = 2.0;
+                ui.spacing_mut().interact_size.y = 20.0;
                 for (key, name, dirty) in &tabs {
                     let active = *key == state.active;
                     let response = ui.selectable_label(active, shorten(name));
+                    if active && reveal_active {
+                        response.scroll_to_me(Some(egui::Align::Center));
+                    }
 
                     let response = if *dirty {
                         response.on_hover_text(format!("{name} — unsaved changes"))
@@ -63,18 +71,33 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
                         choose = Some(*key);
                     }
 
+                    // Keep the same footprint when a document becomes dirty.
+                    let (dot, _) =
+                        ui.allocate_exact_size(egui::vec2(8.0, 20.0), egui::Sense::hover());
                     if *dirty {
-                        // A dot beside the name rather than an asterisk in it: an
-                        // asterisk changes the tab's width the moment somebody
-                        // types, and the whole bar jumps.
-                        ui.colored_label(Theme::accent(), "\u{2022}");
+                        ui.painter()
+                            .circle_filled(dot.center(), 2.5, Theme::accent());
                     }
 
                     // Only on the tab you are in. A row of close buttons is a
                     // row of ways to lose a document by clicking a pixel to the
                     // right of the one you meant.
-                    if active && tabs.len() > 1 && ui.small_button("\u{2715}").clicked() {
-                        close = Some(*key);
+                    if active && tabs.len() > 1 {
+                        let (rect, response) =
+                            ui.allocate_exact_size(egui::Vec2::splat(20.0), egui::Sense::click());
+                        if response.hovered() {
+                            ui.painter()
+                                .rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
+                        }
+                        crate::icons::paint(
+                            ui.painter(),
+                            rect,
+                            crate::icons::Icon::Close,
+                            Theme::text_muted(),
+                        );
+                        if crate::icons::named(response, format!("Close {name}")).clicked() {
+                            close = Some(*key);
+                        }
                     }
 
                     ui.separator();
@@ -171,10 +194,11 @@ pub fn confirm_close(ctx: &egui::Context, state: &mut TesseraApp) {
         .unwrap_or_else(|| "This document".to_string());
 
     let mut decided = None;
-    egui::Window::new("Unsaved changes")
-        .collapsible(false)
-        .resizable(false)
+    let response = egui::Modal::new(egui::Id::new("close-document"))
+        .frame(super::dialog_frame(ctx))
         .show(ctx, |ui| {
+            ui.set_width(400.0);
+            ui.heading("Save changes?");
             ui.label(format!("{name} has changes that have not been saved."));
             ui.add_space(Theme::SPACE_2);
             ui.horizontal(|ui| {
@@ -196,6 +220,10 @@ pub fn confirm_close(ctx: &egui::Context, state: &mut TesseraApp) {
                 });
             });
         });
+
+    if response.should_close() {
+        decided = Some(Decision::Keep);
+    }
 
     match decided {
         Some(Decision::Save) => {

@@ -194,6 +194,39 @@ pub fn guard(run: Run) -> Guard {
     }
 }
 
+/// Whether an action has an applicable target in the current document.
+pub fn enabled(state: &crate::app::TesseraApp, run: Run) -> bool {
+    let doc = state.active();
+    let count = doc.selection.len();
+    match run {
+        Run::Command(Cmd::Undo) => doc.history.can_undo(),
+        Run::Command(Cmd::Redo) => doc.history.can_redo(),
+        Run::Command(Cmd::Paste) => !state.clipboard.is_empty() && doc.editing.is_none(),
+        Run::Command(Cmd::GroupObjects) => count >= 2 && doc.editing.is_none(),
+        Run::Command(Cmd::UngroupObjects) => {
+            doc.editing.is_none()
+                && doc.selection.iter().any(|id| {
+                    matches!(
+                        doc.document().frame(id).map(|f| &f.kind),
+                        Some(tessera_document::nodes::FrameKind::Group(_))
+                    )
+                })
+        }
+        Run::Place => doc.selection.single().is_some_and(|id| {
+            matches!(
+                doc.document().frame(id).map(|f| &f.kind),
+                Some(tessera_document::nodes::FrameKind::Graphic { .. })
+            )
+        }),
+        Run::Command(Cmd::RemovePage) => doc.document().page_ids().count() > 1,
+        _ => match guard(run) {
+            Guard::Always => true,
+            Guard::NotWhileTyping => doc.editing.is_none(),
+            Guard::NeedsSelection => count > 0 && doc.editing.is_none(),
+        },
+    }
+}
+
 /// The document commands an action can name.
 ///
 /// A parallel to `Command` holding only the variants that need no argument
@@ -720,18 +753,14 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             state.prefs.snapping = !state.prefs.snapping;
             crate::prefs::remember(state);
         }
-        Run::PickTool(tool) => state.active_tool = tool,
+        Run::PickTool(tool) => {
+            if state.active_tool == Tool::Pen && tool != Tool::Pen {
+                crate::view::viewport::commit_pen(state);
+            }
+            state.active_tool = tool;
+        }
         Run::ScreenMode(mode) => {
-            // Asking for Preview while already previewing means "take me back",
-            // which is the whole of what W does in a layout tool. Every other
-            // mode is a plain choice: nobody presses Bleed twice meaning Normal.
-            state.screen_mode = if mode == crate::app::ScreenMode::Preview
-                && state.screen_mode == crate::app::ScreenMode::Preview
-            {
-                crate::app::ScreenMode::Normal
-            } else {
-                mode
-            };
+            state.screen_mode = mode;
         }
         // Opens the box rather than doing anything: how many and how far are
         // the whole question, and guessing them would make a mess to undo.

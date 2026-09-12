@@ -169,6 +169,7 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
                 .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = Theme::SPACE_1;
                         // Belt as well as braces: a horizontal layout is enough to stop
                         // the row wrapping, and this stops any single label breaking
                         // even if one is given less room than its own text.
@@ -181,29 +182,17 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
                             let open = open_by_title(state, title);
                             let showing = slot == stack.active && open;
 
-                            // **The showing tab is named; the rest are their
-                            // icons.** Six titles is about four hundred points
-                            // of tab in a 292-point rail, so spelling them all
-                            // out means scrolling the bar to reach the last one
-                            // every time. The name of the panel you are looking
-                            // at is the one you least need told.
-                            let tint = if open {
-                                Theme::text_primary()
-                            } else {
-                                Theme::text_muted()
+                            let Some(dock) = dock_by_title(title) else {
+                                continue;
                             };
-                            let response = {
-                                let drawn = if showing {
-                                    ui.selectable_label(
-                                        true,
-                                        egui::RichText::new(title).color(tint),
-                                    )
-                                } else {
-                                    tab_icon(ui, title, tint)
-                                };
-                                // Click *and* drag, so one widget answers both.
-                                drawn.interact(egui::Sense::click_and_drag())
-                            };
+                            let response = crate::icons::tab_button(
+                                ui,
+                                dock.icon(),
+                                title,
+                                showing,
+                                showing,
+                                egui::Sense::click_and_drag(),
+                            );
 
                             // **The payload is raised on `drag_started`, not on
                             // press.** `dnd_drag_source` makes a widget a drag
@@ -265,7 +254,14 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
     );
 
     // The panel itself, which may be none: every tab in this stack can be shut.
-    let Some(title) = stack.showing().map(str::to_string) else {
+    let Some(title) = state
+        .prefs
+        .docking
+        .stacks(region)
+        .get(at)
+        .and_then(|stack| stack.showing())
+        .map(str::to_string)
+    else {
         return;
     };
     if !open_by_title(state, &title) {
@@ -291,24 +287,6 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
                     .show(ui, |ui| crate::view::rail::body(ui, state, dock));
             });
         });
-}
-
-/// One tab drawn as its icon, for a panel that is not the one showing.
-///
-/// The name is on the hover, because an icon nobody recognises is a button
-/// nobody presses — and the icons here are the rail's own, so somebody who has
-/// used the collapsed rail already knows them.
-fn tab_icon(ui: &mut Ui, title: &str, tint: egui::Color32) -> egui::Response {
-    let size = egui::vec2(22.0, 18.0);
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-    if response.hovered() {
-        ui.painter()
-            .rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
-    }
-    if let Some(dock) = dock_by_title(title) {
-        crate::icons::paint(ui.painter(), rect.shrink(3.0), dock.icon(), tint);
-    }
-    crate::icons::named(response, title)
 }
 
 fn stack_mut(

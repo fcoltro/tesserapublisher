@@ -53,15 +53,15 @@ impl Tool {
     pub fn icon(self) -> crate::icons::Icon {
         match self {
             Self::Select => crate::icons::Icon::Select,
-            Self::DirectSelect => crate::icons::Icon::Crosshair,
+            Self::DirectSelect => crate::icons::Icon::DirectSelect,
             Self::Rectangle => crate::icons::Icon::Rectangle,
             Self::Ellipse => crate::icons::Icon::Ellipse,
             Self::Line => crate::icons::Icon::Line,
             Self::Pen => crate::icons::Icon::Pen,
             Self::Text => crate::icons::Icon::Text,
-            Self::Graphic => crate::icons::Icon::TextFrame,
-            Self::Polygon => crate::icons::Icon::Ellipse,
-            Self::Scissors => crate::icons::Icon::NoFill,
+            Self::Graphic => crate::icons::Icon::PictureFrame,
+            Self::Polygon => crate::icons::Icon::Polygon,
+            Self::Scissors => crate::icons::Icon::Scissors,
             Self::Hand => crate::icons::Icon::Hand,
             Self::Zoom => crate::icons::Icon::ZoomIn,
         }

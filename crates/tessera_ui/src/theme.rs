@@ -24,9 +24,8 @@ use egui::{Color32, Context};
 /// | 9–10 | The solid accent and its hover |
 /// | 11–12 | Text: labels, then values |
 ///
-/// The neutral is **warm** — a few degrees of red in every step. A cool grey
-/// beside a page proof makes warm paper look yellow, which is a judgement the
-/// interface must not make on the user's behalf.
+/// The dark chrome uses the restrained charcoal surfaces of the UI prototype.
+/// Printing previews retain their separate, neutral proof surround.
 ///
 /// Both palettes are defined here and both are contrast-tested, so a light
 /// theme cannot rot while only the dark one is looked at.
@@ -44,11 +43,9 @@ pub struct Palette {
     /// The surface of something you type into.
     ///
     /// **A role, not a step**, for the same reason the pasteboard is one. In a
-    /// dark theme a field is *lighter* than the panel around it and in a light
-    /// theme it is *lighter still* — near white, the way paper is. One step
-    /// number cannot mean both, and using step 4 for both is what made every
-    /// input in the light theme a muddy grey box: two steps toward the light is
-    /// a well in the dark and a stain in the light.
+    /// dark theme a field is recessed into the panel; in a light theme it is
+    /// near white. Keeping this separate from hover and selection fills makes
+    /// those states readable in both themes.
     pub field_bg: Color32,
     pub accent: Color32,
     pub accent_hover: Color32,
@@ -93,22 +90,22 @@ impl Palette {
 
     pub const DARK: Self = Self {
         steps: [
-            Color32::from_rgb(0x0E, 0x0E, 0x0E),
-            Color32::from_rgb(0x14, 0x14, 0x14),
-            Color32::from_rgb(0x1A, 0x1A, 0x1A),
-            Color32::from_rgb(0x21, 0x21, 0x21),
-            Color32::from_rgb(0x28, 0x28, 0x28),
-            Color32::from_rgb(0x31, 0x31, 0x31),
-            Color32::from_rgb(0x3C, 0x3C, 0x3C),
+            Color32::from_rgb(0x11, 0x11, 0x13),
+            Color32::from_rgb(0x16, 0x16, 0x18),
+            Color32::from_rgb(0x1C, 0x1C, 0x1F),
+            Color32::from_rgb(0x22, 0x22, 0x25),
+            Color32::from_rgb(0x26, 0x26, 0x29),
+            Color32::from_rgb(0x2A, 0x2A, 0x2F),
+            Color32::from_rgb(0x30, 0x30, 0x36),
             Color32::from_rgb(0x66, 0x66, 0x66),
             Color32::from_rgb(0x5B, 0x8D, 0xEF),
             Color32::from_rgb(0x7A, 0xA3, 0xF4),
-            Color32::from_rgb(0x94, 0x94, 0x94),
-            Color32::from_rgb(0xEA, 0xEA, 0xEA),
+            Color32::from_rgb(0xA0, 0xA0, 0xAA),
+            Color32::from_rgb(0xEA, 0xEA, 0xEE),
         ],
-        canvas_bg: Color32::from_rgb(0x12, 0x12, 0x12),
-        // Two steps up from the panel: in the dark, a well is lighter.
-        field_bg: Color32::from_rgb(0x21, 0x21, 0x21),
+        canvas_bg: Color32::from_rgb(0x11, 0x11, 0x13),
+        // Flat, recessed inputs, separated from the panel by a subtle border.
+        field_bg: Color32::from_rgb(0x11, 0x11, 0x13),
         // Desaturated from the blue this used to be. A saturated blue on a
         // near-black ground vibrates at small sizes, and step 9 is what a
         // one-pixel selection edge is drawn in.
@@ -342,25 +339,28 @@ impl Theme {
 
     /// Every list row — layers, styles, swatches, links. One height, so a
     /// column of them scans as a column.
-    pub const ROW: f32 = 24.0;
+    pub const ROW: f32 = 28.0;
     /// The fixed column every labelled field aligns its label to. Without
     /// one, no two panels line up and long labels clip instead of wrapping.
     pub const LABEL_COLUMN: f32 = 64.0;
 
-    /// Captions, units, page numbers.
-    pub const TYPE_SM: f32 = 11.0;
+    /// Captions, units, page numbers. Keep the smallest UI text at 13 px so
+    /// the light body face remains legible across display scales.
+    pub const TYPE_SM: f32 = 13.0;
     /// Everything else.
-    pub const TYPE_MD: f32 = 12.5;
+    pub const TYPE_MD: f32 = 13.0;
     /// Section headings.
-    pub const TYPE_LG: f32 = 15.0;
+    pub const TYPE_LG: f32 = 17.0;
 
     pub const SPACING_SM: f32 = 4.0;
     pub const SPACING_MD: f32 = 8.0;
     pub const SPACING_LG: f32 = 16.0;
-    pub const RADIUS: f32 = 4.0;
+    pub const RADIUS: f32 = 3.0;
 
     /// Side of a tool button in the left strip.
     pub const TOOL_SIZE: f32 = 32.0;
+    /// Shared icon grid size, independent of the surrounding click target.
+    pub const ICON_SIZE: f32 = 18.0;
     /// Side of a selection handle.
     pub const HANDLE_SIZE: f32 = 7.0;
 
@@ -495,9 +495,17 @@ mod palette_tests {
 }
 
 pub fn apply(ctx: &Context) {
+    crate::ui_fonts::install(ctx);
     // egui 0.35 keeps a style per theme; `all_styles_mut` applies to both, so
     // the tokens hold whether the OS reports light or dark.
     ctx.all_styles_mut(|style| {
+        // The application palette can differ from the OS-selected egui style.
+        // Use coverage correction for the actual surface behind the glyphs.
+        style.visuals.text_options.color_transfer_function = if palette() == Palette::DARK {
+            egui::epaint::FontColorTransferFunction::DARK_MODE_DEFAULT
+        } else {
+            egui::epaint::FontColorTransferFunction::LIGHT_MODE_DEFAULT
+        };
         style.visuals.panel_fill = Theme::panel_bg();
         style.visuals.window_fill = Theme::panel_bg();
         // The pasteboard is not a field. It was used here because both
@@ -506,7 +514,9 @@ pub fn apply(ctx: &Context) {
         // every text field the colour of the surround around the page.
         style.visuals.extreme_bg_color = Theme::field_bg();
         style.visuals.override_text_color = Some(Theme::text_primary());
-        style.visuals.selection.bg_fill = Theme::selection();
+        style.visuals.selection.bg_fill = Theme::selected_bg();
+        style.visuals.window_shadow = egui::epaint::Shadow::NONE;
+        style.visuals.popup_shadow = egui::epaint::Shadow::NONE;
         // Steps 4 and 5 are the component states, and using them is what
         // makes a field read as a field. A control the same value as the
         // panel behind it is identified only by its border, and a border
@@ -514,7 +524,7 @@ pub fn apply(ctx: &Context) {
         style.visuals.widgets.noninteractive.bg_fill = Theme::panel_bg();
         style.visuals.widgets.inactive.bg_fill = Theme::field_bg();
         style.visuals.widgets.hovered.bg_fill = Theme::selected_bg();
-        style.visuals.widgets.active.bg_fill = Theme::accent();
+        style.visuals.widgets.active.bg_fill = Theme::selected_bg();
 
         // **And `weak_bg_fill`, which is the one buttons actually use.** egui
         // paints a button — and a `DragValue`, which is a button — from
@@ -528,7 +538,7 @@ pub fn apply(ctx: &Context) {
         style.visuals.widgets.noninteractive.weak_bg_fill = Theme::panel_bg();
         style.visuals.widgets.inactive.weak_bg_fill = Theme::field_bg();
         style.visuals.widgets.hovered.weak_bg_fill = Theme::selected_bg();
-        style.visuals.widgets.active.weak_bg_fill = Theme::accent();
+        style.visuals.widgets.active.weak_bg_fill = Theme::selected_bg();
         style.visuals.widgets.open.weak_bg_fill = Theme::field_bg();
         style.visuals.widgets.open.bg_fill = Theme::field_bg();
 
@@ -538,10 +548,10 @@ pub fn apply(ctx: &Context) {
         style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, Theme::rule());
         style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, Theme::border());
         style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, Theme::border());
-        // The text cursor and the outline of selected items, in the text
-        // colour rather than the accent: the accent is what the selection wash
-        // is made of, so a caret drawn in it disappears exactly where somebody
-        // is looking for it.
+        style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.5, Theme::accent());
+        style.visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, Theme::text_primary());
+        // A bright text cursor and selected-item outline remain visible over
+        // the neutral selection fill. Document selections retain their accent.
         style.visuals.selection.stroke = egui::Stroke::new(1.0, Theme::text_primary());
         style.visuals.window_stroke = egui::Stroke::new(1.0, Theme::rule());
 
@@ -552,13 +562,16 @@ pub fn apply(ctx: &Context) {
         style.visuals.widgets.inactive.corner_radius = radius;
         style.visuals.widgets.hovered.corner_radius = radius;
         style.visuals.widgets.active.corner_radius = radius;
+        style.visuals.widgets.open.corner_radius = radius;
+        style.visuals.widgets.hovered.expansion = 0.0;
+        style.visuals.widgets.active.expansion = 0.0;
 
         // Density, set once. Eight points of vertical spacing between every
         // widget is a form; a panel of properties is a list, and a list wants
         // the rhythm of a single row height.
         style.spacing.item_spacing = egui::vec2(Theme::SPACE_2, Theme::SPACE_1);
-        style.spacing.button_padding = egui::vec2(Theme::SPACE_2, 2.0);
-        style.spacing.interact_size.y = 18.0;
+        style.spacing.button_padding = egui::vec2(Theme::SPACE_2, Theme::SPACE_1);
+        style.spacing.interact_size.y = 24.0;
         style.spacing.indent = Theme::SPACE_3;
 
         // Three sizes, and every one of them named. egui's defaults run from
@@ -583,7 +596,10 @@ pub fn apply(ctx: &Context) {
             ),
             (
                 TextStyle::Heading,
-                FontId::new(Theme::TYPE_LG, FontFamily::Proportional),
+                FontId::new(
+                    Theme::TYPE_LG,
+                    FontFamily::Name(crate::ui_fonts::HEADING_FAMILY.into()),
+                ),
             ),
         ]
         .into();
@@ -630,9 +646,8 @@ mod tests {
     #[test]
     fn selected_text_stays_readable() {
         // The bug this replaces: the selection wash and the active widget's
-        // background were both the solid accent, so selecting a value to retype
-        // it turned the field into one flat blue rectangle with the number
-        // invisible inside. A translucent wash keeps the text its own colour.
+        // background were both the solid accent. Check both the neutral UI
+        // selection and the translucent accent retained for document overlays.
         for (name, p) in [("dark", Palette::DARK), ("light", Palette::LIGHT)] {
             let wash = {
                 crate::theme::use_palette(match name {
@@ -654,6 +669,10 @@ mod tests {
             assert!(
                 ratio >= 4.5,
                 "{name}: selected text reads at {ratio:.2}:1 against its own highlight"
+            );
+            assert!(
+                contrast_ratio(p.step(12), p.step(5)) >= 4.5,
+                "{name}: text must remain readable over the neutral UI selection"
             );
         }
         crate::theme::use_palette(crate::prefs::ThemeChoice::Dark);
@@ -830,18 +849,15 @@ mod tests {
     }
 
     #[test]
-    fn the_greys_are_neutral_in_both_palettes() {
-        // **No tint either way.** A tinted interface is an interface making a
-        // claim about the paper next to it: cool greys make warm stock look
-        // yellow and warm greys make it look blue, and which way the chrome
-        // leans is not a judgement this software gets to make on somebody
-        // else’s job. The accent carries all the colour there is.
+    fn chrome_has_only_a_restrained_charcoal_tint() {
+        // The prototype has a slight cool tint in its dark surfaces. Keep it
+        // restrained; the separate proof surround must remain neutral.
         for (name, p) in [("dark", Palette::DARK), ("light", Palette::LIGHT)] {
             for n in 1..=8 {
                 let c = p.step(n);
                 let spread = c.r().max(c.g()).max(c.b()) - c.r().min(c.g()).min(c.b());
                 assert!(
-                    spread <= 2,
+                    spread <= if name == "dark" { 8 } else { 2 },
                     "{name}: step {n} is tinted ({}, {}, {})",
                     c.r(),
                     c.g(),

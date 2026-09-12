@@ -92,37 +92,40 @@ fn body(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
         return;
     }
 
-    ui.horizontal(|ui| {
-        for (icon, label, kind) in [
-            (
-                crate::icons::Icon::Pilcrow,
-                "Paragraph",
-                StyleKind::Paragraph,
-            ),
-            (
-                crate::icons::Icon::CaseSensitive,
-                "Character",
-                StyleKind::Character,
-            ),
-            (crate::icons::Icon::Rectangle, "Object", StyleKind::Object),
-        ] {
-            let selected = state.styles_window.kind == kind;
-            let (spot, _) = ui.allocate_exact_size(egui::Vec2::splat(14.0), egui::Sense::hover());
-            crate::icons::paint(
-                ui.painter(),
-                spot,
-                icon,
-                if selected {
-                    Theme::text_primary()
-                } else {
-                    Theme::text_muted()
-                },
-            );
-            if ui.selectable_label(selected, label).clicked() {
-                state.styles_window.kind = kind;
-            }
-        }
-    });
+    egui::ScrollArea::horizontal()
+        .id_salt("style-kind-tabs")
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                for (icon, label, kind) in [
+                    (
+                        crate::icons::Icon::Pilcrow,
+                        "Paragraph",
+                        StyleKind::Paragraph,
+                    ),
+                    (
+                        crate::icons::Icon::CaseSensitive,
+                        "Character",
+                        StyleKind::Character,
+                    ),
+                    (crate::icons::Icon::Rectangle, "Object", StyleKind::Object),
+                ] {
+                    let selected = state.styles_window.kind == kind;
+                    if crate::icons::tab_button(
+                        ui,
+                        icon,
+                        label,
+                        selected,
+                        true,
+                        egui::Sense::click(),
+                    )
+                    .clicked()
+                    {
+                        state.styles_window.kind = kind;
+                    }
+                }
+            });
+        });
     ui.separator();
 
     match state.styles_window.kind {

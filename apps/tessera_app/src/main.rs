@@ -19,12 +19,11 @@ fn main() -> eframe::Result<()> {
         // Take focus on launch. Without this the window can open behind
         // whatever the user clicked while it was starting.
         .with_active(true)
-        // Maximised. A layout application is what Alan Cooper calls a
-        // sovereign application — one a person works inside for hours at a
-        // time, with nothing else competing for the screen — and his guidance
-        // for those is to take the whole of it. The inner size above stays as
-        // the size the window restores to.
-        .with_maximized(true);
+        // Keep the inner size above for restoring the maximized window.
+        // Maximize after native creation applies the initial size and DPI.
+        // Creating already maximized lets that size request shrink the window
+        // while Windows still reports it as maximized.
+        .with_maximized(false);
 
     // Only when there is one. An empty `IconData` is not "no icon", it is a
     // zero-by-zero icon, and the window manager is entitled to make a mess
@@ -74,7 +73,42 @@ fn main() -> eframe::Result<()> {
             // tour of something nobody can look at.
             app.offer_tour_on_first_run();
 
-            Ok(Box::new(app) as Box<dyn eframe::App>)
+            Ok(Box::new(NativeApp {
+                app,
+                maximize_pending: true,
+                fit_after_maximize: true,
+            }) as Box<dyn eframe::App>)
         }),
     )
+}
+
+/// Native startup policy lives in the binary rather than the headless UI state.
+struct NativeApp {
+    app: TesseraApp,
+    maximize_pending: bool,
+    fit_after_maximize: bool,
+}
+
+impl eframe::App for NativeApp {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if std::mem::take(&mut self.maximize_pending) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+            ctx.request_repaint();
+        }
+        if self.fit_after_maximize && ctx.input(|i| i.viewport().maximized == Some(true)) {
+            // The first frame may have fitted the restored-size canvas.
+            // Refit once after the OS has delivered the maximized dimensions.
+            self.app.active_mut().fitted = false;
+            self.fit_after_maximize = false;
+        }
+        self.app.logic(ctx, frame);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.app.ui(ui, frame);
+    }
+
+    fn on_exit(&mut self) {
+        self.app.on_exit();
+    }
 }

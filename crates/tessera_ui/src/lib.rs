@@ -28,6 +28,7 @@ pub mod theme;
 pub mod tools;
 pub mod tour;
 pub mod transform;
+pub mod ui_fonts;
 pub mod update;
 pub mod view;
 pub mod workspace;
@@ -43,6 +44,9 @@ pub use tools::Tool;
 /// deliberately rather than putting everything in one place.
 impl eframe::App for TesseraApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if ctx.input(|i| i.viewport().close_requested()) && !view::quit::request(self) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        }
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.window_title()));
         // Rides on a frame that was going to be drawn anyway; asks for none
         // of its own.
@@ -66,6 +70,8 @@ impl eframe::App for TesseraApp {
     ///
     /// Only a crash should leave it behind. That is the whole point of it.
     fn on_exit(&mut self) {
-        recovery::Recovery::discard();
+        if self.quit.confirmed || !self.documents.values().any(|doc| doc.dirty) {
+            recovery::Recovery::discard();
+        }
     }
 }

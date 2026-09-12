@@ -167,6 +167,8 @@ fn stroked_rect(bounds: Rect, offset: f64) -> Rect {
 /// Red is the press convention, and it is the one colour a designer already
 /// reads as "this will be trimmed off".
 const BLEED_RULE: [f32; 4] = [0.85, 0.22, 0.18, 1.0];
+/// The non-printing slug boundary, distinct from bleed and margin guides.
+const SLUG_RULE: [f32; 4] = [0.20, 0.48, 0.90, 1.0];
 
 /// The non-printing rule drawn around a page's type area.
 ///
@@ -197,16 +199,17 @@ const COLUMN_RULE: [f32; 4] = [0.55, 0.36, 0.85, 1.0];
 ///
 /// A struct rather than a growing list of booleans, so a call reads as a
 /// description of what it wants rather than as three bare `true`s.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct SceneOptions {
     /// Draw the non-printing margin and bleed rules.
     pub rules: bool,
-    /// Show only what falls inside this rectangle.
+    /// One revealed rectangle per page, in resolved page order.
     ///
     /// The printing screen modes crop to the trim, the bleed or the slug, so
     /// what is on screen is what will come off the press. `None` shows
-    /// everything, pasteboard included.
-    pub clip: Option<DocRect>,
+    /// everything, pasteboard included. The rectangles form a union rather
+    /// than a bounding box, so artwork between spreads stays hidden.
+    pub clip: Option<Vec<DocRect>>,
 }
 
 impl SceneOptions {
@@ -305,7 +308,12 @@ fn build_inner(
     // Everything the document draws goes inside this layer, so a printing
     // mode crops rather than merely hiding the furniture around the page.
     let clipped = options.clip.is_some();
-    if let Some(area) = options.clip {
+    if let Some(areas) = &options.clip {
+        use vello::kurbo::Shape;
+        let mut outline = vello::kurbo::BezPath::new();
+        for area in areas {
+            outline.extend(area.to_kurbo().path_elements(0.1));
+        }
         // A plain layer clipped to the area: vello has no dedicated clip
         // blend, so the clip comes from the layer's own shape.
         scene.push_layer(
@@ -313,7 +321,7 @@ fn build_inner(
             vello::peniko::Mix::Normal,
             1.0,
             transform,
-            &area.to_kurbo(),
+            &outline,
         );
     }
     // The whole stroke, not just its width: caps, joins and dashes are what
@@ -333,7 +341,12 @@ fn build_inner(
     // The pages themselves, so the document reads as paper rather than as
     // objects floating on the pasteboard. Every page of the spread, so facing
     // pages appear side by side.
-    for page in &resolved.pages {
+    for (index, page) in resolved.pages.iter().enumerate() {
+        let paper = options
+            .clip
+            .as_ref()
+            .and_then(|areas| areas.get(index))
+            .unwrap_or(&page.bounds);
         scene.fill(
             Fill::NonZero,
             transform,
@@ -343,7 +356,7 @@ fn build_inner(
             // direction.
             ink(&Color::WHITE, proof),
             None,
-            &page.bounds.to_kurbo(),
+            &paper.to_kurbo(),
         );
     }
 
@@ -351,11 +364,18 @@ fn build_inner(
     // objects sit on top of them rather than being cut by them.
     //
     // Each is drawn only when it says something the trim does not: an
-    // unset bleed is the trim, and a rule on top of a rule is noise. The slug
-    // is deliberately not drawn — it has no distinct meaning until screen
-    // modes arrive, and two identical rectangles teach the reader nothing.
+    // unset bleed is the trim, and a rule on top of a rule is noise.
     let rule = KurboStroke::new(hairline);
     for page in resolved.pages.iter().filter(|_| rules) {
+        if page.slug != page.bounds && page.slug != page.bleed {
+            scene.stroke(
+                &rule,
+                transform,
+                AlphaColor::<Srgb>::new(SLUG_RULE),
+                None,
+                &page.slug.to_kurbo(),
+            );
+        }
         if page.bleed != page.bounds {
             scene.stroke(
                 &rule,
@@ -1215,7 +1235,7 @@ mod tests {
             ViewTransform::default(),
             SceneOptions {
                 rules: true,
-                clip: Some(page()),
+                clip: Some(vec![page()]),
             },
         );
         assert!(

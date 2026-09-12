@@ -21,6 +21,7 @@ pub mod palette;
 pub mod panels;
 pub mod ports;
 pub mod preflight_panel;
+pub mod quit;
 pub mod rail;
 pub mod rulers;
 pub mod settings;
@@ -36,6 +37,28 @@ use egui::{Panel, Ui};
 
 use crate::app::TesseraApp;
 use crate::theme::Theme;
+
+pub(crate) fn dialog_frame(ctx: &egui::Context) -> egui::Frame {
+    egui::Frame::popup(&ctx.style_of(ctx.theme()))
+        .fill(Theme::panel_bg())
+        .inner_margin(Theme::SPACE_4)
+        .corner_radius(10)
+}
+
+pub(crate) fn primary_button(text: &str) -> egui::Button<'_> {
+    egui::Button::new(egui::RichText::new(text).color(crate::theme::readable_on(Theme::accent())))
+        .fill(Theme::accent())
+}
+
+/// Raw keyboard handlers must respect dialogs as well as egui's focus.
+pub(crate) fn modal_open(state: &TesseraApp) -> bool {
+    state.new_document.open
+        || state.palette.open
+        || state.quit.pending
+        || state.closing.is_some()
+        || state.export.open
+        || state.step.open
+}
 
 /// The whole window, outermost first.
 pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
@@ -77,15 +100,6 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // The control bar, directly under the menu and always in the same place.
     // It describes whatever is selected, which is why the geometry fields no
     // longer need a column of their own.
-    // The open documents, under the menu and above everything else, and only
-    // when there is more than one. The structure has been there since milestone
-    // 1.5; until now a second document was unreachable.
-    if state.documents.len() > 1 {
-        Panel::top("documents")
-            .exact_size(26.0)
-            .resizable(false)
-            .show(ui, |ui| document_tabs::show(ui, state));
-    }
     document_tabs::confirm_close(ui.ctx(), state);
     name_workspace(ui.ctx(), state);
 
@@ -109,7 +123,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     styles::editor(ui.ctx(), state);
 
     let status = Panel::bottom("status")
-        .exact_size(24.0)
+        .exact_size(28.0)
         .resizable(false)
         .show(ui, |ui| panels::status_bar(ui, state));
     state
@@ -283,8 +297,10 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
 
             if state.screen_mode.shows_chrome() {
                 rulers::paint(ui, state, canvas, across, down);
-                rulers::drag_out(ui, state, canvas, across, down);
-                rulers::resolve_zero_drag(ui, state, canvas);
+                if !modal_open(state) {
+                    rulers::drag_out(ui, state, canvas, across, down);
+                    rulers::resolve_zero_drag(ui, state, canvas);
+                }
             }
 
             // The rail over the page, when it is glass. Inside the central
@@ -297,7 +313,10 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // Last, because every spot it can point at has now said where it is. Earlier
     // and it would be reading the previous frame's rectangles, which is a card
     // that visibly lags the panel it is describing.
-    tour::show(ui, state);
+    if !modal_open(state) {
+        tour::show(ui, state);
+    }
+    quit::show(ui.ctx(), state);
 }
 
 /// The menu bar, built from the one action list.
@@ -346,7 +365,7 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
                         Some(name) => {
                             ui.menu_button(name, |ui| {
                                 for action in entries {
-                                    if entry(ui, action) {
+                                    if entry(ui, action, state) {
                                         chosen = Some(action.run);
                                     }
                                 }
@@ -357,7 +376,7 @@ fn menu_bar(ui: &mut Ui, state: &mut TesseraApp) {
                                 ui.separator();
                             }
                             for action in entries {
-                                if entry(ui, action) {
+                                if entry(ui, action, state) {
                                     chosen = Some(action.run);
                                 }
                             }
@@ -491,12 +510,22 @@ pub fn name_workspace(ctx: &egui::Context, state: &mut TesseraApp) {
 }
 
 /// One line of a menu: its name, its shortcut, and whether it was chosen.
-fn entry(ui: &mut Ui, action: &crate::actions::Action) -> bool {
-    let label = match action.shortcut {
-        Some(s) => format!("{}\t{}", action.name, s),
-        None => action.name.to_string(),
-    };
-    let clicked = ui.button(label).clicked();
+fn entry(ui: &mut Ui, action: &crate::actions::Action, state: &TesseraApp) -> bool {
+    let selected =
+        matches!(action.run, crate::actions::Run::ScreenMode(mode) if mode == state.screen_mode);
+    let button = egui::Button::new(action.name)
+        .selected(selected)
+        .shortcut_text(
+            state
+                .prefs
+                .shortcuts
+                .chord(action)
+                .map(|c| c.label())
+                .unwrap_or_default(),
+        );
+    let clicked = ui
+        .add_enabled(crate::actions::enabled(state, action.run), button)
+        .clicked();
     if clicked {
         ui.close();
     }
@@ -526,6 +555,10 @@ fn weight(chord: crate::keys::Chord) -> u8 {
 fn accelerators(ui: &Ui, state: &mut TesseraApp) {
     use crate::actions::{self, Guard};
 
+    if modal_open(state) || ui.ctx().egui_wants_keyboard_input() {
+        return;
+    }
+
     let typing = state.active().editing.is_some();
     let nothing_selected = state.active().selection.is_empty();
 
@@ -553,7 +586,7 @@ fn accelerators(ui: &Ui, state: &mut TesseraApp) {
             Guard::NotWhileTyping => !typing,
             Guard::NeedsSelection => !typing && !nothing_selected,
         };
-        if !allowed {
+        if !allowed || !actions::enabled(state, run) {
             continue;
         }
         if ui
@@ -566,6 +599,85 @@ fn accelerators(ui: &Ui, state: &mut TesseraApp) {
     }
 
     if let Some(run) = fired {
+        // W toggles Preview; selecting a mode in the menu is idempotent.
+        let run = if run == actions::Run::ScreenMode(crate::app::ScreenMode::Preview)
+            && state.screen_mode == crate::app::ScreenMode::Preview
+        {
+            actions::Run::ScreenMode(crate::app::ScreenMode::Normal)
+        } else {
+            run
+        };
         actions::run(state, run);
+    }
+}
+
+#[cfg(test)]
+mod interaction_tests {
+    use super::*;
+
+    fn key(key: egui::Key) -> egui::RawInput {
+        egui::RawInput {
+            events: vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn delete_in_a_focused_field_does_not_delete_the_selected_object() {
+        let mut state = TesseraApp::headless();
+        let bounds = state.first_page_bounds();
+        crate::apply(&mut state, crate::Command::AddRectangle(bounds));
+        let ctx = egui::Context::default();
+        let mut text = String::from("12");
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            ui.text_edit_singleline(&mut text).request_focus();
+        });
+        let _ = ctx.run_ui(key(egui::Key::Delete), |ui| {
+            accelerators(ui, &mut state);
+            assert!(
+                ui.input(|i| i.key_pressed(egui::Key::Delete)),
+                "field lost its Delete event"
+            );
+            ui.text_edit_singleline(&mut text);
+        });
+        assert_eq!(state.active().document().frames.len(), 1);
+    }
+
+    #[test]
+    fn delete_does_not_escape_a_modal_but_works_on_the_canvas() {
+        let mut state = TesseraApp::headless();
+        let bounds = state.first_page_bounds();
+        crate::apply(&mut state, crate::Command::AddRectangle(bounds));
+        let ctx = egui::Context::default();
+        state.new_document.open = true;
+        let _ = ctx.run_ui(key(egui::Key::Delete), |ui| accelerators(ui, &mut state));
+        assert_eq!(state.active().document().frames.len(), 1);
+        state.new_document.open = false;
+        let _ = ctx.run_ui(key(egui::Key::Delete), |ui| accelerators(ui, &mut state));
+        assert!(state.active().document().frames.is_empty());
+    }
+
+    #[test]
+    fn choosing_a_screen_mode_is_idempotent_but_w_toggles_preview() {
+        use crate::actions;
+        use crate::app::ScreenMode;
+        let mut state = TesseraApp::headless();
+        for mode in ScreenMode::ALL {
+            actions::run(&mut state, actions::Run::ScreenMode(mode));
+            actions::run(&mut state, actions::Run::ScreenMode(mode));
+            assert_eq!(state.screen_mode, mode);
+        }
+        state.screen_mode = ScreenMode::Normal;
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(key(egui::Key::W), |ui| accelerators(ui, &mut state));
+        assert_eq!(state.screen_mode, ScreenMode::Preview);
+        let _ = ctx.run_ui(key(egui::Key::W), |ui| accelerators(ui, &mut state));
+        assert_eq!(state.screen_mode, ScreenMode::Normal);
     }
 }

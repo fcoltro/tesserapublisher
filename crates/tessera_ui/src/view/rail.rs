@@ -64,12 +64,12 @@ impl Dock {
 
     pub fn icon(self) -> Icon {
         match self {
-            Dock::Properties => Icon::Scale,
-            Dock::Pages => Icon::Duplicate,
+            Dock::Properties => Icon::Properties,
+            Dock::Pages => Icon::Pages,
             Dock::Layers => Icon::Layers,
-            Dock::Styles => Icon::Pilcrow,
-            Dock::Swatches => Icon::Palette,
-            Dock::Preflight => Icon::Crosshair,
+            Dock::Styles => Icon::Styles,
+            Dock::Swatches => Icon::Swatches,
+            Dock::Preflight => Icon::Preflight,
         }
     }
 

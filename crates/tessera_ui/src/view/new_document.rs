@@ -143,20 +143,23 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
     let mut cancel = false;
     let unit = state.prefs.unit;
 
-    egui::Window::new("New document")
-        .collapsible(false)
-        .resizable(false)
-        .default_width(420.0)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+    let response = egui::Modal::new(egui::Id::new("new-document"))
+        .frame(super::dialog_frame(ctx))
         .show(ctx, |ui| {
-            body(ui, &mut settings, unit);
-
+            ui.set_width((ctx.content_rect().width() - 80.0).clamp(280.0, 460.0));
+            ui.heading("New document");
+            ui.weak("Choose your page size and publishing destination.");
             ui.add_space(Theme::SPACE_3);
+            egui::ScrollArea::vertical()
+                .max_height((ctx.content_rect().height() - 200.0).max(160.0))
+                .show(ui, |ui| body(ui, &mut settings, unit));
+            ui.add_space(Theme::SPACE_3);
+            ui.separator();
             ui.horizontal(|ui| {
-                make = ui.button("Create").clicked();
-                cancel = ui.button("Cancel").clicked();
+                ui.checkbox(&mut settings.preview, "Preview");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.checkbox(&mut settings.preview, "Preview");
+                    make = ui.add(super::primary_button("Create document")).clicked();
+                    cancel = ui.button("Cancel").clicked();
                 });
             });
         });
@@ -165,15 +168,9 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
     if make {
         create(state);
         state.new_document.open = false;
-    } else if cancel && state.documents.len() > 1 {
-        // Cancel closes the dialog only when there is something behind it.
-        // With no document open it would leave an application showing nothing
-        // and offering no way back, which is worse than not offering cancel.
+    } else if cancel || response.should_close() {
+        // There is always an active document, including the startup blank.
         state.new_document.open = false;
-    } else if cancel {
-        state.status = Some(crate::app::Status::info(
-            "Tessera needs a document to work in. Create one, or open an existing file.",
-        ));
     }
 }
 
@@ -346,7 +343,11 @@ fn press_name(settings: &NewDocument) -> Option<String> {
 /// behind it is not a document anybody asked for. Drawing it would be showing a
 /// page whose size somebody is in the middle of choosing.
 pub fn showing_nothing(state: &TesseraApp) -> bool {
-    state.new_document.open && !state.new_document.preview
+    state.new_document.open
+        && !state.new_document.preview
+        && state.active().current_path.is_none()
+        && !state.active().dirty
+        && state.active().document().frames.is_empty()
 }
 
 /// Make the placeholder document match what the dialog is asking for.
@@ -457,6 +458,33 @@ fn create(state: &mut TesseraApp) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn escape_cancels_new_with_one_document_without_changing_its_work() {
+        let mut state = TesseraApp::headless();
+        let bounds = state.first_page_bounds();
+        crate::apply(&mut state, crate::Command::AddRectangle(bounds));
+        state.new_document.open = true;
+        state.new_document.preview = false;
+        assert!(!showing_nothing(&state));
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(Default::default(), |ui| show(ui.ctx(), &mut state));
+        let input = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |ui| show(ui.ctx(), &mut state));
+        assert!(!state.new_document.open);
+        assert_eq!(state.documents.len(), 1);
+        assert_eq!(state.active().document().frames.len(), 1);
+        assert!(state.active().dirty);
+    }
 
     #[test]
     fn the_defaults_would_be_accepted_by_a_printer() {

@@ -29,7 +29,7 @@ pub struct Preflight {
     /// The limits are in the key because changing the resolution threshold must
     /// re-run the check: a preference that only takes effect on the next edit is
     /// a preference that looks broken.
-    made_from: Option<(u64, u64)>,
+    made_from: Option<(crate::app::DocumentKey, u64, u64, u64)>,
 }
 
 impl Preflight {
@@ -42,7 +42,12 @@ impl Preflight {
         let limits = limits_from(state);
         // The threshold quantised, so dragging a preference slider does not
         // re-shape every story on every pixel of the drag.
-        let key = (revision, limits.minimum_ppi.round() as u64);
+        let key = (
+            state.active,
+            revision,
+            limits.minimum_ppi.round() as u64,
+            limits.bleed.to_bits(),
+        );
 
         if state.preflight.made_from != Some(key) {
             // The whole of `state` is needed: the document to read and the
@@ -97,6 +102,19 @@ fn limits_from(state: &TesseraApp) -> Limits {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn switching_between_equal_revisions_does_not_reuse_another_report() {
+        let mut state = TesseraApp::headless();
+        state.active_mut().current_path = Some("first.tessera".into());
+        let _ = Preflight::report(&mut state);
+        let first = state.preflight.made_from;
+        state.add_document(Default::default(), Some("second.tessera".into()));
+        let _ = Preflight::report(&mut state);
+        let second = state.preflight.made_from;
+        assert_eq!(first.unwrap().1, second.unwrap().1);
+        assert_ne!(first, second);
+    }
 
     #[test]
     fn the_check_runs_once_for_an_unchanged_document() {

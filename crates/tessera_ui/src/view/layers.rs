@@ -303,7 +303,7 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
         } else {
             Theme::text_muted()
         };
-        crate::icons::paint(&painter, zone.shrink(4.0), icon, tint);
+        crate::icons::paint(&painter, zone, icon, tint);
     }
 
     if !renaming {

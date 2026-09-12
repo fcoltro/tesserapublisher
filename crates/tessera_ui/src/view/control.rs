@@ -129,34 +129,39 @@ impl Subject {
 pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
     let subject = subject(state);
 
-    ui.horizontal_centered(|ui| {
-        ui.spacing_mut().item_spacing.x = Theme::SPACE_2;
+    egui::ScrollArea::horizontal()
+        .id_salt("control-bar-scroll")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.horizontal_centered(|ui| {
+                ui.spacing_mut().item_spacing.x = Theme::SPACE_2;
 
-        // What the row is about, at the left end, always.
-        label(ui, subject.name());
-        separator(ui);
+                // What the row is about, at the left end, always.
+                label(ui, subject.name());
+                separator(ui);
 
-        // A tool with options of its own says so here, before the selection
-        // does. The polygon's sides decide what the *next* drag draws, so they
-        // belong with the tool rather than with whatever happens to be
-        // selected — which may be nothing at all.
-        if state.active_tool == crate::tools::Tool::Polygon {
-            polygon_options(ui, state);
-            separator(ui);
-        }
+                // A tool with options of its own says so here, before the selection
+                // does. The polygon's sides decide what the *next* drag draws, so they
+                // belong with the tool rather than with whatever happens to be
+                // selected — which may be nothing at all.
+                if state.active_tool == crate::tools::Tool::Polygon {
+                    polygon_options(ui, state);
+                    separator(ui);
+                }
 
-        match subject {
-            Subject::Object => object(ui, state),
-            Subject::Text => crate::view::panels::type_row(ui, state),
-            Subject::Several(n) => {
-                ui.colored_label(
-                    Theme::text_muted(),
-                    format!("{n} selected — no single geometry between them"),
-                );
-            }
-            Subject::Document => crate::view::panels::page_row(ui, state),
-        }
-    });
+                match subject {
+                    Subject::Object => object(ui, state),
+                    Subject::Text => crate::view::panels::type_row(ui, state),
+                    Subject::Several(n) => {
+                        ui.colored_label(
+                            Theme::text_muted(),
+                            format!("{n} selected — no single geometry between them"),
+                        );
+                    }
+                    Subject::Document => crate::view::panels::page_row(ui, state),
+                }
+            });
+        });
 }
 
 fn object(ui: &mut Ui, state: &mut TesseraApp) {

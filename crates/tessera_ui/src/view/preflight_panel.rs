@@ -143,6 +143,7 @@ pub fn indicator(ui: &mut Ui, state: &mut TesseraApp) {
     if response.clicked() {
         state.preflight.open = true;
         state.rail_open = true;
+        state.prefs.docking.reveal("Preflight");
     }
 }
 

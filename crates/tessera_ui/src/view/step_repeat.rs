@@ -54,21 +54,24 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
         return;
     }
 
-    let mut open = true;
     let mut go = false;
     let mut window = state.step.clone();
     let unit = state.prefs.unit;
 
-    egui::Window::new("Step and repeat")
-        .open(&mut open)
-        .resizable(false)
-        .default_width(300.0)
+    let response = egui::Modal::new(egui::Id::new("step-and-repeat"))
+        .frame(super::dialog_frame(ctx))
         .show(ctx, |ui| {
+            ui.set_width((ctx.content_rect().width() - 64.0).clamp(280.0, 400.0));
+            ui.heading("Step and repeat");
+            ui.add_space(Theme::SPACE_2);
             let selected = state.active().selection.as_slice().len();
             if selected == 0 {
                 // Said rather than left to a button that does nothing: an
                 // enabled control that changes nothing reads as broken.
                 ui.colored_label(Theme::text_muted(), "Nothing is selected.");
+                if ui.button("Close").clicked() {
+                    window.open = false;
+                }
                 return;
             }
 
@@ -100,7 +103,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
 
             ui.add_space(Theme::SPACE_2);
             ui.horizontal(|ui| {
-                go = ui.button("Make copies").clicked();
+                go = ui.add(super::primary_button("Make copies")).clicked();
                 if ui.button("Cancel").clicked() {
                     window.open = false;
                 }
@@ -108,7 +111,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
         });
 
     state.step = window;
-    if !open {
+    if response.should_close() {
         state.step.open = false;
     }
     if go {

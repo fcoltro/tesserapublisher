@@ -1,7 +1,7 @@
 //! Icons, as geometry rather than assets.
 //!
 //! The shapes are [Lucide](https://lucide.dev) — drawn on a 24×24 grid with a
-//! 2px round-capped stroke — stored here as SVG path data, parsed by `kurbo`
+//! a light round-capped stroke — stored here as SVG path data, parsed by `kurbo`
 //! (already a dependency), and painted through `egui::Painter`.
 //!
 //! No image files, no SVG renderer, no icon font. The icons stay crisp at any
@@ -19,12 +19,24 @@ use kurbo::{BezPath, PathEl};
 
 /// The grid Lucide draws on.
 const GRID: f32 = 24.0;
-/// Lucide's stroke width, in grid units.
-const STROKE: f32 = 2.0;
+/// Interface stroke width in grid units, lighter than Lucide's default 2.
+const STROKE: f32 = 1.5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Icon {
+    Sun,
+    Moon,
     Select,
+    DirectSelect,
+    PictureFrame,
+    Polygon,
+    Scissors,
+    Properties,
+    Pages,
+    Preflight,
+    Swatches,
+    Styles,
+    Close,
     Rectangle,
     Ellipse,
     Line,
@@ -105,6 +117,48 @@ impl Icon {
     /// here so that everything goes through one parser.
     pub fn paths(self) -> &'static [&'static str] {
         match self {
+            Self::Sun => &[
+                "M16 12 A4 4 0 1 1 8 12 A4 4 0 1 1 16 12 Z",
+                "M12 2 V4 M12 20 V22 M2 12 H4 M20 12 H22 M4.93 4.93 L6.34 6.34 M17.66 17.66 L19.07 19.07 M4.93 19.07 L6.34 17.66 M17.66 6.34 L19.07 4.93",
+            ],
+            Self::Moon => &["M20.9 13 A9 9 0 0 1 11 3.1 A7 7 0 0 0 20.9 13 Z"],
+            // Tessera: an arrow selecting an individual anchor.
+            Self::DirectSelect => &[
+                "M4 3 L4 18 L8 14 L11 21 L14 19 L11 13 L17 13 Z",
+                "M18 3 H22 V7 H18 Z",
+            ],
+            // Publishing convention: an empty picture frame has diagonals.
+            Self::PictureFrame => &["M3 3 H21 V21 H3 Z", "M3 3 L21 21", "M21 3 L3 21"],
+            Self::Polygon => &["M12 2 L22 8 V16 L12 22 L2 16 V8 Z"],
+            // Lucide: scissors.
+            Self::Scissors => &[
+                "M9 6 A3 3 0 1 1 3 6 A3 3 0 1 1 9 6 Z",
+                "M9 18 A3 3 0 1 1 3 18 A3 3 0 1 1 9 18 Z",
+                "M8.12 8.12 L20 20",
+                "M14 10 L20 4",
+                "M8.12 15.88 L12 12",
+            ],
+            // Sliders, page sheets, a checklist and a swatch grid identify panels.
+            Self::Properties => &[
+                "M3 6 H8 M8 3 V9 M8 6 H21",
+                "M3 12 H16 M16 9 V15 M16 12 H21",
+                "M3 18 H10 M10 15 V21 M10 18 H21",
+            ],
+            Self::Pages => &["M7 3 H21 V17 H7 Z", "M3 7 V21 H17"],
+            // A type specimen sheet: the panel contains text and object styles.
+            Self::Styles => &[
+                "M4 3 H20 V21 H4 Z",
+                "M8 14 L12 6 L16 14",
+                "M10 11 H14",
+                "M8 18 H16",
+            ],
+            Self::Close => &["M5 5 L19 19", "M19 5 L5 19"],
+            Self::Preflight => &["M4 3 H20 V21 H4 Z", "M7 11 L11 15 L17 8"],
+            Self::Swatches => &[
+                "M3 3 H9 V18 A3 3 0 0 1 3 18 Z",
+                "M9 8 L14 3 L19 8 L9 18",
+                "M13 15 H21 V21 H6",
+            ],
             // lucide: mouse-pointer-2
             Self::Select => &[
                 "M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z",
@@ -356,9 +410,9 @@ impl Icon {
             Self::ChevronRight => &["m9 18 6-6-6-6"],
             // lucide: layers
             Self::Layers => &[
-                "M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z",
-                "M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12",
-                "M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17",
+                "M12 3 L21 7.5 L12 12 L3 7.5 Z",
+                "M3 12 L12 16.5 L21 12",
+                "M3 16.5 L12 21 L21 16.5",
             ],
             // lucide: eye
             Self::Eye => &[
@@ -430,6 +484,7 @@ impl Icon {
         match self {
             // The arrow's tip, where `mouse-pointer-2` starts its outline.
             Self::Select => (4.3, 4.3),
+            Self::DirectSelect => (4.0, 3.0),
             // The nib, not the barrel — and Lucide's `pen-tool` points up and
             // to the LEFT, where its outline turns the sharp corner at about
             // (2.3, 2.3). Reading the nib as the bottom-left corner put the
@@ -490,7 +545,18 @@ impl Icon {
             | Self::Eye
             | Self::EyeOff
             | Self::Lock
-            | Self::Unlock => (12.0, 12.0),
+            | Self::Unlock
+            | Self::PictureFrame
+            | Self::Polygon
+            | Self::Scissors
+            | Self::Properties
+            | Self::Pages
+            | Self::Preflight
+            | Self::Swatches
+            | Self::Styles
+            | Self::Close
+            | Self::Sun
+            | Self::Moon => (12.0, 12.0),
         }
     }
 }
@@ -602,6 +668,69 @@ pub fn named_toggle(
     response.on_hover_text(name)
 }
 
+/// One click target for an icon and its title, with a shared size and weight.
+/// Dock tabs can hide inactive titles and opt into dragging; style tabs keep
+/// their titles and use ordinary clicks.
+pub fn tab_button(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    title: &str,
+    selected: bool,
+    show_title: bool,
+    sense: egui::Sense,
+) -> egui::Response {
+    use crate::theme::Theme;
+    let label = ui.painter().layout_no_wrap(
+        title.to_owned(),
+        egui::FontId::proportional(Theme::TYPE_MD),
+        Color32::PLACEHOLDER,
+    );
+    let width = Theme::ROW
+        + if show_title {
+            label.size().x + Theme::SPACE_1
+        } else {
+            0.0
+        };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, Theme::ROW), sense);
+    if selected || response.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            Theme::RADIUS,
+            if selected {
+                Theme::selected_bg()
+            } else {
+                Theme::hover_bg()
+            },
+        );
+    }
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect,
+            Theme::RADIUS,
+            Stroke::new(1.0, Theme::focus()),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let tint = if selected || response.hovered() {
+        Theme::text_primary()
+    } else {
+        Theme::text_muted()
+    };
+    let icon_rect = Rect::from_min_size(rect.min, egui::Vec2::splat(Theme::ROW));
+    paint(ui.painter(), icon_rect, icon, tint);
+    if show_title {
+        ui.painter().galley(
+            egui::pos2(
+                rect.left() + Theme::ROW,
+                rect.center().y - label.size().y / 2.0,
+            ),
+            label,
+            tint,
+        );
+    }
+    named_toggle(response, title, egui::WidgetType::SelectableLabel, selected)
+}
+
 /// Name a control that already shows its name, but *paints* it.
 ///
 /// **Painted text is visible and not readable.** `Painter::text` puts glyphs on
@@ -627,6 +756,10 @@ pub fn reads_as(
 }
 
 pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
+    let side = crate::theme::Theme::ICON_SIZE
+        .min(rect.width())
+        .min(rect.height());
+    let rect = Rect::from_center_size(rect.center(), egui::Vec2::splat(side));
     paint_rotated(painter, rect, icon, color, 0.0, 1.0);
 }
 
@@ -654,13 +787,23 @@ pub fn paint_rotated(
 
     // Flatten in grid units, then scale — so the tolerance means the same
     // thing regardless of how large the icon is drawn.
-    let tolerance = 0.05 / f64::from(scale.max(f32::EPSILON));
+    let tolerance = 0.1 / f64::from((scale * painter.ctx().pixels_per_point()).max(f32::EPSILON));
 
     for path in icon.geometry() {
         let mut run: Vec<Pos2> = Vec::new();
-        let flush = |run: &mut Vec<Pos2>| {
+        let flush = |run: &mut Vec<Pos2>, closed: bool| {
             if run.len() > 1 {
-                painter.add(Shape::line(std::mem::take(run), stroke));
+                if closed {
+                    painter.add(Shape::closed_line(std::mem::take(run), stroke));
+                } else {
+                    let first = run[0];
+                    let last = *run.last().unwrap();
+                    painter.add(Shape::line(std::mem::take(run), stroke));
+                    // egui paths have butt caps; add the round caps the icon
+                    // geometry was designed for, using the same coverage AA.
+                    painter.circle_filled(first, stroke.width / 2.0, color);
+                    painter.circle_filled(last, stroke.width / 2.0, color);
+                }
             } else {
                 run.clear();
             }
@@ -674,21 +817,21 @@ pub fn paint_rotated(
             };
             match el {
                 PathEl::MoveTo(p) => {
-                    flush(&mut run);
+                    flush(&mut run, false);
                     run.push(at(p));
                 }
                 PathEl::LineTo(p) => run.push(at(p)),
                 PathEl::ClosePath => {
-                    if let Some(first) = run.first().copied() {
-                        run.push(first);
+                    if run.first() == run.last() {
+                        run.pop();
                     }
-                    flush(&mut run);
+                    flush(&mut run, true);
                 }
                 // `flatten` emits only MoveTo, LineTo and ClosePath.
                 PathEl::QuadTo(..) | PathEl::CurveTo(..) => {}
             }
         });
-        flush(&mut run);
+        flush(&mut run, false);
     }
 }
 
@@ -701,7 +844,24 @@ pub fn paint_rotated(
 /// icon rather than returning nothing, so the cost of forgetting is a slower
 /// first draw instead of an invisible button; this list is the fast path, not
 /// the only one.
-pub const ALL: [Icon; 49] = [
+pub const ALL: [Icon; 66] = [
+    Icon::Sun,
+    Icon::Moon,
+    Icon::DirectSelect,
+    Icon::PictureFrame,
+    Icon::Polygon,
+    Icon::Scissors,
+    Icon::Properties,
+    Icon::Pages,
+    Icon::Preflight,
+    Icon::Swatches,
+    Icon::Styles,
+    Icon::Close,
+    Icon::PlaceImage,
+    Icon::TextAlignLeft,
+    Icon::TextAlignCentre,
+    Icon::TextAlignRight,
+    Icon::TextAlignJustify,
     Icon::Select,
     Icon::Rectangle,
     Icon::Ellipse,
@@ -824,7 +984,7 @@ mod tests {
     }
 
     /// The icons that point with a tip rather than with their middle.
-    const POINTED: [Icon; 2] = [Icon::Select, Icon::Pen];
+    const POINTED: [Icon; 3] = [Icon::Select, Icon::DirectSelect, Icon::Pen];
 
     #[test]
     fn a_pointed_icon_has_its_hotspot_on_its_own_ink() {
@@ -896,7 +1056,7 @@ mod tests {
         // fails this rather than shipping an invisible button.
         assert_eq!(
             ALL.len(),
-            49,
+            66,
             "an icon was added to the enum without being added to ALL"
         );
     }

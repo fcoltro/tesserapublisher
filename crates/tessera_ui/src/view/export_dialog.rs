@@ -121,14 +121,18 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
         return;
     }
 
-    let mut open = true;
-    egui::Window::new("Export PDF")
-        .open(&mut open)
-        .resizable(false)
-        .default_width(400.0)
-        .show(ctx, |ui| body(ui, state));
+    let response = egui::Modal::new(egui::Id::new("export-pdf"))
+        .frame(super::dialog_frame(ctx))
+        .show(ctx, |ui| {
+            ui.set_width((ctx.content_rect().width() - 64.0).clamp(280.0, 420.0));
+            ui.heading("Export PDF");
+            ui.add_space(Theme::SPACE_2);
+            egui::ScrollArea::vertical()
+                .max_height((ctx.content_rect().height() - 160.0).max(160.0))
+                .show(ui, |ui| body(ui, state));
+        });
 
-    if !open {
+    if response.should_close() {
         state.export.open = false;
     }
 }

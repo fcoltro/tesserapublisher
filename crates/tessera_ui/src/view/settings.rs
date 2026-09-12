@@ -139,8 +139,10 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
             for page in Page::ALL {
                 let selected = state.settings.page == page;
                 ui.horizontal(|ui| {
-                    let (spot, _) =
-                        ui.allocate_exact_size(egui::Vec2::splat(14.0), egui::Sense::hover());
+                    let (spot, _) = ui.allocate_exact_size(
+                        egui::Vec2::splat(Theme::ICON_SIZE),
+                        egui::Sense::hover(),
+                    );
                     crate::icons::paint(
                         ui.painter(),
                         spot,

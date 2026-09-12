@@ -22,8 +22,17 @@ pub fn tool_strip(ui: &mut Ui, state: &mut TesseraApp) {
     ui.vertical(|ui| {
         ui.add_space(Theme::SPACING_SM);
         for tool in Tool::ALL {
-            if tool_button(ui, tool, state.active_tool == tool).clicked() {
-                state.active_tool = tool;
+            let shortcut = crate::actions::all()
+                .iter()
+                .find(|a| a.run == crate::actions::Run::PickTool(tool))
+                .and_then(|a| state.prefs.shortcuts.chord(a))
+                .map(|c| c.label());
+            let name = shortcut.map_or_else(
+                || tool.label().to_owned(),
+                |chord| format!("{} ({chord})", tool.label()),
+            );
+            if tool_button(ui, tool, state.active_tool == tool, name).clicked() {
+                crate::actions::run(state, crate::actions::Run::PickTool(tool));
             }
         }
     });
@@ -32,37 +41,38 @@ pub fn tool_strip(ui: &mut Ui, state: &mut TesseraApp) {
 /// Icons come from Lucide, painted through `egui::Painter` from path data
 /// rather than loaded as assets — so they stay crisp at any DPI and re-tint
 /// with the theme. See [`crate::icons`].
-fn tool_button(ui: &mut Ui, tool: Tool, active: bool) -> egui::Response {
+fn tool_button(ui: &mut Ui, tool: Tool, active: bool, name: String) -> egui::Response {
     let size = Vec2::splat(Theme::TOOL_SIZE);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
 
     let bg = if active {
-        Theme::accent()
+        Theme::selected_bg()
     } else if response.hovered() {
-        Theme::border()
+        Theme::hover_bg()
     } else {
-        Theme::panel_bg_alt()
-    };
-    let fg = if active {
         Theme::panel_bg()
-    } else {
+    };
+    let fg = if active || response.hovered() {
         Theme::text_primary()
+    } else {
+        Theme::text_muted()
     };
 
     ui.painter().rect_filled(rect, Theme::RADIUS, bg);
-    // Inset so the 24-unit icon grid does not touch the button edge.
-    let inset = Theme::TOOL_SIZE * 0.22;
-    crate::icons::paint(ui.painter(), rect.shrink(inset), tool.icon(), fg);
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect.shrink(1.0),
+            Theme::RADIUS,
+            egui::Stroke::new(1.5, Theme::text_primary()),
+            egui::StrokeKind::Inside,
+        );
+    }
+    crate::icons::paint(ui.painter(), rect, tool.icon(), fg);
 
     // Selected rather than merely labelled: which tool is *active* is the one
     // thing a strip of identical squares does not say out loud, and a person
     // choosing a tool needs to know they already have it.
-    crate::icons::named_toggle(
-        response,
-        format!("{} ({:?})", tool.label(), tool.shortcut()),
-        egui::WidgetType::RadioButton,
-        active,
-    )
+    crate::icons::named_toggle(response, name, egui::WidgetType::RadioButton, active)
 }
 
 // --- inspector ---------------------------------------------------------
@@ -139,7 +149,7 @@ impl Section {
             Section::Text => Icon::CaseSensitive,
             Section::Frame => Icon::TextFrame,
             Section::Wrap => Icon::AlignJustify,
-            Section::Graphic => Icon::Rectangle,
+            Section::Graphic => Icon::PictureFrame,
             Section::Effects => Icon::Blend,
             Section::Style => Icon::Duplicate,
         }
@@ -312,13 +322,13 @@ fn fill_stroke_proxy(
 
 /// A small icon button, for the places a word would be worse than a picture.
 fn glyph_button(ui: &mut Ui, icon: crate::icons::Icon, tip: &str) -> egui::Response {
-    const SIZE: f32 = 20.0;
+    const SIZE: f32 = 24.0;
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(SIZE), Sense::click());
     if response.hovered() {
         ui.painter()
             .rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
     }
-    crate::icons::paint(ui.painter(), rect.shrink(3.0), icon, Theme::text_primary());
+    crate::icons::paint(ui.painter(), rect, icon, Theme::text_primary());
     crate::icons::named(response, tip)
 }
 
@@ -1039,13 +1049,12 @@ fn corners_section(
     // fields for the commonest case is three fields of noise; one field for a
     // frame with different corners would be a control that silently flattens
     // them the first time it is touched.
-    let mut same = corners.is_uniform();
-    if ui.checkbox(&mut same, "All corners the same").changed() && same {
-        // Levelling them takes the first, which is the one the eye reads as
-        // "the" corner: top-left is where a box starts.
-        corners.radii = [corners.radii[0]; 4];
-        changed = true;
-    }
+    let same = linked_group_heading(
+        ui,
+        egui::Id::new(("corner-link", state.active, id)),
+        "Corner radii",
+        corners.is_uniform(),
+    );
 
     let unit = state.prefs.unit;
     if same {
@@ -1127,7 +1136,7 @@ fn stroke_section(
     let [r, g, b, a] = stroke.color.to_rgb_f32();
     let mut rgba = [r, g, b, a];
     ui.horizontal(|ui| {
-        let (spot, _) = ui.allocate_exact_size(Vec2::splat(12.0), Sense::hover());
+        let (spot, _) = ui.allocate_exact_size(Vec2::splat(Theme::ICON_SIZE), Sense::hover());
         crate::icons::paint(
             ui.painter(),
             spot,
@@ -1235,15 +1244,15 @@ pub(crate) fn icon_button(
     tooltip: &str,
     active: bool,
 ) -> bool {
-    let size = Vec2::splat(Theme::TOOL_SIZE * 0.72);
+    let size = Vec2::splat(24.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
 
     if active || response.hovered() {
         ui.painter().rect_filled(
             rect,
-            3.0,
+            Theme::RADIUS,
             if active {
-                Theme::accent()
+                Theme::selected_bg()
             } else {
                 Theme::hover_bg()
             },
@@ -1254,7 +1263,7 @@ pub(crate) fn icon_button(
     } else {
         Theme::text_muted()
     };
-    crate::icons::paint(ui.painter(), rect.shrink(4.0), icon, tint);
+    crate::icons::paint(ui.painter(), rect, icon, tint);
 
     crate::icons::named_toggle(response, tooltip, egui::WidgetType::Button, active).clicked()
 }
@@ -1687,26 +1696,19 @@ fn wrap_controls(
     }
     if on {
         let unit = state.prefs.unit;
-        group_label(ui, "Standoff");
-        let (a, b) = pair(
+        changed |= linked_edges(
             ui,
-            ("Top", |ui: &mut Ui| {
-                measure_bare(ui, &mut standoff.top, unit)
-            }),
-            ("Bottom", |ui: &mut Ui| {
-                measure_bare(ui, &mut standoff.bottom, unit)
-            }),
+            egui::Id::new(("wrap-link", state.active, id)),
+            "Standoff",
+            ["Top", "Bottom", "Left", "Right"],
+            [
+                &mut standoff.top,
+                &mut standoff.bottom,
+                &mut standoff.left,
+                &mut standoff.right,
+            ],
+            unit,
         );
-        let (c, d) = pair(
-            ui,
-            ("Left", |ui: &mut Ui| {
-                measure_bare(ui, &mut standoff.left, unit)
-            }),
-            ("Right", |ui: &mut Ui| {
-                measure_bare(ui, &mut standoff.right, unit)
-            }),
-        );
-        changed |= a || b || c || d;
     }
 
     if changed {
@@ -1760,26 +1762,19 @@ fn text_frame_controls(
     }
     changed |= a || b;
 
-    group_label(ui, "Inset");
-    let (c, d) = pair(
+    changed |= linked_edges(
         ui,
-        ("Top", |ui: &mut Ui| {
-            measure_bare(ui, &mut wanted.inset.top, unit)
-        }),
-        ("Bottom", |ui: &mut Ui| {
-            measure_bare(ui, &mut wanted.inset.bottom, unit)
-        }),
+        egui::Id::new(("inset-link", state.active, id)),
+        "Inset",
+        ["Top", "Bottom", "Left", "Right"],
+        [
+            &mut wanted.inset.top,
+            &mut wanted.inset.bottom,
+            &mut wanted.inset.left,
+            &mut wanted.inset.right,
+        ],
+        unit,
     );
-    let (e, f) = pair(
-        ui,
-        ("Left", |ui: &mut Ui| {
-            measure_bare(ui, &mut wanted.inset.left, unit)
-        }),
-        ("Right", |ui: &mut Ui| {
-            measure_bare(ui, &mut wanted.inset.right, unit)
-        }),
-    );
-    changed |= c || d || e || f;
 
     // Only offered when there is a grid to lock to. A switch that does
     // nothing until a setting three panels away is turned on is a switch that
@@ -1821,6 +1816,7 @@ fn text_frame_controls(
 /// difference in weight is what says one is a level above the other.
 fn group_label(ui: &mut Ui, text: &str) {
     ui.add_space(Theme::SPACE_1);
+    ui.separator();
     ui.add(
         egui::Label::new(
             egui::RichText::new(text)
@@ -1831,11 +1827,107 @@ fn group_label(ui: &mut Ui, text: &str) {
     );
 }
 
+/// Linking is UI state, scoped to this document/object and group. Toggling it
+/// never modifies the document; the next edit supplies the shared value.
+fn linked_group_heading(ui: &mut Ui, id: egui::Id, title: &str, default: bool) -> bool {
+    let mut linked = ui.ctx().data_mut(|data| *data.get_temp_mut_or(id, default));
+    ui.add_space(Theme::SPACE_1);
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::text_muted(), title);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let (rect, response) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), Sense::click());
+            if response.clicked() {
+                linked = !linked;
+            }
+            if linked || response.hovered() {
+                ui.painter()
+                    .rect_filled(rect, Theme::RADIUS, Theme::selected_bg());
+            }
+            if response.has_focus() {
+                ui.painter().rect_stroke(
+                    rect,
+                    Theme::RADIUS,
+                    egui::Stroke::new(1.0, Theme::focus()),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            crate::icons::paint(
+                ui.painter(),
+                rect,
+                if linked {
+                    crate::icons::Icon::Lock
+                } else {
+                    crate::icons::Icon::Unlock
+                },
+                if linked {
+                    Theme::text_primary()
+                } else {
+                    Theme::text_muted()
+                },
+            );
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Checkbox,
+                    ui.is_enabled(),
+                    linked,
+                    format!("Link {title} values"),
+                )
+            });
+            response.on_hover_text(if linked {
+                "Linked: editing one value changes all. Click to edit independently."
+            } else {
+                "Link values: the next value you edit will apply to all sides."
+            });
+        });
+    });
+    ui.ctx().data_mut(|data| data.insert_temp(id, linked));
+    linked
+}
+
+fn propagate_linked_edit(values: &mut [f64; 4], edited: [bool; 4], linked: bool) -> bool {
+    let Some(index) = edited.iter().position(|changed| *changed) else {
+        return false;
+    };
+    if linked {
+        *values = [values[index]; 4];
+    }
+    true
+}
+
+fn linked_edges(
+    ui: &mut Ui,
+    id: egui::Id,
+    title: &str,
+    labels: [&str; 4],
+    values: [&mut f64; 4],
+    unit: Unit,
+) -> bool {
+    let linked = linked_group_heading(ui, id, title, false);
+    let [mut top, mut bottom, mut left, mut right] = values.each_ref().map(|value| **value);
+    let (a, b) = pair(
+        ui,
+        (labels[0], |ui: &mut Ui| measure_bare(ui, &mut top, unit)),
+        (labels[1], |ui: &mut Ui| measure_bare(ui, &mut bottom, unit)),
+    );
+    let (c, d) = pair(
+        ui,
+        (labels[2], |ui: &mut Ui| measure_bare(ui, &mut left, unit)),
+        (labels[3], |ui: &mut Ui| measure_bare(ui, &mut right, unit)),
+    );
+    let mut edited = [top, bottom, left, right];
+    let changed = propagate_linked_edit(&mut edited, [a, b, c, d], linked);
+    for (target, value) in values.into_iter().zip(edited) {
+        *target = value;
+    }
+    changed
+}
+
 /// A heading inside a section, with the glyph that names what follows.
 fn subheading(ui: &mut Ui, icon: crate::icons::Icon, label: &str) {
     ui.add_space(Theme::SPACING_SM);
     ui.horizontal(|ui| {
-        let size = Vec2::splat(12.0);
+        let size = Vec2::splat(Theme::ICON_SIZE);
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
         crate::icons::paint(ui.painter(), rect, icon, Theme::text_muted());
         ui.colored_label(Theme::text_muted(), label);
@@ -2033,7 +2125,7 @@ pub(crate) fn pair<A, B>(
 ) -> (A, B) {
     // A shorter label column inside a pair: each half has half the room, and
     // the full column would leave nothing for the control.
-    const NARROW: f32 = 36.0;
+    const NARROW: f32 = 52.0;
 
     let mut out = (None, None);
     ui.horizontal(|ui| {
@@ -2107,8 +2199,11 @@ pub(crate) fn section_heading_with(
     );
 
     let glyph = egui::Rect::from_min_size(
-        egui::pos2(caret.right() + Theme::SPACE_1, rect.center().y - 6.0),
-        Vec2::splat(12.0),
+        egui::pos2(
+            caret.right() + Theme::SPACE_1,
+            rect.center().y - Theme::ICON_SIZE / 2.0,
+        ),
+        Vec2::splat(Theme::ICON_SIZE),
     );
     crate::icons::paint(&painter, glyph, icon, Theme::text_muted());
 
@@ -2377,7 +2472,7 @@ fn text_section(
     let [r, g, b, a] = shown_colour.to_rgb_f32();
     let mut rgba = [r, g, b, a];
     ui.horizontal(|ui| {
-        let (spot, _) = ui.allocate_exact_size(Vec2::splat(12.0), Sense::hover());
+        let (spot, _) = ui.allocate_exact_size(Vec2::splat(Theme::ICON_SIZE), Sense::hover());
         crate::icons::paint(
             ui.painter(),
             spot,
@@ -2824,18 +2919,14 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
                  v: (&mut f64, &mut f64),
                  h: ((&str, &mut f64), (&str, &mut f64))| {
         ui.add_space(Theme::SPACE_3);
-        group_label(ui, title);
-        let (a, b) = pair(
+        linked_edges(
             ui,
-            ("Top", |ui: &mut Ui| measure_bare(ui, v.0, unit)),
-            ("Bottom", |ui: &mut Ui| measure_bare(ui, v.1, unit)),
-        );
-        let (c, d) = pair(
-            ui,
-            (h.0.0, |ui: &mut Ui| measure_bare(ui, h.0.1, unit)),
-            (h.1.0, |ui: &mut Ui| measure_bare(ui, h.1.1, unit)),
-        );
-        a || b || c || d
+            egui::Id::new(("page-edge-link", state.active, title)),
+            title,
+            ["Top", "Bottom", h.0.0, h.1.0],
+            [v.0, v.1, h.0.1, h.1.1],
+            unit,
+        )
     };
 
     changed |= edges(
@@ -3186,11 +3277,43 @@ pub fn stepped_zoom(current: f64, up: bool) -> f64 {
 
 pub fn status_bar(ui: &mut Ui, state: &mut TesseraApp) {
     ui.horizontal(|ui| {
-        match &state.status {
-            Some(s) if s.is_error => ui.colored_label(Theme::error(), &s.message),
-            Some(s) => ui.colored_label(Theme::text_muted(), &s.message),
-            None => ui.colored_label(Theme::text_muted(), state.active_tool.label()),
-        };
+        // Reserve the navigator and zoom controls before giving documents a
+        // scrollable region; long names and status messages cannot push them out.
+        let left_width = (ui.available_width() - 490.0).max(140.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(left_width, 24.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                let (message, tint) = match &state.status {
+                    Some(s) => (
+                        s.message.as_str(),
+                        if s.is_error {
+                            Theme::error()
+                        } else {
+                            Theme::text_muted()
+                        },
+                    ),
+                    None => (state.active_tool.label(), Theme::text_muted()),
+                };
+                let text_width = ui
+                    .painter()
+                    .layout_no_wrap(
+                        message.to_owned(),
+                        egui::FontId::proportional(Theme::TYPE_SM),
+                        tint,
+                    )
+                    .size()
+                    .x;
+                let message_width = text_width.min((left_width * 0.4).min(180.0));
+                ui.add_sized(
+                    egui::vec2(message_width, 20.0),
+                    egui::Label::new(egui::RichText::new(message).color(tint)).truncate(),
+                )
+                .on_hover_text(message);
+                ui.separator();
+                super::document_tabs::show(ui, state);
+            },
+        );
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // The document’s state, always visible. Somebody who has to open a
@@ -3596,6 +3719,57 @@ fn page_navigator(ui: &mut Ui, state: &mut TesseraApp) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn linked_edges_follow_whichever_side_was_edited() {
+        for side in 0..4 {
+            let mut values = [10.0, 20.0, 30.0, 40.0];
+            values[side] = 7.5;
+            let mut edited = [false; 4];
+            edited[side] = true;
+            assert!(propagate_linked_edit(&mut values, edited, true));
+            assert_eq!(values, [7.5; 4]);
+        }
+    }
+
+    #[test]
+    fn unlinked_edges_and_unedited_linked_edges_keep_their_values() {
+        let original = [10.0, 20.0, 30.0, 40.0];
+        let mut values = original;
+        assert!(propagate_linked_edit(
+            &mut values,
+            [true, false, false, false],
+            false
+        ));
+        assert_eq!(values, original);
+        assert!(!propagate_linked_edit(&mut values, [false; 4], true));
+        assert_eq!(values, original, "linking alone must not normalize values");
+    }
+
+    #[test]
+    fn changing_linked_page_margins_is_one_undoable_edit() {
+        let mut state = TesseraApp::headless();
+        let original = state.active().document().setup;
+        let mut setup = original;
+        let mut edges = [
+            setup.margins.top,
+            23.0,
+            setup.margins.inside,
+            setup.margins.outside,
+        ];
+        propagate_linked_edit(&mut edges, [false, true, false, false], true);
+        setup.margins.top = edges[0];
+        setup.margins.bottom = edges[1];
+        setup.margins.inside = edges[2];
+        setup.margins.outside = edges[3];
+        apply(&mut state, Command::SetDocumentSetup(setup));
+        assert_eq!(
+            state.active().document().setup.margins,
+            tessera_document::nodes::Margins::uniform(23.0)
+        );
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().setup, original);
+    }
+
     /// Draw something in a context that is building an accessibility tree, and
     /// hand back what a screen reader would be given.
     ///

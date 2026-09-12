@@ -90,9 +90,35 @@ impl ScreenMode {
         match self {
             // Normal shows the pasteboard too, so it reveals everything; the
             // widest rectangle a page has is its slug.
-            ScreenMode::Normal | ScreenMode::Slug => page.slug,
+            ScreenMode::Normal | ScreenMode::Slug => {
+                // Slug and bleed are independent distances from trim. A zero
+                // or one-sided slug must not hide the bleed on another edge.
+                let area = page.slug.to_kurbo().union(page.bleed.to_kurbo());
+                DocRect {
+                    x: area.x0,
+                    y: area.y0,
+                    width: area.width(),
+                    height: area.height(),
+                }
+            }
             ScreenMode::Preview => page.bounds,
             ScreenMode::Bleed => page.bleed,
+        }
+    }
+
+    pub fn scene_options(
+        self,
+        resolved: &tessera_layout::ResolvedDocument,
+    ) -> tessera_render::scene::SceneOptions {
+        tessera_render::scene::SceneOptions {
+            rules: self.shows_chrome(),
+            clip: (!self.shows_chrome()).then(|| {
+                resolved
+                    .pages
+                    .iter()
+                    .map(|page| self.revealed(page))
+                    .collect()
+            }),
         }
     }
 }
@@ -207,6 +233,8 @@ pub struct SwatchesWindow {
 /// the file operations and the milestone-0 acceptance path are all exercisable
 /// without a window.
 pub struct TesseraApp {
+    /// Native-window close confirmation, shared by every open document.
+    pub quit: crate::view::quit::Quit,
     /// Every open document. One today; the tab bar is milestone 7.
     pub documents: slotmap::SlotMap<DocumentKey, OpenDocument>,
     pub active: DocumentKey,
@@ -434,6 +462,7 @@ impl TesseraApp {
         let active = documents.insert(OpenDocument::new());
 
         Self {
+            quit: crate::view::quit::Quit::default(),
             documents,
             active,
             shaper: Shaper::new(),
@@ -710,6 +739,7 @@ impl TesseraApp {
     pub fn replace_document(&mut self, document: Document) {
         self.active_mut().replace_document(document);
         self.drag = None;
+        self.preflight.recheck();
     }
 
     /// Open a document **beside** the others and go to it.
@@ -815,6 +845,37 @@ mod tests {
         // What comes off the guillotine, and nothing else.
         let page = page_with(9.0, 18.0);
         assert_eq!(ScreenMode::Preview.revealed(&page), page.bounds);
+    }
+
+    #[test]
+    fn printing_modes_keep_every_page_in_a_multi_spread_document() {
+        let mut app = TesseraApp::headless();
+        for _ in 0..3 {
+            crate::apply(&mut app, crate::Command::AddPage);
+        }
+        let resolved = app.resolve_active().clone();
+        assert_eq!(resolved.pages.len(), 4);
+        for mode in [ScreenMode::Preview, ScreenMode::Bleed, ScreenMode::Slug] {
+            let options = mode.scene_options(&resolved);
+            assert!(!options.rules);
+            let areas = options.clip.unwrap();
+            assert_eq!(areas.len(), 4);
+            for (area, page) in areas.iter().zip(&resolved.pages) {
+                assert_eq!(*area, mode.revealed(page));
+            }
+        }
+        assert!(ScreenMode::Normal.scene_options(&resolved).clip.is_none());
+    }
+
+    #[test]
+    fn slug_mode_always_includes_bleed() {
+        let mut page = page_with(9.0, 0.0);
+        page.slug.height += 24.0; // Only a bottom slug.
+        let area = ScreenMode::Slug.revealed(&page);
+        assert_eq!(area.x, -9.0);
+        assert_eq!(area.y, -9.0);
+        assert_eq!(area.width, 118.0);
+        assert_eq!(area.y + area.height, 124.0);
     }
 
     #[test]

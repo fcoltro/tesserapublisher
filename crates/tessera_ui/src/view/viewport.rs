@@ -125,13 +125,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
         };
         // A printing mode crops to what it reveals, so what is on screen is
         // what will come off the press.
-        let clip = (!mode.shows_chrome())
-            .then(|| resolved.pages.first().map(|p| mode.revealed(p)))
-            .flatten();
-        let options = tessera_render::scene::SceneOptions {
-            rules: mode.shows_chrome(),
-            clip,
-        };
+        let options = mode.scene_options(resolved);
         // The proof, when the document names a press and the user is looking
         // through it. Built on the first frame after the choice changes and kept
         // after that, because compiling one costs more than the conversion it
@@ -150,7 +144,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
                 scene,
                 width,
                 height,
-                background: pasteboard(),
+                background: pasteboard(surround),
             },
         ));
         ui.painter().image(
@@ -253,8 +247,8 @@ fn scaled_view(state: &TesseraApp, ppp: f32) -> ViewTransform {
     }
 }
 
-fn pasteboard() -> vello::peniko::color::AlphaColor<vello::peniko::color::Srgb> {
-    let [r, g, b, a] = Theme::canvas_bg().to_normalized_gamma_f32();
+fn pasteboard(color: Color32) -> vello::peniko::color::AlphaColor<vello::peniko::color::Srgb> {
+    let [r, g, b, a] = color.to_normalized_gamma_f32();
     vello::peniko::color::AlphaColor::new([r, g, b, a])
 }
 
@@ -608,6 +602,9 @@ fn keys_are_ours(ui: &Ui) -> bool {
 }
 
 fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
+    if super::modal_open(state) || !ui.is_enabled() {
+        return;
+    }
     // Text editing takes priority: while a caret is live, keys are text —
     // including the single-key tool shortcuts, which is why this returns
     // rather than falling through.
@@ -616,64 +613,16 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
         return;
     }
 
-    // Nothing single-key acts while a field has the keyboard.
-    let ours = keys_are_ours(ui);
-
-    let (picked_tool, delete_pressed) = ui.input(|i| {
-        let picked = (ours && i.modifiers.is_none())
-            .then(|| Tool::ALL.into_iter().find(|t| i.key_pressed(t.shortcut())))
-            .flatten();
-        let del = ours && (i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace));
-        (picked, del)
-    });
-    if let Some(tool) = picked_tool {
-        // Leaving the pen finishes whatever it was drawing, rather than
-        // stranding a half-built path that nothing can reach any more.
-        if state.active_tool == Tool::Pen && tool != Tool::Pen {
-            commit_pen(state);
-        }
-        state.active_tool = tool;
-    }
-    if delete_pressed && !state.active().selection.is_empty() {
+    // Remappable actions are dispatched once by the application. Backspace
+    // remains a conventional alias for deleting a selected object.
+    if keys_are_ours(ui)
+        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace))
+        && !state.active().selection.is_empty()
+    {
         apply(state, Command::DeleteSelection);
     }
-
     if guide_gesture(ui, response, rect, state) {
         return;
-    }
-
-    // `W` puts the interface away and brings it back — InDesign's key, and
-    // the one gesture worth having on a single stroke.
-    if ours && ui.input(|i| i.modifiers.is_none() && i.key_pressed(egui::Key::W)) {
-        state.screen_mode = if state.screen_mode == crate::app::ScreenMode::Normal {
-            crate::app::ScreenMode::Preview
-        } else {
-            crate::app::ScreenMode::Normal
-        };
-    }
-
-    // The fill and stroke proxy's three keys. Unmodified, so they sit here
-    // rather than in `accelerators` — below the editing guard above, which is
-    // what stops typing the letter `x` into a caption swapping the frame's
-    // colours.
-    if let Some(id) = state.active().selection.single() {
-        let (swap, default, none) = ui.input(|i| {
-            let plain = ours && i.modifiers.is_none();
-            (
-                plain && i.key_pressed(egui::Key::X),
-                plain && i.key_pressed(egui::Key::D),
-                plain && i.key_pressed(egui::Key::Slash),
-            )
-        });
-        if swap {
-            apply(state, Command::SwapFillAndStroke(id));
-        }
-        if default {
-            apply(state, Command::DefaultFillAndStroke(id));
-        }
-        if none {
-            apply(state, Command::ClearFill(id));
-        }
     }
 
     camera_input(ui, response, rect, state);
@@ -799,6 +748,10 @@ fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
         buffer.extend_to(offset);
     }
 
+    // Inspector fields own their keystrokes even while a story remains open.
+    if !keys_are_ours(ui) {
+        return;
+    }
     let Some((id, buffer)) = state.active_mut().editing.as_mut() else {
         return;
     };
@@ -1985,7 +1938,8 @@ fn pen_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tesse
         .or_else(|| response.interact_pointer_pos())
         .map(|pos| doc_pos(state, rect, pos));
 
-    let finish = ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape));
+    let finish = keys_are_ours(ui)
+        && ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape));
     if finish || response.double_clicked() {
         commit_pen(state);
     }
@@ -2013,7 +1967,7 @@ fn place_anchor(state: &mut TesseraApp, at: DocPoint, close_dist: f64) {
 
 /// Turn the path under construction into a frame, or discard it if it draws
 /// nothing.
-fn commit_pen(state: &mut TesseraApp) {
+pub(crate) fn commit_pen(state: &mut TesseraApp) {
     state.active_mut().pen_cursor = None;
     let Some(pen) = state.active_mut().pen.take() else {
         return;
@@ -2703,6 +2657,30 @@ mod tests {
             },
         );
         (state, id)
+    }
+
+    #[test]
+    fn typing_in_an_inspector_field_does_not_change_an_open_story() {
+        let (mut state, id) = a_text_frame(200.0, "Original");
+        start_editing(&mut state, id);
+        let before = state.active().editing.as_ref().unwrap().1.story().clone();
+        let ctx = egui::Context::default();
+        let mut field = String::new();
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            ui.text_edit_singleline(&mut field).request_focus();
+        });
+        let input = egui::RawInput {
+            events: vec![egui::Event::Text("42".into())],
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |ui| {
+            ui.text_edit_singleline(&mut field);
+            let (rect, response) =
+                ui.allocate_exact_size(egui::vec2(400.0, 400.0), egui::Sense::click_and_drag());
+            editing_input(ui, &response, rect, &mut state);
+        });
+        assert_eq!(field, "42");
+        assert_eq!(state.active().editing.as_ref().unwrap().1.story(), &before);
     }
 
     #[test]
