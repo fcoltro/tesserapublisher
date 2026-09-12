@@ -99,8 +99,8 @@ image      = { version = "0.25", default-features = false, features = ["png", "j
 # document sets type with, and the two would disagree. Artwork bound for print
 # carries outlines; an SVG with live text is one whose text will not appear,
 # which preflight can say plainly.
-resvg      = { version = "0.47", default-features = false }
-usvg       = { version = "0.47", default-features = false }
+resvg      = { version = "0.48", default-features = false }
+usvg       = { version = "0.48", default-features = false }
 tiny-skia  = "0.12"
 pdf-writer = "0.15"
 subsetter  = "0.2"
@@ -114,6 +114,11 @@ rfd        = "0.17"
 lcms2 = "6"
 
 # Blocking on async GPU calls in headless rendering.
+# **0.4, not 1.0.** eframe 0.35 pins 0.4, so asking for the newer one does not
+# replace it — it adds a second copy beside it. Sharing a version with the
+# framework that already needs one is worth more than being on the latest
+# number, and this is the whole of what pollster does for us: two `block_on`
+# calls when the headless renderer asks for a GPU adapter.
 pollster = "0.4"
 
 # Errors and testing.
