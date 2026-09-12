@@ -84,17 +84,24 @@ image      = { version = "0.25", default-features = false, features = ["png", "j
 # than once at placement: a logo placed at 20mm and then enlarged to fill a
 # cover must be re-rendered, not scaled up.
 #
-# 0.45 rather than 0.47 because it wants tiny-skia 0.11, which is already in
-# the tree — 0.47 would pull a second copy of it in alongside.
+# 0.47 rather than 0.45, and the reason is kurbo. 0.45 reaches kurbo 0.11
+# through svgtypes while this workspace and vello are on 0.13, so it drags a
+# whole second copy of the geometry library into every build on every platform.
+# 0.47 is on 0.13 and shares ours.
+#
+# The trade is tiny-skia: 0.47 wants 0.12 where `sctk-adwaita` — Wayland window
+# decorations, by way of winit — wants 0.11. That duplicate exists only on
+# Linux, and only for a crate that is not compiled on the other two platforms,
+# which is a much smaller thing than a second kurbo everywhere.
 #
 # `text` is off. A placed SVG with live text needs the whole font stack a
 # second time, resolved against a *different* font database than the one the
 # document sets type with, and the two would disagree. Artwork bound for print
 # carries outlines; an SVG with live text is one whose text will not appear,
 # which preflight can say plainly.
-resvg      = { version = "0.45", default-features = false }
-usvg       = { version = "0.45", default-features = false }
-tiny-skia  = "0.11.4"
+resvg      = { version = "0.47", default-features = false }
+usvg       = { version = "0.47", default-features = false }
+tiny-skia  = "0.12"
 pdf-writer = "0.15"
 subsetter  = "0.2"
 rfd        = "0.17"
