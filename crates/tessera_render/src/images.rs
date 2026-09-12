@@ -230,6 +230,9 @@ impl Images {
 /// handing it on would put a 40-megapixel image in the cache to draw a thumbnail
 /// from.
 fn decode(path: &Path, longest_edge: Option<u32>) -> Option<Decoded> {
+    if is_svg(path) {
+        return decode_svg(path, longest_edge);
+    }
     let reader = image::ImageReader::open(path)
         .ok()?
         .with_guessed_format()
@@ -251,6 +254,109 @@ fn decode(path: &Path, longest_edge: Option<u32>) -> Option<Decoded> {
     })
 }
 
+/// Whether this path is artwork we draw by rendering rather than by decoding.
+///
+/// By extension rather than by content, because the answer decides which
+/// *library* opens the file — sniffing would mean opening it twice.
+pub fn is_svg(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
+}
+
+/// The size an SVG asks to be, in points.
+///
+/// `None` for anything that will not parse, which is what tells a caller to
+/// report the link as unreadable rather than placing a zero-sized frame.
+pub fn svg_size(path: &Path) -> Option<(f64, f64)> {
+    let tree = parse(path)?;
+    let size = tree.size();
+    Some((f64::from(size.width()), f64::from(size.height())))
+}
+
+fn parse(path: &Path) -> Option<usvg::Tree> {
+    let data = std::fs::read(path).ok()?;
+    // The default options resolve `href`s relative to the file, which is what
+    // an SVG referencing a sibling bitmap needs.
+    let options = usvg::Options {
+        resources_dir: path.parent().map(|d| d.to_path_buf()),
+        ..Default::default()
+    };
+    usvg::Tree::from_data(&data, &options).ok()
+}
+
+/// Render an SVG at whatever size was asked for.
+///
+/// **Rendered, not scaled.** A bitmap asked for a smaller copy is downsampled
+/// because that is all a bitmap has; an SVG is re-rendered, so it is crisp at
+/// whatever the zoom or the export asked for. That is the whole reason for
+/// placing vector artwork, and it is why this goes through the same cache — the
+/// cache buckets by requested size, so each bucket holds a rendering made for
+/// it.
+fn decode_svg(path: &Path, longest_edge: Option<u32>) -> Option<Decoded> {
+    // Without a request, one point to one pixel — enough to read, and the
+    // caller asks again with a real size as soon as it knows one.
+    let (rgba, (width, height)) = render_svg(path, longest_edge.unwrap_or(0))?;
+    Some(Decoded {
+        image: to_image(rgba, width, height),
+        pixels: (width, height),
+    })
+}
+
+/// Render an SVG so its longest side is `longest_edge` pixels.
+///
+/// **Rendered, not scaled.** A bitmap asked for a smaller copy is downsampled
+/// because that is all a bitmap has; an SVG is re-rendered, so it is crisp at
+/// whatever the zoom or the export asked for. That is the whole reason for
+/// placing vector artwork.
+///
+/// Zero means the drawing's own size, one point to one pixel. Returns straight
+/// (non-premultiplied) RGBA and the size it came out at. Public because the PDF
+/// writer renders the same artwork for the page, and the proof and the page
+/// must not disagree about what the picture looks like.
+pub fn render_svg(path: &Path, longest_edge: u32) -> Option<(Vec<u8>, (u32, u32))> {
+    let tree = parse(path)?;
+    let size = tree.size();
+    let (natural_w, natural_h) = (size.width(), size.height());
+    if !(natural_w > 0.0 && natural_h > 0.0) {
+        return None;
+    }
+
+    let longest = natural_w.max(natural_h);
+    let scale = if longest_edge > 0 {
+        longest_edge as f32 / longest
+    } else {
+        1.0
+    };
+
+    // Capped, because the request comes from a zoom level and somebody will
+    // zoom to 4000%. Beyond this the rendering costs more than the screen can
+    // show, and a pixmap that fails to allocate loses the artwork entirely.
+    const MAX_EDGE: f32 = 8192.0;
+    let scale = scale.min(MAX_EDGE / longest).max(f32::MIN_POSITIVE);
+
+    let width = (natural_w * scale).round().max(1.0) as u32;
+    let height = (natural_h * scale).round().max(1.0) as u32;
+
+    let mut pixmap = tiny_skia::Pixmap::new(width, height)?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+
+    // tiny-skia works in premultiplied alpha and vello is told these bytes are
+    // straight, so they have to be divided back out. Skipping this makes every
+    // semi-transparent edge too dark — which on a logo is the antialiasing on
+    // every curve.
+    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+    for pixel in pixmap.pixels() {
+        let c = pixel.demultiply();
+        rgba.extend_from_slice(&[c.red(), c.green(), c.blue(), c.alpha()]);
+    }
+    Some((rgba, (width, height)))
+}
+
 /// Wrap raw RGBA bytes as something vello can draw.
 fn to_image(pixels: Vec<u8>, width: u32, height: u32) -> ImageData {
     ImageData {
@@ -265,6 +371,72 @@ fn to_image(pixels: Vec<u8>, width: u32, height: u32) -> ImageData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A square SVG with a known size and one filled shape.
+    fn an_svg(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("tessera-svg-{name}.svg"));
+        std::fs::write(
+            &path,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20" viewBox="0 0 40 20">
+                 <rect x="0" y="0" width="40" height="20" fill="#ff0000"/>
+               </svg>"##,
+        )
+        .expect("write");
+        path
+    }
+
+    #[test]
+    fn an_svg_reports_the_size_it_asks_to_be() {
+        // In points, not pixels. A vector drawing has no pixels, and placing it
+        // at its pixel count would be placing it at nothing.
+        let path = an_svg("size");
+        assert_eq!(svg_size(&path), Some((40.0, 20.0)));
+        assert!(is_svg(&path));
+        assert!(!is_svg(Path::new("photo.png")));
+    }
+
+    #[test]
+    fn an_svg_is_rendered_at_the_size_asked_for_not_scaled_to_it() {
+        // The whole reason for placing vector artwork. A bitmap asked for a
+        // larger copy can only be blurred; this comes back with more pixels.
+        let path = an_svg("scale");
+        let (_, small) = render_svg(&path, 40).expect("renders");
+        let (_, large) = render_svg(&path, 400).expect("renders");
+
+        assert_eq!(small, (40, 20), "longest side lands on what was asked");
+        assert_eq!(large, (400, 200), "and the aspect ratio is kept");
+    }
+
+    #[test]
+    fn a_rendered_svg_comes_back_as_straight_alpha() {
+        // tiny-skia works premultiplied and vello is told these bytes are not.
+        // Handing the premultiplied bytes over makes every antialiased edge too
+        // dark — on a logo, that is every curve on it.
+        let path = an_svg("alpha");
+        let (rgba, (w, h)) = render_svg(&path, 40).expect("renders");
+        assert_eq!(rgba.len(), (w * h * 4) as usize);
+
+        // The fill is opaque red, so a straight-alpha buffer says so exactly.
+        let middle = (((h / 2) * w + w / 2) * 4) as usize;
+        assert_eq!(&rgba[middle..middle + 4], &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn a_file_that_is_not_an_svg_does_not_render_as_one() {
+        let path = std::env::temp_dir().join("tessera-svg-broken.svg");
+        std::fs::write(&path, b"this is not a drawing").expect("write");
+        assert_eq!(svg_size(&path), None);
+        assert!(render_svg(&path, 100).is_none());
+    }
+
+    #[test]
+    fn an_svg_goes_through_the_ordinary_decode_path() {
+        // So the cache, the budget and the sizing all treat it like any other
+        // placed picture; only the reading differs.
+        let path = an_svg("decode");
+        let decoded = decode(&path, Some(200)).expect("decodes");
+        assert_eq!(decoded.pixels, (200, 100));
+    }
 
     /// A tiny PNG written to a temporary file.
     fn a_png(name: &str, size: u32) -> PathBuf {

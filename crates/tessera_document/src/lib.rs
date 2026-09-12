@@ -24,6 +24,7 @@ pub mod paint;
 pub mod path;
 pub mod polygon;
 pub mod shadow;
+pub mod table;
 
 pub use document::{Document, StoryMap, ZMove};
 pub use history::History;

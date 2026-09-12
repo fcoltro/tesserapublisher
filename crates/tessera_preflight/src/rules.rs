@@ -134,6 +134,14 @@ pub fn resolution(doc: &Document, limits: Limits) -> Vec<Problem> {
         if link.status() == Status::Missing {
             continue;
         }
+        // **Vector artwork has no resolution to be short of.** Its `natural`
+        // size is in points, not pixels, so the arithmetic below would read a
+        // 40pt logo as a 40-pixel one and report every drawing in the document
+        // as unprintable. A rule that cries wolf on the artwork that is always
+        // fine is a rule people learn to ignore.
+        if is_vector(&link.path) {
+            continue;
+        }
 
         // How big the artwork actually lands, after its transform inside the
         // frame. Measured from the placement rather than the frame, because a
@@ -165,6 +173,17 @@ pub fn resolution(doc: &Document, limits: Limits) -> Vec<Problem> {
         }
     }
     out
+}
+
+/// Whether a link is resolution-independent.
+///
+/// By extension, which is what decides how the file is read everywhere else in
+/// the application; see `tessera_render::images::is_svg`, which this agrees
+/// with by construction because there is only one vector format so far.
+fn is_vector(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
 }
 
 /// References to named colours the document no longer defines.

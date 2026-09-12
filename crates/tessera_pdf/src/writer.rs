@@ -1213,6 +1213,70 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
             ResolvedKind::Text { shaped, color, .. } => {
                 draw_text(&mut content, page, item.bounds, shaped, color, fonts, ink)?;
             }
+
+            // Cell fills, then the rules, then the text — the same order the
+            // renderer uses, and for the same reason: a fill painted after a
+            // rule covers the half of it that falls inside the cell.
+            ResolvedKind::Table { laid, stroke } => {
+                for cell in &laid.cells {
+                    let Some(fill) = &cell.fill else { continue };
+                    let box_ = DocRect {
+                        x: item.bounds.x + cell.bounds.x,
+                        y: item.bounds.y + cell.bounds.y,
+                        width: cell.bounds.width,
+                        height: cell.bounds.height,
+                    };
+                    content.save_state();
+                    set_solid_fill(&mut content, fill, ink, plates);
+                    content.rect(
+                        box_.x as f32,
+                        to_pdf_y(page, box_.y, box_.height) as f32,
+                        box_.width as f32,
+                        box_.height as f32,
+                    );
+                    content.fill_nonzero();
+                    content.restore_state();
+                }
+
+                if let Some(s) = stroke
+                    && s.width > 0.0
+                {
+                    // One line per grid edge, not four per cell: per-cell
+                    // borders put two strokes on every interior boundary, and
+                    // at a hairline that is a double-weight line everywhere
+                    // except around the outside.
+                    let (width, height) = laid.size();
+                    content.save_state();
+                    apply_stroke(&mut content, s, ink, plates);
+                    for x in &laid.column_edges {
+                        let x0 = (item.bounds.x + x) as f32;
+                        content.move_to(x0, to_pdf_y(page, item.bounds.y, 0.0) as f32);
+                        content.line_to(x0, to_pdf_y(page, item.bounds.y + height, 0.0) as f32);
+                    }
+                    for y in &laid.row_edges {
+                        let y0 = to_pdf_y(page, item.bounds.y + y, 0.0) as f32;
+                        content.move_to(item.bounds.x as f32, y0);
+                        content.line_to((item.bounds.x + width) as f32, y0);
+                    }
+                    content.stroke();
+                    content.restore_state();
+                }
+
+                for cell in &laid.cells {
+                    // The frame's rectangle, not the cell's: the lines were
+                    // flowed into a box already offset to the cell, so handing
+                    // the cell's own rectangle over would add that twice.
+                    draw_text(
+                        &mut content,
+                        page,
+                        item.bounds,
+                        &cell.shaped,
+                        &cell.color,
+                        fonts,
+                        ink,
+                    )?;
+                }
+            }
         }
 
         if composited.is_some() {

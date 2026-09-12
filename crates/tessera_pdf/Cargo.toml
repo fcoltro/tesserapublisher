@@ -16,6 +16,7 @@ tessera_color.workspace = true
 tessera_geometry.workspace = true
 # Reading placed artwork, and deflating what is not already a JPEG.
 image.workspace = true
+tessera_render.workspace = true
 flate2.workspace = true
 kurbo.workspace = true
 pdf-writer.workspace = true

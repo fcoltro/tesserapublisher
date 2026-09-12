@@ -141,6 +141,14 @@ pub enum FrameKind {
     /// One variant covers both the line tool and the pen tool; a line is
     /// simply a two-point path.
     Path(kurbo::BezPath),
+    /// A grid of cells, each holding its own story.
+    ///
+    /// A frame of its own rather than an object anchored in a story, which is
+    /// what InDesign makes a table. Anchored objects do not exist here yet, and
+    /// a table is useful long before they do; when they arrive, a table frame
+    /// is a thing that can be anchored like any other, so nothing here has to
+    /// be unpicked to get there.
+    Table(crate::table::Table),
     /// A group of frames, treated as one object.
     ///
     /// Children are held here and **removed from the layer's own list**, so

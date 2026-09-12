@@ -29,6 +29,16 @@ pub enum Command {
     /// Bounds plus the path, in frame-local coordinates.
     AddPath(DocRect, kurbo::BezPath),
     AddTextFrame(DocRect),
+    /// A grid of empty cells filling `bounds`.
+    ///
+    /// The rows are a starting height; the layout pass grows them to whatever
+    /// their content needs, so a table drawn small does not clip the moment
+    /// anything is typed into it.
+    AddTable {
+        bounds: DocRect,
+        rows: usize,
+        columns: usize,
+    },
     /// Draw an empty picture box.
     AddGraphicFrame(DocRect),
     /// Put a file into a graphic frame.
@@ -689,9 +699,17 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             // The file is measured **now**, once, and the size is kept. A
             // document must open and lay out without touching the disk: a
             // missing image cannot be allowed to stop a page from drawing.
-            let natural = image::image_dimensions(&path)
-                .map(|(w, h)| (f64::from(w), f64::from(h)))
-                .unwrap_or((0.0, 0.0));
+            // An SVG has no pixels to count: its natural size is the size it
+            // asks to be, in points, and reading it as a bitmap would find
+            // nothing at all. Vector artwork placed at zero would be a frame
+            // with invisible contents.
+            let natural = if tessera_render::images::is_svg(&path) {
+                tessera_render::images::svg_size(&path).unwrap_or((0.0, 0.0))
+            } else {
+                image::image_dimensions(&path)
+                    .map(|(w, h)| (f64::from(w), f64::from(h)))
+                    .unwrap_or((0.0, 0.0))
+            };
             let modified = std::fs::metadata(&path)
                 .ok()
                 .and_then(|m| tessera_document::links::modified_seconds(&m));
@@ -708,6 +726,45 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::FitFrameToArtwork { id } => {
             state.active_mut().document_mut().fit_frame_to_content(id);
+        }
+
+        Command::AddTable {
+            bounds,
+            rows,
+            columns,
+        } => {
+            // A story per cell, made here because only the document can mint
+            // one. The table module takes the maker rather than the document,
+            // so it stays a plain node with no idea where stories live.
+            let mut stories = Vec::new();
+            for _ in 0..rows.max(1) * columns.max(1) {
+                stories.push(
+                    state
+                        .active_mut()
+                        .document_mut()
+                        .add_story(Story::default()),
+                );
+            }
+            let mut next = stories.into_iter();
+            let table = tessera_document::table::new(rows, columns, bounds.width, || {
+                next.next().expect("one story per cell")
+            });
+            // A hairline rule, because a table with no rules at all reads as
+            // columns of loose text rather than as a table, and a first
+            // impression of nothing is worse than one of a plain grid.
+            let mut table = table;
+            table.stroke = Some(tessera_document::nodes::Stroke::new(Color::BLACK, 0.5));
+            add(
+                state,
+                bounds,
+                FrameKind::Table(table),
+                Color::Rgb {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.0,
+                },
+            );
         }
 
         Command::AddTextFrame(bounds) => {

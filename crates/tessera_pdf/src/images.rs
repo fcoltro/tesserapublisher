@@ -72,6 +72,9 @@ impl Prepared {
 /// reported; refusing to write the whole PDF because of one picture would mean a
 /// job with a broken link cannot be proofed at all.
 pub fn prepare(path: &Path) -> Result<Prepared, Error> {
+    if tessera_render::images::is_svg(path) {
+        return prepare_svg(path);
+    }
     let bytes = std::fs::read(path)?;
 
     if is_jpeg(&bytes) {
@@ -117,6 +120,67 @@ pub fn prepare(path: &Path) -> Result<Prepared, Error> {
     })
 }
 
+/// How finely a placed SVG is rendered for the page.
+///
+/// **Rasterised, and this is the compromise to know about.** Vector artwork
+/// ought to reach a PDF as vectors; the crate that does that conversion
+/// (`svg2pdf`) is built against `pdf-writer` 0.12 and this writes with 0.15,
+/// so their types cannot meet. Until they line up, an SVG is rendered at a
+/// resolution high enough that a press will not show it — 600 pixels per inch
+/// is twice what a 300ppi photograph gets and is the usual number for line
+/// work — and the limitation is written down here rather than discovered on a
+/// proof.
+const SVG_PPI: f64 = 600.0;
+
+/// A placed SVG rendered for the page, at [`SVG_PPI`].
+///
+/// One function because both the RGB path and the CMYK one need the same
+/// pixels; rendering twice would be slow and could disagree.
+fn svg_rgba(path: &Path) -> Result<(Vec<u8>, u32, u32), Error> {
+    let unreadable =
+        |why: &str| Error::Unreadable(path.to_path_buf(), format!("not readable as SVG: {why}"));
+
+    let (natural_w, natural_h) =
+        tessera_render::images::svg_size(path).ok_or_else(|| unreadable("it does not parse"))?;
+    if !(natural_w > 0.0 && natural_h > 0.0) {
+        return Err(unreadable("the drawing has no size"));
+    }
+
+    // Points to pixels at the chosen resolution, asked of the same renderer the
+    // screen uses so the proof and the page cannot disagree about the artwork.
+    let longest = natural_w.max(natural_h);
+    let edge = (longest / 72.0 * SVG_PPI)
+        .round()
+        .clamp(1.0, f64::from(u32::MAX)) as u32;
+
+    let (rgba, (width, height)) = tessera_render::images::render_svg(path, edge)
+        .ok_or_else(|| unreadable("it renders to nothing"))?;
+    Ok((rgba, width, height))
+}
+
+/// Render a placed SVG into pixels for embedding.
+fn prepare_svg(path: &Path) -> Result<Prepared, Error> {
+    let (rgba, width, height) = svg_rgba(path)?;
+
+    let mut colour = Vec::with_capacity((width * height * 3) as usize);
+    let mut alpha = Vec::with_capacity((width * height) as usize);
+    let mut any_transparent = false;
+    for pixel in rgba.chunks_exact(4) {
+        colour.extend_from_slice(&pixel[..3]);
+        alpha.push(pixel[3]);
+        any_transparent |= pixel[3] != 255;
+    }
+
+    Ok(Prepared {
+        width,
+        height,
+        coding: Coding::Flate,
+        space: Space::Rgb,
+        data: deflate(&colour),
+        alpha: any_transparent.then(|| deflate(&alpha)),
+    })
+}
+
 /// How many pixels are converted per call into Little CMS.
 ///
 /// A chunk rather than the whole image, because the buffers are `[f32; 3]` and
@@ -136,10 +200,19 @@ const CHUNK: usize = 1 << 16;
 /// Alpha survives. It is coverage, not colour, and has nothing to do with which
 /// inks the picture is made of.
 pub fn to_cmyk(path: &Path, conversion: &Conversion) -> Result<Prepared, Error> {
-    let bytes = std::fs::read(path)?;
-    let decoded = image::load_from_memory(&bytes)
-        .map_err(|e| Error::Unreadable(path.to_path_buf(), e.to_string()))?;
-    let rgba = decoded.to_rgba8();
+    // An SVG is rendered rather than decoded, and then converted like any other
+    // picture: the inks a drawing prints in are the press's business, not the
+    // drawing's.
+    let rgba = if tessera_render::images::is_svg(path) {
+        let (raw, w, h) = svg_rgba(path)?;
+        image::RgbaImage::from_raw(w, h, raw)
+            .ok_or_else(|| Error::Unreadable(path.to_path_buf(), "malformed rendering".into()))?
+    } else {
+        let bytes = std::fs::read(path)?;
+        image::load_from_memory(&bytes)
+            .map_err(|e| Error::Unreadable(path.to_path_buf(), e.to_string()))?
+            .to_rgba8()
+    };
     let (width, height) = rgba.dimensions();
 
     let mut inks: Vec<u8> = Vec::with_capacity((width * height * 4) as usize);

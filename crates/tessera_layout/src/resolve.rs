@@ -49,6 +49,16 @@ pub enum ResolvedKind {
         /// counts as *overset* is the caller's question, not this one's.
         overset_lines: usize,
     },
+    /// A table, laid out in frame-local coordinates.
+    ///
+    /// Carries the whole grid rather than one item per cell so that a consumer
+    /// draws the rules once, from the edges, instead of four times per cell —
+    /// which is what puts a double-weight line between every pair of them.
+    Table {
+        laid: crate::table::LaidTable,
+        /// The rule drawn between and around the cells.
+        stroke: Option<Stroke>,
+    },
     /// A path in frame-local coordinates. Consumers translate by
     /// [`ResolvedItem::bounds`]'s origin.
     Path {
@@ -490,6 +500,18 @@ fn resolve_one<'a>(
                 natural: link.map(|l| l.natural).unwrap_or((0.0, 0.0)),
                 missing,
                 stroke: resolved_stroke(doc, frame.stroke.as_ref()),
+            }
+        }
+
+        FrameKind::Table(table) => {
+            // Cells hold stories like any text frame, so a composing input
+            // method reaches them the same way.
+            let laid = crate::table::lay_out(table, doc, shaper, |id| {
+                story_of(doc, composed, id).cloned()
+            });
+            ResolvedKind::Table {
+                laid,
+                stroke: resolved_stroke(doc, table.stroke.as_ref()),
             }
         }
 

@@ -79,6 +79,22 @@ flate2     = "1"
 # one of them decodes through the same `load_from_memory` call, so the
 # screen and the PDF gain them together.
 image      = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "webp", "bmp", "gif"] }
+
+# SVG. Rasterised through resvg at whatever size the output asks for, rather
+# than once at placement: a logo placed at 20mm and then enlarged to fill a
+# cover must be re-rendered, not scaled up.
+#
+# 0.45 rather than 0.47 because it wants tiny-skia 0.11, which is already in
+# the tree — 0.47 would pull a second copy of it in alongside.
+#
+# `text` is off. A placed SVG with live text needs the whole font stack a
+# second time, resolved against a *different* font database than the one the
+# document sets type with, and the two would disagree. Artwork bound for print
+# carries outlines; an SVG with live text is one whose text will not appear,
+# which preflight can say plainly.
+resvg      = { version = "0.45", default-features = false }
+usvg       = { version = "0.45", default-features = false }
+tiny-skia  = "0.11.4"
 pdf-writer = "0.15"
 subsetter  = "0.2"
 rfd        = "0.17"

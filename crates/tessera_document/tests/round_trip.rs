@@ -617,12 +617,61 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_nineteen() {
+fn the_format_version_is_twenty() {
     // A tripwire, not a fact worth asserting on its own: changing it means
     // stopping to ask whether a migration step is owed. Sometimes the answer is
     // no — version 19 added `corners`, whose default is exactly what older
-    // documents meant — and the point is that somebody had to answer.
-    assert_eq!(format::FORMAT_VERSION, 19);
+    // documents meant, and version 20 added a `Table` frame kind, which no
+    // older document can contain — and the point is that somebody had to answer.
+    assert_eq!(format::FORMAT_VERSION, 20);
+}
+
+#[test]
+fn a_table_survives_a_round_trip_with_its_spans_intact() {
+    // The reason version 20 needs no migration step is that the variant is
+    // additive; what it does need is proof that the grid comes back the shape
+    // it went in as. A span written and read as a plain cell would redraw the
+    // table with cells on top of each other.
+    use tessera_document::table::{Slot, Span};
+
+    let mut doc = Document::default();
+    let mut table = tessera_document::table::new(2, 3, 300.0, || {
+        doc.add_story(tessera_text::Story::default())
+    });
+    if let Some(Slot::Cell(cell)) = table.at_mut(0, 0) {
+        cell.span = Span {
+            columns: 2,
+            rows: 1,
+        };
+    }
+    *table.at_mut(0, 1).unwrap() = Slot::Covered;
+    assert!(table.spans_are_sound());
+
+    let frame = tessera_document::nodes::Frame {
+        bounds: DocRect {
+            x: 0.0,
+            y: 0.0,
+            width: 300.0,
+            height: 100.0,
+        },
+        transform: Transform::IDENTITY,
+        kind: tessera_document::nodes::FrameKind::Table(table.clone()),
+        fill: Paint::Solid(Color::BLACK),
+        stroke: None,
+        wrap: tessera_document::nodes::TextWrap::None,
+        blend: tessera_document::blending::Blending::PLAIN,
+        corners: tessera_document::corners::Corners::SQUARE,
+        shadow: None,
+        style: None,
+    };
+    let json = serde_json::to_string(&frame).expect("writes");
+    let back: tessera_document::nodes::Frame = serde_json::from_str(&json).expect("reads");
+
+    let tessera_document::nodes::FrameKind::Table(read) = back.kind else {
+        panic!("a table must come back a table");
+    };
+    assert_eq!(read, table);
+    assert!(read.spans_are_sound(), "the grid must still be consistent");
 }
 
 #[test]

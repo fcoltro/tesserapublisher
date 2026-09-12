@@ -45,7 +45,9 @@ pub use tools::Tool;
 /// twice. Every one of these decodes through the same call in `tessera_render`
 /// and `tessera_pdf`, so a format added here is added to the screen and to the
 /// export at once.
-pub const PLACEABLE: &[&str] = &["png", "jpg", "jpeg", "tif", "tiff", "webp", "bmp", "gif"];
+pub const PLACEABLE: &[&str] = &[
+    "png", "jpg", "jpeg", "tif", "tiff", "webp", "bmp", "gif", "svg",
+];
 
 /// The `eframe::App` implementation.
 ///

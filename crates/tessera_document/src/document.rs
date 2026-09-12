@@ -2290,9 +2290,12 @@ impl Document {
         let mut path = match &frame.kind {
             // A graphic frame is a box like a text frame: the artwork inside
             // it may be any shape, but the container is what is outlined.
-            FrameKind::Rectangle | FrameKind::Text { .. } | FrameKind::Graphic { .. } => {
-                rect.to_path(ACCURACY)
-            }
+            FrameKind::Rectangle
+            | FrameKind::Text { .. }
+            | FrameKind::Graphic { .. }
+            // A table is a box too. Its cells are drawn inside it; the frame
+            // is what has an outline, a wrap and a shadow.
+            | FrameKind::Table(_) => rect.to_path(ACCURACY),
             FrameKind::Ellipse => kurbo::Ellipse::from_rect(rect).to_path(ACCURACY),
             FrameKind::Path(p) => {
                 let mut placed = crate::path::fit_to_bounds(p, b);
@@ -2513,9 +2516,12 @@ fn hits(frame: &Frame, point: DocPoint, tolerance: f64) -> bool {
         // A text frame is a box, and an empty one still has to be clickable —
         // so is a graphic frame, and an empty one is exactly the box somebody
         // drew to reserve room for a photograph.
-        FrameKind::Rectangle | FrameKind::Text { .. } | FrameKind::Graphic { .. } => {
-            grown(bounds, tolerance).contains(local)
-        }
+        FrameKind::Rectangle
+        | FrameKind::Text { .. }
+        | FrameKind::Graphic { .. }
+        // Clickable anywhere inside, including a cell that is still empty —
+        // which is every cell of a table somebody has just drawn.
+        | FrameKind::Table(_) => grown(bounds, tolerance).contains(local),
 
         FrameKind::Ellipse => {
             let (rx, ry) = (

@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 19;
+pub const FORMAT_VERSION: u32 = 20;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -93,6 +93,13 @@ pub fn load(path: &Path) -> Result<Document, FormatError> {
 /// ago follows exactly the path a document written two versions ago does, and
 /// each step only has to know about its own change.
 fn migrate(value: &mut serde_json::Value, from: u32) {
+    // 19 -> 20: frames gained a `Table` kind. **No step, on purpose.** A new
+    // enum variant is purely additive: no document written before it exists can
+    // contain one, so there is nothing to rewrite. The version moves anyway, so
+    // that a build without tables refuses a document that uses them rather than
+    // silently dropping every table in it on the next save — which is the whole
+    // reason this number exists.
+
     // 18 -> 19: frames gained `corners`. **No step, on purpose.** The field
     // carries `serde(default)` and its default is square, which is exactly what
     // every document written before it existed meant — so there is nothing to

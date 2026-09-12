@@ -16,6 +16,9 @@ tessera_color.workspace = true
 tessera_geometry.workspace = true
 vello.workspace = true
 image.workspace = true
+resvg.workspace = true
+usvg.workspace = true
+tiny-skia.workspace = true
 pollster.workspace = true
 thiserror.workspace = true
 

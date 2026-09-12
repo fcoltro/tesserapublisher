@@ -689,6 +689,10 @@ fn build_inner(
             ResolvedKind::Text { shaped, color, .. } => {
                 draw_text(&mut scene, transform, item.bounds, shaped, color, proof);
             }
+
+            ResolvedKind::Table { laid, stroke } => {
+                draw_table(&mut scene, transform, item.bounds, laid, stroke, proof);
+            }
         }
 
         if composited {
@@ -737,8 +741,90 @@ fn paint_extent(kind: &ResolvedKind, rect: Rect) -> Rect {
         // Text is clipped to its frame before it is composited, so the frame
         // is already the whole of it.
         ResolvedKind::Text { .. } => 0.0,
+        // A table's rules are centred on its edges, so half of the outermost
+        // one falls outside the grid.
+        ResolvedKind::Table { stroke, .. } => stroke.as_ref().map(|s| s.width / 2.0).unwrap_or(0.0),
     };
     rect.inflate(reach, reach)
+}
+
+/// A table: cell fills, then the rules, then the text.
+///
+/// **In that order, and it is not arbitrary.** A fill painted after a rule
+/// covers half of it — the rules sit on the cell boundaries, so every one of
+/// them is half inside the cell below and to the right. Text last, because a
+/// rule drawn over a descender is the sort of thing that looks like a font bug.
+///
+/// The rules are drawn from the grid's own edges rather than four to a cell:
+/// per-cell borders put two strokes on every interior boundary, which at a
+/// hairline is a line of double weight everywhere except the outside.
+fn draw_table(
+    scene: &mut Scene,
+    transform: Affine,
+    bounds: DocRect,
+    laid: &tessera_layout::table::LaidTable,
+    stroke: &Option<tessera_document::nodes::Stroke>,
+    proof: Option<&Proof>,
+) {
+    let origin = |x: f64, y: f64| (bounds.x + x, bounds.y + y);
+
+    for cell in &laid.cells {
+        if let Some(fill) = &cell.fill {
+            let (x, y) = origin(cell.bounds.x, cell.bounds.y);
+            let rect = Rect::new(x, y, x + cell.bounds.width, y + cell.bounds.height);
+            // The cell's own box as the gradient's frame, so a gradient in a
+            // cell runs across the cell rather than across the whole table.
+            let local = DocRect {
+                x,
+                y,
+                width: cell.bounds.width,
+                height: cell.bounds.height,
+            };
+            scene.fill(
+                Fill::NonZero,
+                transform,
+                &brush_of(fill, local, proof),
+                None,
+                &rect,
+            );
+        }
+    }
+
+    if let Some(s) = stroke
+        && s.width > 0.0
+    {
+        let rule = KurboStroke::new(s.width);
+        let colour = ink(&s.color, proof);
+        let (width, height) = laid.size();
+        for x in &laid.column_edges {
+            let (x0, y0) = origin(*x, 0.0);
+            scene.stroke(
+                &rule,
+                transform,
+                colour,
+                None,
+                &Line::new((x0, y0), (x0, y0 + height)),
+            );
+        }
+        for y in &laid.row_edges {
+            let (x0, y0) = origin(0.0, *y);
+            scene.stroke(
+                &rule,
+                transform,
+                colour,
+                None,
+                &Line::new((x0, y0), (x0 + width, y0)),
+            );
+        }
+    }
+
+    for cell in &laid.cells {
+        // The frame's own rectangle, not the cell's: the lines were flowed
+        // into a box already offset to the cell, so their positions are
+        // relative to the table's origin. Handing the cell's rectangle over
+        // would add that offset a second time.
+        draw_text(scene, transform, bounds, &cell.shaped, &cell.color, proof);
+    }
 }
 
 fn draw_text(
