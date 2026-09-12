@@ -83,6 +83,19 @@ pub(crate) struct Placed {
     pub hyphenate: bool,
 }
 
+/// The paragraph-local shaped offset a global stored offset became.
+///
+/// The same arithmetic as [`Placed::to_shaped`], but usable *before* a `Placed`
+/// exists — which is when an inline box has to be pushed, because parley needs
+/// to know where it goes in order to break the line around it.
+fn shaped_offset(map: &[(usize, usize)], start: usize, stored: usize) -> usize {
+    if map.is_empty() {
+        return stored.saturating_sub(start);
+    }
+    let i = map.partition_point(|(_, at)| *at <= stored);
+    map[i.saturating_sub(1)].0
+}
+
 impl Placed {
     /// The stored offset a shaped offset came from.
     pub(crate) fn to_stored(&self, shaped: usize) -> usize {
@@ -529,6 +542,34 @@ pub struct ShapedRun {
     pub glyphs: Vec<PositionedGlyph>,
 }
 
+/// Room to reserve in the text for something that is not text.
+///
+/// An anchored object: a picture, a rule, a table, set into a line so the copy
+/// makes way for it and it travels when the copy reflows. The text carries a
+/// marker character at `at` — `U+FFFC OBJECT REPLACEMENT CHARACTER` — which is
+/// what gives the object a place in the story that ordinary editing keeps
+/// correct. This crate only reserves the box; it neither knows nor cares what
+/// is eventually drawn in it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InlineObject {
+    /// Stored byte offset of the marker.
+    pub at: usize,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// Where an [`InlineObject`] ended up once the line was laid out.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlacedObject {
+    /// The stored offset it was asked for at, so a caller can match it back.
+    pub at: usize,
+    /// The box's top-left, in the same space as the glyphs around it.
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
 #[derive(Debug, Clone)]
 pub struct ShapedLine {
     pub runs: Vec<ShapedRun>,
@@ -547,6 +588,15 @@ pub struct ShapedLine {
     /// clip the first line of every column by exactly its own ascent.
     pub ascent: f64,
     pub descent: f64,
+    /// Anchored objects sitting on this line.
+    ///
+    /// **On the line rather than on the text.** A line is the thing that moves
+    /// — into a column, onto the baseline grid, into the next frame of a
+    /// thread — and an object that did not move with its line would be left
+    /// behind on the page while the sentence around it went elsewhere. Putting
+    /// them here means [`shift`] is the only code that has to know.
+    #[doc(alias = "anchored")]
+    pub objects: Vec<PlacedObject>,
 }
 
 impl ShapedLine {
@@ -672,6 +722,12 @@ fn shift(line: &mut ShapedLine, dx: f64, dy: f64) {
             glyph.x += dx;
             glyph.y += dy;
         }
+    }
+    // Anchored objects travel with the line they sit on. Every way a line can
+    // move goes through here, so there is one place to get this right.
+    for object in &mut line.objects {
+        object.x += dx;
+        object.y += dy;
     }
 }
 
@@ -1089,7 +1145,7 @@ impl Shaper {
         width: f64,
         from: usize,
     ) -> Vec<Placed> {
-        self.layout_paragraphs_around(story, styles, width, from, &[])
+        self.layout_paragraphs_around(story, styles, width, from, &[], &[])
     }
 
     /// The same, with objects the text must run around.
@@ -1104,6 +1160,7 @@ impl Shaper {
         width: f64,
         from: usize,
         obstacles: &[crate::wrap::Obstacle],
+        objects: &[InlineObject],
     ) -> Vec<Placed> {
         let floor = styles.document_default();
         let mut placed = Vec::new();
@@ -1256,6 +1313,22 @@ impl Shaper {
             let mut builder =
                 self.layout_ctx
                     .ranged_builder(&mut self.font_ctx, &shaped_text, 1.0, true);
+
+            // Anchored objects belonging to this paragraph, as boxes parley
+            // breaks the line around. The id carries the stored offset so the
+            // caller can match a placed box back to the frame it is for.
+            for object in objects
+                .iter()
+                .filter(|o| o.at >= cap_end.max(start) && o.at < content_end)
+            {
+                builder.push_inline_box(parley::InlineBox {
+                    id: object.at as u64,
+                    kind: parley::InlineBoxKind::InFlow,
+                    index: shaped_offset(&map, cap_end.max(start), object.at),
+                    width: object.width as f32,
+                    height: object.height as f32,
+                });
+            }
 
             // The cascade's floor. `FontFamily::Source` takes the family name
             // as written and resolves generic names ("sans-serif") the way CSS
@@ -1515,7 +1588,29 @@ impl Shaper {
         if from >= story.text.len() && from > 0 {
             return ShapedText::default();
         }
-        let placed = self.layout_paragraphs_around(story, styles, width, from, obstacles);
+        let placed = self.layout_paragraphs_around(story, styles, width, from, obstacles, &[]);
+        Self::assemble(story, styles, &placed)
+    }
+
+    /// The same, with room reserved for anchored objects.
+    ///
+    /// **Never cached.** The shape cache is keyed on the story, the styles and
+    /// the measure; two frames with the same text and different objects in it
+    /// lay out differently, and the cache has no way to tell them apart. A key
+    /// carrying the objects would be a key that almost never hits — an anchored
+    /// object moves whenever the text around it does — so this pays the shaping
+    /// rather than pretending.
+    pub fn shape_with_objects(
+        &mut self,
+        story: &Story,
+        styles: &dyn Styles,
+        width: f64,
+        objects: &[InlineObject],
+    ) -> ShapedText {
+        if objects.is_empty() {
+            return self.shape(story, styles, width);
+        }
+        let placed = self.layout_paragraphs_around(story, styles, width, 0, &[], objects);
         Self::assemble(story, styles, &placed)
     }
 
@@ -1542,9 +1637,24 @@ impl Shaper {
                 // points and never has to know paragraphs exist.
                 let baseline = f64::from(line.metrics().baseline) + paragraph.y;
 
+                let mut objects = Vec::new();
                 for item in line.items() {
-                    let parley::PositionedLayoutItem::GlyphRun(run) = item else {
-                        continue;
+                    let run = match item {
+                        parley::PositionedLayoutItem::GlyphRun(run) => run,
+                        // An anchored object. parley broke the line around the
+                        // box and tells us where it landed; the id it hands
+                        // back is the stored offset it was asked for at, which
+                        // is what lets a caller match it to its frame.
+                        parley::PositionedLayoutItem::InlineBox(box_) => {
+                            objects.push(PlacedObject {
+                                at: box_.id as usize,
+                                x: f64::from(box_.x) + paragraph.x,
+                                y: f64::from(box_.y) + paragraph.y,
+                                width: f64::from(box_.width),
+                                height: f64::from(box_.height),
+                            });
+                            continue;
+                        }
                     };
 
                     let size = run.run().font_size();
@@ -1618,6 +1728,7 @@ impl Shaper {
                     range: paragraph.to_stored(shaped.start)..paragraph.to_stored(shaped.end),
                     ascent: f64::from(metrics.ascent),
                     descent: f64::from(metrics.descent),
+                    objects,
                 });
             }
 
@@ -1642,6 +1753,195 @@ impl Default for Shaper {
 mod tests {
     use super::*;
     use crate::story::{NoStyles, Story};
+
+    // --- anchored objects ----------------------------------------------------
+
+    /// The marker an anchored object sits at in the text.
+    const MARKER: &str = "\u{FFFC}";
+
+    /// Every object placed anywhere in the text, in reading order.
+    fn objects_of(text: &ShapedText) -> Vec<PlacedObject> {
+        text.lines.iter().flat_map(|l| l.objects.clone()).collect()
+    }
+
+    #[test]
+    fn an_inline_object_is_placed_where_its_marker_is() {
+        let story = Story::new(format!("before {MARKER} after"));
+        let at = story.text.find(MARKER).expect("a marker");
+        let mut shaper = Shaper::new();
+
+        let shaped = shaper.shape_with_objects(
+            &story,
+            &NoStyles::default(),
+            400.0,
+            &[InlineObject {
+                at,
+                width: 40.0,
+                height: 20.0,
+            }],
+        );
+
+        let placed = objects_of(&shaped);
+        assert_eq!(placed.len(), 1, "one object in, one object out");
+        assert_eq!(
+            placed[0].at, at,
+            "it must report the offset it was asked for"
+        );
+        assert_eq!(placed[0].width, 40.0);
+        assert_eq!(placed[0].height, 20.0);
+        assert!(placed[0].x > 0.0, "it sits after the word before it");
+    }
+
+    #[test]
+    fn the_text_makes_room_rather_than_drawing_over_it() {
+        // The whole point. If the object reserved nothing, the words after it
+        // would sit where they would have without it, and the picture would be
+        // printed on top of them.
+        let story = Story::new(format!("before {MARKER} after"));
+        let at = story.text.find(MARKER).expect("a marker");
+        let mut shaper = Shaper::new();
+
+        let without = shaper.shape(&story, &NoStyles::default(), 400.0);
+        let with = shaper.shape_with_objects(
+            &story,
+            &NoStyles::default(),
+            400.0,
+            &[InlineObject {
+                at,
+                width: 120.0,
+                height: 10.0,
+            }],
+        );
+
+        let last_x = |t: &ShapedText| {
+            t.lines
+                .iter()
+                .flat_map(|l| l.runs.iter())
+                .flat_map(|r| r.glyphs.iter())
+                .map(|g| g.x)
+                .fold(f64::MIN, f64::max)
+        };
+        assert!(
+            last_x(&with) > last_x(&without) + 100.0,
+            "the copy after the object must be pushed along by its width"
+        );
+    }
+
+    #[test]
+    fn a_taller_object_makes_its_line_taller() {
+        // A picture set into a line of 12pt text cannot hang out of it — the
+        // line has to grow, or the one above is overprinted.
+        let story = Story::new(format!("a {MARKER} b"));
+        let at = story.text.find(MARKER).expect("a marker");
+        let mut shaper = Shaper::new();
+
+        let short = shaper.shape_with_objects(
+            &story,
+            &NoStyles::default(),
+            400.0,
+            &[InlineObject {
+                at,
+                width: 10.0,
+                height: 4.0,
+            }],
+        );
+        let tall = shaper.shape_with_objects(
+            &story,
+            &NoStyles::default(),
+            400.0,
+            &[InlineObject {
+                at,
+                width: 10.0,
+                height: 90.0,
+            }],
+        );
+        assert!(
+            tall.height > short.height + 50.0,
+            "a 90pt object must not fit in a 12pt line: {} vs {}",
+            tall.height,
+            short.height
+        );
+    }
+
+    #[test]
+    fn an_object_too_wide_for_the_rest_of_the_line_moves_to_the_next() {
+        // It is a box the breaker has to fit, like a very long word.
+        let story = Story::new(format!("some words first {MARKER} tail"));
+        let at = story.text.find(MARKER).expect("a marker");
+        let mut shaper = Shaper::new();
+
+        let shaped = shaper.shape_with_objects(
+            &story,
+            &NoStyles::default(),
+            200.0,
+            &[InlineObject {
+                at,
+                width: 190.0,
+                height: 10.0,
+            }],
+        );
+        assert!(shaped.lines.len() > 1, "the line had to break");
+        let carrying = shaped
+            .lines
+            .iter()
+            .position(|l| !l.objects.is_empty())
+            .expect("some line carries it");
+        assert!(
+            carrying > 0,
+            "an object that will not fit the first line belongs on the next"
+        );
+    }
+
+    #[test]
+    fn an_object_travels_with_its_line_into_a_column() {
+        // `shift` is the only place a line moves, so this is the assertion
+        // that anchored objects go through it. An object left behind would sit
+        // on the page while its sentence moved to the next column.
+        let story = Story::new(format!("x {MARKER} y"));
+        let at = story.text.find(MARKER).expect("a marker");
+        let mut shaper = Shaper::new();
+        let shaped = shaper.shape_with_objects(
+            &story,
+            &NoStyles::default(),
+            300.0,
+            &[InlineObject {
+                at,
+                width: 20.0,
+                height: 10.0,
+            }],
+        );
+        let before = objects_of(&shaped)[0];
+
+        let flowed = flow(
+            shaped,
+            &[Column {
+                x: 500.0,
+                y: 900.0,
+                width: 300.0,
+                height: 400.0,
+            }],
+        );
+        let after = objects_of(&flowed.text)[0];
+
+        assert_eq!(after.x - before.x, 500.0, "moved with its column in x");
+        assert!(after.y > before.y + 800.0, "and in y");
+        assert_eq!(after.width, before.width, "and was not resized on the way");
+    }
+
+    #[test]
+    fn no_objects_means_the_cached_path_is_used_unchanged() {
+        // `shape_with_objects` with nothing to place must be exactly `shape`,
+        // so the ordinary case pays nothing for the feature existing.
+        let story = Story::new("plain words with no anchor in them");
+        let mut shaper = Shaper::new();
+
+        let plain_shape = shaper.shape(&story, &NoStyles::default(), 300.0);
+        let empty = shaper.shape_with_objects(&story, &NoStyles::default(), 300.0, &[]);
+
+        assert_eq!(plain_shape.lines.len(), empty.lines.len());
+        assert_eq!(plain_shape.height, empty.height);
+        assert!(objects_of(&empty).is_empty());
+    }
 
     #[test]
     fn shaping_the_same_story_twice_only_lays_it_out_once() {
@@ -3191,6 +3491,7 @@ mod tests {
                     range: i * 10..(i + 1) * 10,
                     ascent: 10.0,
                     descent: 2.0,
+                    objects: Vec::new(),
                     runs: vec![ShapedRun {
                         font_index: 0,
                         size: 12.0,
