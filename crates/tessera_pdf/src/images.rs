@@ -165,7 +165,11 @@ fn prepare_svg(path: &Path) -> Result<Prepared, Error> {
     let mut colour = Vec::with_capacity((width * height * 3) as usize);
     let mut alpha = Vec::with_capacity((width * height) as usize);
     let mut any_transparent = false;
-    for pixel in rgba.chunks_exact(4) {
+    // `as_chunks` rather than `chunks_exact(4)`: the width is a constant, so
+    // this hands back `[u8; 4]` and the indexing below is checked once at
+    // compile time instead of four times a pixel.
+    let (pixels, _) = rgba.as_chunks::<4>();
+    for pixel in pixels {
         colour.extend_from_slice(&pixel[..3]);
         alpha.push(pixel[3]);
         any_transparent |= pixel[3] != 255;

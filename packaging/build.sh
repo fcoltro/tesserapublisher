@@ -62,8 +62,20 @@ case "$kind" in
     if command -v appimagetool >/dev/null 2>&1; then
       appimagetool "$app" "$out/$slug-$version-x86_64.AppImage"
       rm -rf "$app"
+    elif [ -n "${TESSERA_ALLOW_PARTIAL_PACKAGE:-}" ]; then
+      # A convenience for a developer without the tool, who still wants the
+      # AppDir to look inside. Opt-in, never the default.
+      echo "appimagetool not found: leaving the AppDir, because"            "TESSERA_ALLOW_PARTIAL_PACKAGE is set"
     else
-      echo "appimagetool not found: leaving the AppDir for a machine that has it"
+      # **Fails here rather than quietly succeeding.** This used to print a
+      # note and exit 0, so a release built three green packaging jobs and then
+      # refused to publish because one of them had produced a directory instead
+      # of an installer — with the cause a whole job away from the error. A
+      # build that cannot make the artefact it was asked for has failed.
+      echo "appimagetool not found, and no AppImage can be built without it." >&2
+      echo "Install it, or set TESSERA_ALLOW_PARTIAL_PACKAGE=1 to keep the" >&2
+      echo "AppDir for inspection instead." >&2
+      exit 1
     fi
     ;;
 
