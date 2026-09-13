@@ -355,6 +355,67 @@ pub struct KeepOptions {
     pub together: KeepTogether,
 }
 
+/// How a justified line may be stretched or squeezed to reach the measure:
+/// InDesign's Justification dialog, in percent of the natural spacing.
+///
+/// Word spacing is the space character; letter spacing is the gap between
+/// every pair of characters, as a percentage of the space's width. The
+/// breaker uses `word_min` to pull a word up onto a line it would not
+/// otherwise fit, and the composer hands slack to words first, then letters,
+/// then — as InDesign does — back to words past their maximum rather than
+/// leave a justified line short.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Justification {
+    pub word_min: f32,
+    pub word_desired: f32,
+    pub word_max: f32,
+    pub letter_min: f32,
+    pub letter_desired: f32,
+    pub letter_max: f32,
+}
+
+impl Default for Justification {
+    /// InDesign's defaults: words 80 / 100 / 133, letters 0 / 0 / 0.
+    fn default() -> Self {
+        Self {
+            word_min: 80.0,
+            word_desired: 100.0,
+            word_max: 133.0,
+            letter_min: 0.0,
+            letter_desired: 0.0,
+            letter_max: 0.0,
+        }
+    }
+}
+
+/// Where a word may be hyphenated, beyond what the patterns say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Hyphenation {
+    /// Words shorter than this are never broken.
+    pub min_word: u8,
+    /// At least this many letters stay on the line before the hyphen.
+    pub min_before: u8,
+    /// At least this many go to the next line after it.
+    pub min_after: u8,
+    /// How many lines in a row may end in a hyphen; 0 is no limit.
+    pub limit: u8,
+    /// Whether a word beginning with a capital may be broken.
+    pub capitalised: bool,
+}
+
+impl Default for Hyphenation {
+    /// InDesign's defaults.
+    fn default() -> Self {
+        Self {
+            min_word: 5,
+            min_before: 2,
+            min_after: 3,
+            limit: 3,
+            capitalised: true,
+        }
+    }
+}
+
 /// What kind of list a paragraph is an item of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ListKind {
@@ -535,6 +596,13 @@ pub struct ParagraphFormat {
     /// The list this paragraph is an item of, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub list: Option<ListFormat>,
+    /// How far a justified line may stretch or squeeze; `None` is InDesign's
+    /// defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub justification: Option<Justification>,
+    /// Where a word may be broken, when `hyphenate` says words may be.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hyphenation: Option<Hyphenation>,
     /// What every run in the paragraph inherits before its own style speaks.
     #[serde(default)]
     pub character: CharacterFormat,
@@ -565,6 +633,8 @@ impl ParagraphFormat {
             rule_below: self.rule_below.clone().or_else(|| base.rule_below.clone()),
             keep: self.keep.or(base.keep),
             list: self.list.clone().or_else(|| base.list.clone()),
+            justification: self.justification.or(base.justification),
+            hyphenation: self.hyphenation.or(base.hyphenation),
             character: self.character.over(&base.character),
         }
     }

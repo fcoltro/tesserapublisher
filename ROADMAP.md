@@ -2084,7 +2084,38 @@ and not a list of controls.
     hand check is for.
 - [~] **Kerning control and H&J parameters** — still owed from milestone 2,
   and recorded there. Listed here so the debt has one home. **The manual kern
-  is built (by test; hand check owed). Optical kerning and H&J are not.**
+  and H&J are built (by test; hand check owed). Optical kerning is not.**
+  - **H&J meant writing a breaker, and it is written.** parley's breaker
+    knows only a maximum advance, and a justification setting's whole point
+    is that a line may take one more word by squeezing its spaces — which a
+    maximum cannot express. So `break_lines_with_room` now reads the
+    paragraph off as a list of units with widths (one provisional line
+    holding everything), chooses the lines itself — greedy, last fitting
+    break, a soft hyphen costing exactly the hyphen's width in its own font,
+    an unbreakable word left whole to overhang as parley had it — and tells
+    parley where each line ends with `break_next_with_length`. Everything
+    parley knew about a line's room (first indent, drop cap, wrap) is still
+    applied per line, the way it was.
+  - **Justification is Tessera's, not parley's.** parley stretches spaces
+    without limit and knows nothing of letters. Each line's slack goes to its
+    spaces up to the word maximum, then to every gap up to the letter
+    maximum, then back to the spaces past their maximum rather than leave a
+    justified line short — InDesign's order, and its last resort. The last
+    line is set as it falls unless it was pulled up by squeezing, in which
+    case the squeeze is owed. The amounts ride on `LineSpacing` per line and
+    are applied by the same `cluster_shifts` the manual kern uses, so the
+    glyphs, the caret, the selection and the click all agree; a test stands
+    the caret at the end of a justified line and finds it flush.
+  - **The hyphen reserve is retired.** Every hyphenated line used to give up
+    six points whether or not it broke at a hyphen; now the breaker charges
+    the glyph's own width only where it breaks there.
+  - `Justification` (words and letters, min / desired / max, in percent)
+    and `Hyphenation` (shortest word, letters before and after, lines in a
+    row, capitalised words) on `ParagraphFormat`, `None` being InDesign's
+    defaults; the consecutive-hyphen limit is honoured by the breaker.
+  - **Not built:** glyph scaling, single-word justification, the paragraph
+    composer (a line-by-line greedy breaker is what this is; Knuth–Plass
+    over the paragraph is the next order of quality), and optical kerning.
   - **A kern is on the brush, not in the letter spacing, and that is the
     finding.** Milestone 2 recorded that tracking one letter of a kerned pair
     made it *wider* and did not know why. The cause: parley starts a new

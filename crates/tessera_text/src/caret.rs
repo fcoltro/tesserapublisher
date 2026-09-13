@@ -93,10 +93,9 @@ impl crate::shape::ShapedText {
                 let shaped = p.to_shaped(cursor.position);
                 let caret = parley::Cursor::from_byte_index(&p.layout, shaped, affinity);
                 // Moved by the manual kerns before it, as the glyphs were.
-                let kerned = p
-                    .layout
-                    .get(hit.index)
-                    .map_or(0.0, |line| crate::shape::kern_shift_at(&line, shaped));
+                let kerned = p.layout.get(hit.index).map_or(0.0, |line| {
+                    crate::shape::shift_at(&line, p.spacing.get(hit.index).copied(), shaped)
+                });
                 result.caret = Some(translate(
                     caret.geometry(&p.layout, width).into(),
                     hit.x + kerned,
@@ -118,10 +117,11 @@ impl crate::shape::ShapedText {
                 );
                 // Each edge moves by the kerns before *it*, so a selection
                 // across a kerned pair grows or shrinks with the pair.
+                let spacing = p.spacing.get(hit.index).copied();
                 let (shift_a, shift_b) = p.layout.get(hit.index).map_or((0.0, 0.0), |line| {
                     (
-                        crate::shape::kern_shift_at(&line, p.to_shaped(start)),
-                        crate::shape::kern_shift_at(&line, p.to_shaped(end)),
+                        crate::shape::shift_at(&line, spacing, p.to_shaped(start)),
+                        crate::shape::shift_at(&line, spacing, p.to_shaped(end)),
                     )
                 });
                 result.selection.extend(
@@ -173,7 +173,7 @@ impl crate::shape::ShapedText {
         // moved — once more from there, in case that crossed a kern.
         let mut shaped = at(x - hit.x);
         for _ in 0..2 {
-            let shift = crate::shape::kern_shift_at(&line, shaped);
+            let shift = crate::shape::shift_at(&line, p.spacing.get(hit.index).copied(), shaped);
             let again = at(x - hit.x - shift);
             if again == shaped {
                 break;

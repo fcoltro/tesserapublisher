@@ -173,6 +173,8 @@ pub(crate) struct Placed {
     /// about it. The renderer needs to know which cluster not to draw and
     /// what leader to draw in its place.
     pub tabs: Vec<TabRun>,
+    /// What each line does with its slack, by line index.
+    pub spacing: Vec<LineSpacing>,
     /// The paragraph's rules, resolved: `(above, below)`, `None` for a rule
     /// that is absent or switched off. Placed on the first and last line by
     /// `assemble`, which is the first place a line's baseline is known.
@@ -231,15 +233,6 @@ impl Placed {
         shaped
     }
 }
-
-/// How much room a hyphenated line keeps for the hyphen it might need.
-///
-/// A little over the widest hyphen a text face is likely to have at 12pt.
-/// Reserving a fixed amount rather than the exact glyph's width means the
-/// measure does not depend on which font a line happens to end in — and the
-/// cost of being generous is a slightly shorter line, while the cost of being
-/// mean is a hyphen hanging into the margin.
-const HYPHEN_RESERVE: f64 = 6.0;
 
 /// Swap a line's trailing soft hyphen for the font's real one.
 ///
@@ -414,11 +407,14 @@ pub(crate) struct KernShifts {
     pub clusters: Vec<(usize, f64)>,
 }
 
-pub(crate) fn kern_shifts(line: &parley::Line<'_, Brush>) -> Option<KernShifts> {
-    let mut glyphs = Vec::new();
-    let mut clusters = Vec::new();
-    let mut shift = 0.0f64;
-    let mut any = false;
+pub(crate) fn cluster_shifts(
+    line: &parley::Line<'_, Brush>,
+    spacing: Option<LineSpacing>,
+) -> Option<KernShifts> {
+    let spacing = spacing.unwrap_or_default();
+    // Clusters first, so the trailing whitespace — which takes no spacing
+    // and gives none — can be told from the rest.
+    let mut all: Vec<(std::ops::Range<usize>, usize, bool, f64)> = Vec::new();
     let mut seen: Option<std::ops::Range<usize>> = None;
     for item in line.items() {
         let parley::PositionedLayoutItem::GlyphRun(run) = item else {
@@ -431,14 +427,33 @@ pub(crate) fn kern_shifts(line: &parley::Line<'_, Brush>) -> Option<KernShifts> 
         }
         seen = Some(key);
         for cluster in inner.visual_clusters() {
-            clusters.push((cluster.text_range().start, shift));
-            let n = cluster.glyphs().count();
-            glyphs.extend(std::iter::repeat_n(shift, n));
-            let kern = f64::from(cluster.first_style().brush.kern);
-            if kern != 0.0 {
-                any = true;
-                shift += kern;
+            all.push((
+                cluster.text_range(),
+                cluster.glyphs().count(),
+                cluster.is_space_or_nbsp(),
+                f64::from(cluster.first_style().brush.kern),
+            ));
+        }
+    }
+    let last_ink = all.iter().rposition(|(_, _, space, _)| !space);
+
+    let mut glyphs = Vec::new();
+    let mut clusters = Vec::new();
+    let mut shift = 0.0f64;
+    let mut any = false;
+    for (index, (range, n, space, kern)) in all.iter().enumerate() {
+        clusters.push((range.start, shift));
+        glyphs.extend(std::iter::repeat_n(shift, *n));
+        let mut after = *kern;
+        if last_ink.is_some_and(|last| index < last) {
+            after += spacing.letter;
+            if *space {
+                after += spacing.word;
             }
+        }
+        if after != 0.0 {
+            any = true;
+            shift += after;
         }
     }
     any.then_some(KernShifts { glyphs, clusters })
@@ -446,13 +461,16 @@ pub(crate) fn kern_shifts(line: &parley::Line<'_, Brush>) -> Option<KernShifts> 
 
 /// The kern shift of a caret at `shaped` on `line`: what the glyph there
 /// moved by, or, past the line's last cluster, what the line's end did.
-pub(crate) fn kern_shift_at(line: &parley::Line<'_, Brush>, shaped: usize) -> f64 {
-    let Some(shifts) = kern_shifts(line) else {
+pub(crate) fn shift_at(
+    line: &parley::Line<'_, Brush>,
+    spacing: Option<LineSpacing>,
+    shaped: usize,
+) -> f64 {
+    let Some(shifts) = cluster_shifts(line, spacing) else {
         return 0.0;
     };
     // The cluster holding `shaped`, or the one after the last if `shaped` is
     // beyond them all — where the shift is the total.
-    let mut total = 0.0;
     let mut seen: Option<std::ops::Range<usize>> = None;
     for item in line.items() {
         let parley::PositionedLayoutItem::GlyphRun(run) = item else {
@@ -472,10 +490,10 @@ pub(crate) fn kern_shift_at(line: &parley::Line<'_, Brush>, shaped: usize) -> f6
                     .find(|(start, _)| *start == cluster.text_range().start)
                     .map_or(0.0, |(_, shift)| *shift);
             }
-            total += f64::from(cluster.first_style().brush.kern);
         }
     }
-    total
+    // Past the last cluster: where the line's end went.
+    shifts.clusters.last().map_or(0.0, |(_, shift)| *shift)
 }
 
 /// Decide every tab's width from where the last pass put it.
@@ -571,7 +589,7 @@ const SOFT_HYPHEN: char = '\u{00AD}';
 /// languages behind features, but a story has no language to choose between
 /// them. Shipping the rest would be paying for what nothing can select. A
 /// `language` on `CharacterFormat` is what unlocks them.
-fn syllable_breaks(text: &str) -> Vec<usize> {
+fn syllable_breaks(text: &str, rules: &crate::story::Hyphenation) -> Vec<usize> {
     let mut breaks = Vec::new();
 
     // Words, in the plain sense: runs of letters. Hyphenating across
@@ -583,29 +601,46 @@ fn syllable_breaks(text: &str) -> Vec<usize> {
             continue;
         }
         if let Some(from) = start.take() {
-            push_breaks(&mut breaks, text, from, offset);
+            push_breaks(&mut breaks, text, from, offset, rules);
         }
     }
     if let Some(from) = start {
-        push_breaks(&mut breaks, text, from, text.len());
+        push_breaks(&mut breaks, text, from, text.len(), rules);
     }
 
     breaks
 }
 
-fn push_breaks(breaks: &mut Vec<usize>, text: &str, from: usize, to: usize) {
+fn push_breaks(
+    breaks: &mut Vec<usize>,
+    text: &str,
+    from: usize,
+    to: usize,
+    rules: &crate::story::Hyphenation,
+) {
     let word = &text[from..to];
-    // Nothing worth breaking, and `hypher`'s own bounds would refuse anyway.
-    if word.chars().count() < 5 {
+    let letters = word.chars().count();
+    // Nothing worth breaking. `hypher` refuses very short words on its own;
+    // the setting is what a person asked for, and may be longer.
+    if letters < usize::from(rules.min_word).max(2) {
+        return;
+    }
+    if !rules.capitalised && word.chars().next().is_some_and(char::is_uppercase) {
         return;
     }
     let mut at = from;
+    let mut before = 0usize;
     let mut syllables = hypher::hyphenate(word, hypher::Lang::English).peekable();
     while let Some(syllable) = syllables.next() {
         at += syllable.len();
+        before += syllable.chars().count();
         // Not after the last syllable: that is the end of the word, and a
-        // break there is not a hyphenation.
-        if syllables.peek().is_some() {
+        // break there is not a hyphenation. And not where it would leave
+        // fewer letters than asked on either side.
+        if syllables.peek().is_some()
+            && before >= usize::from(rules.min_before)
+            && letters - before >= usize::from(rules.min_after)
+        {
             breaks.push(at);
         }
     }
@@ -635,7 +670,7 @@ fn shaping_text(
     story: &Story,
     styles: &dyn Styles,
     stored: std::ops::Range<usize>,
-    hyphenate: bool,
+    hyphenate: Option<&crate::story::Hyphenation>,
     prefix: Option<(&str, &crate::story::CharacterFormat)>,
 ) -> (String, Vec<Piece>, Vec<(usize, usize)>) {
     use crate::story::Case;
@@ -677,8 +712,8 @@ fn shaping_text(
         // no width when it does not, so a word carries its break points around
         // without them showing. What parley does *not* do is draw a hyphen
         // where it breaks — that is put back when the glyphs are built.
-        let breaks: Vec<usize> = if hyphenate {
-            syllable_breaks(&story.text[from..to])
+        let breaks: Vec<usize> = if let Some(rules) = hyphenate {
+            syllable_breaks(&story.text[from..to], rules)
         } else {
             Vec::new()
         };
@@ -801,7 +836,109 @@ struct Room<'a> {
     line_hint: f64,
 }
 
-fn break_lines_with_room(layout: &mut parley::Layout<Brush>, measure: f64, room: Room<'_>) {
+/// What one line of a paragraph does with its slack, in points.
+///
+/// Decided by the breaker, which is the only thing that knows a line's
+/// natural width, and applied by [`cluster_shifts`] to the glyphs and the
+/// caret alike — parley is not told, because parley's own justification
+/// stretches spaces without limit and knows nothing of letters.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct LineSpacing {
+    /// Added after every space on the line but a trailing one.
+    pub word: f64,
+    /// Added after every cluster on the line but the last.
+    pub letter: f64,
+}
+
+/// One thing the breaker counts: a cluster, or an in-flow inline box.
+struct Unit {
+    kind: UnitKind,
+    width: f64,
+    /// The hyphen this unit would draw if the line broke after it.
+    hyphen: f64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UnitKind {
+    Text,
+    Space,
+    SoftHyphen,
+}
+
+/// The paragraph as the breaker sees it: every cluster and box in logical
+/// order, with its width. Read off one provisional line holding everything.
+fn units_of(layout: &mut parley::Layout<Brush>, shaped_text: &str) -> Vec<Unit> {
+    layout.break_all_lines(None);
+    let mut units = Vec::new();
+    let Some(line) = layout.lines().next() else {
+        return units;
+    };
+    for item in line.items() {
+        match item {
+            parley::PositionedLayoutItem::InlineBox(b) => units.push(Unit {
+                kind: UnitKind::Text,
+                width: f64::from(b.width),
+                hyphen: 0.0,
+            }),
+            parley::PositionedLayoutItem::GlyphRun(run) => {
+                let inner = run.run();
+                let font = inner.font();
+                let size = inner.font_size();
+                for cluster in inner.clusters() {
+                    let text = shaped_text.get(cluster.text_range()).unwrap_or("");
+                    let kind = if cluster.is_space_or_nbsp() {
+                        UnitKind::Space
+                    } else if text.starts_with(SOFT_HYPHEN) {
+                        UnitKind::SoftHyphen
+                    } else {
+                        UnitKind::Text
+                    };
+                    let hyphen = match kind {
+                        UnitKind::SoftHyphen => glyph_of(font, size, '-').map_or(0.0, |(_, w)| w),
+                        _ => 0.0,
+                    };
+                    units.push(Unit {
+                        kind,
+                        width: f64::from(cluster.advance()),
+                        hyphen,
+                    });
+                }
+            }
+        }
+    }
+    units
+}
+
+/// What the breaker is asked to honour beyond the measure.
+struct Composition<'a> {
+    /// Whether lines are to be set flush both sides.
+    justify: bool,
+    rules: &'a crate::story::Justification,
+    /// Lines in a row that may end in a hyphen; 0 for no limit.
+    hyphen_limit: u8,
+}
+
+/// Break `layout` into lines, and say what each line does with its slack.
+///
+/// **Tessera's own breaker, greedy.** parley's would do, and did, until the
+/// justification settings needed a line to take one more word by squeezing
+/// its spaces — which a breaker that knows only a maximum advance cannot
+/// decide. So the paragraph is read off as a list of units with widths, the
+/// lines are chosen here, and parley is told exactly where each one ends.
+/// Everything parley knew about the room a line has — the first-line indent,
+/// a drop cap, the objects text runs around — is still applied, per line, the
+/// way it was.
+///
+/// A soft hyphen is a break opportunity that costs the width of a hyphen,
+/// exactly, in the font the word is in — which retires the fixed reserve
+/// every hyphenated line used to pay whether or not it broke there.
+fn break_lines_with_room(
+    layout: &mut parley::Layout<Brush>,
+    shaped_text: &str,
+    measure: f64,
+    room: Room<'_>,
+    composition: &Composition<'_>,
+) -> Vec<LineSpacing> {
     let Room {
         first,
         cap,
@@ -810,60 +947,164 @@ fn break_lines_with_room(layout: &mut parley::Layout<Brush>, measure: f64, room:
         from_y,
         line_hint,
     } = room;
-    if first == 0.0 && cap == 0.0 && obstacles.is_empty() {
-        layout.break_all_lines(Some(measure as f32));
-        return;
-    }
+    let units = units_of(layout, shaped_text);
+    let rules = composition.rules;
+    let desired = f64::from(rules.word_desired) / 100.0;
+    // How much of a space's width its line may take back, if it must.
+    let squeeze = if composition.justify {
+        (f64::from(rules.word_desired) - f64::from(rules.word_min)).max(0.0) / 100.0
+    } else {
+        0.0
+    };
 
+    let mut spacings = Vec::new();
     let mut breaker = layout.break_lines();
     breaker.state_mut().set_layout_max_advance(f32::INFINITY);
 
     let mut line = 0usize;
-    // The top of the line about to be broken, in the layout's own space, and
-    // how tall to assume it is.
-    //
-    // A guess, and it has to be one: a line's height depends on what ends up
-    // on it, which is not known until it has been broken. The line before is
-    // the best answer available and is exactly right whenever the leading does
-    // not change, which is nearly always. The first line has no line before
-    // it, so the caller passes the paragraph's leading.
     let mut top = 0.0f64;
-    let mut height = line_hint.max(1.0);
+    let height = line_hint.max(1.0);
+    let mut i = 0usize;
+    let mut hyphens_in_a_row = 0u8;
 
-    loop {
+    // An empty paragraph is still one line, for the caret to sit on.
+    if units.is_empty() {
+        breaker.state_mut().set_line_x(first.max(0.0) as f32);
+        breaker.break_remaining(measure.max(1.0) as f32);
+        return vec![LineSpacing::default()];
+    }
+
+    while i < units.len() {
         let indent = if line == 0 { first } else { 0.0 } + if line < cap_lines { cap } else { 0.0 };
-
-        // What is in this line's way. `set_line_x` and `set_line_max_advance`
-        // are per line, which is why a wrap gives one run rather than several:
-        // a line split either side of an object is a different line-breaking
-        // problem, not a narrower measure.
-        let (offset, room) = if obstacles.is_empty() {
+        let (offset, available) = if obstacles.is_empty() {
             (0.0, measure)
         } else {
             crate::wrap::available_run(measure, from_y + top, from_y + top + height, obstacles)
         };
-
         let x = indent.max(offset);
+        let room = ((offset + available) - x).max(1.0);
+        // The line's own edges, which alignment measures against: the
+        // breaker by count would otherwise leave the right edge at infinity
+        // and a centred line with nowhere to be centred in.
         breaker.state_mut().set_line_x(x as f32);
-        breaker
-            .state_mut()
-            .set_line_max_advance(((offset + room) - x).max(1.0) as f32);
+        breaker.state_mut().set_line_max_advance(room as f32);
 
-        match breaker.break_next() {
-            None => break,
-            Some(parley::YieldData::LineBreak(broken)) => {
-                top = broken.line_y_end;
-                if broken.line_height > 0.0 {
-                    height = f64::from(broken.line_height);
+        // Walk forward until the room is used up, remembering the last place
+        // a break was allowed and fitted. A candidate fits if its width less
+        // what its spaces can give up is within the room.
+        let mut width = 0.0f64;
+        let mut spaces = 0usize;
+        let mut space_width = 0.0f64;
+        // (units on the line, ink width, spaces, hyphenated)
+        let mut best: Option<(usize, f64, usize, bool)> = None;
+        let mut j = i;
+        let may_hyphenate =
+            composition.hyphen_limit == 0 || hyphens_in_a_row < composition.hyphen_limit;
+        while j < units.len() {
+            let unit = &units[j];
+            match unit.kind {
+                UnitKind::Space => {
+                    // A break after this space: the space itself hangs.
+                    let fits = width - spaces as f64 * space_width * squeeze <= room + 1e-6;
+                    if fits || best.is_none() {
+                        best = Some((j + 1 - i, width, spaces, false));
+                    }
+                    if !fits {
+                        break;
+                    }
+                    width += unit.width * desired;
+                    spaces += 1;
+                    space_width = unit.width;
+                }
+                UnitKind::SoftHyphen => {
+                    let with_hyphen = width + unit.hyphen;
+                    let fits = with_hyphen - spaces as f64 * space_width * squeeze <= room + 1e-6;
+                    if may_hyphenate && (fits || best.is_none()) {
+                        best = Some((j + 1 - i, with_hyphen, spaces, true));
+                    }
+                    if !fits && best.is_some() {
+                        break;
+                    }
+                }
+                UnitKind::Text => {
+                    width += unit.width;
+                    let fits = width - spaces as f64 * space_width * squeeze <= room + 1e-6;
+                    // Past the room with somewhere to break: break there. With
+                    // nowhere, the word stays whole and overhangs, as parley
+                    // has it — a word broken where no one said it could be is
+                    // a worse fault than a long line.
+                    if !fits && best.is_some() {
+                        break;
+                    }
                 }
             }
-            // A max-height break and an out-of-flow inline box are yields this
-            // layout never asks for: no max height is set and there are no
-            // boxes. Ignoring them keeps the loop honest if that changes.
-            Some(_) => {}
+            j += 1;
         }
+        let (take, ink, spaces_on_line, hyphenated) = match best {
+            // Everything left fits: the last line.
+            _ if j >= units.len() => (units.len() - i, width, spaces, false),
+            Some(best) => best,
+            None => (1, units[i].width, 0, false),
+        };
+        let is_last = i + take >= units.len();
+        hyphens_in_a_row = if hyphenated { hyphens_in_a_row + 1 } else { 0 };
+
+        // What the line does with its slack.
+        let slack = room - ink;
+        let gaps = take.saturating_sub(1) as f64;
+        let base_word = space_width * (desired - 1.0);
+        let mut spacing = LineSpacing {
+            word: base_word,
+            letter: 0.0,
+        };
+        // The last line is set as it falls — unless it was pulled up by
+        // squeezing its spaces, in which case the squeeze is owed.
+        if composition.justify && (!is_last || slack < 0.0) && slack.abs() > 1e-6 {
+            let n = spaces_on_line as f64;
+            let per = |percent: f32| space_width * f64::from(percent) / 100.0;
+            let (word_lo, word_hi) = (
+                per(rules.word_min) - space_width * desired,
+                per(rules.word_max) - space_width * desired,
+            );
+            let (letter_lo, letter_hi) = (per(rules.letter_min), per(rules.letter_max));
+            let mut remaining = slack;
+            if n > 0.0 {
+                let word = (remaining / n).clamp(word_lo.min(word_hi), word_hi.max(word_lo));
+                spacing.word += word;
+                remaining -= word * n;
+            }
+            if gaps > 0.0 && remaining.abs() > 1e-6 {
+                let letter =
+                    (remaining / gaps).clamp(letter_lo.min(letter_hi), letter_hi.max(letter_lo));
+                spacing.letter = letter;
+                remaining -= letter * gaps;
+            }
+            // Past every limit, the words take the rest: InDesign does the
+            // same and marks the line, and a justified line left short is
+            // the worse fault.
+            if remaining.abs() > 1e-6 {
+                if n > 0.0 {
+                    spacing.word += remaining / n;
+                } else if gaps > 0.0 {
+                    spacing.letter += remaining / gaps;
+                }
+            }
+        }
+        spacings.push(spacing);
+
+        if breaker.break_next_with_length(take as u32).is_none() {
+            break;
+        }
+        // The line's height, for the next line's obstacles: parley has it
+        // once the line exists, which is after the breaker is done — so the
+        // paragraph's leading is used throughout, as it is nearly always
+        // right and is what the first line had anyway.
+        top += height;
+        i += take;
         line += 1;
     }
+    breaker.finish();
+    spacings
 }
 
 /// How many points a drop cap of `lines` lines should be set at.
@@ -1759,7 +2000,7 @@ impl Shaper {
 
             if cap_end > start {
                 let (cap_text, cap_pieces, cap_map) =
-                    shaping_text(story, styles, start..cap_end, false, None);
+                    shaping_text(story, styles, start..cap_end, None, None);
 
                 // Measured once at a nominal size to learn the font's cap
                 // height, then again at the size that makes it span the lines.
@@ -1827,6 +2068,8 @@ impl Shaper {
             // while nothing in it is transformed. Setting text in capitals
             // means shaping a different string.
             let hyphenate = format.hyphenate.unwrap_or(false);
+            let hyphenation = format.hyphenation.unwrap_or_default();
+            let justification = format.justification.unwrap_or_default();
             // The marker and the tab that carries the text to its stop. Only
             // where the paragraph begins: carried on into another frame, an
             // item does not get a second number.
@@ -1838,7 +2081,7 @@ impl Shaper {
                 story,
                 styles,
                 cap_end.max(start)..content_end,
-                hyphenate,
+                hyphenate.then_some(&hyphenation),
                 Some((generated.as_str(), &format.character)),
             );
 
@@ -1990,17 +2233,10 @@ impl Shaper {
                 }
 
                 let mut layout: parley::Layout<Brush> = builder.build(&shaped_text);
-                // A hyphenated paragraph keeps room for the hyphen on every line.
-                //
-                // parley gives a soft hyphen no width, so it packs a line as though
-                // no hyphen were needed, and one drawn afterwards would hang past
-                // the measure. Reserving on every line costs a few points on the
-                // lines that do not end up hyphenated — the ordinary "hyphen zone"
-                // compromise — and never overflows, which the alternative does.
-                let reserve = if hyphenate { HYPHEN_RESERVE } else { 0.0 };
-                break_lines_with_room(
+                let spacings = break_lines_with_room(
                     &mut layout,
-                    measure - reserve,
+                    &shaped_text,
+                    measure,
                     Room {
                         first: indent_first,
                         cap: cap_width,
@@ -2015,15 +2251,20 @@ impl Shaper {
                             floor.size.unwrap_or(12.0) * floor.line_height.unwrap_or(1.2),
                         ),
                     },
+                    &Composition {
+                        justify: format.alignment == Some(crate::story::Alignment::Justify),
+                        rules: &justification,
+                        hyphen_limit: hyphenation.limit,
+                    },
                 );
-                layout
+                (layout, spacings)
             };
 
             // Laid out once, and again for every tab that has not yet reached
             // its stop. See `TabRun` for why this is a loop.
             let stops = format.tab_stops.clone().unwrap_or_default();
             let mut tabs = tabs_in(&shaped_text);
-            let mut layout = build(&tabs, &mut self.layout_ctx, &mut self.font_ctx);
+            let (mut layout, mut spacings) = build(&tabs, &mut self.layout_ctx, &mut self.font_ctx);
             for _ in 0..4 {
                 if tabs.is_empty() {
                     break;
@@ -2036,7 +2277,7 @@ impl Shaper {
                 if settled {
                     break;
                 }
-                layout = build(&tabs, &mut self.layout_ctx, &mut self.font_ctx);
+                (layout, spacings) = build(&tabs, &mut self.layout_ctx, &mut self.font_ctx);
             }
 
             // Alignment is per layout, which is now per paragraph — so two
@@ -2052,7 +2293,9 @@ impl Shaper {
                     Some(crate::story::Alignment::Left) => parley::Alignment::Left,
                     Some(crate::story::Alignment::Centre) => parley::Alignment::Center,
                     Some(crate::story::Alignment::Right) => parley::Alignment::Right,
-                    Some(crate::story::Alignment::Justify) => parley::Alignment::Justify,
+                    // Flush both sides is done here, by the breaker's
+                    // spacings, and parley is asked only to start the line.
+                    Some(crate::story::Alignment::Justify) => parley::Alignment::Start,
                 },
                 parley::AlignmentOptions::default(),
             );
@@ -2088,6 +2331,7 @@ impl Shaper {
                     map: cap_map,
                     shaped_text: cap_text,
                     tabs: Vec::new(),
+                    spacing: Vec::new(),
                     rules: (None, None),
                     begins_here: false,
                     paragraph: paragraph_index,
@@ -2105,6 +2349,7 @@ impl Shaper {
                 map,
                 shaped_text,
                 tabs,
+                spacing: spacings,
                 rules: (
                     format.rule_above.clone().filter(|r| r.on),
                     format.rule_below.clone().filter(|r| r.on),
@@ -2267,7 +2512,7 @@ impl Shaper {
                         .collect()
                 };
                 let mut glyph_index = 0usize;
-                let kerns = kern_shifts(&line);
+                let kerns = cluster_shifts(&line, paragraph.spacing.get(index).copied());
 
                 let mut objects = Vec::new();
                 // Underlines and strikethroughs, one rectangle per run.
@@ -3255,6 +3500,187 @@ mod tests {
         assert!(
             second < 1.0,
             "and the one nobody aligned should still start at the left, not at {second}"
+        );
+    }
+
+    // --- hyphenation and justification ---------------------------------------
+
+    const COPY: &str = "The quick brown fox jumps over the lazy dog and keeps on \
+                        running through the long grass until the light goes";
+
+    fn justified(text: &str, width: f64, j: Option<crate::story::Justification>) -> ShapedText {
+        use crate::story::{Alignment, ParagraphFormat};
+        let mut story = Story::new(text);
+        story.apply_paragraph_format(
+            0..1,
+            &ParagraphFormat {
+                alignment: Some(Alignment::Justify),
+                justification: j,
+                ..ParagraphFormat::default()
+            },
+        );
+        Shaper::new().shape(&story, &NoStyles::default(), width)
+    }
+
+    /// The right edge of a line's ink: the furthest any glyph reaches.
+    fn ink_end(line: &ShapedLine) -> f64 {
+        line.glyphs().map(|g| g.x + g.advance).fold(0.0, f64::max)
+    }
+
+    #[test]
+    fn justified_lines_end_flush_at_the_measure_and_the_last_does_not() {
+        let shaped = justified(COPY, 200.0, None);
+        assert!(shaped.lines.len() >= 3, "enough lines to mean something");
+        let last = shaped.lines.len() - 1;
+        for (i, line) in shaped.lines.iter().enumerate() {
+            // Some glyph ends at the measure: the last word. The trailing
+            // space, which has no ink, may reach past it.
+            let flush = line.glyphs().any(|g| (g.x + g.advance - 200.0).abs() < 0.5);
+            if i < last {
+                assert!(flush, "line {i} should reach the measure");
+            } else {
+                assert!(
+                    ink_end(line) < 190.0,
+                    "the last line is set as it falls, not {}",
+                    ink_end(line)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn slack_goes_to_the_words_first_and_only_then_to_the_letters() {
+        use crate::story::Justification;
+        let plain = Shaper::new().shape(&Story::new(COPY), &NoStyles::default(), 10_000.0);
+        let natural_space = plain.lines[0]
+            .glyphs()
+            .nth(3)
+            .expect("the space after The")
+            .advance;
+        let letter_gap = |line: &ShapedLine| {
+            let g: Vec<_> = line.glyphs().collect();
+            g[1].x - g[0].x - g[0].advance
+        };
+        let space_gap = |line: &ShapedLine| {
+            let g: Vec<_> = line.glyphs().collect();
+            // Between "The" and "quick": the space is glyph 3.
+            g[4].x - g[3].x - natural_space
+        };
+
+        // Defaults: letters may not move, so the words take it all.
+        let words_only = justified(COPY, 200.0, None);
+        let first = &words_only.lines[0];
+        assert!(letter_gap(first).abs() < 1e-6, "letters untouched");
+        assert!(space_gap(first) > 0.5, "the space grew");
+
+        // Words may not move, letters may: now the letters take it all.
+        let letters_only = justified(
+            COPY,
+            200.0,
+            Some(Justification {
+                word_min: 100.0,
+                word_max: 100.0,
+                letter_max: 500.0,
+                ..Justification::default()
+            }),
+        );
+        let first = &letters_only.lines[0];
+        assert!(letter_gap(first) > 0.05, "letters spread");
+        assert!(
+            (space_gap(first) - letter_gap(first)).abs() < 1e-6,
+            "and the space grew by exactly one letter gap, no more"
+        );
+    }
+
+    #[test]
+    fn a_word_that_fits_with_squeezed_spaces_is_pulled_up() {
+        use crate::story::Justification;
+        let text = "aaa bbb ccc ddd";
+        let plain = Shaper::new().shape(&Story::new(text), &NoStyles::default(), 1000.0);
+        let natural = ink_end(&plain.lines[0]);
+        // Two points short: less than the three spaces can give up at 80%.
+        let measure = natural - 2.0;
+        let squeezed = justified(text, measure, None);
+        assert_eq!(squeezed.lines.len(), 1, "80% word spacing lets it fit");
+        assert!(
+            (ink_end(&squeezed.lines[0]) - measure).abs() < 0.5,
+            "and it is flush"
+        );
+        let rigid = justified(
+            text,
+            measure,
+            Some(Justification {
+                word_min: 100.0,
+                ..Justification::default()
+            }),
+        );
+        assert_eq!(rigid.lines.len(), 2, "at 100% it cannot");
+    }
+
+    #[test]
+    fn the_caret_at_the_end_of_a_justified_line_is_flush_too() {
+        let shaped = justified(COPY, 200.0, None);
+        let line = &shaped.lines[0];
+        // The end of the last word: the trailing space sits past it.
+        let end_of_word = line.range.end - 1;
+        let caret = shaped
+            .caret_geometry(
+                crate::edit::TextCursor {
+                    position: end_of_word,
+                    anchor: end_of_word,
+                },
+                1.0,
+            )
+            .caret
+            .expect("a caret");
+        assert!(
+            (caret.x0 - 200.0).abs() < 0.5,
+            "the caret stands where the word ends: {}",
+            caret.x0
+        );
+    }
+
+    #[test]
+    fn hyphenation_settings_keep_the_short_ends_whole() {
+        use crate::story::Hyphenation;
+        let loose = Hyphenation {
+            min_word: 1,
+            min_before: 1,
+            min_after: 1,
+            capitalised: true,
+            ..Hyphenation::default()
+        };
+        let all = syllable_breaks("unbelievable", &loose);
+        assert!(all.len() >= 3, "patterns found several breaks: {all:?}");
+        let strict = Hyphenation {
+            min_before: 4,
+            min_after: 4,
+            ..loose
+        };
+        for at in syllable_breaks("unbelievable", &strict) {
+            assert!(at >= 4 && "unbelievable".len() - at >= 4, "break at {at}");
+        }
+        assert!(
+            syllable_breaks(
+                "Unbelievable",
+                &Hyphenation {
+                    capitalised: false,
+                    ..loose
+                }
+            )
+            .is_empty(),
+            "a capitalised word is left whole when asked"
+        );
+        assert!(
+            syllable_breaks(
+                "unbelievable",
+                &Hyphenation {
+                    min_word: 20,
+                    ..loose
+                }
+            )
+            .is_empty(),
+            "a word shorter than the minimum is left whole"
         );
     }
 
@@ -4436,7 +4862,7 @@ mod tests {
     #[test]
     fn hyphenation_finds_the_places_a_word_may_break() {
         // `hypher`'s own answer for "hyphenation" is hy-phen-ation.
-        let breaks = syllable_breaks("hyphenation");
+        let breaks = syllable_breaks("hyphenation", &crate::story::Hyphenation::default());
         assert!(!breaks.is_empty(), "no break points at all");
         assert!(
             breaks.iter().all(|b| *b > 0 && *b < "hyphenation".len()),
@@ -4446,8 +4872,8 @@ mod tests {
 
     #[test]
     fn a_short_word_is_not_hyphenated() {
-        assert!(syllable_breaks("the").is_empty());
-        assert!(syllable_breaks("cat sat").is_empty());
+        assert!(syllable_breaks("the", &crate::story::Hyphenation::default()).is_empty());
+        assert!(syllable_breaks("cat sat", &crate::story::Hyphenation::default()).is_empty());
     }
 
     #[test]

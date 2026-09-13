@@ -366,6 +366,21 @@ fn body_copy_formatting_survives_a_save_and_load() {
         with_next: true,
         together: tessera_text::story::KeepTogether::Ends { start: 2, end: 3 },
     };
+    let justification = tessera_text::story::Justification {
+        word_min: 85.0,
+        word_desired: 100.0,
+        word_max: 120.0,
+        letter_min: -2.0,
+        letter_desired: 0.0,
+        letter_max: 5.0,
+    };
+    let hyphenation = tessera_text::story::Hyphenation {
+        min_word: 6,
+        min_before: 3,
+        min_after: 3,
+        limit: 2,
+        capitalised: false,
+    };
     let list = tessera_text::story::ListFormat {
         kind: tessera_text::story::ListKind::Number,
         bullet: '\u{2013}',
@@ -380,6 +395,8 @@ fn body_copy_formatting_survives_a_save_and_load() {
             rule_above: Some(rule.clone()),
             keep: Some(keep),
             list: Some(list.clone()),
+            justification: Some(justification),
+            hyphenation: Some(hyphenation),
             ..ParagraphFormat::default()
         },
     );
@@ -445,6 +462,14 @@ fn body_copy_formatting_survives_a_save_and_load() {
     assert_eq!(loaded_story.paragraphs[0].local.rule_below, None);
     assert_eq!(loaded_story.paragraphs[0].local.keep, Some(keep));
     assert_eq!(loaded_story.paragraphs[0].local.list, Some(list));
+    assert_eq!(
+        loaded_story.paragraphs[0].local.justification,
+        Some(justification)
+    );
+    assert_eq!(
+        loaded_story.paragraphs[0].local.hyphenation,
+        Some(hyphenation)
+    );
 }
 
 #[test]

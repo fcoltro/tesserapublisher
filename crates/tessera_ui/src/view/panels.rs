@@ -1552,6 +1552,153 @@ pub(crate) fn list_editor(
     (changed, hang)
 }
 
+/// A percentage field: a drag value with a `%` suffix. Returns whether it
+/// changed.
+fn percent_of(ui: &mut Ui, value: &mut f32, range: std::ops::RangeInclusive<f64>) -> bool {
+    let mut edited = f64::from(*value);
+    if ui
+        .add(
+            egui::DragValue::new(&mut edited)
+                .speed(1.0)
+                .range(range)
+                .custom_formatter(|v, _| format!("{v:.0}%")),
+        )
+        .changed()
+    {
+        *value = edited as f32;
+        true
+    } else {
+        false
+    }
+}
+
+/// InDesign's Justification dialog, in two rows: how far the spaces and the
+/// letters of a justified line may be squeezed or stretched. Returns whether
+/// anything changed.
+pub(crate) fn justification_editor(
+    ui: &mut Ui,
+    value: &mut Option<tessera_text::story::Justification>,
+    inheritable: bool,
+) -> bool {
+    let mut changed = false;
+    let mut inherit = false;
+    let stated = value.is_some();
+    group_label(ui, "Justification");
+    let j = value.get_or_insert_with(Default::default);
+
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::text_muted(), "");
+        ui.colored_label(Theme::text_muted(), "min");
+        ui.colored_label(Theme::text_muted(), "desired");
+        ui.colored_label(Theme::text_muted(), "max");
+        if inheritable && stated && ui.small_button("Inherit").clicked() {
+            inherit = true;
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::text_muted(), "Words");
+        changed |= percent_of(ui, &mut j.word_min, 0.0..=1000.0);
+        changed |= percent_of(ui, &mut j.word_desired, 0.0..=1000.0);
+        changed |= percent_of(ui, &mut j.word_max, 0.0..=1000.0);
+    });
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::text_muted(), "Letters");
+        changed |= percent_of(ui, &mut j.letter_min, -100.0..=500.0);
+        changed |= percent_of(ui, &mut j.letter_desired, -100.0..=500.0);
+        changed |= percent_of(ui, &mut j.letter_max, -100.0..=500.0);
+    });
+    // Kept in order: a minimum above its maximum is not a setting anyone
+    // means, and the breaker would only refuse to squeeze.
+    if changed {
+        j.word_min = j.word_min.min(j.word_desired);
+        j.word_max = j.word_max.max(j.word_desired);
+        j.letter_min = j.letter_min.min(j.letter_desired);
+        j.letter_max = j.letter_max.max(j.letter_desired);
+    }
+
+    if inherit {
+        *value = None;
+        return true;
+    }
+    if inheritable && !stated && !changed {
+        *value = None;
+    }
+    changed
+}
+
+/// Where a word may be hyphenated: the counts InDesign's Hyphenation dialog
+/// has. Returns whether anything changed.
+pub(crate) fn hyphenation_editor(
+    ui: &mut Ui,
+    value: &mut Option<tessera_text::story::Hyphenation>,
+    inheritable: bool,
+) -> bool {
+    let mut changed = false;
+    let mut inherit = false;
+    let stated = value.is_some();
+    group_label(ui, "Hyphenation");
+    let h = value.get_or_insert_with(Default::default);
+
+    let count = |ui: &mut Ui, value: &mut u8, range: std::ops::RangeInclusive<f64>| {
+        let mut edited = f64::from(*value);
+        if ui
+            .add(egui::DragValue::new(&mut edited).speed(0.1).range(range))
+            .changed()
+        {
+            *value = edited.round() as u8;
+            true
+        } else {
+            false
+        }
+    };
+    let (a, b) = pair(
+        ui,
+        ("Words of", |ui: &mut Ui| {
+            count(ui, &mut h.min_word, 2.0..=25.0)
+        }),
+        ("Before", |ui: &mut Ui| {
+            count(ui, &mut h.min_before, 1.0..=15.0)
+        }),
+    );
+    changed |= a || b;
+    let (a, b) = pair(
+        ui,
+        ("After", |ui: &mut Ui| {
+            count(ui, &mut h.min_after, 1.0..=15.0)
+        }),
+        ("In a row", |ui: &mut Ui| {
+            count(ui, &mut h.limit, 0.0..=25.0)
+        }),
+    );
+    changed |= a || b;
+    ui.horizontal(|ui| {
+        let response = ui.selectable_label(h.capitalised, "Capitalised words");
+        if crate::icons::named_toggle(
+            response.on_hover_text("Whether a word beginning with a capital may be broken"),
+            "Hyphenate capitalised words",
+            egui::WidgetType::Checkbox,
+            h.capitalised,
+        )
+        .clicked()
+        {
+            h.capitalised = !h.capitalised;
+            changed = true;
+        }
+        if inheritable && stated && ui.small_button("Inherit").clicked() {
+            inherit = true;
+        }
+    });
+
+    if inherit {
+        *value = None;
+        return true;
+    }
+    if inheritable && !stated && !changed {
+        *value = None;
+    }
+    changed
+}
+
 /// What a column break may not part: the paragraph from the next one, or its
 /// own lines from each other. Returns whether anything changed.
 ///
@@ -3385,6 +3532,34 @@ fn text_section(
                 ..ParagraphFormat::default()
             },
         );
+    }
+
+    // Justification and hyphenation settings: each one value, written whole.
+    let mut justification = paragraph.justification;
+    if justification_editor(ui, &mut justification, false) {
+        set_paragraph(
+            state,
+            story,
+            target.clone(),
+            ParagraphFormat {
+                justification: Some(justification.unwrap_or_default()),
+                ..ParagraphFormat::default()
+            },
+        );
+    }
+    if paragraph.hyphenate == Some(true) {
+        let mut hyphenation = paragraph.hyphenation;
+        if hyphenation_editor(ui, &mut hyphenation, false) {
+            set_paragraph(
+                state,
+                story,
+                target.clone(),
+                ParagraphFormat {
+                    hyphenation: Some(hyphenation.unwrap_or_default()),
+                    ..ParagraphFormat::default()
+                },
+            );
+        }
     }
 
     // Keep options: one value, written whole.
