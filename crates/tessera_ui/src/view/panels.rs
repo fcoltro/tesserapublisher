@@ -8,7 +8,7 @@ use tessera_document::paint::Paint;
 use tessera_geometry::{Anchor, Unit};
 use tessera_text::story::{
     Alignment, Case, CharacterFormat, CharacterStyle, CharacterStyleId, ParagraphFormat,
-    ParagraphStyle, ParagraphStyleId,
+    ParagraphRule, ParagraphStyle, ParagraphStyleId,
 };
 
 use crate::app::TesseraApp;
@@ -1273,6 +1273,242 @@ pub(crate) fn icon_button(
 /// [`group_label`], for another module in the view.
 pub(crate) fn group_label_pub(ui: &mut Ui, text: &str) {
     group_label(ui, text);
+}
+
+/// One paragraph rule, above or below: on or off, and when on, its weight,
+/// offset, width, indents and colour. Returns whether anything changed.
+///
+/// `inheritable` offers "Inherit" — `None` — which only a style can mean; see
+/// [`tab_stops_editor`] for why the inspector never shows it.
+pub(crate) fn paragraph_rule_editor(
+    ui: &mut Ui,
+    label: &str,
+    rule: &mut Option<ParagraphRule>,
+    inheritable: bool,
+) -> bool {
+    use tessera_text::story::RuleWidth;
+
+    let mut changed = false;
+    let mut inherit = false;
+    let on = rule.as_ref().is_some_and(|r| r.on);
+
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::text_muted(), label);
+        let response = ui.selectable_label(on, if on { "On" } else { "Off" });
+        if crate::icons::named_toggle(response, label, egui::WidgetType::Checkbox, on).clicked() {
+            match rule.as_mut() {
+                // Keep the settings: off and back on should not mean set up
+                // again.
+                Some(r) => r.on = !r.on,
+                None => *rule = Some(ParagraphRule::default()),
+            }
+            changed = true;
+        }
+        if inheritable && rule.is_some() && ui.small_button("Inherit").clicked() {
+            inherit = true;
+        }
+    });
+    if inherit {
+        *rule = None;
+        return true;
+    }
+    let Some(r) = rule.as_mut().filter(|r| r.on) else {
+        return changed;
+    };
+
+    let number =
+        |ui: &mut Ui, value: &mut f32, speed: f64, range: std::ops::RangeInclusive<f64>| {
+            let mut edited = f64::from(*value);
+            if ui
+                .add(
+                    egui::DragValue::new(&mut edited)
+                        .speed(speed)
+                        .range(range)
+                        .custom_formatter(|v, _| format!("{v:.2} pt")),
+                )
+                .changed()
+            {
+                *value = edited as f32;
+                true
+            } else {
+                false
+            }
+        };
+    let (a, b) = pair(
+        ui,
+        ("Weight", |ui: &mut Ui| {
+            number(ui, &mut r.weight, 0.25, 0.0..=100.0)
+        }),
+        ("Offset", |ui: &mut Ui| {
+            number(ui, &mut r.offset, 0.25, -100.0..=100.0)
+        }),
+    );
+    changed |= a || b;
+    let (a, b) = pair(
+        ui,
+        ("Left", |ui: &mut Ui| {
+            number(ui, &mut r.indent_left, 0.25, -720.0..=720.0)
+        }),
+        ("Right", |ui: &mut Ui| {
+            number(ui, &mut r.indent_right, 0.25, -720.0..=720.0)
+        }),
+    );
+    changed |= a || b;
+
+    field(ui, "Width", |ui| {
+        for (width, text) in [(RuleWidth::Column, "Column"), (RuleWidth::Text, "Text")] {
+            if ui.selectable_label(r.width == width, text).clicked() && r.width != width {
+                r.width = width;
+                changed = true;
+            }
+        }
+    });
+
+    // The colour: the text's own, or one of the rule's. Shown as the text's
+    // black when it has none, and set the moment the picker moves.
+    field(ui, "Colour", |ui| {
+        let own = r.colour.is_some();
+        if ui
+            .selectable_label(!own, "Text")
+            .on_hover_text("The colour of the text it belongs to")
+            .clicked()
+            && own
+        {
+            r.colour = None;
+            changed = true;
+        }
+        let [cr, cg, cb, ca] = r.colour.clone().unwrap_or(Color::BLACK).to_rgb_f32();
+        let mut rgba = [cr, cg, cb, ca];
+        if fill_picker(ui, &mut rgba) {
+            r.colour = Some(Color::Rgb {
+                r: rgba[0],
+                g: rgba[1],
+                b: rgba[2],
+                a: rgba[3],
+            });
+            changed = true;
+        }
+    });
+
+    changed
+}
+
+/// The tab stops of a paragraph or a style: one row per stop, and a way to
+/// add one. Returns whether anything changed.
+///
+/// A row is the stop's position, how text sits against it, and its leader.
+/// The position is from the left edge of the column, as the model has it and
+/// as InDesign's ruler shows it.
+///
+/// `inheritable` offers "Inherit" — clearing the list to `None` — which only
+/// a style can mean: a paragraph's own `None` is indistinguishable from its
+/// style's answer, so the inspector never shows it.
+pub(crate) fn tab_stops_editor(
+    ui: &mut Ui,
+    stops: &mut Option<Vec<tessera_text::story::TabStop>>,
+    inheritable: bool,
+) -> bool {
+    use tessera_text::story::{TabAlignment, TabStop};
+
+    let mut changed = false;
+    group_label(ui, "Tab stops");
+
+    let list = stops.get_or_insert_with(Vec::new);
+    let mut remove = None;
+    for (i, stop) in list.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            let mut position = f64::from(stop.position);
+            if ui
+                .add(
+                    egui::DragValue::new(&mut position)
+                        .speed(0.25)
+                        .range(0.0..=1440.0)
+                        .custom_formatter(|v, _| format!("{v:.2} pt")),
+                )
+                .on_hover_text("Position from the left edge of the column")
+                .changed()
+            {
+                stop.position = position as f32;
+                changed = true;
+            }
+
+            let alignments = [
+                (TabAlignment::Left, "Left"),
+                (TabAlignment::Centre, "Centre"),
+                (TabAlignment::Right, "Right"),
+                (TabAlignment::Decimal, "Decimal"),
+            ];
+            let shown = alignments
+                .iter()
+                .find(|(a, _)| *a == stop.alignment)
+                .map_or("Left", |(_, label)| *label);
+            egui::ComboBox::from_id_salt(("tab-alignment", i))
+                .selected_text(shown)
+                .width(80.0)
+                .show_ui(ui, |ui| {
+                    for (alignment, label) in alignments {
+                        if ui
+                            .selectable_label(stop.alignment == alignment, label)
+                            .clicked()
+                            && stop.alignment != alignment
+                        {
+                            stop.alignment = alignment;
+                            changed = true;
+                        }
+                    }
+                });
+
+            // The leader is one character; the field takes the last one typed
+            // so that typing over a dot with a dash needs no deleting first.
+            let mut leader: String = stop.leader.map(String::from).unwrap_or_default();
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut leader)
+                    .desired_width(20.0)
+                    .hint_text("·"),
+            );
+            crate::icons::named(response.clone(), format!("Leader of tab stop {}", i + 1));
+            if response.changed() {
+                let next = leader.chars().last();
+                if next != stop.leader {
+                    stop.leader = next;
+                    changed = true;
+                }
+            }
+
+            if icon_button(ui, crate::icons::Icon::Trash, "Remove this tab stop", false) {
+                remove = Some(i);
+            }
+        });
+    }
+    if let Some(i) = remove {
+        list.remove(i);
+        changed = true;
+    }
+
+    let mut inherit = false;
+    ui.horizontal(|ui| {
+        if icon_button(ui, crate::icons::Icon::Plus, "Add a tab stop", false) {
+            // Half an inch past the last one, which is where the default
+            // stop would have been anyway.
+            let last = list.iter().map(|s| s.position).fold(0.0, f32::max);
+            list.push(TabStop::at(last + 36.0));
+            changed = true;
+        }
+        if inheritable && ui.small_button("Inherit").clicked() {
+            inherit = true;
+        }
+    });
+    if inherit {
+        *stops = None;
+        return true;
+    }
+    // A style whose editor was opened and touched nothing should still say
+    // `None` — inherit — not "no stops". The inspector keeps the empty list,
+    // because there it is the only way to say "no stops".
+    if inheritable && stops.as_ref().is_some_and(|l| l.is_empty()) {
+        *stops = None;
+    }
+    changed
 }
 
 /// What is in a picture box: the file, its state, and its real resolution.
@@ -2665,6 +2901,47 @@ fn text_section(
             );
         }
     });
+
+    // Tab stops. Edited as a whole: the list is one value in the cascade,
+    // so a change to any stop writes the whole list back.
+    let mut stops = paragraph.tab_stops.clone();
+    if tab_stops_editor(ui, &mut stops, false) {
+        set_paragraph(
+            state,
+            story,
+            target.clone(),
+            ParagraphFormat {
+                // An empty list, never `None`: `None` would mean "leave it",
+                // and removing the last stop has to mean "no stops".
+                tab_stops: Some(stops.unwrap_or_default()),
+                ..ParagraphFormat::default()
+            },
+        );
+    }
+
+    // Paragraph rules. Each is one value in the cascade, written whole.
+    for (label, above) in [("Rule above", true), ("Rule below", false)] {
+        let mut rule = if above {
+            paragraph.rule_above.clone()
+        } else {
+            paragraph.rule_below.clone()
+        };
+        if paragraph_rule_editor(ui, label, &mut rule, false) {
+            let mut format = ParagraphFormat::default();
+            // Switched off is `Some` with `on: false`, never `None`: `None`
+            // would mean "leave it", and off has to mean off.
+            let rule = Some(rule.unwrap_or(ParagraphRule {
+                on: false,
+                ..ParagraphRule::default()
+            }));
+            if above {
+                format.rule_above = rule;
+            } else {
+                format.rule_below = rule;
+            }
+            set_paragraph(state, story, target.clone(), format);
+        }
+    }
 
     /// Which field of a `ParagraphFormat` a row writes.
     type Set = fn(&mut ParagraphFormat, f32);

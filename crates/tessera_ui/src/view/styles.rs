@@ -608,6 +608,11 @@ fn paragraph_fields(
         &mut edited.format.drop_cap_characters,
         1,
     );
+    // The whole list is one value: `edited != existing` below sees a change
+    // to any stop, and "Inherit" puts `None` back.
+    super::panels::tab_stops_editor(ui, &mut edited.format.tab_stops, true);
+    super::panels::paragraph_rule_editor(ui, "Rule above", &mut edited.format.rule_above, true);
+    super::panels::paragraph_rule_editor(ui, "Rule below", &mut edited.format.rule_below, true);
 
     if let Some(based_on) = chosen_parent {
         apply(state, Command::SetParagraphStyleBasedOn { id, based_on });

@@ -179,6 +179,57 @@ fn text_is_positioned_by_the_same_glyphs_the_renderer_drew() {
 }
 
 #[test]
+fn a_paragraph_rule_is_a_filled_rectangle_where_the_shaper_put_it() {
+    use tessera_text::story::{ParagraphFormat, ParagraphRule};
+
+    let mut story = Story::new("Heading");
+    story.apply_paragraph_format(
+        0..1,
+        &ParagraphFormat {
+            rule_below: Some(ParagraphRule {
+                weight: 1.5,
+                offset: 2.0,
+                indent_left: 7.25,
+                indent_right: 3.5,
+                ..ParagraphRule::default()
+            }),
+            ..ParagraphFormat::default()
+        },
+    );
+    let shaped = Shaper::new().shape(&story, &NoStyles::default(), 400.0);
+    let rule = shaped
+        .rules()
+        .next()
+        .expect("the shaper placed a rule")
+        .clone();
+
+    let bytes = tessera_pdf::export(&one(
+        ResolvedKind::Text {
+            shaped,
+            color: Color::BLACK,
+            overset_lines: 0,
+        },
+        rect(20.0, 20.0, 400.0, 40.0),
+    ))
+    .expect("export");
+    let text = String::from_utf8_lossy(&bytes);
+
+    // The rule's width is 400 - 7.25 - 3.5, which nothing else on the page
+    // measures — so finding it proves the rectangle came from the rule and
+    // was not recomputed.
+    let width = format!("{:.2}", rule.x1 - rule.x0);
+    let width = width.trim_end_matches('0').trim_end_matches('.');
+    assert!(
+        text.contains(&format!("{width} ")),
+        "expected a rectangle {width} wide"
+    );
+    // And it sits where the shaper said: flipped into PDF space, 792 high.
+    let y = format!("{:.2}", 792.0 - (20.0 + rule.top + rule.weight));
+    let y = y.trim_end_matches('0').trim_end_matches('.');
+    assert!(text.contains(y), "expected the rule's bottom edge at {y}");
+}
+
+#[test]
 fn an_empty_text_frame_exports_without_a_font() {
     let mut shaper = Shaper::new();
     let shaped = shaper.shape(&Story::new(""), &NoStyles::default(), 400.0);

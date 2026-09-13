@@ -1628,6 +1628,23 @@ fn draw_text(
         content.restore_state();
     }
 
+    // Paragraph rules, as the rectangles the shaper placed. Positions come
+    // from the shaper for the same reason glyph positions do: recomputing
+    // them here is how an export drifts from the screen.
+    for rule in shaped.rules() {
+        let colour = rule.colour.as_ref().unwrap_or(color);
+        content.save_state();
+        ink.set_fill(content, colour);
+        content.rect(
+            (bounds.x + rule.x0) as f32,
+            to_pdf_y(page, bounds.y + rule.top, rule.weight) as f32,
+            (rule.x1 - rule.x0) as f32,
+            rule.weight as f32,
+        );
+        content.fill_nonzero();
+        content.restore_state();
+    }
+
     Ok(())
 }
 

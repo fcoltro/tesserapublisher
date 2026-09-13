@@ -1901,6 +1901,12 @@ milestone the layout is fixed: a tool strip, one inspector, and the canvas.
   `packaging/`, and `desktop-file-validate` runs on the Linux one. Nothing has
   double-clicked a `.tessera` file on any of the three, which is what the
   acceptance sentence asks for.
+  **2026-09-13:** the application now opens the paths it is launched with,
+  which is what a double-click delivers on Windows and Linux. macOS delivers
+  it as an open-file event rather than an argument, and nothing receives one,
+  so the sentence cannot be true there yet. A second instance no longer takes
+  the first one's autosave copies for a crash's leavings; see finding 21 in
+  `docs/reviews/2026-09-13-deep-bug-review.md`.
 - [ ] **Linux verified interactively** — Wayland and X11, fractional scaling,
   IME, native dialogs.
 - [ ] **macOS verified interactively** — Retina, menu bar conventions, IME.
@@ -1920,6 +1926,106 @@ milestone the layout is fixed: a tool strip, one inspector, and the canvas.
   nothing. **Left open because nobody has seen it.** The card's placement is
   arithmetic and tested; whether it reads well on screen is not something a test
   can say.
+
+---
+
+# Milestone 9 — Body Copy
+
+**Named on 2026-09-13, late.** Milestone 2 built the typography its sentence
+asked for and recorded the two things it could not build — a kerning control
+and H&J parameters. It did not record the things its sentence never asked
+for, and a milestone cannot see what it was not asked. Six of them are what
+a person setting a long document reaches for in the first hour, and none had
+a field in `ParagraphFormat` or `CharacterFormat`, a line in this file, or a
+row in the parity reference. This milestone exists so that they are missing
+by decision rather than by accident, which is the parity file's whole reason
+to exist.
+
+Every item below is **model** work: a field in `story.rs`, a format version
+bump, a migration test, and then the surface. That is why it is a milestone
+and not a list of controls.
+
+### Acceptance
+
+> Set a price list with a tab stop and a leader. Put a rule under a heading.
+> Set a bulleted list and a numbered one, and renumber by moving an item.
+> Keep a heading with the paragraph that follows it and refuse a widow. Turn
+> on old-style figures and discretionary ligatures in a font that has them.
+> Underline a word.
+
+- [x] **Tab stops**: position, alignment (left, centre, right, decimal), and a
+  leader, per paragraph. Before this, Tab stepped between table cells and did
+  nothing in a text frame — there was no tab character to type and nothing for
+  one to land on. It was the most-noticed absence in a price list, a contents
+  page or any columnar setting that is not a `Table`. **By test; the hand
+  check is owed**, like every other tick in this file.
+  - **A tab's width is decided by laying the paragraph out more than once.**
+    How wide a tab is depends on where it falls, which depends on the line
+    before it, which cannot be broken without knowing the width. So the
+    paragraph is laid out, every tab is read back and told the distance to
+    its stop, and the paragraph is laid out again — twice settles nearly all
+    of them, four is the most tried. The width is handed to parley as letter
+    spacing on the tab alone, so the line breaker sees the real width and the
+    caret has a real cluster to sit either side of. `TabRun` in `shape.rs`.
+  - **Positions are from the column's left edge**, not the indent, as
+    InDesign has it — so moving an indent leaves the stops where they were.
+  - No stop past the tab means the next half inch, which is what a tab does
+    in every other program and what somebody expects before they have set
+    any.
+  - A leader fills the gap from the right, so the dots end against the text
+    they lead to. The tab glyph itself is never drawn; the renderer and the
+    PDF writer both consume positioned glyphs and so agree without knowing.
+  - `tab_stops` is an `Option<Vec<_>>` on `ParagraphFormat`, absent when
+    unset, so no format version was needed: an older file reads as having
+    none. The style editor can say "inherit"; the inspector can only say "no
+    stops", because a paragraph's own `None` is indistinguishable from its
+    style's answer.
+- [x] **Paragraph rules**: above and below, with weight, colour, offset,
+  indents and width (column or text). Stroke is on the object; a rule on a
+  paragraph moves with the paragraph. **By test; the hand check is owed.**
+  - **Placed by the shaper, drawn by nobody in particular.** `ShapedLine`
+    carries `PlacedRule`s beside its glyphs — a rule above on a paragraph's
+    first line, a rule below on its last — and the renderer and the PDF
+    writer each fill the rectangle they are handed. Neither computes a
+    position, so neither can drift from the other, which is the same
+    argument the glyphs were placed by.
+  - **On the line, not the text**, for the reason anchored objects are: a
+    line is what moves into a column, onto the grid or into the next frame,
+    and `shift` is the one function that has to know.
+  - A paragraph carried on from an earlier frame of a thread does **not**
+    repeat its rule above; the rule below goes wherever the last line does.
+  - `on` is kept as InDesign keeps it: switching a rule off keeps its
+    settings. In the cascade `None` inherits and `Some { on: false }` says
+    no rule, whatever the style says — the inspector writes the latter,
+    because a paragraph's own `None` cannot be told from its style's.
+  - A text-width rule on a line with no ink is not drawn; an empty paragraph
+    with a column rule still gets one, because a spacer with a rule is a
+    thing people make on purpose.
+- [ ] **Keep options**: keep with next, keep lines together, and widow and
+  orphan control, honoured by the threading in milestone 4. This is the one
+  that changes where text breaks, so the composed-geometry contract from the
+  2026-09-13 review — layout, caret, preflight and export all reading the
+  same lines — has to hold through it.
+- [ ] **Lists**: bullets and numbering as a paragraph property, with the
+  numbering restarted by a style and continued across a thread. The number is
+  generated, never typed, or moving an item leaves the old number behind.
+- [ ] **Underline and strikethrough**, with weight, offset and colour. Drawn
+  by the renderer and the PDF writer both, or the screen and the press
+  disagree.
+- [ ] **OpenType features**: ligatures on and off, old-style and tabular
+  figures, fractions, and a way to reach a font's stylistic sets. Small caps
+  already ask the font for `smcp` and synthesise where it has none, which is
+  the pattern; nothing else does. parley takes feature settings and the model
+  has nowhere to say them.
+- [ ] **Kerning control and H&J parameters** — still owed from milestone 2,
+  and recorded there. Listed here so the debt has one home.
+
+### Recorded, unscheduled, and probably not wanted yet
+
+Footnotes, a table of contents, an index, hyperlinks and bookmarks, type on a
+path, a story editor, spell checking, a print dialog (there is PDF export and
+nothing that talks to a printer), and IDML import. Each is a milestone of its
+own, and none is what a person misses in the first hour.
 
 ---
 

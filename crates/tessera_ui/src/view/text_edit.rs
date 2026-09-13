@@ -40,6 +40,13 @@ pub fn handle_events(ui: &Ui, buffer: &mut EditBuffer) -> bool {
                     buffer.insert("\n");
                     changed = true;
                 }
+                // A tab character, which the shaper carries to the next stop.
+                // Inside a table cell Tab has been consumed before this is
+                // reached, because there it moves between cells instead.
+                Key::Tab if !modifiers.shift => {
+                    buffer.insert("\t");
+                    changed = true;
+                }
                 _ => {}
             },
             // The system clipboard. egui turns the platform's paste into an
@@ -124,6 +131,17 @@ mod tests {
         let mut buffer = EditBuffer::new(Story::default());
         run_with_events(vec![Event::Text("Hi".to_string())], &mut buffer);
         assert_eq!(buffer.story().text, "Hi");
+    }
+
+    #[test]
+    fn tab_types_a_tab() {
+        // Until milestone 9, Tab in a text frame did nothing: there was no
+        // tab stop for one to land on. Now there is, and a price list needs
+        // the character before it needs the stop.
+        let mut buffer = EditBuffer::new(Story::new("a"));
+        buffer.set_cursor(1);
+        run_with_events(vec![key(Key::Tab, egui::Modifiers::NONE)], &mut buffer);
+        assert_eq!(buffer.story().text, "a\t");
     }
 
     #[test]

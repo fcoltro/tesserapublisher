@@ -96,6 +96,103 @@ impl CharacterFormat {
     }
 }
 
+/// Where a tab stops, and how the text after it sits against the stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TabAlignment {
+    /// The text after the tab begins at the stop.
+    #[default]
+    Left,
+    /// The text after the tab is centred on the stop.
+    Centre,
+    /// The text after the tab ends at the stop.
+    Right,
+    /// The text's decimal point sits on the stop; text without one ends there.
+    Decimal,
+}
+
+/// One tab stop of a paragraph.
+///
+/// The position is measured from the left edge of the column, as InDesign
+/// measures it — not from the paragraph's indent — so moving an indent does
+/// not move every stop with it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TabStop {
+    /// Points from the left edge of the column.
+    pub position: f32,
+    #[serde(default)]
+    pub alignment: TabAlignment,
+    /// A character repeated across the gap the tab leaves, or none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leader: Option<char>,
+}
+
+impl TabStop {
+    pub fn at(position: f32) -> Self {
+        Self {
+            position,
+            alignment: TabAlignment::Left,
+            leader: None,
+        }
+    }
+}
+
+/// How wide a paragraph rule is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum RuleWidth {
+    /// From edge to edge of the column, less the rule's own indents.
+    #[default]
+    Column,
+    /// As wide as the line's text — the first line for a rule above, the last
+    /// for a rule below.
+    Text,
+}
+
+/// A rule drawn above or below a paragraph.
+///
+/// A rule is a paragraph property, not an object, so it moves with the
+/// paragraph: a heading that reflows to the next column takes its rule with
+/// it, which is the whole reason it is not a drawn line.
+///
+/// `on` is what InDesign has, and for the same reason: switching a rule off
+/// keeps its settings, so switching it back on does not mean setting it up
+/// again. In the cascade `None` inherits; `Some` with `on: false` states that
+/// there is no rule, whatever the style says.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParagraphRule {
+    #[serde(default)]
+    pub on: bool,
+    /// Points.
+    pub weight: f32,
+    /// `None` is the text's own colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colour: Option<Color>,
+    /// Points from the baseline: up to the rule's bottom edge for a rule
+    /// above, down to its top edge for a rule below.
+    #[serde(default)]
+    pub offset: f32,
+    #[serde(default)]
+    pub width: RuleWidth,
+    /// Points in from either end of whatever `width` spans.
+    #[serde(default)]
+    pub indent_left: f32,
+    #[serde(default)]
+    pub indent_right: f32,
+}
+
+impl Default for ParagraphRule {
+    fn default() -> Self {
+        Self {
+            on: true,
+            weight: 1.0,
+            colour: None,
+            offset: 0.0,
+            width: RuleWidth::Column,
+            indent_left: 0.0,
+            indent_right: 0.0,
+        }
+    }
+}
+
 /// Paragraph formatting, every field optional, plus the character formatting
 /// a paragraph imposes before any run of its own speaks.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -126,6 +223,16 @@ pub struct ParagraphFormat {
     /// How many characters are set as the drop cap. Defaults to one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drop_cap_characters: Option<u8>,
+    /// The paragraph's tab stops, in any order. `None` inherits; an empty
+    /// list states that there are none, and a tab then goes to the default
+    /// stops every half inch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_stops: Option<Vec<TabStop>>,
+    /// A rule over the paragraph's first line, and one under its last.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_above: Option<ParagraphRule>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_below: Option<ParagraphRule>,
     /// What every run in the paragraph inherits before its own style speaks.
     #[serde(default)]
     pub character: CharacterFormat,
@@ -151,6 +258,9 @@ impl ParagraphFormat {
             hyphenate: self.hyphenate.or(base.hyphenate),
             drop_cap_lines: self.drop_cap_lines.or(base.drop_cap_lines),
             drop_cap_characters: self.drop_cap_characters.or(base.drop_cap_characters),
+            tab_stops: self.tab_stops.clone().or_else(|| base.tab_stops.clone()),
+            rule_above: self.rule_above.clone().or_else(|| base.rule_above.clone()),
+            rule_below: self.rule_below.clone().or_else(|| base.rule_below.clone()),
             character: self.character.over(&base.character),
         }
     }

@@ -81,6 +81,17 @@ To break a thread: select the frames and **Object ▸ Unthread**.
 what you look at every few minutes, so the two dozen properties live in a window
 of their own.
 
+**Tabs.** Press Tab in a frame and the text after it goes to the next stop.
+The stops are in the inspector's Paragraph section: a position from the left
+edge of the column, whether the text sits left, centred, right or on its
+decimal point, and a leader character to fill the gap. A paragraph with no
+stops uses one every half inch. In a table, Tab moves to the next cell instead.
+
+**Rules.** A paragraph can carry a rule above its first line and one below
+its last, from the same Paragraph section: weight, distance from the baseline,
+column-wide or as wide as the text, and a colour or the text's own. It is a
+paragraph property, so a heading that moves takes its rule with it.
+
 ## Colour
 
 The Swatches panel holds named colours. A **spot** colour is a pot of a specific

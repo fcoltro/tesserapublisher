@@ -71,7 +71,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
         match outcome.touched {
             Some(Touched::Activate) => chosen = Some(*id),
             Some(Touched::Rename) => rename = Some(*id),
-            Some(Touched::Command(cmd)) => command = Some(cmd),
+            Some(Touched::Command(cmd)) => command = Some(*cmd),
             None => {}
         }
 
@@ -195,7 +195,9 @@ fn place_to_depth(place: usize, layers: usize) -> usize {
 enum Touched {
     Activate,
     Rename,
-    Command(Command),
+    /// Boxed: a `Command` carries a whole paragraph format, and the two
+    /// variants beside it carry nothing.
+    Command(Box<Command>),
 }
 
 /// What one row reported back.
@@ -353,7 +355,10 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
             let draft = state.layers_window.draft.trim().to_string();
             state.layers_window.renaming = None;
             if !draft.is_empty() && draft != name {
-                out.touched = Some(Touched::Command(Command::RenameLayer { id, name: draft }));
+                out.touched = Some(Touched::Command(Box::new(Command::RenameLayer {
+                    id,
+                    name: draft,
+                })));
             }
         }
         return out;
@@ -378,14 +383,18 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
 
     if response.clicked() {
         out.touched = match pointer {
-            Some(p) if eye.contains(p) => Some(Touched::Command(Command::SetLayerVisible {
-                id,
-                visible: !visible,
-            })),
-            Some(p) if lock.contains(p) => Some(Touched::Command(Command::SetLayerLocked {
-                id,
-                locked: !locked,
-            })),
+            Some(p) if eye.contains(p) => {
+                Some(Touched::Command(Box::new(Command::SetLayerVisible {
+                    id,
+                    visible: !visible,
+                })))
+            }
+            Some(p) if lock.contains(p) => {
+                Some(Touched::Command(Box::new(Command::SetLayerLocked {
+                    id,
+                    locked: !locked,
+                })))
+            }
             _ => Some(Touched::Activate),
         };
     }

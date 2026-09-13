@@ -889,6 +889,25 @@ fn draw_text(
             .draw(Fill::NonZero, glyphs.into_iter());
     }
 
+    // Paragraph rules: rectangles where the shaper put them, in the rule's
+    // own colour or the text's. Inside the same clip, because a rule belongs
+    // to its paragraph and an overset paragraph's rule is overset with it.
+    for rule in shaped.rules() {
+        let colour = rule.colour.as_ref().unwrap_or(color);
+        scene.fill(
+            Fill::NonZero,
+            transform,
+            ink(colour, proof),
+            None,
+            &Rect::new(
+                bounds.x + rule.x0,
+                bounds.y + rule.top,
+                bounds.x + rule.x1,
+                bounds.y + rule.top + rule.weight,
+            ),
+        );
+    }
+
     scene.pop_layer();
 }
 
@@ -943,6 +962,45 @@ mod tests {
         // Both draw glyphs; the mixed one draws them in more than one call.
         assert!(!build(mixed).encoding().resources.glyph_runs.is_empty());
         assert!(!build(uniform).encoding().resources.glyph_runs.is_empty());
+    }
+
+    /// A paragraph rule reaches the scene as a filled path of its own.
+    #[test]
+    fn a_paragraph_rule_is_painted() {
+        use tessera_text::story::{ParagraphFormat, ParagraphRule, Story};
+
+        let plain = Story::new("Heading");
+        let mut ruled = Story::new("Heading");
+        ruled.apply_paragraph_format(
+            0..1,
+            &ParagraphFormat {
+                rule_below: Some(ParagraphRule::default()),
+                ..ParagraphFormat::default()
+            },
+        );
+
+        let mut shaper = tessera_text::shape::Shaper::new();
+        let mut paths = |story: &Story| {
+            let shaped = shaper.shape(story, &NoStyles::default(), 300.0);
+            build_scene(
+                &one_item(
+                    ResolvedKind::Text {
+                        shaped,
+                        color: Color::BLACK,
+                        overset_lines: 0,
+                    },
+                    page(),
+                ),
+                ViewTransform::default(),
+            )
+            .encoding()
+            .n_paths
+        };
+        assert_eq!(
+            paths(&ruled),
+            paths(&plain) + 1,
+            "one more filled path: the rule"
+        );
     }
 
     #[test]

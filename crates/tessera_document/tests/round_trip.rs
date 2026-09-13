@@ -337,6 +337,55 @@ fn a_version_1_document_still_opens() {
 }
 
 #[test]
+fn tab_stops_and_rules_survive_a_save_and_load() {
+    use tessera_text::story::{ParagraphFormat, Story, TabAlignment, TabStop};
+
+    // Every field of a stop, including the one that is an `Option<char>` —
+    // a single character has more ways to serialise than a string does.
+    let path = temp_path("tab-stops.tessera");
+    let mut doc = Document::new();
+    let mut story = Story::new("Item\t12.50");
+    let stops = vec![
+        TabStop::at(40.0),
+        TabStop {
+            position: 200.0,
+            alignment: TabAlignment::Decimal,
+            leader: Some('.'),
+        },
+    ];
+    let rule = tessera_text::story::ParagraphRule {
+        on: true,
+        weight: 0.5,
+        colour: Some(tessera_color::Color::BLACK),
+        offset: 3.0,
+        width: tessera_text::story::RuleWidth::Text,
+        indent_left: 1.0,
+        indent_right: 2.0,
+    };
+    story.apply_paragraph_format(
+        0..1,
+        &ParagraphFormat {
+            tab_stops: Some(stops.clone()),
+            rule_above: Some(rule.clone()),
+            ..ParagraphFormat::default()
+        },
+    );
+    let story = doc.add_story(story);
+
+    format::save(&doc, &path).expect("save");
+    let loaded = format::load(&path).expect("load");
+
+    let loaded_story = loaded.story(story).expect("story survived");
+    assert_eq!(loaded_story.text, "Item\t12.50");
+    assert_eq!(
+        loaded_story.paragraphs[0].local.tab_stops.as_deref(),
+        Some(stops.as_slice())
+    );
+    assert_eq!(loaded_story.paragraphs[0].local.rule_above, Some(rule));
+    assert_eq!(loaded_story.paragraphs[0].local.rule_below, None);
+}
+
+#[test]
 fn a_placement_survives_a_save_and_load() {
     let path = temp_path("rotated.tessera");
     // Sheared as well as turned, so this cannot pass by carrying an angle:
