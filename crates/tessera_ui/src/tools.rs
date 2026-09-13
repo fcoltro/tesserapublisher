@@ -154,7 +154,11 @@ pub enum DragKind {
         handle: crate::transform::Handle,
         /// The frame the handle belongs to. It takes the new box directly;
         /// anything inside it follows by transform.
-        target: FrameId,
+        ///
+        /// `None` for a multiple selection, whose box is the upright one drawn
+        /// around the whole of it. That box is nobody's own, so no frame may
+        /// take it: every one of them follows by transform instead.
+        target: Option<FrameId>,
         origin: DocRect,
         placement: tessera_geometry::Transform,
         leaves: Vec<crate::transform::Origin>,

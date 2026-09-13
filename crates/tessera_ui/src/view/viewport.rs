@@ -1354,16 +1354,80 @@ fn handle_screen_pos(
     egui::pos2(rect.min.x + s.x, rect.min.y + s.y)
 }
 
-/// What the pointer is over, for a lone selection: a handle to scale by, or
-/// the ring outside a corner that rotates.
+/// What the pointer is over: a handle to scale by, or the ring outside a
+/// corner that rotates.
 enum Grab {
     Scale(crate::transform::Handle),
     Rotate,
 }
 
-fn grab_at(state: &TesseraApp, rect: Rect, pos: egui::Pos2) -> Option<(FrameId, Grab)> {
-    let id = state.active().selection.single()?;
-    let (bounds, placement) = presented(state, id)?;
+/// What a transform gesture would take hold of, and the box it would use.
+struct Grabbed {
+    /// The frame that owns the box. `None` for a multiple selection, whose box
+    /// is the upright one drawn around the whole of it and belongs to no frame.
+    target: Option<FrameId>,
+    bounds: DocRect,
+    placement: tessera_geometry::Transform,
+    grab: Grab,
+}
+
+/// The box the handles are drawn on, and the frame that owns it.
+///
+/// One answer for both drawing and hit-testing, so a handle can never be
+/// painted where a press would miss it.
+fn grabbable(
+    state: &TesseraApp,
+) -> Option<(Option<FrameId>, DocRect, tessera_geometry::Transform)> {
+    if let Some(id) = state.active().selection.single() {
+        let (bounds, placement) = presented(state, id)?;
+        return Some((Some(id), bounds, placement));
+    }
+    if state.active().selection.len() < 2 {
+        return None;
+    }
+    // Upright, and in document space: see `transform::enclosing` for why a
+    // selection has no angle of its own to draw the box at.
+    let whole = crate::transform::enclosing(&selection_origins(state))?;
+    Some((None, whole, tessera_geometry::Transform::IDENTITY))
+}
+
+/// Every frame a transform of the whole selection will move.
+///
+/// **Deduplicated.** A group and something inside it can both be selected —
+/// direct-select puts them there — and `origins_of` returns a group's
+/// descendants, so the child would appear twice and take the gesture's map
+/// twice: a frame moving at double the speed of everything it was selected
+/// with.
+fn selection_origins(state: &TesseraApp) -> Vec<crate::transform::Origin> {
+    let mut seen = std::collections::HashSet::new();
+    let mut origins = Vec::new();
+    for id in state.active().selection.iter() {
+        for origin in origins_of(state, id) {
+            if seen.insert(origin.0) {
+                origins.push(origin);
+            }
+        }
+    }
+    origins
+}
+
+/// Where every handle sits on screen, for whatever the selection currently is.
+///
+/// Drawing and hit-testing read this one answer. Two lists would be two
+/// opinions about where a handle is, and the one that drew it would win the
+/// argument in the eye while the one that tested it won in the hand.
+fn handle_positions(state: &TesseraApp, rect: Rect) -> Vec<(crate::transform::Handle, egui::Pos2)> {
+    let Some((_, bounds, placement)) = grabbable(state) else {
+        return Vec::new();
+    };
+    crate::transform::Handle::ALL
+        .into_iter()
+        .map(|h| (h, handle_screen_pos(state, rect, bounds, placement, h)))
+        .collect()
+}
+
+fn grab_at(state: &TesseraApp, rect: Rect, pos: egui::Pos2) -> Option<Grabbed> {
+    let (target, bounds, placement) = grabbable(state)?;
 
     // A handle you can see is a handle you can drag: scale wins wherever the
     // two zones touch, so the cursor never promises a resize the click then
@@ -1371,7 +1435,12 @@ fn grab_at(state: &TesseraApp, rect: Rect, pos: egui::Pos2) -> Option<(FrameId, 
     for handle in crate::transform::Handle::ALL {
         let hp = handle_screen_pos(state, rect, bounds, placement, handle);
         if hp.distance(pos) <= HANDLE_GRAB_PX {
-            return Some((id, Grab::Scale(handle)));
+            return Some(Grabbed {
+                target,
+                bounds,
+                placement,
+                grab: Grab::Scale(handle),
+            });
         }
     }
 
@@ -1389,7 +1458,12 @@ fn grab_at(state: &TesseraApp, rect: Rect, pos: egui::Pos2) -> Option<(FrameId, 
         .map(|h| handle_screen_pos(state, rect, bounds, placement, h).distance(pos))
         .fold(f32::MAX, f32::min);
 
-    (nearest_corner <= ROTATE_RING_PX).then_some((id, Grab::Rotate))
+    (nearest_corner <= ROTATE_RING_PX).then_some(Grabbed {
+        target,
+        bounds,
+        placement,
+        grab: Grab::Rotate,
+    })
 }
 
 /// Tell the pointer what a click here would do.
@@ -1429,19 +1503,18 @@ fn show_cursor(ui: &Ui, response: &egui::Response, rect: Rect, state: &TesseraAp
 
 /// The cursor for a grip: the scale arrow turned along the handle's own
 /// normal, or the rotate arc.
-fn grip_cursor(state: &TesseraApp, id: FrameId, grab: &Grab) -> crate::cursor::Cursor {
+fn grip_cursor(grabbed: &Grabbed) -> crate::cursor::Cursor {
     use crate::cursor::Cursor;
     use crate::icons::Icon;
 
-    match grab {
+    match &grabbed.grab {
         Grab::Rotate => Cursor::new(Icon::Rotate),
         // One double-headed arrow, turned to point along the handle's own
         // normal plus the frame's rotation — the direction the edge will
         // really travel, rather than an approximation from four fixed
         // diagonals that go wrong the moment a frame is rotated.
         Grab::Scale(handle) => {
-            let turned =
-                presented(state, id).map_or(0.0, |(_, placement)| placement.rotation_degrees());
+            let turned = grabbed.placement.rotation_degrees();
             Cursor::turned(Icon::Scale, handle.normal_degrees() + turned as f32)
         }
     }
@@ -1491,8 +1564,8 @@ fn canvas_cursor(
     if let Some((id, _)) = &state.active().editing {
         // The grips come first, exactly as they do outside an edit: a text
         // frame is still resizable while its caret is live.
-        if let Some((grabbed, grab)) = grab_at(state, rect, pos) {
-            return grip_cursor(state, grabbed, &grab);
+        if let Some(grabbed) = grab_at(state, rect, pos) {
+            return grip_cursor(&grabbed);
         }
         let inside = state
             .active()
@@ -1543,7 +1616,7 @@ fn canvas_cursor(
         // one it is still the tool that picks parts.
         Tool::DirectSelect => Cursor::new(Icon::Crosshair),
         Tool::Select => match grab_at(state, rect, pos) {
-            Some((id, grab)) => grip_cursor(state, id, &grab),
+            Some(grabbed) => grip_cursor(&grabbed),
             None => match move_target_at(state, rect, pos) {
                 Some(id) if state.active().selection.contains(id) => Cursor::new(Icon::Move),
                 _ => Cursor::new(Icon::Select),
@@ -1856,16 +1929,26 @@ fn transform_gesture(
         // and is the only way to start a thread, so it is the one that cannot
         // afford to lose the press.
         && !on_a_port(state, rect, pos)
-        && let Some((id, grab)) = grab_at(state, rect, pos)
-        && let Some((bounds, placement)) = presented(state, id)
+        && let Some(grabbed) = grab_at(state, rect, pos)
     {
-        let leaves = origins_of(state, id);
+        let Grabbed {
+            target,
+            bounds,
+            placement,
+            grab,
+        } = grabbed;
+        // A lone selection carries its own frame and whatever is inside it; a
+        // multiple selection carries all of them, each counted once.
+        let leaves = match target {
+            Some(id) => origins_of(state, id),
+            None => selection_origins(state),
+        };
         state.drag = Some(Drag::new(
             doc_pos(state, rect, pos),
             match grab {
                 Grab::Scale(handle) => DragKind::Scale {
                     handle,
-                    target: id,
+                    target,
                     origin: bounds,
                     placement,
                     leaves,
@@ -2382,9 +2465,8 @@ fn draw_overlays(
     snap_indicator(state, rect, &painter);
     thread_connectors(state, rect, &painter);
 
-    // Every selected frame gets an outline; only a lone selection gets
-    // handles, since a multiple selection has nothing single to resize yet.
-    let single = state.active().selection.single();
+    // Every selected frame gets an outline of its own, so you can see which
+    // of them are in the selection and not only how far it reaches.
     for id in state.active().selection.iter() {
         let Some((bounds, placement)) = presented(state, id) else {
             continue;
@@ -2402,36 +2484,56 @@ fn draw_overlays(
             corners,
             Stroke::new(1.0, Theme::selection()),
         ));
+    }
+
+    // The handles go on the box the gesture will really use: one frame's own
+    // box, or the upright box around a multiple selection. Read from
+    // `grabbable`, which is what the hit test reads, so a handle cannot be
+    // painted where a press would miss it.
+    if let Some((_, bounds, placement)) = grabbable(state) {
+        // A multiple selection's box is nobody's outline, so it needs drawing.
+        // Without it the handles float in the space between the objects with
+        // nothing joining them up.
+        if state.active().selection.len() > 1 {
+            let corners: Vec<egui::Pos2> = [
+                crate::transform::Handle::TopLeft,
+                crate::transform::Handle::TopRight,
+                crate::transform::Handle::BottomRight,
+                crate::transform::Handle::BottomLeft,
+            ]
+            .into_iter()
+            .map(|h| handle_screen_pos(state, rect, bounds, placement, h))
+            .collect();
+            painter.add(egui::Shape::closed_line(
+                corners,
+                Stroke::new(1.0, Theme::selection()),
+            ));
+        }
 
         // Handles ride the rotation too, so they stay on the frame's own
-        // corners. Only a lone selection gets them: a multiple selection has
-        // no single frame to resize.
-        if single == Some(id) {
-            let h = Theme::HANDLE_SIZE;
-            for handle in crate::transform::Handle::ALL {
-                let pos = handle_screen_pos(state, rect, bounds, placement, handle);
-                painter.rect_filled(
-                    Rect::from_center_size(pos, egui::vec2(h, h)),
-                    0.0,
-                    Theme::selection(),
-                );
-            }
-
-            // The reference point every transform resolves about: a small
-            // thin x. A ring with a full crosshair through it was big enough
-            // to read as part of the artwork.
-            //
-            // Drawn wherever the chosen anchor is, not always at the centre.
-            // That is D4: InDesign's proxy sits in a corner of the screen and
-            // silently changes what every field and every drag gesture mean,
-            // and the only safe place to show a mode is where the user is
-            // already looking.
-            let c = to_screen(placement.apply(state.anchor.in_rect(bounds)));
-            let arm = Theme::REFERENCE_MARK;
-            let hair = Stroke::new(1.0, Theme::selection());
-            painter.line_segment([c - egui::vec2(arm, arm), c + egui::vec2(arm, arm)], hair);
-            painter.line_segment([c - egui::vec2(arm, -arm), c + egui::vec2(arm, -arm)], hair);
+        // corners.
+        let h = Theme::HANDLE_SIZE;
+        for (_, pos) in handle_positions(state, rect) {
+            painter.rect_filled(
+                Rect::from_center_size(pos, egui::vec2(h, h)),
+                0.0,
+                Theme::selection(),
+            );
         }
+
+        // The reference point every transform resolves about: a small thin x.
+        // A ring with a full crosshair through it was big enough to read as
+        // part of the artwork.
+        //
+        // Drawn wherever the chosen anchor is, not always at the centre. That
+        // is D4: InDesign's proxy sits in a corner of the screen and silently
+        // changes what every field and every drag gesture mean, and the only
+        // safe place to show a mode is where the user is already looking.
+        let c = to_screen(placement.apply(state.anchor.in_rect(bounds)));
+        let arm = Theme::REFERENCE_MARK;
+        let hair = Stroke::new(1.0, Theme::selection());
+        painter.line_segment([c - egui::vec2(arm, arm), c + egui::vec2(arm, arm)], hair);
+        painter.line_segment([c - egui::vec2(arm, -arm), c + egui::vec2(arm, -arm)], hair);
     }
 
     // **Last of everything drawn on a frame.** A port is the smallest control
@@ -2883,6 +2985,102 @@ mod tests {
         let now = to_screen_pos(&state, rect, DocPoint { x: 250.0, y: 120.0 });
         assert_eq!(centre_grab_at(&state, rect, was), None, "not where it was");
         assert_eq!(centre_grab_at(&state, rect, now), Some(id), "where it is");
+    }
+
+    // --- the box around a multiple selection ---------------------------------
+
+    /// Two frames a long way apart, both selected.
+    fn app_with_two_selected_frames() -> (TesseraApp, FrameId, FrameId, Rect) {
+        let (mut state, first, rect) = app_with_a_selected_frame();
+        let layer = state.default_layer();
+        let second = state.active_mut().document_mut().add_frame(
+            layer,
+            tessera_document::nodes::Frame {
+                corners: tessera_document::corners::Corners::SQUARE,
+                bounds: DocRect {
+                    x: 200.0,
+                    y: 200.0,
+                    width: 100.0,
+                    height: 40.0,
+                },
+                kind: tessera_document::nodes::FrameKind::Rectangle,
+                transform: Transform::IDENTITY,
+                fill: Paint::Solid(tessera_color::Color::BLACK),
+                stroke: None,
+                wrap: tessera_document::nodes::TextWrap::None,
+                blend: tessera_document::blending::Blending::PLAIN,
+                shadow: None,
+                anchor: None,
+                style: None,
+            },
+        );
+        state.active_mut().selection.toggle(second);
+        (state, first, second, rect)
+    }
+
+    #[test]
+    fn a_multiple_selection_can_be_grabbed_by_the_box_around_it() {
+        // The shortfall this closes: two frames selected had an outline each
+        // and no handles at all, so resizing several objects meant grouping
+        // them first and ungrouping them after.
+        let (state, _, _, rect) = app_with_two_selected_frames();
+        // The far corner of the two frames together: 0,0 to 300,240.
+        let corner = to_screen_pos(&state, rect, DocPoint { x: 300.0, y: 240.0 });
+
+        let grabbed = grab_at(&state, rect, corner).expect("the corner of the box is a handle");
+        assert!(
+            matches!(
+                grabbed.grab,
+                Grab::Scale(crate::transform::Handle::BottomRight)
+            ),
+            "the bottom-right corner of the selection did not offer a scale"
+        );
+        assert_eq!(
+            grabbed.target, None,
+            "the selection's box was claimed by one of the frames in it"
+        );
+    }
+
+    #[test]
+    fn every_handle_that_is_drawn_can_be_grabbed() {
+        // Drawing and hit-testing read one answer, and this is the assertion
+        // that keeps it that way: a handle painted where a press misses it is
+        // the worst kind of control, because it looks like it works.
+        let (state, _, _, rect) = app_with_two_selected_frames();
+        let drawn = handle_positions(&state, rect);
+        assert_eq!(drawn.len(), 8, "a box has eight handles");
+
+        for (handle, pos) in drawn {
+            let grabbed = grab_at(&state, rect, pos)
+                .unwrap_or_else(|| panic!("{handle:?} is drawn where nothing can be grabbed"));
+            assert!(
+                matches!(grabbed.grab, Grab::Scale(h) if h == handle),
+                "{handle:?} is drawn where a press grabs something else"
+            );
+        }
+    }
+
+    #[test]
+    fn a_frame_selected_twice_over_is_still_moved_once() {
+        // A group and something inside it can both be selected. `origins_of`
+        // returns a group's descendants, so the child would arrive twice and
+        // take the gesture's map twice — moving at double the speed of
+        // everything it was selected with.
+        let (mut state, first, second, _) = app_with_two_selected_frames();
+        let group = state
+            .active_mut()
+            .document_mut()
+            .group(&[first, second])
+            .expect("two frames group");
+        state.active_mut().selection.set(group);
+        state.active_mut().selection.toggle(first);
+
+        let origins = selection_origins(&state);
+        let mut ids: Vec<_> = origins.iter().map(|(id, _, _)| *id).collect();
+        let before = ids.len();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(before, ids.len(), "a frame appears in the gesture twice");
     }
 
     // --- typing into a table -------------------------------------------------

@@ -206,15 +206,41 @@ Making the skeleton pleasant to use. No new file-format surface area.
 > Zoom to fit, zoom to selection, and pan with the spacebar. Undo any of it,
 > then redo it.
 
-- [~] Tool state machine: select, rectangle, ellipse, line, pen, text, hand.
-  *Direct-select and zoom tools are not built; the wheel zooms instead.*
+- [x] Tool state machine: select, direct-select, rectangle, ellipse, line,
+  pen, text, graphic, polygon, scissors, hand, zoom. All twelve are in
+  `Tool::ALL`, each with a key.
+  - **The shortfall recorded here had gone stale rather than being true.**
+    Direct-select and zoom were built in a later milestone — `direct_gesture`
+    picks and drags an anchor, `zoom_gesture` clicks and marquees — and nothing
+    came back to tick the box. It was found by reading the code instead of the
+    note, which is the argument for this file's own rule: perform the sentence.
+    A stale shortfall is the mirror of the defect this roadmap was rewritten to
+    prevent, and costs the same thing — an accounting nobody can trust.
 - [x] Marquee selection, shift-extend, and select-all. Both clicking and the
   rubber band select by an object's geometry, not by its bounding box.
-- [~] Transform handles: move, scale from any of eight handles, rotate by
+- [x] Transform handles: move, scale from any of eight handles, rotate by
   dragging outside a corner, with shift for proportional scaling and
   15-degree rotation snap. A group scales and rotates as one, carrying its
-  contents. *From-centre scaling is not built, and a multiple selection has
-  no handles — one frame or one group at a time.*
+  contents, and **so does a multiple selection** — several objects resize and
+  turn together without being grouped first. From-centre scaling is subsumed
+  by the reference point, below.
+  - The box around a multiple selection is **upright**, and in document space.
+    A selection has no angle of its own: two frames at different angles share
+    none, and taking the first-picked frame's angle would make the box jump
+    when the same two were picked in the other order.
+  - It belongs to **no frame**, which is the whole of what had to change in the
+    arithmetic. A scale gives the dragged frame the new box directly and makes
+    everything inside it follow by transform; with no dragged frame, every
+    selected frame follows. The plausible misreading — "no target means they
+    are all the target" — collapses the selection into several copies of one
+    rectangle, and `scaling_a_selection_rewrites_nobody_s_box` is that bug
+    written down. Rotation needed nothing: it already took a pivot and a set.
+  - **Drawing and hit-testing read one answer**, `grabbable`. Two lists would
+    be two opinions about where a handle is, and the one that drew it would win
+    in the eye while the one that tested it won in the hand.
+  - A frame reachable twice over — a group selected along with something
+    inside it — is **counted once**. Otherwise it takes the gesture's map
+    twice and moves at double the speed of everything it was selected with.
 - [x] Clipboard, duplicate, and step and repeat.
   - **The offset accumulates.** Each copy is `n` steps from the original, not one
     step from the copy before it: reading the previous copy's position compounds

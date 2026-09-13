@@ -274,6 +274,37 @@ pub fn footprint_map(
     was.inverse().then(in_own_space).then(placement)
 }
 
+/// The upright box around every frame in a gesture, in document space.
+///
+/// What a multiple selection is resized by. Upright rather than turned,
+/// because a selection has no angle of its own: two frames at different angles
+/// have no shared one, and inventing the first-picked frame's angle would make
+/// the box jump when the same two were picked in the other order.
+/// A turned frame is enclosed by its **corners where they really are**, not by
+/// its box: the box is in the frame's own space, and a selection is measured
+/// in the document's.
+pub fn enclosing(origins: &[Origin]) -> Option<DocRect> {
+    let mut span: Option<(f64, f64, f64, f64)> = None;
+    for (_, bounds, placement) in origins {
+        let (x0, y0) = (bounds.x, bounds.y);
+        let (x1, y1) = (bounds.x + bounds.width, bounds.y + bounds.height);
+        for (x, y) in [(x0, y0), (x1, y0), (x1, y1), (x0, y1)] {
+            let p = placement.apply(DocPoint { x, y });
+            span = Some(match span {
+                None => (p.x, p.y, p.x, p.y),
+                Some((lx, ty, rx, by)) => (lx.min(p.x), ty.min(p.y), rx.max(p.x), by.max(p.y)),
+            });
+        }
+    }
+    let (left, top, right, bottom) = span?;
+    Some(DocRect {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    })
+}
+
 /// Every frame in a scale gesture.
 ///
 /// The frame being dragged takes the new box directly and keeps its placement,
@@ -284,9 +315,13 @@ pub fn footprint_map(
 /// A child turned at some angle of its own is handled exactly, not
 /// approximately: scaling it along the group's axes shears it, and a placement
 /// can hold a shear.
+/// `target` is the frame the handle belongs to, and `None` for a multiple
+/// selection: the box being dragged is then the upright one around the whole
+/// selection, which is nobody's own box, so every frame follows the map
+/// instead of one of them taking the new box.
 pub fn scaled(
     origins: &[Origin],
-    target: tessera_document::ids::FrameId,
+    target: Option<tessera_document::ids::FrameId>,
     resize: &Resize,
     placement: Transform,
 ) -> Vec<Origin> {
@@ -298,7 +333,7 @@ pub fn scaled(
     origins
         .iter()
         .map(|(id, bounds, own)| {
-            if *id == target {
+            if target == Some(*id) {
                 // The dragged frame takes the new box directly, so its bounds
                 // stay an honest width and height. Any mirror goes into its
                 // placement, where a positive box can still hold it.
@@ -395,6 +430,86 @@ pub fn rotation_from_drag(
 mod tests {
     use super::*;
     use tessera_document::paint::Paint;
+
+    /// Two frames, the second placed well away from the first and turned.
+    fn two_frames() -> Vec<Origin> {
+        use slotmap::KeyData;
+        use tessera_document::ids::FrameId;
+        let a = FrameId::from(KeyData::from_ffi(1 << 32 | 1));
+        let b = FrameId::from(KeyData::from_ffi(1 << 32 | 2));
+        let box_of = |x: f64, y: f64| DocRect {
+            x,
+            y,
+            width: 100.0,
+            height: 100.0,
+        };
+        vec![
+            (a, box_of(0.0, 0.0), Transform::IDENTITY),
+            (b, box_of(200.0, 200.0), Transform::IDENTITY),
+        ]
+    }
+
+    #[test]
+    fn the_box_around_a_selection_holds_all_of_it() {
+        // The failure this exists for is the obvious one: a box that is really
+        // the first frame's box leaves every other selected frame outside the
+        // handles that claim to resize it.
+        let found = enclosing(&two_frames()).expect("two frames enclose something");
+        assert_eq!(found.x, 0.0);
+        assert_eq!(found.y, 0.0);
+        assert_eq!(found.width, 300.0, "it stops short of the second frame");
+        assert_eq!(found.height, 300.0, "it stops short of the second frame");
+    }
+
+    #[test]
+    fn the_box_is_around_where_a_frame_really_is() {
+        // A frame's box is in its own space; its placement says where that
+        // space sits. A box built from the boxes alone would sit where the
+        // artwork used to be before anything was ever dragged.
+        let mut frames = two_frames();
+        frames[1].2 = Transform::translate(400.0, 0.0);
+        let found = enclosing(&frames).expect("two frames enclose something");
+        assert_eq!(found.width, 700.0, "the placement was not accounted for");
+    }
+
+    #[test]
+    fn scaling_a_selection_rewrites_nobody_s_box() {
+        // A multiple selection's box belongs to no frame, so no frame may take
+        // it as its own. Handing it to each of them in turn is the plausible
+        // misreading of "no target", and it would collapse every selected
+        // frame onto the selection's own outline — several objects becoming
+        // several copies of one rectangle.
+        let frames = two_frames();
+        let whole = enclosing(&frames).expect("a box around them");
+        let resize = resize(
+            whole,
+            Handle::BottomRight,
+            DocPoint {
+                x: whole.x + whole.width * 2.0,
+                y: whole.y + whole.height * 2.0,
+            },
+            false,
+        );
+
+        let out = scaled(&frames, None, &resize, Transform::IDENTITY);
+
+        for ((_, was, _), (_, now, placement)) in frames.iter().zip(&out) {
+            assert_eq!(
+                was, now,
+                "a frame's own box was rewritten by a selection's handle"
+            );
+            assert_ne!(
+                *placement,
+                Transform::IDENTITY,
+                "and its placement did not take the scale either"
+            );
+        }
+    }
+
+    #[test]
+    fn nothing_encloses_nothing() {
+        assert_eq!(enclosing(&[]), None);
+    }
 
     fn rect() -> DocRect {
         DocRect {
@@ -782,7 +897,7 @@ mod tests {
         let (start, group) = group_and_children();
         let out = scaled(
             &start,
-            group,
+            Some(group),
             &to_box(group_box(), doubled()),
             Transform::IDENTITY,
         );
@@ -813,7 +928,12 @@ mod tests {
             Transform::rotate_about(217.0, DocPoint { x: 5.0, y: -3.0 }),
         ] {
             let (start, group) = placed_group(placement);
-            let out = scaled(&start, group, &to_box(group_box(), group_box()), placement);
+            let out = scaled(
+                &start,
+                Some(group),
+                &to_box(group_box(), group_box()),
+                placement,
+            );
             for (before, after) in start.iter().zip(out.iter()) {
                 let (b, a) = (centre_of(before), centre_of(after));
                 assert!(close(b.x, a.x) && close(b.y, a.y), "{b:?} -> {a:?}");
@@ -830,7 +950,7 @@ mod tests {
         let (start, group) = group_and_children();
         let out = scaled(
             &start,
-            group,
+            Some(group),
             &to_box(flat, group_box()),
             Transform::IDENTITY,
         );
@@ -846,7 +966,12 @@ mod tests {
         let placement = Transform::rotate_about(90.0, group_box().center());
         let (start, group) = placed_group(placement);
 
-        let out = scaled(&start, group, &to_box(group_box(), doubled()), placement);
+        let out = scaled(
+            &start,
+            Some(group),
+            &to_box(group_box(), doubled()),
+            placement,
+        );
 
         let (near, far) = (centre_of(&out[1]), centre_of(&out[2]));
         assert!(close((far.y - near.y).abs(), 180.0), "{near:?} -> {far:?}");
@@ -880,7 +1005,7 @@ mod tests {
 
         let out = scaled(
             &start,
-            group,
+            Some(group),
             &to_box(group_box(), doubled()),
             Transform::IDENTITY,
         );
@@ -1030,7 +1155,7 @@ mod tests {
             DocPoint { x: -100.0, y: 5.0 },
             false,
         );
-        let out = scaled(&start, group, &r, Transform::IDENTITY);
+        let out = scaled(&start, Some(group), &r, Transform::IDENTITY);
 
         // The child that was on the left is now on the right of the other.
         let near = centre_of(&out[1]).x;
