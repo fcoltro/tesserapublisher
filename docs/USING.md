@@ -59,6 +59,12 @@ what a layout designer's fingers already know.
 | `H` | Hand | Or hold space |
 | `Z` | Zoom | Click in, Alt-click out, drag to a region |
 
+**Without a mouse.** Click the page once, or Tab to it, and `Tab` selects the
+next object on the spread and `Shift+Tab` the one before, in the order the page
+is read — top to bottom, then left to right. The arrows nudge what is selected
+by a point, or ten with `Shift`. `Escape` lets go. The page says what is selected to a screen reader, and where
+it is in the walk: "Text frame, 2 of 4".
+
 ## Text
 
 Draw a frame with `T` and type. Double-click an existing frame with the select

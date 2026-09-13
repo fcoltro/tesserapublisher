@@ -25,6 +25,8 @@ pub enum Group {
     Align,
     View,
     Tool,
+    /// The arrow keys. See [`Group::menu`].
+    Nudge,
     Type,
     Layout,
     Table,
@@ -33,7 +35,7 @@ pub enum Group {
 }
 
 impl Group {
-    pub const ALL: [Group; 13] = [
+    pub const ALL: [Group; 14] = [
         Group::File,
         Group::Edit,
         Group::Object,
@@ -42,6 +44,7 @@ impl Group {
         Group::Align,
         Group::View,
         Group::Tool,
+        Group::Nudge,
         Group::Type,
         Group::Layout,
         Group::Table,
@@ -77,6 +80,12 @@ impl Group {
     ///
     /// Arrange, Transform and Align share the Object menu as submenus: they are
     /// groupings, not extra menus.
+    ///
+    /// **`Nudge` has none either**, for the reason `Tool` has none. No layout
+    /// tool lists "move left one point" in a menu; it is what the arrow keys
+    /// do, and eight rows of it in the Transform submenu would bury the four
+    /// entries that belong there. Actions rather than a hard-coded key handler
+    /// all the same, so they can be remapped and the palette can find them.
     pub fn menu(self) -> Option<&'static str> {
         match self {
             Group::File => Some("File"),
@@ -88,7 +97,7 @@ impl Group {
             Group::Table => Some("Table"),
             Group::Window => Some("Window"),
             Group::Help => Some("Help"),
-            Group::Tool => None,
+            Group::Tool | Group::Nudge => None,
         }
     }
 }
@@ -210,6 +219,7 @@ pub fn guard(run: Run) -> Guard {
             | Distribute(_)
             | Flip { .. }
             | Rotate90 { .. }
+            | Nudge { .. }
             | SwapFillAndStroke
             | DefaultFillAndStroke
             | ClearFill
@@ -281,8 +291,24 @@ pub enum Cmd {
     Z(ZMove),
     Align(Edge, AlignTo),
     Distribute(Axis),
-    Flip { horizontal: bool, vertical: bool },
-    Rotate90 { clockwise: bool },
+    Flip {
+        horizontal: bool,
+        vertical: bool,
+    },
+    Rotate90 {
+        clockwise: bool,
+    },
+    /// Move the selection by whole points, from the arrow keys.
+    ///
+    /// The other half of working the page without a pointer: Tab selects an
+    /// object, and this is what moves it. One point a press and ten with Shift,
+    /// which is InDesign's default and what a layout designer's hands expect.
+    /// Whole points rather than `f64` so the command stays `PartialEq`, and
+    /// because a nudge is a count of presses, not a measurement.
+    Nudge {
+        dx: i32,
+        dy: i32,
+    },
     SwapFillAndStroke,
     DefaultFillAndStroke,
     ClearFill,
@@ -465,6 +491,54 @@ pub fn all() -> &'static [Action] {
             None,
             Group::Transform,
             Command(Rotate90 { clockwise: false }),
+        ),
+        a(
+            "Nudge left",
+            Some("Left"),
+            Group::Nudge,
+            Command(Nudge { dx: -1, dy: 0 }),
+        ),
+        a(
+            "Nudge right",
+            Some("Right"),
+            Group::Nudge,
+            Command(Nudge { dx: 1, dy: 0 }),
+        ),
+        a(
+            "Nudge up",
+            Some("Up"),
+            Group::Nudge,
+            Command(Nudge { dx: 0, dy: -1 }),
+        ),
+        a(
+            "Nudge down",
+            Some("Down"),
+            Group::Nudge,
+            Command(Nudge { dx: 0, dy: 1 }),
+        ),
+        a(
+            "Nudge left by ten",
+            Some("Shift+Left"),
+            Group::Nudge,
+            Command(Nudge { dx: -10, dy: 0 }),
+        ),
+        a(
+            "Nudge right by ten",
+            Some("Shift+Right"),
+            Group::Nudge,
+            Command(Nudge { dx: 10, dy: 0 }),
+        ),
+        a(
+            "Nudge up by ten",
+            Some("Shift+Up"),
+            Group::Nudge,
+            Command(Nudge { dx: 0, dy: -10 }),
+        ),
+        a(
+            "Nudge down by ten",
+            Some("Shift+Down"),
+            Group::Nudge,
+            Command(Nudge { dx: 0, dy: 10 }),
         ),
         a(
             "Swap fill and stroke",
@@ -1013,6 +1087,10 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
                     vertical,
                 },
                 Cmd::Rotate90 { clockwise } => Command::RotateSelection90 { clockwise },
+                Cmd::Nudge { dx, dy } => Command::TranslateSelection {
+                    dx: f64::from(dx),
+                    dy: f64::from(dy),
+                },
                 Cmd::SwapFillAndStroke | Cmd::DefaultFillAndStroke | Cmd::ClearFill => {
                     // These three act on one frame. With nothing selected, or
                     // several, there is no single answer — doing nothing beats
@@ -1088,6 +1166,14 @@ mod tests {
                 | "Send to back"
                 | "Swap fill and stroke"
                 | "Default fill and stroke"
+                | "Nudge left"
+                | "Nudge right"
+                | "Nudge up"
+                | "Nudge down"
+                | "Nudge left by ten"
+                | "Nudge right by ten"
+                | "Nudge up by ten"
+                | "Nudge down by ten"
                 | "Step and repeat\u{2026}" => Guard::NeedsSelection,
                 _ => Guard::NotWhileTyping,
             };
@@ -1289,17 +1375,61 @@ mod tests {
     }
 
     #[test]
-    fn only_the_tools_are_missing_from_the_menu_bar() {
+    fn only_the_tools_and_the_arrow_keys_are_missing_from_the_menu_bar() {
         // A command with no menu is reachable only through the palette, which
         // is fine for a tool — there is a strip of them and each has a key —
-        // and would be a command nobody can find for anything else. So the
-        // exception is named rather than allowed generally.
+        // and for a nudge, which every layout tool leaves to the arrow keys
+        // and none lists. It would be a command nobody can find for anything
+        // else, so the exceptions are named rather than allowed generally.
         let homeless: Vec<Group> = Group::ALL
             .into_iter()
             .filter(|g| all().iter().any(|a| a.group == *g))
             .filter(|g| g.menu().is_none())
             .collect();
-        assert_eq!(homeless, vec![Group::Tool]);
+        assert_eq!(homeless, vec![Group::Tool, Group::Nudge]);
+    }
+
+    #[test]
+    fn every_arrow_nudges_and_shift_nudges_ten_times_as_far() {
+        // Which is what makes leaving them out of the menus acceptable: a
+        // person's hands already know these, so a menu would teach nothing.
+        use crate::keys::Chord;
+        let chord_of = |name: &str| -> Chord {
+            let action = all()
+                .iter()
+                .find(|a| a.name == name)
+                .unwrap_or_else(|| panic!("{name} is not an action"));
+            action
+                .shortcut
+                .and_then(Chord::parse)
+                .unwrap_or_else(|| panic!("{name} has no chord"))
+        };
+        let nudge_of = |name: &str| -> (i32, i32) {
+            match all().iter().find(|a| a.name == name).map(|a| a.run) {
+                Some(Run::Command(Cmd::Nudge { dx, dy })) => (dx, dy),
+                other => panic!("{name} runs {other:?}, not a nudge"),
+            }
+        };
+
+        for (name, key, (dx, dy)) in [
+            ("left", egui::Key::ArrowLeft, (-1, 0)),
+            ("right", egui::Key::ArrowRight, (1, 0)),
+            ("up", egui::Key::ArrowUp, (0, -1)),
+            ("down", egui::Key::ArrowDown, (0, 1)),
+        ] {
+            let bare = chord_of(&format!("Nudge {name}"));
+            assert_eq!(bare.key, key);
+            assert!(bare.is_bare(), "a plain arrow must be a plain arrow");
+            assert_eq!(nudge_of(&format!("Nudge {name}")), (dx, dy));
+
+            let shifted = chord_of(&format!("Nudge {name} by ten"));
+            assert_eq!(shifted.key, key);
+            assert!(shifted.modifiers.shift && !shifted.modifiers.command);
+            assert_eq!(
+                nudge_of(&format!("Nudge {name} by ten")),
+                (dx * 10, dy * 10)
+            );
+        }
     }
 
     #[test]

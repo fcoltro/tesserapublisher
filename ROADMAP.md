@@ -103,15 +103,53 @@ Never "done" until shipping; re-checked at the close of every milestone.
   losing it, not evidence of a fix, and the difference was established by taking
   the naming out and running it again.
 
-  **Still owed, and neither is an oversight:**
+  **2026-09-13 — the page can be worked without a pointer, and says what is
+  on it.** Every path into a selection began with a click, so a person with no
+  mouse could reach every control in the interface and nothing on the page to
+  use them on. Now, with the canvas focused, **Tab and Shift-Tab walk the
+  spread's objects and Escape lets go** — InDesign's binding, so a perpetual
+  intermediate already knows it. The walk is in `object_order.rs`; the keys are
+  in the viewport.
+
+  - **Reading order, not creation order.** InDesign walks objects in the order
+    they were drawn, which is an accident of how a layout was built. Top to
+    bottom then left to right is the order the page is read in, and it is a
+    property of the layout rather than of its history. Objects whose tops are
+    within a line of body text (12 pt) are one row; a row is anchored to its
+    *first* member, or a staircase of objects each nine points lower than the
+    last would chain into one row across the page. Both cases are tests.
+  - **Only what a click could reach.** `selectable_order` is the shared rule,
+    so a locked layer is out of the walk for the same reason it is out of a
+    click, without the walk knowing that locking exists.
+  - **The canvas is in the accessibility tree**, as a named pane whose label is
+    a sentence — "Page canvas, 4 objects. Text frame, 2 of 4." — read from the
+    real AccessKit tree by a test rather than asserted from the source. The
+    ordinal is the useful part: it says whether Tab goes on or starts over.
+  - **Making the canvas focusable nearly switched off every shortcut in the
+    application.** `keys_are_ours` read "nothing is focused", and the
+    accelerators are gated on it; clicking the page would have made Ctrl+Z,
+    Delete and every tool key dead until Escape, with no test to say so. It now
+    asks whether a *field* holds the keyboard, the canvas has a fixed id so it
+    can be told apart, and a test holds the line. egui also moves focus on an
+    unmodified arrow key, so the canvas keeps the arrows while it has focus —
+    the first thing anyone does after Tabbing to an object is nudge it.
+  - **Which there was no way to do.** No arrow-key nudge existed; the arrows
+    moved the caret and the palette's highlight and nothing else. Eight
+    actions now — a point a press, ten with Shift, InDesign's defaults — in a
+    group of their own with no menu, for the reason the tools have none: no
+    layout tool lists "move left one point", and eight rows of it would bury
+    the Transform submenu. The palette lists them and they can be remapped.
+
+  **Still owed, and none is an oversight:**
 
   - **The layers panel's eye and lock.** They are hit-tested as zones inside the
     row's own response because the row drags to reorder, so giving each its own
     means reworking that interaction — not something to do without seeing it.
-  - **The canvas.** Objects on the page are not in the accessibility tree in any
-    form, and what a screen reader should make of a page of frames is a design
-    question, not a missing call. This is the half that would cost most to
-    retrofit, which is precisely what the requirement warns about.
+  - **The objects themselves are not nodes in the tree.** The canvas is one
+    node that says what is selected; a screen reader's own object navigation
+    cannot walk the page. Putting a node under the canvas for each frame is the
+    next step, and a bigger one: each needs bounds, a role, and to *not* take
+    pointer input, which egui's response-per-widget model does not make natural.
   - **Nobody has run a screen reader against any of it.**
 - [x] **Performance is measured, not asserted.** A guard over a 500-frame
   document holds resolve and scene-build time under one whole frame. Baseline

@@ -558,7 +558,7 @@ fn weight(chord: crate::keys::Chord) -> u8 {
 fn accelerators(ui: &Ui, state: &mut TesseraApp) {
     use crate::actions::{self, Guard};
 
-    if modal_open(state) || ui.ctx().egui_wants_keyboard_input() {
+    if modal_open(state) || !viewport::keys_are_ours(ui.ctx()) {
         return;
     }
 

@@ -46,8 +46,16 @@ const HANDLE_GRAB_PX: f32 = 8.0;
 const ROTATE_RING_PX: f32 = 20.0;
 
 pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
-    let size = ui.available_size();
-    let (allocated, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
+    let (allocated, response) = allocate_canvas(ui);
+
+    // The canvas takes keyboard focus, which is what lets Tab walk the objects
+    // on the page instead of walking out of the canvas and into the panels.
+    // Clicking focuses it too, so the keyboard carries on from wherever the
+    // pointer left off rather than making somebody Tab all the way back in.
+    if response.clicked() {
+        response.request_focus();
+    }
+    hold_tab(ui, &response);
 
     // Everything downstream uses the snapped box, so what is drawn, what is
     // rendered into, and what the pointer is measured against all agree.
@@ -78,6 +86,29 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     }
 
     handle_input(ui, &response, rect, state);
+
+    // What a screen reader is told about the page, after the input that may
+    // have changed it. Lazy on purpose: egui runs this closure when
+    // accessibility is switched on or the canvas gains focus, and never on the
+    // frames in between — so a still canvas sorts nothing.
+    //
+    // `Panel` rather than `Other` because egui's mapping is fixed and `Other`
+    // becomes `Role::Unknown`, which is a role a screen reader has nothing to
+    // say about. The canvas is a region holding the document, and a pane is the
+    // nearest true thing that vocabulary can say.
+    let open = state.active();
+    let document = open.document();
+    let selected = open.selection.as_slice();
+    response.widget_info(|| {
+        let order = current_spread(state)
+            .map(|spread| crate::object_order::reading_order(document, spread))
+            .unwrap_or_default();
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Panel,
+            ui.is_enabled(),
+            crate::object_order::announce(document, &order, selected),
+        )
+    });
 
     // An object somebody asked to be shown — from the preflight panel, and one
     // day from a search. Served here because centring needs the size of the
@@ -591,14 +622,145 @@ fn guide_hit(
     best.map(|(i, _)| i)
 }
 
+/// The canvas's widget id.
+///
+/// Fixed rather than derived from its position, so that anything asking "who
+/// has the keyboard" can tell the canvas apart from a text field. See
+/// [`keys_are_ours`].
+fn canvas_id() -> egui::Id {
+    egui::Id::new("tessera.canvas")
+}
+
+/// Reserve the canvas and take its response, under [`canvas_id`].
+fn allocate_canvas(ui: &mut Ui) -> (Rect, egui::Response) {
+    let (_, rect) = ui.allocate_space(ui.available_size());
+    let response = ui.interact(rect, canvas_id(), Sense::click_and_drag());
+    (rect, response)
+}
+
 /// Whether a single-key shortcut should act.
 ///
-/// False whenever egui has given the keyboard to a widget — a text field in
+/// False whenever egui has given the keyboard to a **field** — a text field in
 /// the inspector, the command palette's query. Raw key state ignores focus, so
 /// without this, typing `d` into a caption would apply the default fill and
 /// `w` would put the interface into preview.
-fn keys_are_ours(ui: &Ui) -> bool {
-    !ui.ctx().egui_wants_keyboard_input()
+///
+/// The canvas holding focus does not count, and the distinction was invisible
+/// until the canvas could hold it. This used to read "nothing is focused",
+/// which was the same test while the canvas could not take focus; the day it
+/// could — so that Tab can walk the page — that test switched off every
+/// shortcut in the application the moment somebody clicked on the page.
+pub(crate) fn keys_are_ours(ctx: &egui::Context) -> bool {
+    match ctx.memory(|memory| memory.focused()) {
+        None => true,
+        Some(focused) => focused == canvas_id(),
+    }
+}
+
+/// Keep the walking keys for the canvas while the canvas holds focus.
+///
+/// Without this egui reads Tab first and moves focus to the next widget, so
+/// the walk below would never see a single press. The arrows are held for the
+/// same reason: an unmodified arrow moves egui's focus too, and the first
+/// thing a person does after Tabbing to an object is nudge it.
+///
+/// Escape is deliberately left out. It clears the selection *and* surrenders
+/// focus, which is what stops the canvas being a place a keyboard can enter and
+/// never leave.
+fn hold_tab(ui: &Ui, response: &egui::Response) {
+    if !response.has_focus() {
+        return;
+    }
+    ui.memory_mut(|memory| {
+        memory.set_focus_lock_filter(
+            response.id,
+            egui::EventFilter {
+                tab: true,
+                horizontal_arrows: true,
+                vertical_arrows: true,
+                escape: false,
+            },
+        );
+    });
+}
+
+/// Walking the page's objects from the keyboard.
+///
+/// Tab and Shift-Tab move the selection through the spread in reading order,
+/// and Escape lets go. Only while the canvas holds focus: Tab anywhere else is
+/// still how a person gets from one panel to the next, and taking it globally
+/// would trade one keyboard trap for a worse one.
+///
+/// This is the half of the application that had no keyboard at all. Every other
+/// path into a selection begins with a click, so without this a person who
+/// cannot use a mouse can reach every control in the interface and nothing on
+/// the page for them to use those controls on.
+fn walk_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
+    // Focus is the whole gate: the canvas holding it is what `keys_are_ours`
+    // means, so there is nothing further to ask.
+    if !response.has_focus() {
+        return;
+    }
+
+    // Two reads rather than one: `consume_key` matches the modifiers exactly,
+    // so a plain Tab and a Shift-Tab are different keys to it.
+    let forward = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab));
+    let backward = ui.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab));
+    if forward || backward {
+        walk_selection(state, rect, backward);
+        return;
+    }
+
+    if ui.input(|i| i.key_pressed(egui::Key::Escape)) && !state.active().selection.is_empty() {
+        state.active_mut().selection.clear();
+    }
+}
+
+/// Move the selection one object along the spread's reading order.
+fn walk_selection(state: &mut TesseraApp, rect: Rect, back: bool) {
+    let Some(spread) = current_spread(state) else {
+        return;
+    };
+    let order = crate::object_order::reading_order(state.active().document(), spread);
+    // `single` is `None` when several objects are selected, which is the right
+    // answer: there is no one place in the walk to step on from, so Tab starts
+    // the walk over rather than picking one of them arbitrarily.
+    let from = state.active().selection.single();
+    let Some(next) = crate::object_order::step(&order, from, back) else {
+        return;
+    };
+
+    state.active_mut().selection.set(next);
+    // Only when it cannot already be seen. `reveal` centres what it is given,
+    // and centring on every press would swing the page about under somebody
+    // stepping between two objects that were both in view the whole time.
+    if !wholly_visible(state, rect, next) {
+        state.reveal = Some(next);
+    }
+}
+
+/// Whether every corner of an object's box is inside the canvas.
+fn wholly_visible(state: &TesseraApp, rect: Rect, id: FrameId) -> bool {
+    let Some(bounds) = state.active().document().visual_bounds(id) else {
+        return false;
+    };
+    let top_left = to_screen_pos(
+        state,
+        rect,
+        tessera_geometry::DocPoint {
+            x: bounds.x,
+            y: bounds.y,
+        },
+    );
+    let bottom_right = to_screen_pos(
+        state,
+        rect,
+        tessera_geometry::DocPoint {
+            x: bounds.x + bounds.width,
+            y: bounds.y + bounds.height,
+        },
+    );
+    rect.contains(top_left) && rect.contains(bottom_right)
 }
 
 fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
@@ -615,7 +777,7 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
 
     // Remappable actions are dispatched once by the application. Backspace
     // remains a conventional alias for deleting a selected object.
-    if keys_are_ours(ui)
+    if keys_are_ours(ui.ctx())
         && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace))
         && !state.active().selection.is_empty()
     {
@@ -624,6 +786,11 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
     if guide_gesture(ui, response, rect, state) {
         return;
     }
+
+    // Selecting an object without a pointer. Placed after the guide gesture so
+    // that Escape cancels a guide being dragged before it clears a selection —
+    // the gesture in progress is the one being talked to.
+    walk_input(ui, response, rect, state);
 
     camera_input(ui, response, rect, state, true);
 
@@ -749,7 +916,7 @@ fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
     }
 
     // Inspector fields own their keystrokes even while a story remains open.
-    if !keys_are_ours(ui) {
+    if !keys_are_ours(ui.ctx()) {
         return;
     }
 
@@ -1156,13 +1323,23 @@ fn snap_indicator(state: &TesseraApp, rect: Rect, painter: &egui::Painter) {
 }
 
 /// The area the spread being looked at covers, for the camera to fit.
-fn current_spread_bounds(state: &TesseraApp) -> Option<DocRect> {
+/// The spread being looked at.
+///
+/// Clamped, because `current_spread` is an index into a list that shrinks: a
+/// document whose last spread has just been deleted still holds the number of a
+/// spread that is no longer there.
+fn current_spread(state: &TesseraApp) -> Option<tessera_document::ids::SpreadId> {
     let open = state.active();
     let doc = open.document();
     let at = open
         .current_spread
         .min(doc.spread_order.len().saturating_sub(1));
-    let pages = doc.pages_of(*doc.spread_order.get(at)?);
+    doc.spread_order.get(at).copied()
+}
+
+fn current_spread_bounds(state: &TesseraApp) -> Option<DocRect> {
+    let doc = state.active().document();
+    let pages = doc.pages_of(current_spread(state)?);
 
     let first = doc.pages.get(*pages.first()?)?.bounds;
     let last = doc.pages.get(*pages.last()?)?.bounds;
@@ -2186,7 +2363,7 @@ fn pen_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tesse
         .or_else(|| response.interact_pointer_pos())
         .map(|pos| doc_pos(state, rect, pos));
 
-    let finish = keys_are_ours(ui)
+    let finish = keys_are_ours(ui.ctx())
         && ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape));
     if finish || response.double_clicked() {
         commit_pen(state);
@@ -2776,6 +2953,218 @@ fn draw_overlays(
 mod tests {
     use tessera_document::nodes::Axis;
     use tessera_document::paint::Paint;
+
+    /// Two boxes on the page, the lower one added first.
+    ///
+    /// Added out of reading order so that a walk which merely replayed the
+    /// order they were created in would fail these tests rather than pass them
+    /// by accident.
+    fn two_objects() -> (TesseraApp, FrameId, FrameId) {
+        let mut state = TesseraApp::headless();
+        let document = state.active_mut().document_mut();
+        let layer = document.default_layer().expect("a document has a layer");
+        let box_at = |y: f64| tessera_document::nodes::Frame {
+            bounds: tessera_geometry::DocRect {
+                x: 100.0,
+                y,
+                width: 40.0,
+                height: 40.0,
+            },
+            kind: tessera_document::nodes::FrameKind::Rectangle,
+            transform: tessera_geometry::Transform::IDENTITY,
+            fill: Paint::Solid(tessera_color::Color::BLACK),
+            stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
+            shadow: None,
+            anchor: None,
+            style: None,
+        };
+        let lower = document.add_frame(layer, box_at(400.0));
+        let upper = document.add_frame(layer, box_at(100.0));
+        (state, upper, lower)
+    }
+
+    /// One pass over a focused canvas, with `events` delivered to it.
+    ///
+    /// The canvas is allocated the same way `show` allocates it, so the widget
+    /// id is the one the real thing uses and the focus set by one pass is
+    /// found by the next.
+    fn canvas_pass(ctx: &egui::Context, state: &mut TesseraApp, events: Vec<egui::Event>) {
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |ui| {
+            let (allocated, response) = allocate_canvas(ui);
+            response.request_focus();
+            hold_tab(ui, &response);
+            walk_input(ui, &response, allocated, state);
+        });
+    }
+
+    fn tab(shift: bool) -> egui::Event {
+        egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: if shift {
+                egui::Modifiers::SHIFT
+            } else {
+                egui::Modifiers::NONE
+            },
+        }
+    }
+
+    #[test]
+    fn tab_selects_an_object_with_no_pointer_anywhere_near_it() {
+        // The sentence this whole thing exists for. Before it, every path into
+        // a selection began with a click, so a person who could not use a mouse
+        // could reach every control in the interface and nothing on the page to
+        // use them on.
+        let (mut state, upper, lower) = two_objects();
+        let ctx = egui::Context::default();
+
+        // The first pass lays the canvas out and takes focus; nothing is
+        // focusable before it exists.
+        canvas_pass(&ctx, &mut state, Vec::new());
+        assert!(
+            state.active().selection.is_empty(),
+            "laying the canvas out selected something on its own"
+        );
+
+        canvas_pass(&ctx, &mut state, vec![tab(false)]);
+        assert_eq!(
+            state.active().selection.single(),
+            Some(upper),
+            "Tab did not reach the first object in reading order"
+        );
+
+        canvas_pass(&ctx, &mut state, vec![tab(false)]);
+        assert_eq!(state.active().selection.single(), Some(lower));
+
+        // And back the way it came.
+        canvas_pass(&ctx, &mut state, vec![tab(true)]);
+        assert_eq!(
+            state.active().selection.single(),
+            Some(upper),
+            "Shift-Tab did not walk backwards"
+        );
+    }
+
+    #[test]
+    fn the_canvas_holding_focus_does_not_take_the_keyboard_from_the_shortcuts() {
+        // The regression that making the canvas focusable nearly shipped.
+        // `keys_are_ours` used to read "nothing is focused", and the
+        // application's accelerators are gated on it — so clicking the page
+        // would have switched off every shortcut in the application until
+        // Escape, with no test to say so. A text field holding focus must
+        // still take the keyboard; the canvas holding it must not.
+        let ctx = egui::Context::default();
+        let mut text = String::new();
+
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let (_, canvas) = allocate_canvas(ui);
+            canvas.request_focus();
+            ui.text_edit_singleline(&mut text);
+        });
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let (_, canvas) = allocate_canvas(ui);
+            assert!(canvas.has_focus(), "the canvas did not take focus");
+            assert!(
+                keys_are_ours(ui.ctx()),
+                "the canvas holding focus counted as a field holding it"
+            );
+            ui.text_edit_singleline(&mut text).request_focus();
+        });
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let _ = allocate_canvas(ui);
+            ui.text_edit_singleline(&mut text);
+            assert!(
+                !keys_are_ours(ui.ctx()),
+                "a text field holding focus did not take the keyboard"
+            );
+        });
+    }
+
+    #[test]
+    fn escape_lets_go_of_the_page() {
+        let (mut state, upper, _) = two_objects();
+        let ctx = egui::Context::default();
+        canvas_pass(&ctx, &mut state, Vec::new());
+        canvas_pass(&ctx, &mut state, vec![tab(false)]);
+        assert_eq!(state.active().selection.single(), Some(upper));
+
+        canvas_pass(
+            &ctx,
+            &mut state,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert!(
+            state.active().selection.is_empty(),
+            "Escape left the selection where it was"
+        );
+    }
+
+    #[test]
+    fn the_canvas_tells_a_screen_reader_what_is_selected() {
+        // The canvas contributed nothing to the accessibility tree at all: a
+        // response from `allocate_exact_size` carries no `WidgetInfo`, so the
+        // page was not unnamed but absent. This reads the real tree rather than
+        // asserting that the source says what it says.
+        let (mut state, upper, _) = two_objects();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+
+        canvas_pass(&ctx, &mut state, Vec::new());
+        canvas_pass(&ctx, &mut state, vec![tab(false)]);
+
+        let input = egui::RawInput::default();
+        let output = ctx.run_ui(input, |ui| {
+            let (_, response) = allocate_canvas(ui);
+            response.request_focus();
+            hold_tab(ui, &response);
+            let open = state.active();
+            let document = open.document();
+            let selected = open.selection.as_slice();
+            response.widget_info(|| {
+                let order = current_spread(&state)
+                    .map(|spread| crate::object_order::reading_order(document, spread))
+                    .unwrap_or_default();
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Panel,
+                    ui.is_enabled(),
+                    crate::object_order::announce(document, &order, selected),
+                )
+            });
+        });
+
+        let update = output
+            .platform_output
+            .accesskit_update
+            .expect("accessibility was enabled, so there is a tree");
+        let spoken: Vec<String> = update
+            .nodes
+            .iter()
+            .filter_map(|(_, node)| node.label().map(ToString::to_string))
+            .collect();
+
+        assert!(
+            spoken
+                .iter()
+                .any(|label| label == "Page canvas, 2 objects. Rectangle, 1 of 2."),
+            "the canvas said {spoken:?}"
+        );
+        let _ = upper;
+    }
 
     #[test]
     fn a_pointer_on_a_guide_grabs_it() {

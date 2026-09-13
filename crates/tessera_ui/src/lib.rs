@@ -17,6 +17,7 @@ pub mod find;
 pub mod icons;
 pub mod ime;
 pub mod keys;
+pub mod object_order;
 pub mod open_document;
 pub mod package;
 pub mod pen;
