@@ -37,6 +37,24 @@ pub enum Alignment {
 
 /// Character formatting, every field optional.
 ///
+/// Which figures a font sets: the capitals' height or the lowercase's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FigureCase {
+    /// `lnum`: all the height of a capital.
+    Lining,
+    /// `onum`: with ascenders and descenders, like lowercase.
+    OldStyle,
+}
+
+/// Whether figures share one width, so columns of them line up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FigureWidth {
+    /// `pnum`: each figure its own width, for running text.
+    Proportional,
+    /// `tnum`: every figure the same width, for tables.
+    Tabular,
+}
+
 /// A line drawn through or under a run of text.
 ///
 /// Weight and offset default to what the font says — every font carries an
@@ -105,9 +123,61 @@ pub struct CharacterFormat {
     pub underline: Option<Decoration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub strikethrough: Option<Decoration>,
+    /// OpenType features, each cascading on its own so a style can ask for
+    /// old-style figures and a run beneath it turn ligatures off. `None` is
+    /// the font's default — which for the common ligatures is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ligatures: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discretionary_ligatures: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub figure_case: Option<FigureCase>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub figure_width: Option<FigureWidth>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fractions: Option<bool>,
+    /// Stylistic sets by number, 1 to 20: `ss01` to `ss20`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stylistic_sets: Option<Vec<u8>>,
 }
 
 impl CharacterFormat {
+    /// The OpenType feature tags this format asks for, with their values,
+    /// in the form parley takes. Small caps is here too: it is a feature
+    /// like the others, whatever else the shaper does about it.
+    pub fn features(&self) -> Vec<([u8; 4], u16)> {
+        let mut out = Vec::new();
+        if self.case == Some(Case::SmallCaps) {
+            out.push((*b"smcp", 1));
+        }
+        if let Some(on) = self.ligatures {
+            out.push((*b"liga", u16::from(on)));
+            out.push((*b"clig", u16::from(on)));
+        }
+        if let Some(on) = self.discretionary_ligatures {
+            out.push((*b"dlig", u16::from(on)));
+        }
+        match self.figure_case {
+            Some(FigureCase::Lining) => out.push((*b"lnum", 1)),
+            Some(FigureCase::OldStyle) => out.push((*b"onum", 1)),
+            None => {}
+        }
+        match self.figure_width {
+            Some(FigureWidth::Proportional) => out.push((*b"pnum", 1)),
+            Some(FigureWidth::Tabular) => out.push((*b"tnum", 1)),
+            None => {}
+        }
+        if let Some(on) = self.fractions {
+            out.push((*b"frac", u16::from(on)));
+        }
+        for set in self.stylistic_sets.iter().flatten() {
+            if (1..=20).contains(set) {
+                out.push(([b's', b's', b'0' + set / 10, b'0' + set % 10], 1));
+            }
+        }
+        out
+    }
+
     /// This format applied over `base`: what `self` states wins, what it
     /// leaves `None` is inherited.
     ///
@@ -129,6 +199,17 @@ impl CharacterFormat {
                 .strikethrough
                 .clone()
                 .or_else(|| base.strikethrough.clone()),
+            ligatures: self.ligatures.or(base.ligatures),
+            discretionary_ligatures: self
+                .discretionary_ligatures
+                .or(base.discretionary_ligatures),
+            figure_case: self.figure_case.or(base.figure_case),
+            figure_width: self.figure_width.or(base.figure_width),
+            fractions: self.fractions.or(base.fractions),
+            stylistic_sets: self
+                .stylistic_sets
+                .clone()
+                .or_else(|| base.stylistic_sets.clone()),
         }
     }
 
@@ -2907,5 +2988,33 @@ mod run_tests {
         assert_eq!(list.marker(3), Some("3)".to_string()));
         list.kind = ListKind::None;
         assert_eq!(list.marker(3), None);
+    }
+
+    #[test]
+    fn features_are_the_tags_the_format_asks_for() {
+        let format = CharacterFormat {
+            ligatures: Some(false),
+            discretionary_ligatures: Some(true),
+            figure_case: Some(FigureCase::OldStyle),
+            figure_width: Some(FigureWidth::Tabular),
+            fractions: Some(true),
+            stylistic_sets: Some(vec![1, 12, 0, 21]),
+            ..CharacterFormat::default()
+        };
+        assert_eq!(
+            format.features(),
+            vec![
+                (*b"liga", 0),
+                (*b"clig", 0),
+                (*b"dlig", 1),
+                (*b"onum", 1),
+                (*b"tnum", 1),
+                (*b"frac", 1),
+                (*b"ss01", 1),
+                (*b"ss12", 1),
+            ],
+            "0 and 21 are not sets a font can have"
+        );
+        assert!(CharacterFormat::default().features().is_empty());
     }
 }

@@ -102,6 +102,11 @@ that cannot be honoured, because it would leave a column empty, is let go.
 where the font says they go, in the text's colour; a character style can set
 the weight, the offset and a colour of its own.
 
+**Features.** Below Case: common and discretionary ligatures on or off,
+lining or old-style figures, proportional or tabular, fractions, and
+stylistic sets by number. A font that lacks a feature ignores it — nothing
+here can make text disappear, only fail to change it.
+
 **Lists.** *List* in the Paragraph section makes a paragraph a bulleted or
 numbered item. The marker is generated, not typed — you cannot put a caret
 in it, and moving an item renumbers the list — and a tab follows it, so the

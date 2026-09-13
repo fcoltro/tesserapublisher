@@ -397,6 +397,11 @@ fn body_copy_formatting_survives_a_save_and_load() {
                 on: false,
                 ..Default::default()
             }),
+            ligatures: Some(false),
+            figure_case: Some(tessera_text::story::FigureCase::OldStyle),
+            figure_width: Some(tessera_text::story::FigureWidth::Tabular),
+            fractions: Some(true),
+            stylistic_sets: Some(vec![2, 5]),
             ..Default::default()
         },
     );
@@ -417,6 +422,18 @@ fn body_copy_formatting_survives_a_save_and_load() {
         run.local.strikethrough.as_ref().map(|d| d.on),
         Some(false),
         "off is stated, not absent"
+    );
+    assert_eq!(
+        run.local.features(),
+        vec![
+            (*b"liga", 0),
+            (*b"clig", 0),
+            (*b"onum", 1),
+            (*b"tnum", 1),
+            (*b"frac", 1),
+            (*b"ss02", 1),
+            (*b"ss05", 1),
+        ]
     );
     assert_eq!(
         loaded_story.paragraphs[0].local.tab_stops.as_deref(),

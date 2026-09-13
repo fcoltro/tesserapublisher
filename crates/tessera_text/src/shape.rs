@@ -1841,9 +1841,24 @@ impl Shaper {
                     // fonts that have not — 191 of 191 on the machine this was
                     // written on — so this is the better answer where it exists
                     // and harmless where it does not.
-                    if format.case == Some(crate::story::Case::SmallCaps) {
+                    //
+                    // The other features ride in the same list: ligatures on
+                    // or off, figure style, fractions, stylistic sets. Pushed
+                    // as a list of tags rather than parsed from a string, so a
+                    // feature that does not reach the font is a bug here and
+                    // not a quiet parse failure.
+                    let features: Vec<parley::FontFeature> = format
+                        .features()
+                        .into_iter()
+                        .map(|(tag, value)| {
+                            parley::FontFeature::new(parley::setting::Tag::new(&tag), value)
+                        })
+                        .collect();
+                    if !features.is_empty() {
                         builder.push(
-                            parley::StyleProperty::FontFeatures(parley::FontFeatures::from("smcp")),
+                            parley::StyleProperty::FontFeatures(parley::FontFeatures::List(
+                                std::borrow::Cow::Owned(features),
+                            )),
                             local.clone(),
                         );
                     }
@@ -3142,6 +3157,44 @@ mod tests {
             second < 1.0,
             "and the one nobody aligned should still start at the left, not at {second}"
         );
+    }
+
+    // --- OpenType features ---------------------------------------------------
+
+    #[test]
+    fn turning_ligatures_off_never_yields_fewer_glyphs() {
+        // Whether the default face has an fi ligature is the font's business;
+        // what is certain is that asking for none cannot produce fewer glyphs
+        // than leaving them on, and that a font with one produces more.
+        let mut story = Story::new("fifty flags");
+        let with = Shaper::new().shape(&story, &NoStyles::default(), 400.0);
+        story.apply_character_format(
+            0..11,
+            &crate::story::CharacterFormat {
+                ligatures: Some(false),
+                ..crate::story::CharacterFormat::default()
+            },
+        );
+        let without = Shaper::new().shape(&story, &NoStyles::default(), 400.0);
+        assert!(without.glyph_count() >= with.glyph_count());
+        assert_eq!(without.lines.len(), with.lines.len());
+    }
+
+    #[test]
+    fn a_feature_boundary_splits_the_run() {
+        // Old-style figures on one word only: parley has to be told at the
+        // boundary, which shows as two runs where there was one.
+        let plain = Shaper::new().shape(&Story::new("ab cd"), &NoStyles::default(), 400.0);
+        let mut story = Story::new("ab cd");
+        story.apply_character_format(
+            3..5,
+            &crate::story::CharacterFormat {
+                figure_case: Some(crate::story::FigureCase::OldStyle),
+                ..crate::story::CharacterFormat::default()
+            },
+        );
+        let split = Shaper::new().shape(&story, &NoStyles::default(), 400.0);
+        assert!(split.runs().count() > plain.runs().count());
     }
 
     // --- underline and strikethrough -----------------------------------------

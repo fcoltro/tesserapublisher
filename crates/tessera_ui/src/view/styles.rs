@@ -14,8 +14,8 @@ use egui::Ui;
 use tessera_color::Color;
 
 use tessera_text::story::{
-    Alignment, Case, CharacterFormat, CharacterStyle, CharacterStyleId, Decoration,
-    ParagraphFormat, ParagraphStyle, ParagraphStyleId,
+    Alignment, Case, CharacterFormat, CharacterStyle, CharacterStyleId, Decoration, FigureCase,
+    FigureWidth, ParagraphFormat, ParagraphStyle, ParagraphStyleId,
 };
 
 use crate::app::{StyleKind, TesseraApp};
@@ -869,6 +869,57 @@ fn character_format_fields(ui: &mut Ui, state: &mut TesseraApp, format: &mut Cha
         };
         decoration_editor(ui, label, slot);
     }
+
+    optional_flag(ui, "Ligatures", &mut format.ligatures);
+    optional_flag(
+        ui,
+        "Discretionary ligatures",
+        &mut format.discretionary_ligatures,
+    );
+    optional_choice(
+        ui,
+        "Figures",
+        &mut format.figure_case,
+        FigureCase::Lining,
+        &[
+            ("Lining", FigureCase::Lining),
+            ("Old-style", FigureCase::OldStyle),
+        ],
+    );
+    optional_choice(
+        ui,
+        "Figure width",
+        &mut format.figure_width,
+        FigureWidth::Proportional,
+        &[
+            ("Proportional", FigureWidth::Proportional),
+            ("Tabular", FigureWidth::Tabular),
+        ],
+    );
+    optional_flag(ui, "Fractions", &mut format.fractions);
+    ui.horizontal(|ui| {
+        let mut stated = format.stylistic_sets.is_some();
+        if ui
+            .checkbox(&mut stated, "")
+            .on_hover_text(INHERIT_HINT)
+            .changed()
+        {
+            format.stylistic_sets = stated.then(Vec::new);
+        }
+        ui.colored_label(Theme::text_muted(), "Stylistic sets");
+        if let Some(sets) = &mut format.stylistic_sets {
+            let mut text = sets.iter().map(u8::to_string).collect::<Vec<_>>().join(" ");
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut text)
+                    .desired_width(60.0)
+                    .hint_text("1 3 7"),
+            );
+            crate::icons::named(response.clone(), "Stylistic sets, by number");
+            if response.lost_focus() {
+                *sets = super::panels::parse_sets(&text);
+            }
+        }
+    });
 
     optional_choice(
         ui,

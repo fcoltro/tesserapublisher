@@ -2064,11 +2064,24 @@ and not a list of controls.
     above, a twentieth thick). A stated weight or offset wins.
   - The colour is the run's unless the decoration has its own — a red word's
     underline is red, which is what "text colour" has to mean.
-- [ ] **OpenType features**: ligatures on and off, old-style and tabular
+- [x] **OpenType features**: ligatures on and off, old-style and tabular
   figures, fractions, and a way to reach a font's stylistic sets. Small caps
   already ask the font for `smcp` and synthesise where it has none, which is
-  the pattern; nothing else does. parley takes feature settings and the model
-  has nowhere to say them.
+  the pattern; nothing else did. **By test; the hand check is owed** — and
+  this one especially, because a test cannot see whether a font *has* the
+  feature it was asked for.
+  - **Six fields on `CharacterFormat`, cascading on their own**, so a style
+    can set old-style figures and a run beneath it turn ligatures off:
+    `ligatures` (liga and clig), `discretionary_ligatures` (dlig),
+    `figure_case` (lnum / onum), `figure_width` (pnum / tnum), `fractions`
+    (frac), `stylistic_sets` (ss01–ss20). `CharacterFormat::features` turns
+    them into tags, small caps included.
+  - **Handed to parley as a list of tags, not a string.** The `smcp` push
+    was a source string parsed at layout; a tag that did not parse would
+    have vanished quietly. A list cannot fail to parse.
+  - A feature the font lacks is ignored by the shaper, so no control here
+    can make text disappear — only fail to change it, which is what the
+    hand check is for.
 - [ ] **Kerning control and H&J parameters** — still owed from milestone 2,
   and recorded there. Listed here so the debt has one home.
 

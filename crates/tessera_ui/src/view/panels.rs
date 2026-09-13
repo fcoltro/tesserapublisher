@@ -1393,6 +1393,39 @@ pub(crate) fn paragraph_rule_editor(
     changed
 }
 
+/// Stylistic set numbers out of whatever somebody typed: "1 3, 7" is sets
+/// one, three and seven. Out-of-range numbers are dropped, because a set
+/// that no font can have is not one to keep.
+pub(crate) fn parse_sets(text: &str) -> Vec<u8> {
+    let mut sets: Vec<u8> = text
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|s| s.parse::<u8>().ok())
+        .filter(|n| (1..=20).contains(n))
+        .collect();
+    sets.sort_unstable();
+    sets.dedup();
+    sets
+}
+
+#[cfg(test)]
+mod set_tests {
+    #[test]
+    fn sets_are_read_out_of_whatever_was_typed() {
+        assert_eq!(super::parse_sets("1 3, 7"), vec![1, 3, 7]);
+        assert_eq!(
+            super::parse_sets("7 3 3 1"),
+            vec![1, 3, 7],
+            "sorted, once each"
+        );
+        assert_eq!(
+            super::parse_sets("0 21 ss04"),
+            vec![4],
+            "out of range dropped"
+        );
+        assert!(super::parse_sets("").is_empty());
+    }
+}
+
 /// A paragraph as a list item: none, a bullet or a number, and the shape of
 /// the marker. Returns `(changed, hang)`: whether the list changed, and
 /// whether a hanging indent was asked for — which is the caller's to write,
@@ -2913,6 +2946,124 @@ fn text_section(
                 ..CharacterFormat::default()
             },
         );
+    }
+
+    // OpenType features. Each row states `Some(..)` either way, for the
+    // reason italic does: `None` would inherit, and off has to mean off.
+    // What a font lacks it ignores, so a control here can never make text
+    // disappear — it can only fail to change it.
+    group_label(ui, "Features");
+    let mut feature_change: Option<CharacterFormat> = None;
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::text_muted(), "Ligatures");
+        let common = shown.ligatures != Some(false);
+        if ui
+            .selectable_label(common, "Common")
+            .on_hover_text("fi, fl and the others the font sets by default")
+            .clicked()
+        {
+            feature_change = Some(CharacterFormat {
+                ligatures: Some(!common),
+                ..CharacterFormat::default()
+            });
+        }
+        let discretionary = shown.discretionary_ligatures == Some(true);
+        if ui
+            .selectable_label(discretionary, "Discretionary")
+            .on_hover_text("The decorative ones: st, ct, Th")
+            .clicked()
+        {
+            feature_change = Some(CharacterFormat {
+                discretionary_ligatures: Some(!discretionary),
+                ..CharacterFormat::default()
+            });
+        }
+    });
+    ui.horizontal(|ui| {
+        use tessera_text::story::{FigureCase, FigureWidth};
+        ui.colored_label(Theme::text_muted(), "Figures");
+        for (label, case, hint) in [
+            ("Lining", FigureCase::Lining, "As tall as capitals"),
+            (
+                "Old-style",
+                FigureCase::OldStyle,
+                "With ascenders and descenders",
+            ),
+        ] {
+            if ui
+                .selectable_label(shown.figure_case == Some(case), label)
+                .on_hover_text(hint)
+                .clicked()
+            {
+                feature_change = Some(CharacterFormat {
+                    figure_case: Some(case),
+                    ..CharacterFormat::default()
+                });
+            }
+        }
+        ui.separator();
+        for (label, width, hint) in [
+            (
+                "Proportional",
+                FigureWidth::Proportional,
+                "Each its own width",
+            ),
+            (
+                "Tabular",
+                FigureWidth::Tabular,
+                "All one width, for columns",
+            ),
+        ] {
+            if ui
+                .selectable_label(shown.figure_width == Some(width), label)
+                .on_hover_text(hint)
+                .clicked()
+            {
+                feature_change = Some(CharacterFormat {
+                    figure_width: Some(width),
+                    ..CharacterFormat::default()
+                });
+            }
+        }
+    });
+    ui.horizontal(|ui| {
+        let fractions = shown.fractions == Some(true);
+        if ui
+            .selectable_label(fractions, "Fractions")
+            .on_hover_text("1/2 set as a fraction, where the font can")
+            .clicked()
+        {
+            feature_change = Some(CharacterFormat {
+                fractions: Some(!fractions),
+                ..CharacterFormat::default()
+            });
+        }
+        ui.colored_label(Theme::text_muted(), "Sets");
+        let mut sets = shown
+            .stylistic_sets
+            .as_ref()
+            .map(|s| s.iter().map(u8::to_string).collect::<Vec<_>>().join(" "))
+            .unwrap_or_default();
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut sets)
+                .desired_width(60.0)
+                .hint_text("1 3 7"),
+        );
+        crate::icons::named(response.clone(), "Stylistic sets, by number");
+        // Written when the field is left, not on every keystroke: half a
+        // number is not a set.
+        if response.lost_focus() {
+            let parsed = parse_sets(&sets);
+            if Some(&parsed) != shown.stylistic_sets.as_ref() {
+                feature_change = Some(CharacterFormat {
+                    stylistic_sets: Some(parsed),
+                    ..CharacterFormat::default()
+                });
+            }
+        }
+    });
+    if let Some(format) = feature_change {
+        set_character(state, story, target.clone(), format);
     }
 
     // Baseline shift: a superscript sits above the line it belongs to without
