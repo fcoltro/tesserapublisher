@@ -337,7 +337,7 @@ fn a_version_1_document_still_opens() {
 }
 
 #[test]
-fn tab_stops_and_rules_survive_a_save_and_load() {
+fn tab_stops_rules_and_keeps_survive_a_save_and_load() {
     use tessera_text::story::{ParagraphFormat, Story, TabAlignment, TabStop};
 
     // Every field of a stop, including the one that is an `Option<char>` —
@@ -362,11 +362,16 @@ fn tab_stops_and_rules_survive_a_save_and_load() {
         indent_left: 1.0,
         indent_right: 2.0,
     };
+    let keep = tessera_text::story::KeepOptions {
+        with_next: true,
+        together: tessera_text::story::KeepTogether::Ends { start: 2, end: 3 },
+    };
     story.apply_paragraph_format(
         0..1,
         &ParagraphFormat {
             tab_stops: Some(stops.clone()),
             rule_above: Some(rule.clone()),
+            keep: Some(keep),
             ..ParagraphFormat::default()
         },
     );
@@ -383,6 +388,7 @@ fn tab_stops_and_rules_survive_a_save_and_load() {
     );
     assert_eq!(loaded_story.paragraphs[0].local.rule_above, Some(rule));
     assert_eq!(loaded_story.paragraphs[0].local.rule_below, None);
+    assert_eq!(loaded_story.paragraphs[0].local.keep, Some(keep));
 }
 
 #[test]

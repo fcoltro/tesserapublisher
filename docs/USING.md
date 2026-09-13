@@ -92,6 +92,12 @@ its last, from the same Paragraph section: weight, distance from the baseline,
 column-wide or as wide as the text, and a colour or the text's own. It is a
 paragraph property, so a heading that moves takes its rule with it.
 
+**Keep.** In the same section: *With next* keeps a paragraph's last line in
+the column that holds the next paragraph's first — what a heading wants — and
+*Lines* keeps the paragraph's own lines together, all of them or a number at
+each end so no line is left alone at the bottom or top of a column. A keep
+that cannot be honoured, because it would leave a column empty, is let go.
+
 ## Colour
 
 The Swatches panel holds named colours. A **spot** colour is a pot of a specific

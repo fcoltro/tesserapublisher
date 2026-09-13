@@ -94,6 +94,10 @@ pub(crate) struct Placed {
     /// Whether this paragraph begins here or is carried on from an earlier
     /// frame of a thread. A rule above belongs to the beginning only.
     pub begins_here: bool,
+    /// Which paragraph this is, counting from the start of this shaping. A
+    /// drop cap and its body share a number: they are one paragraph.
+    pub paragraph: usize,
+    pub keep: crate::story::KeepOptions,
     /// The measure this paragraph was laid out into, from the column's left
     /// edge — which is where a column-wide rule starts.
     pub column_width: f64,
@@ -784,6 +788,49 @@ pub struct PlacedRule {
     pub colour: Option<tessera_color::Color>,
 }
 
+/// Where a line sits in its paragraph, and what that paragraph keeps.
+///
+/// Carried on every line so the flow — the one place a column break is
+/// decided — can ask whether a break before this line would part what the
+/// paragraph asked to keep together, without knowing what a paragraph is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LineKeep {
+    /// Which paragraph of this shaping the line belongs to. Only equality
+    /// matters: two lines with the same number are in the same paragraph.
+    pub paragraph: usize,
+    /// This line's position in the paragraph, and how many the paragraph has
+    /// — in this shaping, so a paragraph carried on from an earlier frame
+    /// counts only what is here.
+    pub line: usize,
+    pub lines: usize,
+    pub options: crate::story::KeepOptions,
+}
+
+impl LineKeep {
+    /// Whether a column may begin with `this`, given the line before it.
+    ///
+    /// Inside a paragraph the paragraph's own rule decides. At a boundary,
+    /// the previous paragraph decides: `with_next` is its claim on the line
+    /// that follows it.
+    pub fn may_break_before(previous: &LineKeep, this: &LineKeep) -> bool {
+        use crate::story::KeepTogether;
+        if previous.paragraph != this.paragraph {
+            return !previous.options.with_next;
+        }
+        match this.options.together {
+            KeepTogether::Off => true,
+            KeepTogether::All => false,
+            KeepTogether::Ends { start, end } => {
+                let (start, end) = (usize::from(start), usize::from(end));
+                let before = this.line;
+                let after = this.lines - this.line;
+                // A paragraph too short to have both is kept whole.
+                this.lines >= start + end && before >= start && after >= end
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ShapedLine {
     pub runs: Vec<ShapedRun>,
@@ -816,6 +863,8 @@ pub struct ShapedLine {
     /// the objects are — a rule that did not move with its line would be
     /// left where the heading used to be.
     pub rules: Vec<PlacedRule>,
+    /// What this line's paragraph keeps together; see [`LineKeep`].
+    pub keep: LineKeep,
     /// Original paragraph layout, carried with the line for editing.
     pub hit: Option<crate::caret::LineLayout>,
 }
@@ -1019,6 +1068,7 @@ pub fn flow_on_grid(
         fonts: text.fonts,
     };
     let mut overset = 0usize;
+    let lines = text.lines;
 
     let mut column = 0usize;
     // What to add to a line's baseline to put it in the current column. Set
@@ -1031,71 +1081,93 @@ pub fn flow_on_grid(
     let mut lowest = None::<f64>;
     // Which box each placed line went into, so the slack can be shared out
     // afterwards.
-    let mut boxes: Vec<usize> = Vec::with_capacity(out.lines.capacity());
+    let mut boxes: Vec<usize> = Vec::with_capacity(lines.len());
+    // Which line of `lines` began the current column. A keep may move lines
+    // back out of a column, but never this one: a column holds at least one
+    // line, or nothing would ever be placed.
+    let mut column_first = 0usize;
 
-    for mut line in text.lines {
-        let (above, below) = extent(&line);
-
+    let mut i = 0usize;
+    while i < lines.len() {
         // Text flows in order, so once a line has nowhere to go neither has
         // anything after it.
         if column >= columns.len() {
-            overset += 1;
+            overset += lines.len() - i;
+            break;
+        }
+
+        let line = &lines[i];
+        let (above, below) = extent(line);
+        let box_ = columns[column];
+        let shift_by = match offset {
+            Some(offset) => offset,
+            // The column's first line sits with its ascent against the
+            // top, not its baseline — otherwise the first line of every
+            // column is clipped by exactly its own height.
+            None => box_.y + above - line.baseline,
+        };
+        let baseline = line.baseline + shift_by;
+        // Locked lines take the next slot at or below where they fell.
+        // Down rather than to the nearest, so text never rides up into
+        // the line above it.
+        let baseline = match grid {
+            Some(grid) => {
+                // At least one slot past the line above, and never above
+                // the top of the box.
+                let floor = lowest.map_or(box_.y + above, |b| b + grid.step.max(f64::EPSILON));
+                grid.at_or_below(baseline.max(floor))
+            }
+            None => baseline,
+        };
+        let shift_by = baseline - line.baseline;
+        let fits = baseline + below <= box_.y + box_.height;
+
+        // A line taller than the column fits nowhere; putting it in
+        // anyway is better than dropping every line of a story because
+        // one of them is oversized.
+        if fits || offset.is_none() {
+            // With a grid every line finds its own slot, so the column's
+            // running offset must not be carried: it is already in
+            // `baseline` by way of the line's own position.
+            offset = match grid {
+                Some(_) => offset.or(Some(shift_by)),
+                None => Some(shift_by),
+            };
+            let mut line = line.clone();
+            shift(&mut line, box_.x, shift_by);
+            lowest = Some(baseline);
+            out.lines.push(line);
+            boxes.push(column);
+            i += 1;
             continue;
         }
 
-        loop {
-            let box_ = columns[column];
-            let shift_by = match offset {
-                Some(offset) => offset,
-                // The column's first line sits with its ascent against the
-                // top, not its baseline — otherwise the first line of every
-                // column is clipped by exactly its own height.
-                None => box_.y + above - line.baseline,
-            };
-            let baseline = line.baseline + shift_by;
-            // Locked lines take the next slot at or below where they fell.
-            // Down rather than to the nearest, so text never rides up into
-            // the line above it.
-            let baseline = match grid {
-                Some(grid) => {
-                    // At least one slot past the line above, and never above
-                    // the top of the box.
-                    let floor = lowest.map_or(box_.y + above, |b| b + grid.step.max(f64::EPSILON));
-                    grid.at_or_below(baseline.max(floor))
-                }
-                None => baseline,
-            };
-            let shift_by = baseline - line.baseline;
-            let fits = baseline + below <= box_.y + box_.height;
+        // The column is full. The break goes before this line unless the
+        // paragraph asked otherwise, in which case it goes before the
+        // nearest earlier line it may go before — and the lines between
+        // come back out of the column to lead the next one. Never before
+        // the column's own first line: a keep that would empty a column is
+        // let go, because the alternative places nothing at all.
+        let break_at = (column_first + 1..=i)
+            .rev()
+            .find(|&b| LineKeep::may_break_before(&lines[b - 1].keep, &lines[b].keep))
+            .unwrap_or(i);
+        let keep_placed = out.lines.len() - (i - break_at);
+        out.lines.truncate(keep_placed);
+        boxes.truncate(keep_placed);
 
-            // A line taller than the column fits nowhere; putting it in
-            // anyway is better than dropping every line of a story because
-            // one of them is oversized.
-            if fits || offset.is_none() {
-                // With a grid every line finds its own slot, so the column's
-                // running offset must not be carried: it is already in
-                // `baseline` by way of the line's own position.
-                offset = match grid {
-                    Some(_) => offset.or(Some(shift_by)),
-                    None => Some(shift_by),
-                };
-                shift(&mut line, box_.x, shift_by);
-                out.height = out.height.max(baseline + below);
-                lowest = Some(baseline);
-                out.lines.push(line);
-                boxes.push(column);
-                break;
-            }
-
-            column += 1;
-            offset = None;
-            lowest = None;
-            if column >= columns.len() {
-                overset += 1;
-                break;
-            }
-        }
+        column += 1;
+        offset = None;
+        lowest = None;
+        column_first = break_at;
+        i = break_at;
     }
+
+    out.height = out
+        .lines
+        .iter()
+        .map(|l| l.baseline + extent(l).1)
+        .fold(0.0, f64::max);
 
     justify(&mut out, &boxes, columns, vertical);
 
@@ -1401,7 +1473,7 @@ impl Shaper {
         let mut placed = Vec::new();
         let mut y = 0.0;
 
-        for (start, text) in paragraphs_of(&story.text) {
+        for (paragraph_index, (start, text)) in paragraphs_of(&story.text).into_iter().enumerate() {
             let end = start + text.len();
             // Wholly behind the starting point: already set in an earlier
             // frame of the thread.
@@ -1777,6 +1849,8 @@ impl Shaper {
                     tabs: Vec::new(),
                     rules: (None, None),
                     begins_here: false,
+                    paragraph: paragraph_index,
+                    keep: format.keep.unwrap_or_default(),
                     column_width: width,
                     hyphenate: false,
                 });
@@ -1795,6 +1869,8 @@ impl Shaper {
                     format.rule_below.clone().filter(|r| r.on),
                 ),
                 begins_here,
+                paragraph: paragraph_index,
+                keep: format.keep.unwrap_or_default(),
                 column_width: width,
                 hyphenate,
             });
@@ -2109,6 +2185,12 @@ impl Shaper {
                 lines.push(ShapedLine {
                     runs,
                     rules,
+                    keep: LineKeep {
+                        paragraph: paragraph.paragraph,
+                        line: index,
+                        lines: line_count,
+                        options: paragraph.keep,
+                    },
                     baseline,
                     range: paragraph.to_stored(shaped.start)..paragraph.to_stored(shaped.end),
                     ascent: f64::from(metrics.ascent),
@@ -2902,6 +2984,164 @@ mod tests {
         assert!(
             second < 1.0,
             "and the one nobody aligned should still start at the left, not at {second}"
+        );
+    }
+
+    // --- keep options --------------------------------------------------------
+
+    /// `ruled(count)`, with every line told which paragraph it is in and what
+    /// that paragraph keeps. `paragraphs` is one entry per paragraph: how
+    /// many lines it has, and its keep options.
+    fn kept(paragraphs: &[(usize, crate::story::KeepOptions)]) -> ShapedText {
+        let count = paragraphs.iter().map(|(n, _)| n).sum();
+        let mut text = ruled(count);
+        let mut at = 0;
+        for (index, (lines, keep)) in paragraphs.iter().enumerate() {
+            for k in 0..*lines {
+                text.lines[at + k].keep = LineKeep {
+                    paragraph: index,
+                    line: k,
+                    lines: *lines,
+                    options: *keep,
+                };
+            }
+            at += lines;
+        }
+        text
+    }
+
+    /// Two columns: the first holds `first` twelve-point lines, the second
+    /// holds as many as it is given.
+    fn two_columns(first: usize) -> [Column; 2] {
+        [
+            Column {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 12.0 * first as f64 + 1.0,
+            },
+            Column {
+                x: 200.0,
+                y: 0.0,
+                width: 100.0,
+                height: 1000.0,
+            },
+        ]
+    }
+
+    /// Which column each line landed in, by its x.
+    fn columns_of(flowed: &Flowed) -> Vec<usize> {
+        flowed
+            .text
+            .lines
+            .iter()
+            .map(|l| usize::from(l.glyphs().next().expect("a glyph").x >= 200.0))
+            .collect()
+    }
+
+    #[test]
+    fn keep_together_moves_the_whole_paragraph_to_the_next_column() {
+        use crate::story::{KeepOptions, KeepTogether};
+        let all = KeepOptions {
+            together: KeepTogether::All,
+            ..KeepOptions::default()
+        };
+        let text = kept(&[(1, KeepOptions::default()), (2, all)]);
+        let flowed = flow(text, &two_columns(2));
+        assert_eq!(columns_of(&flowed), vec![0, 1, 1]);
+        assert_eq!(flowed.overset_lines, 0);
+    }
+
+    #[test]
+    fn keep_with_next_takes_a_heading_along_with_its_text() {
+        use crate::story::KeepOptions;
+        let heading = KeepOptions {
+            with_next: true,
+            ..KeepOptions::default()
+        };
+        let text = kept(&[
+            (1, KeepOptions::default()),
+            (1, heading),
+            (1, KeepOptions::default()),
+        ]);
+        let flowed = flow(text, &two_columns(2));
+        assert_eq!(
+            columns_of(&flowed),
+            vec![0, 1, 1],
+            "the heading goes with the paragraph it heads"
+        );
+    }
+
+    #[test]
+    fn widows_and_orphans_are_refused() {
+        use crate::story::{KeepOptions, KeepTogether};
+        let ends = KeepOptions {
+            together: KeepTogether::Ends { start: 2, end: 2 },
+            ..KeepOptions::default()
+        };
+        let flowed = flow(kept(&[(4, ends)]), &two_columns(3));
+        assert_eq!(
+            columns_of(&flowed),
+            vec![0, 0, 1, 1],
+            "one line alone at the top of the second column is a widow"
+        );
+    }
+
+    #[test]
+    fn a_keep_that_would_empty_the_column_is_let_go() {
+        use crate::story::{KeepOptions, KeepTogether};
+        let all = KeepOptions {
+            together: KeepTogether::All,
+            ..KeepOptions::default()
+        };
+        let flowed = flow(kept(&[(5, all)]), &two_columns(3));
+        assert_eq!(
+            columns_of(&flowed),
+            vec![0, 0, 0, 1, 1],
+            "a column has to hold something"
+        );
+    }
+
+    #[test]
+    fn lines_pushed_to_the_next_frame_are_not_consumed_here() {
+        use crate::story::{KeepOptions, KeepTogether};
+        let all = KeepOptions {
+            together: KeepTogether::All,
+            ..KeepOptions::default()
+        };
+        let text = kept(&[(1, KeepOptions::default()), (2, all)]);
+        let one_column = [two_columns(2)[0]];
+        let flowed = flow(text, &one_column);
+        assert_eq!(flowed.overset_lines, 2, "the kept paragraph went nowhere");
+        assert_eq!(
+            flowed.consumed_to,
+            Some(10),
+            "so the next frame begins at its first line"
+        );
+    }
+
+    #[test]
+    fn the_shaper_tells_each_line_what_its_paragraph_keeps() {
+        use crate::story::{KeepOptions, ParagraphFormat};
+        let mut story = Story::new("one\ntwo");
+        story.apply_paragraph_format(
+            5..6,
+            &ParagraphFormat {
+                keep: Some(KeepOptions {
+                    with_next: true,
+                    ..KeepOptions::default()
+                }),
+                ..ParagraphFormat::default()
+            },
+        );
+        let shaped = Shaper::new().shape(&story, &NoStyles::default(), 400.0);
+        assert_eq!(shaped.lines[0].keep.paragraph, 0);
+        assert_eq!(shaped.lines[1].keep.paragraph, 1);
+        assert!(!shaped.lines[0].keep.options.with_next);
+        assert!(shaped.lines[1].keep.options.with_next);
+        assert_eq!(
+            (shaped.lines[1].keep.line, shaped.lines[1].keep.lines),
+            (0, 1)
         );
     }
 
@@ -4186,6 +4426,7 @@ mod tests {
                     descent: 2.0,
                     objects: Vec::new(),
                     rules: Vec::new(),
+                    keep: LineKeep::default(),
                     hit: None,
                     runs: vec![ShapedRun {
                         font_index: 0,

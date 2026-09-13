@@ -2001,11 +2001,28 @@ and not a list of controls.
   - A text-width rule on a line with no ink is not drawn; an empty paragraph
     with a column rule still gets one, because a spacer with a rule is a
     thing people make on purpose.
-- [ ] **Keep options**: keep with next, keep lines together, and widow and
+- [x] **Keep options**: keep with next, keep lines together, and widow and
   orphan control, honoured by the threading in milestone 4. This is the one
   that changes where text breaks, so the composed-geometry contract from the
   2026-09-13 review — layout, caret, preflight and export all reading the
-  same lines — has to hold through it.
+  same lines — has to hold through it. **By test; the hand check is owed.**
+  - **Decided in the flow, and only there.** A column break is chosen in
+    `flow_on_grid`, so that is where a keep is honoured: when a line does not
+    fit, the break goes before the nearest earlier line it *may* go before,
+    and the lines between come back out of the column to lead the next one.
+    Every line carries a `LineKeep` — its paragraph, its place in it, and the
+    paragraph's options — so the flow can ask without knowing what a
+    paragraph is.
+  - **Threading got it for free.** The next frame of a thread begins at
+    `consumed_to`, which is the end of the last line the flow placed — so a
+    heading pushed out of one frame leads the next, and the caret, preflight
+    and export read the same lines because they already read the flow's.
+  - **A keep that would empty a column is let go.** Never before the
+    column's first line: the alternative places nothing, and a column that
+    holds nothing is worse than a widow.
+  - A paragraph too short to keep both `start` and `end` lines is kept
+    whole; the counts are in this shaping, so a paragraph carried on from an
+    earlier frame counts only what is here.
 - [ ] **Lists**: bullets and numbering as a paragraph property, with the
   numbering restarted by a style and continued across a thread. The number is
   generated, never typed, or moving an item leaves the old number behind.

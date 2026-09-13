@@ -1393,6 +1393,92 @@ pub(crate) fn paragraph_rule_editor(
     changed
 }
 
+/// What a column break may not part: the paragraph from the next one, or its
+/// own lines from each other. Returns whether anything changed.
+///
+/// `inheritable` offers "Inherit" — `None` — which only a style can mean.
+pub(crate) fn keep_options_editor(
+    ui: &mut Ui,
+    keep: &mut Option<tessera_text::story::KeepOptions>,
+    inheritable: bool,
+) -> bool {
+    use tessera_text::story::KeepTogether;
+
+    let mut changed = false;
+    let mut inherit = false;
+    group_label(ui, "Keep");
+    let stated = keep.is_some();
+    let k = keep.get_or_insert_with(Default::default);
+
+    ui.horizontal(|ui| {
+        let response = ui.selectable_label(k.with_next, "With next");
+        if crate::icons::named_toggle(
+            response.on_hover_text("Keep the last line with the next paragraph"),
+            "Keep with next paragraph",
+            egui::WidgetType::Checkbox,
+            k.with_next,
+        )
+        .clicked()
+        {
+            k.with_next = !k.with_next;
+            changed = true;
+        }
+        if inheritable && stated && ui.small_button("Inherit").clicked() {
+            inherit = true;
+        }
+    });
+
+    field(ui, "Lines", |ui| {
+        let all = matches!(k.together, KeepTogether::All);
+        let ends = matches!(k.together, KeepTogether::Ends { .. });
+        let choices = [
+            (KeepTogether::Off, "Off", !all && !ends),
+            (KeepTogether::All, "All", all),
+            (KeepTogether::Ends { start: 2, end: 2 }, "Ends", ends),
+        ];
+        for (choice, text, selected) in choices {
+            if ui.selectable_label(selected, text).clicked() && !selected {
+                k.together = choice;
+                changed = true;
+            }
+        }
+    });
+    if let KeepTogether::Ends { start, end } = &mut k.together {
+        let count = |ui: &mut Ui, value: &mut u8| {
+            let mut edited = f64::from(*value);
+            if ui
+                .add(
+                    egui::DragValue::new(&mut edited)
+                        .speed(0.1)
+                        .range(1.0..=10.0),
+                )
+                .changed()
+            {
+                *value = edited.round() as u8;
+                true
+            } else {
+                false
+            }
+        };
+        let (a, b) = pair(
+            ui,
+            ("Start", |ui: &mut Ui| count(ui, start)),
+            ("End", |ui: &mut Ui| count(ui, end)),
+        );
+        changed |= a || b;
+    }
+
+    if inherit {
+        *keep = None;
+        return true;
+    }
+    // Opened and untouched, a style still inherits.
+    if inheritable && !stated && !changed {
+        *keep = None;
+    }
+    changed
+}
+
 /// The tab stops of a paragraph or a style: one row per stop, and a way to
 /// add one. Returns whether anything changed.
 ///
@@ -2941,6 +3027,22 @@ fn text_section(
             }
             set_paragraph(state, story, target.clone(), format);
         }
+    }
+
+    // Keep options: one value, written whole.
+    let mut keep = paragraph.keep;
+    if keep_options_editor(ui, &mut keep, false) {
+        set_paragraph(
+            state,
+            story,
+            target.clone(),
+            ParagraphFormat {
+                // Stated, never `None`: everything switched off has to mean
+                // "keep nothing", whatever the style says.
+                keep: Some(keep.unwrap_or_default()),
+                ..ParagraphFormat::default()
+            },
+        );
     }
 
     /// Which field of a `ParagraphFormat` a row writes.

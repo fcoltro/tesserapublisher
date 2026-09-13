@@ -193,6 +193,37 @@ impl Default for ParagraphRule {
     }
 }
 
+/// Which of a paragraph's lines may not be parted by a column break.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum KeepTogether {
+    /// Any line may start a column.
+    #[default]
+    Off,
+    /// The whole paragraph moves as one.
+    All,
+    /// At least `start` lines stay at the end of a column and at least `end`
+    /// lines go to the top of the next — the orphan and the widow. A
+    /// paragraph too short to satisfy both is kept whole.
+    Ends { start: u8, end: u8 },
+}
+
+/// What a column break may not separate.
+///
+/// A paragraph property, because the thing being kept is a paragraph's
+/// shape: a heading with its text, a paragraph's first lines with its last.
+/// Applied by the flow, which is the one place a column break is decided,
+/// and yields when it cannot be satisfied — a column has to hold at least one
+/// line, and a constraint that would empty it is let go rather than obeyed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct KeepOptions {
+    /// The paragraph's last line stays in the column that holds the next
+    /// paragraph's first. What a heading asks for.
+    #[serde(default)]
+    pub with_next: bool,
+    #[serde(default)]
+    pub together: KeepTogether,
+}
+
 /// Paragraph formatting, every field optional, plus the character formatting
 /// a paragraph imposes before any run of its own speaks.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -233,6 +264,9 @@ pub struct ParagraphFormat {
     pub rule_above: Option<ParagraphRule>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule_below: Option<ParagraphRule>,
+    /// What a column break may not separate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep: Option<KeepOptions>,
     /// What every run in the paragraph inherits before its own style speaks.
     #[serde(default)]
     pub character: CharacterFormat,
@@ -261,6 +295,7 @@ impl ParagraphFormat {
             tab_stops: self.tab_stops.clone().or_else(|| base.tab_stops.clone()),
             rule_above: self.rule_above.clone().or_else(|| base.rule_above.clone()),
             rule_below: self.rule_below.clone().or_else(|| base.rule_below.clone()),
+            keep: self.keep.or(base.keep),
             character: self.character.over(&base.character),
         }
     }
