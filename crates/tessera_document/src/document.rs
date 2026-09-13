@@ -884,19 +884,7 @@ impl Document {
         let (from, to) = (self.pages.get(id)?.bounds, self.pages.get(page)?.bounds);
         let (dx, dy) = (to.x - from.x, to.y - from.y);
 
-        for frame in standing_on_it {
-            let layer = self.layer_of_frame(frame);
-            let Some(copy) = self.copy_frame_deeply(frame) else {
-                continue;
-            };
-            self.translate_deeply(copy, dx, dy);
-            // Onto the same layer as its original, directly above it. A copy
-            // that landed on the active layer instead would jump layers,
-            // which is not what duplicating a page means.
-            if let Some(layer) = layer.and_then(|l| self.layers.get_mut(l)) {
-                layer.frames.push(copy);
-            }
-        }
+        self.copy_page_frames(&standing_on_it, dx, dy);
 
         self.revision += 1;
         Some(page)
@@ -906,8 +894,12 @@ impl Document {
     fn translate_deeply(&mut self, id: FrameId, dx: f64, dy: f64) {
         let children = match self.frames.get_mut(id) {
             Some(frame) => {
-                frame.bounds.x += dx;
-                frame.bounds.y += dy;
+                if frame.transform.is_identity() {
+                    frame.bounds.x += dx;
+                    frame.bounds.y += dy;
+                } else {
+                    frame.transform = frame.transform.then(Transform::translate(dx, dy));
+                }
                 match &frame.kind {
                     FrameKind::Group(children) => children.clone(),
                     _ => Vec::new(),
@@ -918,41 +910,6 @@ impl Document {
         for child in children {
             self.translate_deeply(child, dx, dy);
         }
-    }
-
-    /// One frame and its children, with their own stories.
-    fn copy_frame_deeply(&mut self, id: FrameId) -> Option<FrameId> {
-        let mut frame = self.frames.get(id)?.clone();
-
-        match &mut frame.kind {
-            FrameKind::Text { story, .. } => {
-                // Its own copy of the words, so the two pages can diverge.
-                if let Some(text) = self.stories.get(*story).cloned() {
-                    *story = self.stories.insert(text);
-                }
-            }
-            FrameKind::Group(children) => {
-                let originals = children.clone();
-                children.clear();
-                for child in originals {
-                    if let Some(copy) = self.copy_frame_deeply(child) {
-                        children.push(copy);
-                    }
-                }
-            }
-            FrameKind::Table(table) => {
-                for slot in &mut table.cells {
-                    if let Some(cell) = slot.cell_mut()
-                        && let Some(story) = self.stories.get(cell.story).cloned()
-                    {
-                        cell.story = self.stories.insert(story);
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        Some(self.frames.insert(frame))
     }
 
     // --- placed artwork ---------------------------------------------------
@@ -1456,9 +1413,7 @@ impl Document {
         ) else {
             return false;
         };
-        let (FrameKind::Text { story, layout }, FrameKind::Text { layout: theirs, .. }) =
-            (source, target)
-        else {
+        let (FrameKind::Text { story, layout }, FrameKind::Text { .. }) = (source, target) else {
             return false;
         };
         // Following `to` forward must not arrive back at `from`.
@@ -1475,16 +1430,21 @@ impl Document {
                 },
             };
         }
-        if let Some(frame) = self.frames.get_mut(to) {
-            frame.kind = FrameKind::Text {
-                // The same story. A thread is one story shown across several
-                // frames, not several stories shown in a row.
-                story,
-                layout: TextLayout {
-                    next: theirs.next,
-                    ..theirs
-                },
+        let mut next = Some(to);
+        let mut seen = std::collections::HashSet::new();
+        while let Some(id) = next {
+            if !seen.insert(id) {
+                break;
+            }
+            let Some(FrameKind::Text {
+                story: target_story,
+                layout,
+            }) = self.frames.get_mut(id).map(|f| &mut f.kind)
+            else {
+                break;
             };
+            *target_story = story;
+            next = layout.next;
         }
         self.revision += 1;
         true
@@ -1672,16 +1632,7 @@ impl Document {
             .into_iter()
             .find(|(f, _, _)| *f == item)?;
 
-        let copy = self.copy_frame_deeply(item)?;
-        self.translate_deeply(copy, dx, dy);
-
-        let layer = self
-            .layer_of_frame(item)
-            .filter(|l| self.layers.contains_key(*l))
-            .or_else(|| self.default_layer())?;
-        if let Some(layer) = self.layers.get_mut(layer) {
-            layer.frames.push(copy);
-        }
+        let copy = self.copy_page_frames(&[item], dx, dy).first().copied()?;
         self.overrides.insert(copy, item);
         self.revision += 1;
         Some(copy)
@@ -1845,8 +1796,38 @@ impl Document {
 
     /// Remove a frame, and everything inside it if it is a group.
     pub fn remove_frame(&mut self, id: FrameId) {
-        for victim in self.descendants(id) {
+        let victims: std::collections::HashSet<_> = self.descendants(id).into_iter().collect();
+        // Repair every surviving inlet before removing any link in the chain.
+        let successors: Vec<_> = self
+            .frames
+            .iter()
+            .filter_map(|(frame, node)| {
+                if victims.contains(&frame) {
+                    return None;
+                }
+                let FrameKind::Text { layout, .. } = &node.kind else {
+                    return None;
+                };
+                let mut next = layout.next;
+                let mut seen = std::collections::HashSet::new();
+                while let Some(id) = next.filter(|id| victims.contains(id)) {
+                    if !seen.insert(id) {
+                        next = None;
+                        break;
+                    }
+                    next = self.next_in_thread(id);
+                }
+                (next != layout.next).then_some((frame, next))
+            })
+            .collect();
+        for (frame, next) in successors {
+            if let FrameKind::Text { layout, .. } = &mut self.frames[frame].kind {
+                layout.next = next;
+            }
+        }
+        for victim in victims {
             self.frames.remove(victim);
+            self.overrides.remove(victim);
             for layer in self.layers.values_mut() {
                 layer.frames.retain(|f| *f != victim);
             }
@@ -1983,14 +1964,32 @@ impl Document {
     /// but it does silently drop formatting, which is worse than corruption
     /// because nothing reports it.
     pub fn remove_character_style(&mut self, id: CharacterStyleId) -> Option<CharacterStyle> {
+        let removed = self.character_styles.remove(id)?;
+        for style in self
+            .character_styles
+            .values_mut()
+            .filter(|s| s.based_on == Some(id))
+        {
+            style.format = style.format.over(&removed.format);
+            style.based_on = removed.based_on;
+        }
         self.revision += 1;
-        self.character_styles.remove(id)
+        Some(removed)
     }
 
     /// Remove a named paragraph style, under the same caveat.
     pub fn remove_paragraph_style(&mut self, id: ParagraphStyleId) -> Option<ParagraphStyle> {
+        let removed = self.paragraph_styles.remove(id)?;
+        for style in self
+            .paragraph_styles
+            .values_mut()
+            .filter(|s| s.based_on == Some(id))
+        {
+            style.format = style.format.over(&removed.format);
+            style.based_on = removed.based_on;
+        }
         self.revision += 1;
-        self.paragraph_styles.remove(id)
+        Some(removed)
     }
 
     /// Bumps the revision, because changing a style changes every run using it.

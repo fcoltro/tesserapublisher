@@ -269,6 +269,13 @@ fn resolve_pages<'a>(
             continue;
         };
         for (item, dx, dy) in doc.inherited_by(page) {
+            if !doc
+                .layer_of_frame(item)
+                .and_then(|id| doc.layers.get(id))
+                .is_some_and(|layer| layer.visible)
+            {
+                continue;
+            }
             for leaf in doc.descendants(item) {
                 let Some(frame) = doc.frame(leaf) else {
                     continue;
@@ -276,7 +283,7 @@ fn resolve_pages<'a>(
                 let Some(mut resolved) = resolve_one(doc, shaper, leaf, frame, composed) else {
                     continue;
                 };
-                resolved.transform = Transform::translate(dx, dy).then(resolved.transform);
+                resolved.transform = resolved.transform.then(Transform::translate(dx, dy));
                 resolved.spread_area = Some(area);
                 items.push(resolved);
             }

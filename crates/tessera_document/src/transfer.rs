@@ -9,6 +9,12 @@ use crate::ids::{LinkId, ObjectStyleId};
 use crate::paint::Paint;
 use crate::{Document, FrameId, FrameKind, LayerId, StoryId};
 
+#[derive(Clone, Copy)]
+enum Destination {
+    Layer(LayerId),
+    OriginalLayers,
+}
+
 impl Document {
     /// Copy a selection as one graph, preserving shared stories within the copy.
     pub fn copy_frames(
@@ -28,6 +34,31 @@ impl Document {
         source: &Document,
         roots: &[FrameId],
         layer: LayerId,
+        dx: f64,
+        dy: f64,
+        same_document: bool,
+    ) -> Vec<FrameId> {
+        self.import_graph(
+            source,
+            roots,
+            Destination::Layer(layer),
+            dx,
+            dy,
+            same_document,
+        )
+    }
+
+    /// Page copies retain layers and master overrides, but own their text graph.
+    pub(crate) fn copy_page_frames(&mut self, roots: &[FrameId], dx: f64, dy: f64) -> Vec<FrameId> {
+        let source = self.clone();
+        self.import_graph(&source, roots, Destination::OriginalLayers, dx, dy, true)
+    }
+
+    fn import_graph(
+        &mut self,
+        source: &Document,
+        roots: &[FrameId],
+        destination: Destination,
         dx: f64,
         dy: f64,
         same_document: bool,
@@ -129,6 +160,11 @@ impl Document {
                 }
             }
             transfer.target.frames[frame_map[id]] = frame;
+            if matches!(destination, Destination::OriginalLayers)
+                && let Some(master) = source.overrides.get(*id)
+            {
+                transfer.target.overrides.insert(frame_map[id], *master);
+            }
         }
         // Anchors can be visited before their host; remap after every story is known.
         for id in &ids {
@@ -147,19 +183,31 @@ impl Document {
                 _ => vec![],
             })
             .collect();
-        let roots: Vec<_> = roots
+        let original_roots: Vec<_> = roots
             .iter()
             .filter(|id| !children.contains(id))
-            .filter_map(|id| frame_map.get(id).copied())
+            .copied()
+            .filter(|id| frame_map.contains_key(id))
             .collect();
-        if let Some(layer) = transfer.target.layers.get_mut(layer) {
-            layer.frames.extend(roots.iter().copied());
-            layer.frames.extend(
-                ids.iter()
-                    .filter(|id| !children.contains(id) && source.frames[**id].anchor.is_some())
-                    .filter_map(|id| frame_map.get(id).copied())
-                    .filter(|id| !roots.contains(id)),
-            );
+        let roots: Vec<_> = original_roots.iter().map(|id| frame_map[id]).collect();
+        let top_level = original_roots
+            .iter()
+            .copied()
+            .chain(ids.iter().copied().filter(|id| {
+                !children.contains(id)
+                    && source.frames[*id].anchor.is_some()
+                    && !original_roots.contains(id)
+            }));
+        for id in top_level {
+            let layer = match destination {
+                Destination::Layer(layer) => Some(layer),
+                Destination::OriginalLayers => {
+                    source.layer_of_frame(id).or_else(|| source.default_layer())
+                }
+            };
+            if let Some(layer) = layer.and_then(|layer| transfer.target.layers.get_mut(layer)) {
+                layer.frames.push(frame_map[&id]);
+            }
         }
         transfer.target.touch();
         roots

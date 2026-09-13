@@ -7,7 +7,9 @@ use pdf_writer::types::{BlendMode, LineCapStyle, LineJoinStyle};
 use pdf_writer::writers::ExtGraphicsState;
 use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref, Str, TextStr};
 use tessera_color::Color;
+use tessera_document::blending::Blending;
 use tessera_document::nodes::{LineCap, LineJoin, Stroke};
+use tessera_document::paint::Paint;
 use tessera_geometry::{DocRect, Transform};
 use tessera_layout::resolve::{ResolvedDocument, ResolvedKind};
 
@@ -140,10 +142,88 @@ fn has_artwork(resolved: &ResolvedDocument) -> bool {
 }
 
 fn uses_transparency(resolved: &ResolvedDocument) -> bool {
-    resolved
-        .items
+    resolved.items.iter().any(|item| {
+        !item.blend.is_plain()
+            || item.shadow.is_some()
+            || has_gradient_alpha(&item.kind)
+            || item_colours(&item.kind)
+                .iter()
+                .any(|c| (0.0..1.0).contains(&colour_alpha(c)) && colour_alpha(c) > 0.0)
+    })
+}
+
+fn colour_alpha(colour: &Color) -> f32 {
+    colour.to_rgb_f32()[3].clamp(0.0, 1.0)
+}
+
+fn paint_visible(paint: &Paint) -> bool {
+    paint
+        .colours()
         .iter()
-        .any(|item| !item.blend.is_plain() || item.shadow.is_some())
+        .any(|colour| colour_alpha(colour) > 0.0)
+}
+
+fn has_gradient_alpha(kind: &ResolvedKind) -> bool {
+    let transparent = |paint: &Paint| {
+        paint.gradient().is_some()
+            && paint_visible(paint)
+            && paint.colours().iter().any(|c| colour_alpha(c) < 1.0)
+    };
+    match kind {
+        ResolvedKind::Rectangle { fill, .. } | ResolvedKind::Ellipse { fill, .. } => {
+            transparent(fill)
+        }
+        ResolvedKind::Path { fill, .. } => fill.as_ref().is_some_and(transparent),
+        ResolvedKind::Table { laid, .. } => laid
+            .cells
+            .iter()
+            .any(|cell| cell.fill.as_ref().is_some_and(transparent)),
+        _ => false,
+    }
+}
+
+fn item_colours(kind: &ResolvedKind) -> Vec<Color> {
+    let mut colours = Vec::new();
+    let (fill, stroke) = match kind {
+        ResolvedKind::Rectangle { fill, stroke, .. } | ResolvedKind::Ellipse { fill, stroke } => {
+            (Some(fill), stroke.as_ref())
+        }
+        ResolvedKind::Path { fill, stroke, .. } => (fill.as_ref(), stroke.as_ref()),
+        ResolvedKind::Graphic { stroke, .. } => (None, stroke.as_ref()),
+        ResolvedKind::Text { shaped, color, .. } => {
+            text_colours(shaped, color, &mut colours);
+            (None, None)
+        }
+        ResolvedKind::Table { laid, stroke } => {
+            for cell in &laid.cells {
+                if let Some(fill) = &cell.fill {
+                    colours.extend(fill.colours());
+                }
+                text_colours(&cell.shaped, &cell.color, &mut colours);
+            }
+            (None, stroke.as_ref())
+        }
+    };
+    if let Some(fill) = fill {
+        colours.extend(fill.colours());
+    }
+    if let Some(stroke) = stroke {
+        colours.push(stroke.color.clone());
+    }
+    colours
+}
+
+fn text_colours(shaped: &ShapedText, fallback: &Color, out: &mut Vec<Color>) {
+    out.extend(
+        shaped
+            .runs()
+            .map(|run| run.colour.as_ref().unwrap_or(fallback).clone()),
+    );
+    out.extend(
+        shaped
+            .rules()
+            .map(|rule| rule.colour.as_ref().unwrap_or(fallback).clone()),
+    );
 }
 
 fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>, PdfError> {
@@ -288,10 +368,14 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
             font_dict.pair(Name(font.resource.as_bytes()), font.font_ref);
         }
         font_dict.finish();
-        if !states.is_empty() {
+        if !states.is_empty() || shadings.iter().flatten().any(|sh| sh.mask.is_some()) {
             let mut state_dict = resources.ext_g_states();
             for state in &states {
                 state_dict.pair(Name(state.resource.as_bytes()), state.id);
+            }
+            for shading in shadings.iter().flatten().filter(|sh| sh.mask.is_some()) {
+                let mask = shading.mask.as_ref().expect("filtered mask");
+                state_dict.pair(Name(mask.resource.as_bytes()), mask.state);
             }
             state_dict.finish();
         }
@@ -384,16 +468,25 @@ fn collect_states(
     for item in &resolved.items {
         // A plain object is painted straight onto the page and needs no state.
         // An invisible one is not written at all, exactly as it is not drawn.
-        if item.blend.is_plain() || item.blend.is_invisible() {
+        let alphas: Vec<_> = item_colours(&item.kind).iter().map(colour_alpha).collect();
+        if item.blend.is_invisible()
+            || (item.blend.is_plain() && alphas.iter().all(|a| *a == 0.0 || *a == 1.0))
+        {
             continue;
         }
-        let key = (item.blend.mode as u8, item.blend.alpha().to_bits());
-        let next = seen.len();
-        seen.entry(key).or_insert_with(|| GraphicsState {
-            resource: format!("GS{next}"),
-            id: alloc(),
-            blend: item.blend,
-        });
+        for alpha in std::iter::once(1.0).chain(alphas).filter(|a| *a > 0.0) {
+            let blend = Blending {
+                opacity: item.blend.alpha() * alpha,
+                ..item.blend
+            };
+            let key = (blend.mode as u8, blend.alpha().to_bits());
+            let next = seen.len();
+            seen.entry(key).or_insert_with(|| GraphicsState {
+                resource: format!("GS{next}"),
+                id: alloc(),
+                blend,
+            });
+        }
     }
 
     seen.into_values().collect()
@@ -436,6 +529,15 @@ struct Shading {
     pieces: Vec<Ref>,
     join: Option<Ref>,
     kind: ShadingKind,
+    mask: Option<GradientMask>,
+}
+
+struct GradientMask {
+    resource: String,
+    state: Ref,
+    form: Ref,
+    bounds: Rect,
+    shading: Box<Shading>,
 }
 
 /// The geometry of one shading, already in PDF space.
@@ -793,7 +895,7 @@ fn collect_shadings(
             ResolvedKind::Path { fill, .. } => fill.as_ref(),
             _ => None,
         };
-        let Some(gradient) = fill.and_then(|f| f.gradient()) else {
+        let Some(gradient) = fill.filter(|f| paint_visible(f)).and_then(|f| f.gradient()) else {
             out.push(None);
             continue;
         };
@@ -845,11 +947,48 @@ fn collect_shadings(
             .iter()
             .filter(|s: &&Option<Shading>| s.is_some())
             .count();
+        let mask = if gradient
+            .stops()
+            .iter()
+            .any(|s| colour_alpha(&s.colour) < 1.0)
+        {
+            let count = stops.len().saturating_sub(1);
+            Some(GradientMask {
+                resource: format!("Mask{next}"),
+                state: alloc(),
+                form: alloc(),
+                bounds: Rect::new(
+                    item.bounds.x as f32,
+                    flip(item.bounds.y + item.bounds.height),
+                    (item.bounds.x + item.bounds.width) as f32,
+                    flip(item.bounds.y),
+                ),
+                shading: Box::new(Shading {
+                    resource: "Alpha".into(),
+                    id: alloc(),
+                    pieces: (0..count).map(|_| alloc()).collect(),
+                    join: (count > 1).then(&mut *alloc),
+                    kind: ShadingKind {
+                        axial,
+                        coords: coords.clone(),
+                        stops: gradient
+                            .stops()
+                            .iter()
+                            .map(|s| (vec![colour_alpha(&s.colour)], s.at))
+                            .collect(),
+                    },
+                    mask: None,
+                }),
+            })
+        } else {
+            None
+        };
         out.push(Some(Shading {
             resource: format!("Sh{next}"),
             id: alloc(),
             pieces,
             join,
+            mask,
             kind: ShadingKind {
                 axial,
                 coords,
@@ -903,7 +1042,9 @@ fn write_shading(pdf: &mut Pdf, shading: &Shading, ink: &Ink) {
         FunctionShadingType::Radial
     });
     // The same space the stops were written in, or no RIP will read the file.
-    if ink.is_cmyk() {
+    if shading.kind.stops.first().is_some_and(|s| s.0.len() == 1) {
+        written.color_space().device_gray();
+    } else if ink.is_cmyk() {
         written.color_space().device_cmyk();
     } else {
         written.color_space().device_rgb();
@@ -915,6 +1056,35 @@ fn write_shading(pdf: &mut Pdf, shading: &Shading, ink: &Ink) {
         .extend([true, true])
         .function(shading.join.unwrap_or(shading.pieces[0]));
     written.finish();
+    if let Some(mask) = &shading.mask {
+        write_shading(pdf, &mask.shading, ink);
+        let mut content = Content::new();
+        content.shading(Name(b"Alpha"));
+        let bytes = content.finish();
+        let mut form = pdf.form_xobject(mask.form, &bytes);
+        form.bbox(mask.bounds);
+        form.resources()
+            .shadings()
+            .pair(Name(b"Alpha"), mask.shading.id);
+        let mut group = form.group();
+        group.transparency().isolated(true);
+        group.color_space().device_gray();
+        group.finish();
+        form.finish();
+        let mut state = pdf.indirect(mask.state).start::<ExtGraphicsState>();
+        state
+            .soft_mask()
+            .subtype(pdf_writer::types::MaskType::Luminosity)
+            .group(mask.form);
+        state.finish();
+    }
+}
+
+fn paint_shading(content: &mut Content, shading: &Shading) {
+    if let Some(mask) = &shading.mask {
+        content.set_parameters(Name(mask.resource.as_bytes()));
+    }
+    content.shading(Name(shading.resource.as_bytes()));
 }
 
 fn collect_fonts(
@@ -1013,6 +1183,42 @@ struct Written<'a> {
     options: &'a ExportOptions,
 }
 
+/// Paint alpha multiplies object opacity; each paint resets it independently.
+struct Painting<'a> {
+    ink: &'a Ink,
+    plates: &'a [Plate],
+    states: &'a [GraphicsState],
+    blend: Blending,
+    has_paint_alpha: bool,
+}
+
+impl Painting<'_> {
+    fn alpha(&self, content: &mut Content, alpha: f32) {
+        if alpha == 1.0 && !self.has_paint_alpha {
+            return; // The object's state already supplies this opacity.
+        }
+        let opacity = self.blend.alpha() * alpha;
+        if let Some(state) = self.states.iter().find(|state| {
+            state.blend.mode == self.blend.mode
+                && state.blend.alpha().to_bits() == opacity.to_bits()
+        }) {
+            content.set_parameters(Name(state.resource.as_bytes()));
+        }
+    }
+
+    fn fill(&self, content: &mut Content, colour: &Color) {
+        self.alpha(content, colour_alpha(colour));
+        if let Some(plate) = plate_for(colour, self.plates) {
+            content.set_fill_color_space(pdf_writer::types::ColorSpaceOperand::Named(Name(
+                plate.resource.as_bytes(),
+            )));
+            content.set_fill_color([crate::separation::tint_of(colour).unwrap_or(1.0)]);
+        } else {
+            self.ink.set_fill(content, colour);
+        }
+    }
+}
+
 fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>, PdfError> {
     let Written {
         page,
@@ -1042,6 +1248,16 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
     content.end_path();
 
     for (index, item) in resolved.items.iter().enumerate() {
+        let painting = Painting {
+            ink,
+            plates,
+            states,
+            blend: item.blend,
+            has_paint_alpha: item_colours(&item.kind).iter().any(|c| {
+                let alpha = colour_alpha(c);
+                alpha > 0.0 && alpha < 1.0
+            }),
+        };
         let shading = shadings.get(index).and_then(|s| s.as_ref());
         // An object at no opacity is not written, exactly as it is not drawn.
         // Writing it at `/ca 0` would put ink-free paint in the file for a
@@ -1140,9 +1356,9 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                     content.x_object(Name(picture.resource.as_bytes()));
                     content.restore_state();
                 }
-                if let Some(s) = stroke {
+                if let Some(s) = stroke.as_ref().filter(|s| colour_alpha(&s.color) > 0.0) {
                     content.save_state();
-                    apply_stroke(&mut content, s, ink, plates);
+                    apply_stroke(&mut content, s, &painting);
                     let b = offset_rect(item.bounds, s.offset());
                     content.rect(
                         b.x as f32,
@@ -1194,21 +1410,22 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                         shape(&mut content, item.bounds);
                         content.clip_nonzero();
                         content.end_path();
-                        content.shading(Name(sh.resource.as_bytes()));
+                        paint_shading(&mut content, sh);
                         content.restore_state();
                     }
-                    None => {
-                        set_solid_fill(&mut content, fill, ink, plates);
+                    None if paint_visible(fill) => {
+                        set_solid_fill(&mut content, fill, &painting);
                         shape(&mut content, item.bounds);
                         content.fill_nonzero();
                     }
+                    None => {}
                 }
 
-                if let Some(s) = stroke {
+                if let Some(s) = stroke.as_ref().filter(|s| colour_alpha(&s.color) > 0.0) {
                     // The fill and the stroke follow different rectangles once
                     // the stroke is aligned inside or outside, so they cannot
                     // share one path.
-                    apply_stroke(&mut content, s, ink, plates);
+                    apply_stroke(&mut content, s, &painting);
                     match outline {
                         // A cut corner strokes on its own centre line: offsetting
                         // a curved path is an offset curve, which is not a bezier
@@ -1230,17 +1447,18 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                         ellipse_path(&mut content, page, item.bounds);
                         content.clip_nonzero();
                         content.end_path();
-                        content.shading(Name(sh.resource.as_bytes()));
+                        paint_shading(&mut content, sh);
                         content.restore_state();
                     }
-                    None => {
-                        set_solid_fill(&mut content, fill, ink, plates);
+                    None if paint_visible(fill) => {
+                        set_solid_fill(&mut content, fill, &painting);
                         ellipse_path(&mut content, page, item.bounds);
                         content.fill_nonzero();
                     }
+                    None => {}
                 }
-                if let Some(s) = stroke {
-                    apply_stroke(&mut content, s, ink, plates);
+                if let Some(s) = stroke.as_ref().filter(|s| colour_alpha(&s.color) > 0.0) {
+                    apply_stroke(&mut content, s, &painting);
                     ellipse_path(&mut content, page, offset_rect(item.bounds, s.offset()));
                     content.stroke();
                 }
@@ -1256,21 +1474,21 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                         let sh = shading.expect("just checked");
                         content.clip_nonzero();
                         content.end_path();
-                        content.shading(Name(sh.resource.as_bytes()));
+                        paint_shading(&mut content, sh);
                     }
-                    (Some(f), _) => {
-                        set_solid_fill(&mut content, f, ink, plates);
+                    (Some(f), _) if paint_visible(f) => {
+                        set_solid_fill(&mut content, f, &painting);
                         content.fill_nonzero();
                     }
-                    (None, _) => {
+                    _ => {
                         // Nothing to paint; the path was still emitted, so
                         // end it rather than leaving a dangling path object.
                         content.end_path();
                     }
                 }
                 content.restore_state();
-                if let Some(s) = stroke {
-                    apply_stroke(&mut content, s, ink, plates);
+                if let Some(s) = stroke.as_ref().filter(|s| colour_alpha(&s.color) > 0.0) {
+                    apply_stroke(&mut content, s, &painting);
                     emit_path(&mut content, page, item.bounds, path);
                     content.stroke();
                 }
@@ -1278,7 +1496,15 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
             }
 
             ResolvedKind::Text { shaped, color, .. } => {
-                draw_text(&mut content, page, item.bounds, shaped, color, fonts, ink)?;
+                draw_text(
+                    &mut content,
+                    page,
+                    item.bounds,
+                    shaped,
+                    color,
+                    fonts,
+                    &painting,
+                )?;
             }
 
             // Cell fills, then the rules, then the text — the same order the
@@ -1286,7 +1512,9 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
             // rule covers the half of it that falls inside the cell.
             ResolvedKind::Table { laid, stroke } => {
                 for cell in &laid.cells {
-                    let Some(fill) = &cell.fill else { continue };
+                    let Some(fill) = cell.fill.as_ref().filter(|f| paint_visible(f)) else {
+                        continue;
+                    };
                     let box_ = DocRect {
                         x: item.bounds.x + cell.bounds.x,
                         y: item.bounds.y + cell.bounds.y,
@@ -1294,7 +1522,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                         height: cell.bounds.height,
                     };
                     content.save_state();
-                    set_solid_fill(&mut content, fill, ink, plates);
+                    set_solid_fill(&mut content, fill, &painting);
                     content.rect(
                         box_.x as f32,
                         to_pdf_y(page, box_.y, box_.height) as f32,
@@ -1307,6 +1535,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
 
                 if let Some(s) = stroke
                     && s.width > 0.0
+                    && colour_alpha(&s.color) > 0.0
                 {
                     // One line per grid edge, not four per cell: per-cell
                     // borders put two strokes on every interior boundary, and
@@ -1314,7 +1543,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                     // except around the outside.
                     let (width, height) = laid.size();
                     content.save_state();
-                    apply_stroke(&mut content, s, ink, plates);
+                    apply_stroke(&mut content, s, &painting);
                     for x in &laid.column_edges {
                         let x0 = (item.bounds.x + x) as f32;
                         content.move_to(x0, to_pdf_y(page, item.bounds.y, 0.0) as f32);
@@ -1340,7 +1569,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                         &cell.shaped,
                         &cell.color,
                         fonts,
-                        ink,
+                        &painting,
                     )?;
                 }
             }
@@ -1380,8 +1609,9 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
 /// Colour, width, cap, join, miter limit and dash pattern. A stroke that
 /// exported as a bare width would not be the stroke that was on screen, which
 /// is the one thing this crate exists to prevent.
-fn apply_stroke(content: &mut Content, stroke: &Stroke, ink: &Ink, plates: &[Plate]) {
-    match plate_for(&stroke.color, plates) {
+fn apply_stroke(content: &mut Content, stroke: &Stroke, painting: &Painting<'_>) {
+    painting.alpha(content, colour_alpha(&stroke.color));
+    match plate_for(&stroke.color, painting.plates) {
         Some(plate) => {
             let tint = crate::separation::tint_of(&stroke.color).unwrap_or(1.0);
             content.set_stroke_color_space(pdf_writer::types::ColorSpaceOperand::Named(Name(
@@ -1389,7 +1619,7 @@ fn apply_stroke(content: &mut Content, stroke: &Stroke, ink: &Ink, plates: &[Pla
             )));
             content.set_stroke_color([tint]);
         }
-        None => ink.set_stroke(content, &stroke.color),
+        None => painting.ink.set_stroke(content, &stroke.color),
     }
     content.set_line_width(stroke.width as f32);
     content.set_line_cap(match stroke.cap {
@@ -1425,8 +1655,7 @@ fn apply_stroke(content: &mut Content, stroke: &Stroke, ink: &Ink, plates: &[Pla
 fn set_solid_fill(
     content: &mut Content,
     paint: &tessera_document::paint::Paint,
-    ink: &Ink,
-    plates: &[Plate],
+    painting: &Painting<'_>,
 ) {
     let colour = paint
         .solid()
@@ -1435,15 +1664,7 @@ fn set_solid_fill(
     // A spot goes on its own plate: `/Sep0 cs 0.4 scn` rather than the process
     // mix that approximates it. The approximation is still in the file, as the
     // separation's tint transform, for anything that cannot print the real ink.
-    if let Some(plate) = plate_for(&colour, plates) {
-        let tint = crate::separation::tint_of(&colour).unwrap_or(1.0);
-        content.set_fill_color_space(pdf_writer::types::ColorSpaceOperand::Named(Name(
-            plate.resource.as_bytes(),
-        )));
-        content.set_fill_color([tint]);
-        return;
-    }
-    ink.set_fill(content, &colour);
+    painting.fill(content, &colour);
 }
 
 /// The plate a colour belongs to, if it names a spot ink.
@@ -1582,13 +1803,16 @@ fn draw_text(
     shaped: &ShapedText,
     color: &Color,
     fonts: &[EmbeddedFont],
-    ink: &Ink,
+    painting: &Painting<'_>,
 ) -> Result<(), PdfError> {
     // One text object per run, because the size lives there — and now the
     // colour too. Grouping by font alone would set the font once and draw
     // every size at it.
     for run in shaped.runs() {
         let run_colour = run.colour.as_ref().unwrap_or(color).clone();
+        if colour_alpha(&run_colour) == 0.0 {
+            continue;
+        }
         let index = run.font_index;
         // Match by subset content: `collect_fonts` walked the same items in
         // the same order, so position `index` here maps to the same font.
@@ -1604,7 +1828,7 @@ fn draw_text(
         }
 
         content.save_state();
-        ink.set_fill(content, &run_colour);
+        painting.fill(content, &run_colour);
         content.begin_text();
         content.set_font(Name(embedded.resource.as_bytes()), run.size);
 
@@ -1633,8 +1857,11 @@ fn draw_text(
     // them here is how an export drifts from the screen.
     for rule in shaped.rules() {
         let colour = rule.colour.as_ref().unwrap_or(color);
+        if colour_alpha(colour) == 0.0 {
+            continue;
+        }
         content.save_state();
-        ink.set_fill(content, colour);
+        painting.fill(content, colour);
         content.rect(
             (bounds.x + rule.x0) as f32,
             to_pdf_y(page, bounds.y + rule.top, rule.weight) as f32,

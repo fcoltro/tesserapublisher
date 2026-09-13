@@ -36,6 +36,8 @@ const META_ENTRY: &str = "meta.json";
 
 #[derive(Debug, thiserror::Error)]
 pub enum FormatError {
+    #[error("cannot save to {0}: that file is open in another tab")]
+    AlreadyOpen(std::path::PathBuf),
     #[error("could not read {0}")]
     Read(std::path::PathBuf),
     #[error("the archive is missing {0}")]

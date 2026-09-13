@@ -17,7 +17,28 @@ const FILTER_NAME: &str = "Tessera Document";
 
 // --- testable cores ----------------------------------------------------
 
+fn same_file(a: &Path, b: &Path) -> bool {
+    let identity = |path: &Path| {
+        std::fs::canonicalize(path)
+            .or_else(|_| std::path::absolute(path))
+            .ok()
+    };
+    match (identity(a), identity(b)) {
+        (Some(a), Some(b)) => a == b,
+        _ => a == b,
+    }
+}
+
 pub fn save_to_path(state: &mut TesseraApp, path: &Path) -> Result<(), FormatError> {
+    if state.documents.iter().any(|(key, open)| {
+        key != state.active
+            && open
+                .current_path
+                .as_ref()
+                .is_some_and(|other| same_file(other, path))
+    }) {
+        return Err(FormatError::AlreadyOpen(path.to_path_buf()));
+    }
     format::save(state.active().document(), path)?;
     state.active_mut().current_path = Some(path.to_path_buf());
     state.active_mut().dirty = false;
@@ -31,17 +52,17 @@ pub fn save_to_path(state: &mut TesseraApp, path: &Path) -> Result<(), FormatErr
 }
 
 pub fn open_from_path(state: &mut TesseraApp, path: &Path) -> Result<(), FormatError> {
-    // Load first, mutate second. A failed open must leave the open document
-    // exactly as it was rather than clearing it.
-    let document = format::load(path)?;
-
     // Already open? Go to it rather than opening a second copy. Two tabs of one
     // file are two histories of one file, and whichever is saved last wins
     // silently.
     let already = state
         .documents
         .iter()
-        .find(|(_, open)| open.current_path.as_deref() == Some(path))
+        .find(|(_, open)| {
+            open.current_path
+                .as_ref()
+                .is_some_and(|other| same_file(other, path))
+        })
         .map(|(key, _)| key);
     if let Some(key) = already {
         state.active = key;
@@ -49,6 +70,8 @@ pub fn open_from_path(state: &mut TesseraApp, path: &Path) -> Result<(), FormatE
         return Ok(());
     }
 
+    // Load before changing state: an unreadable file leaves the current tab alone.
+    let document = format::load(path)?;
     state.add_document(document, Some(path.to_path_buf()));
     state.status = Some(Status::info(format!("Opened {}", path.display())));
     Ok(())

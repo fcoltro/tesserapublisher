@@ -613,7 +613,26 @@ fn align_target(
     use crate::align::AlignTo;
 
     let doc = state.active().document();
-    let page = doc.page_ids().next()?;
+    let shown = match state.scope() {
+        tessera_layout::resolve::Scope::Master(master) => doc.pages_of_master(master),
+        tessera_layout::resolve::Scope::Document => doc.page_ids().collect(),
+    };
+    let page = state
+        .active()
+        .selection
+        .as_slice()
+        .iter()
+        .find_map(|id| doc.page_of_frame(*id).filter(|page| shown.contains(page)))
+        .or_else(|| {
+            doc.spread_ids()
+                .nth(state.active().current_spread)
+                .and_then(|spread| {
+                    doc.pages_of(spread)
+                        .into_iter()
+                        .find(|page| shown.contains(page))
+                })
+        })
+        .or_else(|| shown.first().copied())?;
 
     match to {
         AlignTo::Selection => crate::align::bounding_box(rects),
@@ -1178,7 +1197,7 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 .document()
                 .character_styles
                 .get(id)
-                .map(|s| s.format.clone())
+                .map(|_| state.active().document().character_chain(id))
             else {
                 return;
             };
@@ -1200,7 +1219,7 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 .document()
                 .paragraph_styles
                 .get(id)
-                .map(|s| s.format.clone())
+                .map(|_| state.active().document().paragraph_chain(id))
             else {
                 return;
             };
@@ -1701,9 +1720,8 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 result = result.then(Transform::shear_about(shear, about));
             }
 
-            if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
-                f.transform = result;
-            }
+            let bounds = frame.bounds;
+            retarget(state, id, bounds, result);
         }
 
         Command::SwapFillAndStroke(id) => {

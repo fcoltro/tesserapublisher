@@ -1409,32 +1409,15 @@ impl Story {
 
     /// As above, for a paragraph style.
     ///
-    /// A paragraph style carries character formatting too, in
-    /// [`ParagraphFormat::character`], and that half has to land on the runs
-    /// inside the paragraph rather than on the paragraph — it is what those
-    /// runs were inheriting. Under their own overrides, for the same reason.
+    /// Keep character properties at paragraph precedence so character styles
+    /// and local run overrides still win over them.
     pub fn flatten_paragraph_style(&mut self, id: ParagraphStyleId, format: &ParagraphFormat) {
-        let affected: Vec<Range<usize>> = self
-            .paragraphs
-            .iter()
-            .filter(|p| p.style == Some(id))
-            .map(|p| p.range.clone())
-            .collect();
-
         for para in &mut self.paragraphs {
             if para.style != Some(id) {
                 continue;
             }
             para.local = para.local.over(format);
             para.style = None;
-        }
-
-        for range in affected {
-            for run in &mut self.runs {
-                if run.range.start >= range.start && run.range.end <= range.end {
-                    run.local = run.local.over(&format.character);
-                }
-            }
         }
 
         self.merge_equal_neighbours();
@@ -2655,9 +2638,7 @@ mod run_tests {
     }
 
     #[test]
-    fn flattening_a_paragraph_style_lands_its_character_half_on_the_runs() {
-        // A paragraph style's character formatting is what the runs inside it
-        // were inheriting, so that is where it has to land.
+    fn flattening_a_paragraph_style_preserves_paragraph_precedence() {
         let mut story = Story::new("one\ntwo");
         let id = ParagraphStyleId::default();
         story.set_paragraph_style(0..1, Some(id));
@@ -2675,9 +2656,9 @@ mod run_tests {
         assert_eq!(story.paragraphs[0].style, None);
         assert_eq!(story.paragraphs[0].local.alignment, Some(Alignment::Centre));
         assert_eq!(
-            story.runs[0].local.size,
+            story.paragraphs[0].local.character.size,
             Some(30.0),
-            "the first paragraph's runs kept the size it gave them"
+            "the first paragraph kept the size it gave its runs"
         );
         assert_eq!(
             story.runs.last().expect("a run").local.size,
