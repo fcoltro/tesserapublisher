@@ -419,7 +419,7 @@ fn packaging_survives_relocation_and_refreshes_colliding_assets() {
 }
 
 #[test]
-fn equal_revision_documents_each_recover_and_saving_one_preserves_the_other() {
+fn equal_revision_documents_each_get_a_copy_and_saving_one_preserves_the_other() {
     use std::time::{Duration, Instant};
     let temp = Scratch::new();
     let mut app = TesseraApp::headless();
@@ -437,13 +437,23 @@ fn equal_revision_documents_each_recover_and_saving_one_preserves_the_other() {
     let b = app.documents[second].recovery.copy_path.clone().unwrap();
     assert_ne!(a, b);
     assert!(a.exists() && b.exists());
-    let mut recovered = TesseraApp::headless();
-    tessera_ui::recovery::recover_directory(&mut recovered, &temp.0);
-    assert_eq!(recovered.documents.len(), 2);
-    assert!(recovered.documents.values().all(|d| d.dirty));
     tessera_ui::file_ops::save_to_path(&mut app, &temp.0.join("saved.tessera")).unwrap();
     assert!(a.exists());
     assert!(!b.exists());
+
+    // The copies are recovered only once the instance that wrote them is
+    // gone. While it runs they are its, and a second instance — the one a
+    // double-clicked file starts — must leave them alone.
+    let mut running = TesseraApp::headless();
+    tessera_ui::recovery::recover_directory(&mut running, &temp.0);
+    assert_eq!(running.documents.len(), 1);
+    assert!(!running.active().dirty);
+
+    drop(app);
+    let mut recovered = TesseraApp::headless();
+    tessera_ui::recovery::recover_directory(&mut recovered, &temp.0);
+    assert_eq!(recovered.documents.len(), 1);
+    assert!(recovered.active().dirty);
 }
 
 fn artifact(name: &str, bytes: &[u8]) {

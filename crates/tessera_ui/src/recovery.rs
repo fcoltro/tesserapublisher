@@ -35,6 +35,21 @@ pub struct Recovery {
     /// application silently not protecting your work is the exact failure the
     /// no-silent-fallbacks rule exists for.
     pub announced_failure: bool,
+    /// Held for as long as this process owns the copy.
+    ///
+    /// A second Tessera — the one a file manager starts when a `.tessera` is
+    /// double-clicked while the first is open — reads the same directory on
+    /// its way up, and a copy that is merely *present* looks exactly like a
+    /// crash's leavings. What tells them apart is whether somebody still has
+    /// it, and the operating system is the only witness both processes can
+    /// ask: the lock is released by the kernel when the owner dies, however it
+    /// dies, which is the one property a crash-recovery scheme cannot do
+    /// without.
+    ///
+    /// On a sibling `.lock` file rather than the copy itself, because the copy
+    /// is rewritten by renaming a `.tmp` over it, and Windows will not rename
+    /// over a locked file.
+    lock: Option<std::fs::File>,
 }
 
 impl Recovery {
@@ -53,6 +68,29 @@ impl Recovery {
             last_saved_revision: revision,
             last_write: Instant::now(),
             announced_failure: false,
+            lock: None,
+        }
+    }
+
+    /// The lock file that says a copy is still owned.
+    fn lock_path(copy: &Path) -> PathBuf {
+        let mut name = copy.file_name().unwrap_or_default().to_os_string();
+        name.push(".lock");
+        copy.with_file_name(name)
+    }
+
+    /// Whether some process still owns the copy at `copy`.
+    ///
+    /// Answered by trying to take the lock: if it cannot be taken, somebody
+    /// has it. A lock file with nobody holding it is what a crash leaves.
+    fn is_owned(copy: &Path) -> bool {
+        let lock = Self::lock_path(copy);
+        if !lock.exists() {
+            return false;
+        }
+        match std::fs::File::open(&lock) {
+            Ok(file) => !matches!(file.try_lock(), Ok(())),
+            Err(_) => false,
         }
     }
 
@@ -85,7 +123,10 @@ impl Recovery {
 
     pub fn discard_copy(&mut self) {
         if let Some(path) = self.copy_path.take() {
-            let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(&path);
+            // Release before removing: Windows will not delete a locked file.
+            self.lock = None;
+            let _ = std::fs::remove_file(Self::lock_path(&path));
         }
     }
 
@@ -105,6 +146,9 @@ impl Recovery {
             .unwrap_or_else(|| directory.join(&self.file_name));
         self.last_write = now;
         write_copy(document, &path)?;
+        if self.lock.is_none() {
+            self.lock = Some(take_lock(&Self::lock_path(&path))?);
+        }
         self.copy_path = Some(path);
         self.last_saved_revision = document.revision();
         self.announced_failure = false;
@@ -136,6 +180,20 @@ pub fn write_copy(document: &Document, path: &Path) -> Result<(), String> {
     tessera_document::format::save(document, path).map_err(|e| e.to_string())
 }
 
+/// Create the lock file and take the exclusive lock on it.
+fn take_lock(path: &Path) -> Result<std::fs::File, String> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|e| format!("could not create {}: {e}", path.display()))?;
+    file.try_lock()
+        .map_err(|e| format!("could not lock {}: {e}", path.display()))?;
+    Ok(file)
+}
+
 // --- testable core -----------------------------------------------------
 
 /// Take up the recovered document at `path`.
@@ -149,8 +207,20 @@ pub fn recover_from_path(state: &mut TesseraApp, path: &Path) {
         Ok(document) => {
             let revision = document.revision();
             state.add_document(document, None);
-            state.active_mut().recovery.copy_path = Some(path.to_path_buf());
-            state.active_mut().recovery.last_saved_revision = revision;
+            let recovery = &mut state.active_mut().recovery;
+            recovery.copy_path = Some(path.to_path_buf());
+            recovery.last_saved_revision = revision;
+            // Ours now, and said so: the lock stops the next instance up
+            // from taking it too. A lock that cannot be taken is not fatal —
+            // the work is recovered either way — but it is not silent.
+            match take_lock(&Recovery::lock_path(path)) {
+                Ok(lock) => recovery.lock = Some(lock),
+                Err(error) => {
+                    state.status = Some(Status::error(format!(
+                        "Recovered work, but could not claim its copy: {error}"
+                    )));
+                }
+            }
             state.active_mut().current_path = None;
             // Unsaved, because it is: the user has nowhere on disk that holds
             // this yet. It also keeps the title's asterisk honest.
@@ -193,6 +263,8 @@ pub fn recover_directory(state: &mut TesseraApp, directory: &Path) {
                 && (name == Recovery::FILE_NAME
                     || (name.starts_with("recovery-") && name.ends_with(".tessera")))
         })
+        // Still being written by a Tessera that is running: not ours to take.
+        .filter(|path| !Recovery::is_owned(path))
         .collect();
     paths.sort();
     for path in paths {
@@ -360,5 +432,55 @@ mod tests {
             path.file_name().map(|n| n.to_string_lossy().to_string()),
             Some(Recovery::FILE_NAME.to_string())
         );
+    }
+
+    #[test]
+    fn a_copy_a_running_instance_still_owns_is_not_taken_up_by_another() {
+        // **The defect this fixes.** Recovery copies became one per document
+        // and the application began opening the files it is launched with.
+        // Double-clicking a second `.tessera` in a file manager starts a
+        // second process, and that process swept up every copy the first one
+        // was still writing and offered them as a crash's leavings — two
+        // windows editing the same "recovered" work, and both autosaving to
+        // the same file.
+        let dir =
+            std::env::temp_dir().join(format!("tessera-recovery-live-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let document = Document::new();
+        let mut owner = Recovery {
+            last_saved_revision: u64::MAX,
+            ..Recovery::default()
+        };
+        owner
+            .save_if_due(&document, &dir, Instant::now(), Duration::ZERO)
+            .expect("the owner writes its copy");
+        assert!(owner.copy_path.is_some());
+
+        let mut second = TesseraApp::headless();
+        recover_directory(&mut second, &dir);
+        assert!(
+            !second.active().dirty,
+            "a copy its owner is still writing is not a crash's leavings"
+        );
+
+        drop(owner);
+        let mut later = TesseraApp::headless();
+        recover_directory(&mut later, &dir);
+        assert!(
+            later.active().dirty,
+            "once the owner is gone, the copy is offered"
+        );
+
+        // And having taken it up, `later` owns it: a third instance started
+        // in the meantime must not take it as well.
+        let mut third = TesseraApp::headless();
+        recover_directory(&mut third, &dir);
+        assert!(
+            !third.active().dirty,
+            "recovering a copy makes the recoverer its owner"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
