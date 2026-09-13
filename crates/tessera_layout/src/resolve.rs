@@ -479,32 +479,14 @@ fn story_starts_at<'a>(
         let Some(before) = doc.frame(*id) else {
             continue;
         };
-        let FrameKind::Text { story, layout } = &before.kind else {
+        let FrameKind::Text { story, .. } = &before.kind else {
             continue;
         };
         let Some(text) = story_of(doc, composed, *story) else {
             continue;
         };
 
-        let columns = layout.columns_of(DocRect {
-            x: 0.0,
-            y: 0.0,
-            width: before.bounds.width,
-            height: before.bounds.height,
-        });
-        let measure = columns.first().map_or(before.bounds.width, |c| c.width);
-        let boxes: Vec<tessera_text::shape::Column> = columns
-            .iter()
-            .map(|c| tessera_text::shape::Column {
-                x: c.x,
-                y: c.y,
-                width: c.width,
-                height: c.height,
-            })
-            .collect();
-
-        let shaped = shaper.shape_from(text, doc, measure, from);
-        let flowed = tessera_text::shape::flow(shaped, &boxes);
+        let flowed = compose_frame(doc, shaper, *id, before, *story, text, from);
         // A frame that held nothing hands the story on untouched rather than
         // restarting it: treating "placed nothing" as zero would loop the
         // whole chain back to the beginning.
@@ -513,6 +495,91 @@ fn story_starts_at<'a>(
         }
     }
     from
+}
+
+fn compose_frame(
+    doc: &Document,
+    shaper: &mut Shaper,
+    id: FrameId,
+    frame: &tessera_document::nodes::Frame,
+    story_id: StoryId,
+    story: &TextStory,
+    from: usize,
+) -> tessera_text::shape::Flowed {
+    let FrameKind::Text { layout, .. } = &frame.kind else {
+        unreachable!()
+    };
+    // Shaped at the width of a column, then flowed through them.
+    // One shaping serves every column because they are all the same
+    // width, which is what makes columns a cheap pass over a finished
+    // layout rather than a shaping each.
+    let columns = layout.columns_of(DocRect {
+        x: 0.0,
+        y: 0.0,
+        width: frame.bounds.width,
+        height: frame.bounds.height,
+    });
+    let measure = columns.first().map_or(frame.bounds.width, |c| c.width);
+    let boxes: Vec<tessera_text::shape::Column> = columns
+        .iter()
+        .map(|c| tessera_text::shape::Column {
+            x: c.x,
+            y: c.y,
+            width: c.width,
+            height: c.height,
+        })
+        .collect();
+
+    // The document's enum mapped onto the shaper's. Two enums rather
+    // than one because `tessera_text` knows nothing about documents,
+    // the same arrangement `Styles` uses.
+    let vertical = match layout.vertical {
+        tessera_document::nodes::VerticalJustify::Top => tessera_text::shape::Vertical::Top,
+        tessera_document::nodes::VerticalJustify::Centre => tessera_text::shape::Vertical::Centre,
+        tessera_document::nodes::VerticalJustify::Bottom => tessera_text::shape::Vertical::Bottom,
+        tessera_document::nodes::VerticalJustify::Justify => tessera_text::shape::Vertical::Justify,
+    };
+
+    // Where in the story this frame starts. Zero unless something
+    // flows into it, in which case the frames before it are laid out
+    // to find out how much they hold — the answer depends on their
+    // measures, so there is no shortcut past doing it.
+
+    // The grid is measured from the top of the **page**, so two
+    // frames on the same page line up. The text crate has no notion of
+    // a page, so the page's rhythm is expressed in this frame's own
+    // space before it is handed over: a slot at document `y` is at
+    // `y - the frame's top` inside the frame.
+    //
+    // A rotated frame is left off the grid. A rhythm measured down the
+    // page means nothing to text running across it at an angle, and
+    // guessing would be worse than declining.
+    let grid = doc.setup.baseline_grid.and_then(|grid| {
+        if !layout.lock_to_grid || grid.step <= 0.0 || !frame.transform.is_identity() {
+            return None;
+        }
+        let page = doc.pages.get(doc.page_of_frame(id)?)?.bounds;
+        Some(tessera_text::shape::Grid {
+            first: page.y + grid.start - frame.bounds.y,
+            step: grid.step,
+        })
+    });
+
+    // Objects on the same spread that this text must run around,
+    // in the text's own space. Gathered per frame rather than once,
+    // because "near" is relative to the frame doing the reading.
+    let obstacles = obstacles_for(doc, id, frame, measure);
+
+    // Room for anything anchored in this story. The boxes come from
+    // the anchored frames' own sizes, so a picture made larger pushes
+    // the copy aside the moment it is resized.
+    let anchored: Vec<tessera_text::shape::InlineObject> = doc
+        .inline_objects_of(story_id)
+        .into_iter()
+        .map(|(at, _, width, height)| tessera_text::shape::InlineObject { at, width, height })
+        .collect();
+    let shaped = shaper.shape_around_with_objects(story, doc, measure, from, &obstacles, &anchored);
+    tessera_text::shape::flow_on_grid(shaped, &boxes, vertical, grid)
 }
 
 /// One frame, resolved.
@@ -593,7 +660,7 @@ fn resolve_one<'a>(
 
         FrameKind::Text {
             story: story_id,
-            layout,
+            layout: _,
         } => {
             // A text frame whose story is missing is a broken document,
             // not a blank frame. Skipping it silently would hide the
@@ -615,89 +682,8 @@ fn resolve_one<'a>(
                 .and_then(|f| f.colour)
                 .unwrap_or(tessera_color::Color::BLACK);
             let colour = doc.resolve_colour(&colour);
-            // Shaped at the width of a column, then flowed through them.
-            // One shaping serves every column because they are all the same
-            // width, which is what makes columns a cheap pass over a finished
-            // layout rather than a shaping each.
-            let columns = layout.columns_of(DocRect {
-                x: 0.0,
-                y: 0.0,
-                width: frame.bounds.width,
-                height: frame.bounds.height,
-            });
-            let measure = columns.first().map_or(frame.bounds.width, |c| c.width);
-            let boxes: Vec<tessera_text::shape::Column> = columns
-                .iter()
-                .map(|c| tessera_text::shape::Column {
-                    x: c.x,
-                    y: c.y,
-                    width: c.width,
-                    height: c.height,
-                })
-                .collect();
-
-            // The document's enum mapped onto the shaper's. Two enums rather
-            // than one because `tessera_text` knows nothing about documents,
-            // the same arrangement `Styles` uses.
-            let vertical = match layout.vertical {
-                tessera_document::nodes::VerticalJustify::Top => tessera_text::shape::Vertical::Top,
-                tessera_document::nodes::VerticalJustify::Centre => {
-                    tessera_text::shape::Vertical::Centre
-                }
-                tessera_document::nodes::VerticalJustify::Bottom => {
-                    tessera_text::shape::Vertical::Bottom
-                }
-                tessera_document::nodes::VerticalJustify::Justify => {
-                    tessera_text::shape::Vertical::Justify
-                }
-            };
-
-            // Where in the story this frame starts. Zero unless something
-            // flows into it, in which case the frames before it are laid out
-            // to find out how much they hold — the answer depends on their
-            // measures, so there is no shortcut past doing it.
             let from = story_starts_at(doc, shaper, id, composed);
-
-            // The grid is measured from the top of the **page**, so two
-            // frames on the same page line up. The text crate has no notion of
-            // a page, so the page's rhythm is expressed in this frame's own
-            // space before it is handed over: a slot at document `y` is at
-            // `y - the frame's top` inside the frame.
-            //
-            // A rotated frame is left off the grid. A rhythm measured down the
-            // page means nothing to text running across it at an angle, and
-            // guessing would be worse than declining.
-            let grid = doc.setup.baseline_grid.and_then(|grid| {
-                if !layout.lock_to_grid || grid.step <= 0.0 || !frame.transform.is_identity() {
-                    return None;
-                }
-                let page = doc.pages.get(doc.page_of_frame(id)?)?.bounds;
-                Some(tessera_text::shape::Grid {
-                    first: page.y + grid.start - frame.bounds.y,
-                    step: grid.step,
-                })
-            });
-
-            // Objects on the same spread that this text must run around,
-            // in the text's own space. Gathered per frame rather than once,
-            // because "near" is relative to the frame doing the reading.
-            let obstacles = obstacles_for(doc, id, frame, measure);
-
-            // Room for anything anchored in this story. The boxes come from
-            // the anchored frames' own sizes, so a picture made larger pushes
-            // the copy aside the moment it is resized.
-            let anchored: Vec<tessera_text::shape::InlineObject> = doc
-                .inline_objects_of(*story_id)
-                .into_iter()
-                .map(|(at, _, width, height)| tessera_text::shape::InlineObject {
-                    at,
-                    width,
-                    height,
-                })
-                .collect();
-            let shaped =
-                shaper.shape_around_with_objects(story, doc, measure, from, &obstacles, &anchored);
-            let flowed = tessera_text::shape::flow_on_grid(shaped, &boxes, vertical, grid);
+            let flowed = compose_frame(doc, shaper, id, frame, *story_id, story, from);
 
             ResolvedKind::Text {
                 shaped: flowed.text,

@@ -80,6 +80,7 @@ fn to_pdf_y(page: DocRect, doc_y: f64, height: f64) -> f64 {
 
 /// One embedded font: its subset bytes, its glyph mapping and its metrics.
 struct EmbeddedFont {
+    source: FontData,
     /// Subset font bytes.
     data: Vec<u8>,
     /// Original glyph id to subset glyph id.
@@ -150,8 +151,11 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
     // The page comes from the resolved document rather than from a parameter,
     // so the screen and the PDF cannot disagree about where the trim is.
     // Milestone 3 makes this every page; today it is the first.
-    let resolved_page = resolved.pages.first().cloned().unwrap_or_else(default_page);
-    let page = resolved_page.bounds;
+    let pages = if resolved.pages.is_empty() {
+        vec![default_page()]
+    } else {
+        resolved.pages.clone()
+    };
     let mut pdf = Pdf::new();
     let mut next = 1;
     let mut alloc = || {
@@ -162,30 +166,17 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
 
     let catalog_id = alloc();
     let page_tree_id = alloc();
-    let page_id = alloc();
-    let content_id = alloc();
-
+    let page_ids: Vec<_> = pages.iter().map(|_| alloc()).collect();
     let fonts = collect_fonts(resolved, &mut alloc)?;
     let states = collect_states(resolved, &mut alloc);
-    let shadings = collect_shadings(resolved, page, &mut alloc, &ink);
     let pictures = collect_pictures(resolved, &mut alloc, &ink);
     let shadows = collect_shadows(resolved, &mut alloc);
     let plates = collect_plates(resolved, &ink, &mut alloc);
-    let content = build_content(
-        resolved,
-        &Written {
-            page,
-            fonts: &fonts,
-            states: &states,
-            shadings: &shadings,
-            pictures: &pictures,
-            shadows: &shadows,
-            plates: &plates,
-            ink: &ink,
-            resolved_page: &resolved_page,
-            options,
-        },
-    )?;
+    if options.standard == Standard::X1a && pictures.iter().any(|p| p.ready.is_transparent()) {
+        return Err(PdfError::CannotConform(vec![
+            "PDF/X-1a does not allow transparent artwork; use PDF/X-4".into(),
+        ]));
+    }
 
     // The profile is an indirect stream; the intent dictionary that points at it
     // is written inline in the catalogue, which is where PDF/X expects it.
@@ -212,7 +203,9 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
         intents.finish();
     }
     catalog.finish();
-    pdf.pages(page_tree_id).kids([page_id]).count(1);
+    pdf.pages(page_tree_id)
+        .kids(page_ids.iter().copied())
+        .count(page_ids.len() as i32);
 
     // **The claim itself.** `GTS_PDFXVersion` is what a printer’s preflight reads
     // to decide the file conforms, which is exactly why it is written only after
@@ -231,7 +224,25 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
         info.finish();
     }
 
-    {
+    for (resolved_page, page_id) in pages.iter().zip(page_ids) {
+        let page = resolved_page.bounds;
+        let content_id = alloc();
+        let shadings = collect_shadings(resolved, page, &mut alloc, &ink);
+        let content = build_content(
+            resolved,
+            &Written {
+                page,
+                fonts: &fonts,
+                states: &states,
+                shadings: &shadings,
+                pictures: &pictures,
+                shadows: &shadows,
+                plates: &plates,
+                ink: &ink,
+                resolved_page,
+                options,
+            },
+        )?;
         let mut page_obj = pdf.page(page_id);
         // MediaBox must contain everything imaged, so it is the bleed when
         // there is one. TrimBox is the finished page — where the guillotine
@@ -250,9 +261,9 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
         let bleed = resolved_page.bleed;
         let media = Rect::new(
             (bleed.x - page.x - reach) as f32,
-            (bleed.y - page.y - reach) as f32,
+            (page.y + page.height - bleed.y - bleed.height - reach) as f32,
             (bleed.x - page.x + bleed.width + reach) as f32,
-            (bleed.y - page.y + bleed.height + reach) as f32,
+            (page.y + page.height - bleed.y + reach) as f32,
         );
         let trim = Rect::new(0.0, 0.0, page.width as f32, page.height as f32);
 
@@ -261,9 +272,9 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
         // the ink runs that far would be a lie a printer acts on.
         let bleed_box = Rect::new(
             (bleed.x - page.x) as f32,
-            (bleed.y - page.y) as f32,
+            (page.y + page.height - bleed.y - bleed.height) as f32,
             (bleed.x - page.x + bleed.width) as f32,
-            (bleed.y - page.y + bleed.height) as f32,
+            (page.y + page.height - bleed.y) as f32,
         );
         page_obj
             .parent(page_tree_id)
@@ -312,12 +323,15 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
         }
         resources.finish();
         page_obj.finish();
+        pdf.stream(content_id, &content);
+        for shading in shadings.iter().flatten() {
+            write_shading(&mut pdf, shading, &ink);
+        }
     }
 
     // Uncompressed in milestone 0 so the operators are assertable and a
     // damaged file stays inspectable. Milestone 6 owns export quality and
     // turns on compression there.
-    pdf.stream(content_id, &content);
     write_pictures(&mut pdf, &pictures);
     write_shadows(&mut pdf, &shadows);
     write_plates(&mut pdf, &plates);
@@ -327,9 +341,6 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
     }
     for state in &states {
         write_state(&mut pdf, state);
-    }
-    for shading in shadings.iter().flatten() {
-        write_shading(&mut pdf, shading, &ink);
     }
 
     if let (Some(profile), Some(intent)) = (profile_id, options.intent.as_ref()) {
@@ -913,10 +924,11 @@ fn collect_fonts(
     // Group the glyphs actually drawn, per font, so only those are embedded.
     let mut used: Vec<(FontData, Vec<u16>, BTreeMap<u16, f64>)> = Vec::new();
 
-    for item in &resolved.items {
-        let ResolvedKind::Text { shaped, .. } = &item.kind else {
-            continue;
-        };
+    for shaped in resolved.items.iter().flat_map(|item| match &item.kind {
+        ResolvedKind::Text { shaped, .. } => vec![shaped],
+        ResolvedKind::Table { laid, .. } => laid.cells.iter().map(|cell| &cell.shaped).collect(),
+        _ => vec![],
+    }) {
         for (index, font) in shaped.fonts.iter().enumerate() {
             let slot = match used.iter().position(|(f, _, _)| f == font) {
                 Some(i) => i,
@@ -968,6 +980,7 @@ fn collect_fonts(
         }
 
         fonts.push(EmbeddedFont {
+            source: font,
             data,
             remap,
             widths,
@@ -1014,6 +1027,19 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
         options,
     } = *w;
     let mut content = Content::new();
+    // All existing emitters operate in document coordinates with a y flip.
+    // Translate that space to this page's trim origin, then clip artwork to bleed.
+    content.save_state();
+    content.transform([1.0, 0.0, 0.0, 1.0, -page.x as f32, page.y as f32]);
+    let bleed = resolved_page.bleed;
+    content.rect(
+        bleed.x as f32,
+        to_pdf_y(page, bleed.y, bleed.height) as f32,
+        bleed.width as f32,
+        bleed.height as f32,
+    );
+    content.clip_nonzero();
+    content.end_path();
 
     for (index, item) in resolved.items.iter().enumerate() {
         let shading = shadings.get(index).and_then(|s| s.as_ref());
@@ -1022,6 +1048,17 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
         // press to process and a viewer to composite, for no visible result.
         if item.blend.is_invisible() {
             continue;
+        }
+        content.save_state();
+        if let Some(area) = item.spread_area {
+            content.rect(
+                area.x as f32,
+                to_pdf_y(page, area.y, area.height) as f32,
+                area.width as f32,
+                area.height as f32,
+            );
+            content.clip_nonzero();
+            content.end_path();
         }
 
         // A placed item gets its own graphics state, with its transform
@@ -1067,7 +1104,13 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
             // still never written: a picture box is **furniture** — the cross
             // and the frame edge are interface, not ink — and a violet cross in
             // a printed job is far worse than a blank space.
-            ResolvedKind::Graphic { source, .. } => {
+            ResolvedKind::Graphic {
+                source,
+                inner,
+                natural,
+                stroke,
+                ..
+            } => {
                 if let Some(source) = source
                     && let Some(picture) = pictures.iter().find(|p| &p.source == source)
                 {
@@ -1078,15 +1121,36 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                     // bottom-up page, so without the negative height every
                     // photograph would print upside down.
                     let b = item.bounds;
-                    content.transform([
-                        b.width as f32,
-                        0.0,
-                        0.0,
-                        b.height as f32,
+                    content.rect(
                         b.x as f32,
                         to_pdf_y(page, b.y, b.height) as f32,
-                    ]);
+                        b.width as f32,
+                        b.height as f32,
+                    );
+                    content.clip_nonzero();
+                    content.end_path();
+                    let flip = kurbo::Affine::new([1.0, 0.0, 0.0, -1.0, 0.0, page.height]);
+                    // PDF's unit image square -> natural image points -> fitted
+                    // frame space -> document space -> PDF's y-up coordinates.
+                    let matrix = flip
+                        * kurbo::Affine::translate((b.x, b.y))
+                        * inner.to_affine()
+                        * kurbo::Affine::new([natural.0, 0.0, 0.0, -natural.1, 0.0, natural.1]);
+                    content.transform(matrix.as_coeffs().map(|v| v as f32));
                     content.x_object(Name(picture.resource.as_bytes()));
+                    content.restore_state();
+                }
+                if let Some(s) = stroke {
+                    content.save_state();
+                    apply_stroke(&mut content, s, ink, plates);
+                    let b = offset_rect(item.bounds, s.offset());
+                    content.rect(
+                        b.x as f32,
+                        to_pdf_y(page, b.y, b.height) as f32,
+                        b.width as f32,
+                        b.height as f32,
+                    );
+                    content.stroke();
                     content.restore_state();
                 }
             }
@@ -1185,6 +1249,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
 
             ResolvedKind::Path { path, fill, stroke } => {
                 content.save_state();
+                content.save_state();
                 emit_path(&mut content, page, item.bounds, path);
                 match (fill, stroke) {
                     (Some(_), _) if shading.is_some() => {
@@ -1197,15 +1262,17 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                         set_solid_fill(&mut content, f, ink, plates);
                         content.fill_nonzero();
                     }
-                    (None, Some(s)) => {
-                        apply_stroke(&mut content, s, ink, plates);
-                        content.stroke();
-                    }
-                    (None, None) => {
+                    (None, _) => {
                         // Nothing to paint; the path was still emitted, so
                         // end it rather than leaving a dangling path object.
                         content.end_path();
                     }
+                }
+                content.restore_state();
+                if let Some(s) = stroke {
+                    apply_stroke(&mut content, s, ink, plates);
+                    emit_path(&mut content, page, item.bounds, path);
+                    content.stroke();
                 }
                 content.restore_state();
             }
@@ -1285,13 +1352,25 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
         if placed {
             content.restore_state();
         }
+        content.restore_state();
     }
+    content.restore_state();
 
     // The marks, after the document and outside the trim, so nothing on the page
     // can sit on top of a crop mark. An object dragged onto the pasteboard is
     // not bounded by the bleed, and a crop mark half covered by a stray
     // rectangle is one somebody cuts to the wrong place.
-    crate::marks::draw(&mut content, resolved_page, options, ink);
+    let mut local = resolved_page.clone();
+    for area in [
+        &mut local.bounds,
+        &mut local.bleed,
+        &mut local.slug,
+        &mut local.margins,
+    ] {
+        area.x -= page.x;
+        area.y -= page.y;
+    }
+    crate::marks::draw(&mut content, &local, options, ink);
 
     Ok(content.finish().to_vec())
 }
@@ -1513,7 +1592,11 @@ fn draw_text(
         let index = run.font_index;
         // Match by subset content: `collect_fonts` walked the same items in
         // the same order, so position `index` here maps to the same font.
-        let Some(embedded) = fonts.get(font_for(shaped, index, fonts)) else {
+        let Some(embedded) = shaped
+            .fonts
+            .get(index)
+            .and_then(|font| fonts.iter().find(|embedded| &embedded.source == font))
+        else {
             continue;
         };
         if run.glyphs.is_empty() {
@@ -1550,10 +1633,6 @@ fn draw_text(
 
 /// Milestone 0 embeds one font, so index and slot coincide. Kept as a named
 /// function so milestone 2's font cache has an obvious place to change.
-fn font_for(_shaped: &ShapedText, index: usize, fonts: &[EmbeddedFont]) -> usize {
-    index.min(fonts.len().saturating_sub(1))
-}
-
 fn write_font(pdf: &mut Pdf, font: &EmbeddedFont) {
     let base = format!("Tessera+F{}", font.font_ref.get());
 

@@ -2,8 +2,8 @@
 //!
 //! [`crate::edit::EditBuffer`] knows the cursor as a byte offset; the screen
 //! needs a rectangle. Turning one into the other is layout's job, not the
-//! buffer's, so it lives with the [`Shaper`] that did the layout in the first
-//! place — and it asks parley rather than re-deriving positions from
+//! buffer's. Flowed text retains its paragraph layouts so editing asks parley
+//! about the same lines that were drawn, rather than re-deriving positions from
 //! [`crate::shape::PositionedGlyph`], which carries no offsets and could not
 //! answer for bidi text even if it did.
 //!
@@ -55,6 +55,127 @@ pub struct CaretGeometry {
     /// One rectangle per line the selection covers. Empty when nothing is
     /// selected.
     pub selection: Vec<TextRect>,
+}
+
+/// The paragraph and line that produced the visible glyphs. Offsets follow
+/// the line when flow moves it into a column, table cell, or onto a grid.
+#[derive(Debug, Clone)]
+pub struct LineLayout {
+    pub(crate) paragraph: std::sync::Arc<crate::shape::Placed>,
+    pub(crate) index: usize,
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+}
+
+impl crate::shape::ShapedText {
+    /// Measure editing geometry against the actual, flowed text.
+    pub fn caret_geometry(&self, cursor: TextCursor, width: f32) -> CaretGeometry {
+        let mut result = CaretGeometry::default();
+        let selected = cursor.position.min(cursor.anchor)..cursor.position.max(cursor.anchor);
+        let current = self
+            .lines
+            .iter()
+            .position(|l| l.range.contains(&cursor.position))
+            .or_else(|| {
+                self.lines
+                    .iter()
+                    .rposition(|l| l.range.end == cursor.position)
+            });
+        for (index, line) in self.lines.iter().enumerate() {
+            let Some(hit) = &line.hit else { continue };
+            let p = &hit.paragraph;
+            if Some(index) == current {
+                let affinity = if cursor.position == line.range.end {
+                    parley::Affinity::Upstream
+                } else {
+                    parley::Affinity::Downstream
+                };
+                let caret = parley::Cursor::from_byte_index(
+                    &p.layout,
+                    p.to_shaped(cursor.position),
+                    affinity,
+                );
+                result.caret = Some(translate(
+                    caret.geometry(&p.layout, width).into(),
+                    hit.x,
+                    hit.y,
+                ));
+            }
+            let start = selected.start.max(line.range.start);
+            let end = selected.end.min(line.range.end);
+            if start < end {
+                let a = parley::Cursor::from_byte_index(
+                    &p.layout,
+                    p.to_shaped(start),
+                    parley::Affinity::Downstream,
+                );
+                let b = parley::Cursor::from_byte_index(
+                    &p.layout,
+                    p.to_shaped(end),
+                    parley::Affinity::Upstream,
+                );
+                result.selection.extend(
+                    parley::Selection::new(a, b)
+                        .geometry(&p.layout)
+                        .into_iter()
+                        .filter(|(_, index)| *index == hit.index)
+                        .map(|(rect, _)| translate(rect.into(), hit.x, hit.y)),
+                );
+            }
+        }
+        result
+    }
+
+    fn line_at(&self, x: f64, y: f64) -> Option<&LineLayout> {
+        self.lines
+            .iter()
+            .filter_map(|line| line.hit.as_ref())
+            .min_by(|a, b| {
+                let distance = |hit: &LineLayout| {
+                    let line = hit.paragraph.layout.get(hit.index).expect("stored line");
+                    let m = line.metrics();
+                    let dx = (f64::from(m.inline_min_coord) + hit.x - x).max(0.0)
+                        + (x - f64::from(m.inline_max_coord) - hit.x).max(0.0);
+                    let dy = (f64::from(m.block_min_coord) + hit.y - y).max(0.0)
+                        + (y - f64::from(m.block_max_coord) - hit.y).max(0.0);
+                    dx * dx + dy * dy
+                };
+                distance(a).total_cmp(&distance(b))
+            })
+    }
+
+    pub fn offset_at(&self, x: f64, y: f64) -> usize {
+        let Some(hit) = self.line_at(x, y) else {
+            return 0;
+        };
+        let p = &hit.paragraph;
+        let line = p.layout.get(hit.index).expect("stored line");
+        let m = line.metrics();
+        p.to_stored(
+            parley::Cursor::from_point(
+                &p.layout,
+                (x - hit.x) as f32,
+                (m.block_min_coord + m.block_max_coord) * 0.5,
+            )
+            .index(),
+        )
+    }
+
+    pub fn word_at(&self, x: f64, y: f64) -> std::ops::Range<usize> {
+        let Some(hit) = self.line_at(x, y) else {
+            return 0..0;
+        };
+        let p = &hit.paragraph;
+        let line = p.layout.get(hit.index).expect("stored line");
+        let m = line.metrics();
+        let range = parley::Selection::word_from_point(
+            &p.layout,
+            (x - hit.x) as f32,
+            (m.block_min_coord + m.block_max_coord) * 0.5,
+        )
+        .text_range();
+        p.to_stored(range.start)..p.to_stored(range.end)
+    }
 }
 
 impl Shaper {
@@ -251,6 +372,89 @@ mod tests {
     use crate::story::NoStyles;
 
     const WIDTH: f64 = 400.0;
+
+    #[test]
+    fn flowed_carets_preserve_bidi_mapping_and_empty_story_editing() {
+        let mut shaper = Shaper::new();
+        let styles = NoStyles::default();
+        for text in ["", "abc אבג xyz", "éclair Straße"] {
+            let story = Story::new(text);
+            let shaped = shaper.shape(&story, &styles, WIDTH);
+            for position in text.char_indices().map(|(i, _)| i).chain([text.len()]) {
+                let cursor = TextCursor {
+                    position,
+                    anchor: position,
+                };
+                let original = shaper
+                    .caret_geometry(&story, &styles, WIDTH, cursor, 1.0)
+                    .caret
+                    .unwrap();
+                let flowed = crate::shape::flow(
+                    shaped.clone(),
+                    &[crate::shape::Column {
+                        x: 80.0,
+                        y: 40.0,
+                        width: WIDTH,
+                        height: 200.0,
+                    }],
+                );
+                let actual = flowed.text.caret_geometry(cursor, 1.0).caret.unwrap();
+                assert!(
+                    (actual.x0 - original.x0 - 80.0).abs() < 0.01,
+                    "{text:?} at {position}"
+                );
+                assert!(
+                    (actual.y0
+                        - original.y0
+                        - (flowed.text.lines[0].baseline - shaped.lines[0].baseline))
+                        .abs()
+                        < 0.01,
+                    "{text:?} at {position}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn selection_and_hit_testing_follow_text_into_the_second_column() {
+        let story = Story::new("one two three four five six seven eight nine ten eleven twelve");
+        let text = Shaper::new().shape(&story, &NoStyles::default(), 90.0);
+        let flowed = crate::shape::flow(
+            text,
+            &[
+                crate::shape::Column {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 90.0,
+                    height: 40.0,
+                },
+                crate::shape::Column {
+                    x: 140.0,
+                    y: 20.0,
+                    width: 90.0,
+                    height: 100.0,
+                },
+            ],
+        );
+        let line = flowed
+            .text
+            .lines
+            .iter()
+            .find(|line| line.glyphs().next().is_some_and(|g| g.x >= 140.0))
+            .unwrap();
+        let at = line.range.start;
+        assert_eq!(flowed.text.offset_at(140.0, line.baseline), at);
+        let geometry = flowed.text.caret_geometry(
+            TextCursor {
+                position: at,
+                anchor: 0,
+            },
+            1.0,
+        );
+        assert!(geometry.caret.unwrap().x0 >= 139.0);
+        assert!(!geometry.selection.is_empty());
+        assert!(geometry.selection.iter().all(|r| r.x1 <= 101.0));
+    }
 
     fn cursor(position: usize) -> TextCursor {
         TextCursor {

@@ -62,6 +62,7 @@ pub struct OpenDocument {
 
     pub current_path: Option<PathBuf>,
     pub dirty: bool,
+    pub recovery: crate::recovery::Recovery,
 
     /// The pen tool's path under construction, if any.
     pub pen: Option<crate::pen::PenPath>,
@@ -87,6 +88,7 @@ impl OpenDocument {
             editing_cell: None,
             current_path: None,
             dirty: false,
+            recovery: crate::recovery::Recovery::new(u64::MAX),
             pen: None,
             pen_cursor: None,
             fitted: false,
@@ -95,6 +97,16 @@ impl OpenDocument {
 
     pub fn document(&self) -> &Document {
         &self.document
+    }
+
+    pub fn autosave_in(
+        &mut self,
+        directory: &std::path::Path,
+        now: std::time::Instant,
+        every: std::time::Duration,
+    ) -> Result<(), String> {
+        self.recovery
+            .save_if_due(&self.document, directory, now, every)
     }
 
     /// The mutable document.
@@ -126,7 +138,7 @@ impl OpenDocument {
         // that holds the edit buffer and the layout at once. A caller that had to
         // supply it would be a caller that could forget to — and forgetting
         // means a composition that is typed and never appears.
-        let composing = composing(&self.document, self.editing.as_ref());
+        let composing = composing(&self.document, self.editing.as_ref(), self.editing_cell);
         self.resolved
             .get_composing(&self.document, shaper, scope, composing.as_ref())
     }
@@ -140,6 +152,7 @@ impl OpenDocument {
 
     /// Snapshot the document, so the change about to be made can be undone.
     pub(crate) fn record_history(&mut self) {
+        self.recovery.last_saved_revision = u64::MAX;
         self.history.record(&self.document);
     }
 
@@ -175,8 +188,10 @@ impl OpenDocument {
     /// inside the document, so nothing else needs replacing alongside it.
     pub fn replace_document(&mut self, document: Document) {
         self.document = document;
+        self.resolved.invalidate();
         self.selection.clear();
         self.editing = None;
+        self.editing_cell = None;
     }
 
     /// The file's name, or `Untitled`, with unsaved work marked.
@@ -204,11 +219,17 @@ impl Default for OpenDocument {
 fn composing(
     document: &Document,
     editing: Option<&(tessera_document::ids::FrameId, EditBuffer)>,
+    cell: Option<(usize, usize)>,
 ) -> Option<tessera_layout::resolve::Composing> {
     let (id, buffer) = editing?;
     let (replacing, text) = buffer.composing()?;
-    let tessera_document::nodes::FrameKind::Text { story, .. } = document.frame(*id)?.kind else {
-        return None;
+    let story = match &document.frame(*id)?.kind {
+        tessera_document::nodes::FrameKind::Text { story, .. } => *story,
+        tessera_document::nodes::FrameKind::Table(table) => {
+            let (row, column) = cell?;
+            table.at(row, column)?.cell()?.story
+        }
+        _ => return None,
     };
     Some(tessera_layout::resolve::Composing {
         story,

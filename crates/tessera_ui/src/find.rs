@@ -56,6 +56,7 @@ pub struct Hit {
     /// given offset lands in is a question for the layout pass, not for a
     /// search, so this is where to *start* looking rather than a promise.
     pub frame: FrameId,
+    pub cell: Option<(usize, usize)>,
     /// Byte range into the story's text.
     pub range: Range<usize>,
 }
@@ -78,24 +79,36 @@ pub fn search(doc: &Document, query: &Query) -> Vec<Hit> {
     let mut seen: Vec<StoryId> = Vec::new();
 
     for frame in doc.paint_order() {
-        let Some(FrameKind::Text { story, .. }) = doc.frame(frame).map(|f| &f.kind) else {
-            continue;
+        let stories: Vec<_> = match doc.frame(frame).map(|f| &f.kind) {
+            Some(FrameKind::Text { story, .. }) => vec![(*story, None)],
+            Some(FrameKind::Table(table)) => (0..table.rows())
+                .flat_map(|row| {
+                    (0..table.columns()).filter_map(move |column| {
+                        table
+                            .at(row, column)?
+                            .cell()
+                            .map(|c| (c.story, Some((row, column))))
+                    })
+                })
+                .collect(),
+            _ => Vec::new(),
         };
-        let story = *story;
-        if seen.contains(&story) {
-            continue;
-        }
-        seen.push(story);
-
-        let Some(text) = doc.story(story) else {
-            continue;
-        };
-        for range in ranges_in(&text.text, query) {
-            hits.push(Hit {
-                story,
-                frame,
-                range,
-            });
+        for (story, cell) in stories {
+            if seen.contains(&story) {
+                continue;
+            }
+            seen.push(story);
+            let Some(text) = doc.story(story) else {
+                continue;
+            };
+            for range in ranges_in(&text.text, query) {
+                hits.push(Hit {
+                    story,
+                    frame,
+                    cell,
+                    range,
+                });
+            }
         }
     }
     hits
@@ -287,11 +300,13 @@ mod tests {
             Hit {
                 story,
                 frame: FrameId::default(),
+                cell: None,
                 range: 0..3,
             },
             Hit {
                 story,
                 frame: FrameId::default(),
+                cell: None,
                 range: 10..13,
             },
         ];

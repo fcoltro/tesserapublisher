@@ -164,7 +164,9 @@ pub fn close_now(state: &mut TesseraApp, key: DocumentKey) {
     // first would lose your place in a way that has to be undone by hand.
     let order: Vec<DocumentKey> = state.documents.keys().collect();
     let at = order.iter().position(|k| *k == key);
-    state.documents.remove(key);
+    if let Some(mut open) = state.documents.remove(key) {
+        open.recovery.discard_copy();
+    }
 
     if state.active == key {
         let next = at

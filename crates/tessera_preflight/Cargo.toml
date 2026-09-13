@@ -12,6 +12,7 @@ workspace = true
 # Preflight runs while the document changes, on a machine with no adapter, and
 # one day in a packager with no window. This list is the proof of that.
 [dependencies]
+tessera_layout.workspace = true
 tessera_document.workspace = true
 tessera_text.workspace = true
 tessera_color.workspace = true

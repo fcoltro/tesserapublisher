@@ -26,6 +26,7 @@ pub mod path;
 pub mod polygon;
 pub mod shadow;
 pub mod table;
+mod transfer;
 
 pub use document::{Document, StoryMap, ZMove};
 pub use history::History;

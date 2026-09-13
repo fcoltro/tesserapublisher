@@ -80,10 +80,20 @@ pub fn load(path: &Path) -> Result<Document, FormatError> {
 
     let mut value: serde_json::Value = read_json(&mut zip, DOCUMENT_ENTRY)?;
     migrate(&mut value, meta.format_version);
-    serde_json::from_value(value).map_err(|source| FormatError::Parse {
-        entry: DOCUMENT_ENTRY,
-        source,
-    })
+    let mut document: Document =
+        serde_json::from_value(value).map_err(|source| FormatError::Parse {
+            entry: DOCUMENT_ENTRY,
+            source,
+        })?;
+    let absolute = std::path::absolute(path).map_err(|_| FormatError::Read(path.to_path_buf()))?;
+    if let Some(directory) = absolute.parent() {
+        for link in document.links.values_mut() {
+            if link.path.is_relative() {
+                link.path = directory.join(&link.path);
+            }
+        }
+    }
+    Ok(document)
 }
 
 /// Bring a document forward from `from` to [`FORMAT_VERSION`], one step at a

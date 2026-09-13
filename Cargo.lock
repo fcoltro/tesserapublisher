@@ -3960,6 +3960,7 @@ dependencies = [
  "tessera_color",
  "tessera_document",
  "tessera_geometry",
+ "tessera_layout",
  "tessera_text",
 ]
 

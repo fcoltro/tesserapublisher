@@ -1001,9 +1001,17 @@ impl Story {
     /// ends, which is where its own formatting lives.
     pub fn paragraph_bounds(&self, range: Range<usize>) -> Range<usize> {
         let start = self.text[..range.start].rfind('\n').map_or(0, |i| i + 1);
-        let end = self.text[range.end..]
+        let last = if range.is_empty() {
+            range.end
+        } else {
+            self.text[..range.end]
+                .char_indices()
+                .next_back()
+                .map_or(range.start, |(i, _)| i)
+        };
+        let end = self.text[last..]
             .find('\n')
-            .map_or(self.text.len(), |i| range.end + i + 1);
+            .map_or(self.text.len(), |i| last + i + 1);
         start..end
     }
 

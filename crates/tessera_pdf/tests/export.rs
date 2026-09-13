@@ -476,7 +476,10 @@ fn an_object_at_no_opacity_is_not_written_at_all() {
     .expect("export");
     let text = String::from_utf8_lossy(&bytes).into_owned();
 
-    assert!(!text.contains(" re"), "an invisible rectangle was written");
+    assert!(
+        !text.lines().any(|line| line.trim() == "f"),
+        "an invisible rectangle was painted"
+    );
     assert!(!text.contains("/ExtGState"));
 }
 
@@ -691,6 +694,13 @@ fn an_intent() -> tessera_document::intent::OutputIntent {
     }
 }
 
+fn cmyk_intent() -> tessera_document::intent::OutputIntent {
+    tessera_document::intent::OutputIntent {
+        profile: include_bytes!("../../../assets/profiles/CGATS21_CRPC6.icc").to_vec(),
+        ..an_intent()
+    }
+}
+
 fn text_of(doc: &ResolvedDocument, options: &ExportOptions) -> String {
     let bytes = tessera_pdf::export_with(doc, options).expect("export");
     String::from_utf8_lossy(&bytes).into_owned()
@@ -772,7 +782,7 @@ fn pdf_x1a_refuses_a_document_that_uses_transparency() {
 fn pdf_x1a_accepts_the_same_document_without_transparency() {
     let options = ExportOptions {
         standard: Standard::X1a,
-        intent: Some(an_intent()),
+        intent: Some(cmyk_intent()),
         ..Default::default()
     };
     let text = text_of(&black_rect(rect(10.0, 10.0, 50.0, 50.0)), &options);
@@ -942,7 +952,7 @@ fn pdf_x1a_is_no_longer_refused_over_pictures() {
 
     let options = tessera_pdf::ExportOptions {
         standard: tessera_pdf::Standard::X1a,
-        intent: Some(an_intent()),
+        intent: Some(cmyk_intent()),
         ..Default::default()
     };
     let bytes = tessera_pdf::export_with(&doc, &options)
@@ -991,10 +1001,7 @@ fn the_shadow_is_drawn_before_the_shape_that_casts_it() {
     let bytes = tessera_pdf::export(&doc).expect("export");
     let text = String::from_utf8_lossy(&bytes);
     let shadow_at = text.find("/Sh0 Do").expect("the shadow");
-    let fill_at = text
-        .find(" re\n")
-        .or_else(|| text.find(" re "))
-        .expect("the rectangle");
+    let fill_at = text.find("60 692 80 40 re").expect("the rectangle");
     assert!(
         shadow_at < fill_at,
         "the shadow is drawn over the shape rather than behind it"

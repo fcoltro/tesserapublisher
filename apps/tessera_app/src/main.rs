@@ -40,10 +40,14 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
 
+    let startup_paths: Vec<_> = std::env::args_os()
+        .skip(1)
+        .map(std::path::PathBuf::from)
+        .collect();
     eframe::run_native(
         "Tessera Publisher",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             tessera_ui::theme::apply(&cc.egui_ctx);
 
             let render_state = cc
@@ -66,7 +70,10 @@ fn main() -> eframe::Result<()> {
             // size, a bleed and a press are decisions a job is built on, and a
             // document that appears without being asked for has already made
             // all three on somebody's behalf.
-            app.ask_what_to_make();
+            tessera_ui::file_ops::open_startup_paths(&mut app, &startup_paths);
+            if startup_paths.is_empty() {
+                app.ask_what_to_make();
+            }
             // And on a first run, offer to say where everything is. Offered
             // rather than started: it waits until the dialog above has been
             // dealt with, because a tour of the interface behind a modal is a

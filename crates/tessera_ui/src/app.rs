@@ -11,15 +11,12 @@ use tessera_text::shape::Shaper;
 use crate::open_document::OpenDocument;
 use crate::tools::{Drag, Tool};
 
-/// A frame on the clipboard, with its text if it had any.
-///
-/// The story travels with the frame because a text frame's content lives in
-/// the document's story arena rather than in the frame itself. Copying only
-/// the frame would paste an empty box.
+/// A copied root and a shared snapshot of its owned content and resources.
+/// The snapshot survives cuts and switching to another document.
 #[derive(Debug, Clone)]
 pub struct Clipboard {
-    pub frame: tessera_document::nodes::Frame,
-    pub story: Option<tessera_text::story::Story>,
+    pub source: std::sync::Arc<Document>,
+    pub root: FrameId,
 }
 
 /// A message for the status bar. Errors are never swallowed; they land here.
@@ -427,9 +424,6 @@ pub struct TesseraApp {
     /// that a copy in one document pastes into another.
     pub clipboard: Vec<Clipboard>,
 
-    /// When the crash-recovery copy was last written.
-    pub recovery: crate::recovery::Recovery,
-
     /// The command palette's own state.
     pub palette: crate::view::palette::Palette,
 
@@ -504,7 +498,6 @@ impl TesseraApp {
             drag: None,
             status: None,
             clipboard: Vec::new(),
-            recovery: crate::recovery::Recovery::default(),
             palette: crate::view::palette::Palette::default(),
             prefs: crate::prefs::Preferences::default(),
             update_check: crate::update::Check::default(),
@@ -623,21 +616,9 @@ impl TesseraApp {
             // said: somebody who turned this off knows what they turned off.
             return;
         }
-        let revision = self.active().document().revision();
-        if !self.recovery.due(
-            revision,
-            std::time::Instant::now(),
-            self.prefs.recovery_interval(),
-        ) {
-            return;
-        }
-
-        let Some(path) = crate::recovery::Recovery::path() else {
-            // No config directory means no autosave. Say so once: an
-            // application quietly not protecting your work is exactly what
-            // the no-silent-fallbacks rule is for.
-            if !self.recovery.announced_failure {
-                self.recovery.announced_failure = true;
+        let Some(directory) = crate::prefs::Preferences::directory() else {
+            if !self.active().recovery.announced_failure {
+                self.active_mut().recovery.announced_failure = true;
                 self.status = Some(Status::error(
                     "This system reports no configuration directory, so \
                      Tessera cannot autosave. Save your work manually.",
@@ -646,20 +627,20 @@ impl TesseraApp {
             return;
         };
 
-        match crate::recovery::write_copy(self.active().document(), &path) {
-            Ok(()) => {
-                self.recovery.last_saved_revision = revision;
-                self.recovery.last_write = std::time::Instant::now();
-                self.recovery.announced_failure = false;
-            }
-            Err(error) => {
-                if !self.recovery.announced_failure {
-                    self.recovery.announced_failure = true;
-                    self.status = Some(Status::error(format!("Could not autosave: {error}")));
-                }
-                // Try again next interval rather than never: the failure may
-                // be a full disk that the user is about to clear.
-                self.recovery.last_write = std::time::Instant::now();
+        self.autosave_in(&directory, std::time::Instant::now());
+    }
+
+    pub fn autosave_in(&mut self, directory: &std::path::Path, now: std::time::Instant) {
+        let every = self.prefs.recovery_interval();
+        for open in self.documents.values_mut().filter(|open| open.dirty) {
+            if let Err(error) = open.autosave_in(directory, now, every)
+                && !open.recovery.announced_failure
+            {
+                open.recovery.announced_failure = true;
+                self.status = Some(Status::error(format!(
+                    "Could not autosave {}: {error}",
+                    open.title()
+                )));
             }
         }
     }

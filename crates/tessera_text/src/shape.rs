@@ -35,12 +35,13 @@ pub struct PositionedGlyph {
     pub font_index: usize,
 }
 
-/// What a run is drawn in, as parley's brush.
-///
-/// `None` means the run states no colour of its own. parley requires
-/// `Clone + PartialEq + Default + Debug` and implements `Brush` for anything
-/// with them, so this needs no impl of its own.
-pub type Brush = Option<tessera_color::Color>;
+/// Paint and baseline placement carried through Parley's run boundaries.
+/// Including shift makes a shift-only style change split the positioned run.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Brush {
+    pub colour: Option<tessera_color::Color>,
+    pub baseline_shift: f32,
+}
 
 /// A drop cap, laid out and waiting for the body to say where it goes.
 ///
@@ -56,6 +57,7 @@ struct DropCap {
 }
 
 /// One paragraph's layout, and where it sits in the frame.
+#[derive(Clone, Debug)]
 pub(crate) struct Placed {
     /// The byte range of the story this paragraph covers, newline included.
     pub range: std::ops::Range<usize>,
@@ -100,7 +102,7 @@ impl Placed {
     /// The stored offset a shaped offset came from.
     pub(crate) fn to_stored(&self, shaped: usize) -> usize {
         if self.map.is_empty() {
-            return self.range.start + shaped;
+            return (self.range.start + shaped).min(self.range.end);
         }
         // The last pair at or before `shaped`: an offset inside a shaped
         // character belongs to the character it is inside.
@@ -538,7 +540,7 @@ pub struct ShapedRun {
     /// brush here is `()`: the renderer and the PDF writer express colour
     /// differently, so it is applied when drawing rather than baked into the
     /// glyphs. Both already walk run by run, for the size.
-    pub colour: Brush,
+    pub colour: Option<tessera_color::Color>,
     pub glyphs: Vec<PositionedGlyph>,
 }
 
@@ -597,6 +599,8 @@ pub struct ShapedLine {
     /// them here means [`shift`] is the only code that has to know.
     #[doc(alias = "anchored")]
     pub objects: Vec<PlacedObject>,
+    /// Original paragraph layout, carried with the line for editing.
+    pub hit: Option<crate::caret::LineLayout>,
 }
 
 impl ShapedLine {
@@ -717,6 +721,10 @@ fn extent(line: &ShapedLine) -> (f64, f64) {
 /// Move every glyph on a line, and its baseline, by an offset.
 fn shift(line: &mut ShapedLine, dx: f64, dy: f64) {
     line.baseline += dy;
+    if let Some(hit) = &mut line.hit {
+        hit.x += dx;
+        hit.y += dy;
+    }
     for run in &mut line.runs {
         for glyph in &mut run.glyphs {
             glyph.x += dx;
@@ -1259,7 +1267,10 @@ impl Shaper {
                     for piece in &cap_pieces {
                         if let Some(colour) = &piece.format.colour {
                             builder.push(
-                                parley::StyleProperty::Brush(Some(colour.clone())),
+                                parley::StyleProperty::Brush(Brush {
+                                    colour: Some(colour.clone()),
+                                    ..Brush::default()
+                                }),
                                 piece.shaped.clone(),
                             );
                         }
@@ -1418,7 +1429,10 @@ impl Shaper {
                 // place for one piece and setting it for the next is exactly
                 // the boundary needed.
                 builder.push(
-                    parley::StyleProperty::Brush(format.colour.clone()),
+                    parley::StyleProperty::Brush(Brush {
+                        colour: format.colour.clone(),
+                        baseline_shift: format.baseline_shift.unwrap_or(0.0),
+                    }),
                     local.clone(),
                 );
             }
@@ -1525,10 +1539,6 @@ impl Shaper {
     /// hands back parley's own layout for the caret to interrogate, which is
     /// asked for only while a caret is live and is not worth holding on to.
     pub fn shape(&mut self, story: &Story, styles: &dyn Styles, width: f64) -> ShapedText {
-        if story.text.is_empty() {
-            return ShapedText::default();
-        }
-
         let key = ShapeKey::new(story, styles, width);
         if let Some(shaped) = self.cache.get(&key) {
             self.hits += 1;
@@ -1639,13 +1649,14 @@ impl Shaper {
     ///
     /// Shared by both entry points, so a threaded frame and a lone one cannot
     /// disagree about baseline shift, colour or which font a run came from.
-    fn assemble(story: &Story, styles: &dyn Styles, placed: &[Placed]) -> ShapedText {
+    fn assemble(_story: &Story, _styles: &dyn Styles, placed: &[Placed]) -> ShapedText {
         let mut fonts: Vec<FontData> = Vec::new();
         let mut lines = Vec::new();
         let mut height: f64 = 0.0;
 
         for paragraph in placed {
-            for line in paragraph.layout.lines() {
+            let shared = std::sync::Arc::new(paragraph.clone());
+            for (index, line) in paragraph.layout.lines().enumerate() {
                 let mut runs = Vec::new();
                 // The paragraph's own origin is folded into every position
                 // here, so everything downstream — the renderer, the PDF
@@ -1688,11 +1699,7 @@ impl Shaper {
                     // disturb line breaking — a superscript sits above the line
                     // it belongs to, it does not make the line taller. Positive
                     // raises, which is why it is subtracted: y grows downward.
-                    let global = paragraph.range.start + run.run().text_range().start;
-                    let shift = story
-                        .run_at(global)
-                        .and_then(|r| story.resolve_run(r, styles).baseline_shift)
-                        .unwrap_or(0.0);
+                    let shift = run.style().brush.baseline_shift;
 
                     // `positioned_glyphs` already folds in the run offset, the
                     // baseline, and each glyph's advance — so nothing here
@@ -1714,7 +1721,7 @@ impl Shaper {
                     // glyphs — whereas the story run at the stretch's start
                     // would be the right answer only when the split happened to
                     // line up.
-                    let colour = run.style().brush.clone();
+                    let colour = run.style().brush.colour.clone();
 
                     runs.push(ShapedRun {
                         font_index,
@@ -1745,6 +1752,12 @@ impl Shaper {
                     ascent: f64::from(metrics.ascent),
                     descent: f64::from(metrics.descent),
                     objects,
+                    hit: Some(crate::caret::LineLayout {
+                        paragraph: shared.clone(),
+                        index,
+                        x: paragraph.x,
+                        y: paragraph.y,
+                    }),
                 });
             }
 
@@ -2057,13 +2070,17 @@ mod tests {
     }
 
     #[test]
-    fn empty_text_is_not_cached_and_costs_nothing() {
+    fn empty_text_caches_a_line_for_the_caret_without_painting_glyphs() {
         let mut shaper = Shaper::new();
-        shaper.shape(&Story::new(""), &NoStyles::default(), 200.0);
+        let story = Story::new("");
+        let shaped = shaper.shape(&story, &NoStyles::default(), 200.0);
+        assert_eq!(shaped.glyph_count(), 0);
+        assert_eq!(shaped.lines[0].range, 0..0);
+        shaper.shape(&story, &NoStyles::default(), 200.0);
         assert_eq!(
             shaper.cache_counts(),
-            (0, 0),
-            "there was nothing to lay out"
+            (1, 1),
+            "the empty paragraph still needs editing geometry"
         );
     }
 
@@ -3508,6 +3525,7 @@ mod tests {
                     ascent: 10.0,
                     descent: 2.0,
                     objects: Vec::new(),
+                    hit: None,
                     runs: vec![ShapedRun {
                         font_index: 0,
                         size: 12.0,

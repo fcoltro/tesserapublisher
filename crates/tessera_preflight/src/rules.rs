@@ -45,30 +45,25 @@ pub fn check(doc: &Document, shaper: &mut Shaper, limits: Limits) -> Report {
 pub fn overset_text(doc: &Document, shaper: &mut Shaper) -> Vec<Problem> {
     let mut out = Vec::new();
 
-    for id in doc.paint_order() {
-        let Some(frame) = doc.frame(id) else { continue };
-        let FrameKind::Text { story, .. } = frame.kind else {
-            continue;
+    let resolved = tessera_layout::resolve::resolve(doc, shaper);
+    for item in &resolved.items {
+        let id = item.frame;
+        let overset = match &item.kind {
+            tessera_layout::ResolvedKind::Text { overset_lines, .. } => {
+                if doc.thread_of(id).last() != Some(&id) {
+                    continue;
+                }
+                *overset_lines
+            }
+            tessera_layout::ResolvedKind::Table { laid, .. } => {
+                laid.cells.iter().map(|c| c.overset_lines).sum()
+            }
+            _ => continue,
         };
-        // The tail: a frame with nothing after it in its chain.
-        let chain = doc.thread_of(id);
-        if chain.last() != Some(&id) {
-            continue;
-        }
-        let Some(text) = doc.story(story) else {
-            continue;
-        };
-
-        // A hair of tolerance: a story that exactly fills its frame is not
-        // overset, and floating point should not decide otherwise.
-        let height = shaper.shape(text, doc, frame.bounds.width).height;
-        if height > frame.bounds.height + 0.5 {
-            let over = height - frame.bounds.height;
+        if overset > 0 {
             out.push(Problem {
                 rule: Rule::OversetText,
-                message: format!(
-                    "Text overflows its frame by {over:.0} pt and will not be printed"
-                ),
+                message: format!("{overset} lines overflow their frame and will not be printed"),
                 at: Where::Frame(id),
             });
         }

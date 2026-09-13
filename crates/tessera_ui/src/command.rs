@@ -681,10 +681,16 @@ fn editing_buffer_for(
 ) -> Option<&mut tessera_text::edit::EditBuffer> {
     let (id, _) = state.active().editing.as_ref()?;
     let editing = *id;
-    let shows = matches!(
-        state.active().document().frame(editing).map(|f| &f.kind),
-        Some(FrameKind::Text { story: s, .. }) if *s == story
-    );
+    let shows = match state.active().document().frame(editing).map(|f| &f.kind) {
+        Some(FrameKind::Text { story: s, .. }) => *s == story,
+        Some(FrameKind::Table(table)) => state
+            .active()
+            .editing_cell
+            .and_then(|(r, c)| table.at(r, c))
+            .and_then(|s| s.cell())
+            .is_some_and(|c| c.story == story),
+        _ => false,
+    };
     if !shows {
         return None;
     }
@@ -1288,14 +1294,14 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         }
 
         Command::DuplicateSelection => {
-            let copies: Vec<FrameId> = state
-                .active()
-                .selection
-                .as_slice()
-                .to_vec()
-                .into_iter()
-                .filter_map(|id| duplicate_one(state, id, DUPLICATE_OFFSET, DUPLICATE_OFFSET))
-                .collect();
+            let roots = state.active().selection.as_slice().to_vec();
+            let layer = state.default_layer();
+            let copies = state.active_mut().document_mut().copy_frames(
+                &roots,
+                layer,
+                DUPLICATE_OFFSET,
+                DUPLICATE_OFFSET,
+            );
             // Select the copies, so a second Ctrl+D duplicates them rather
             // than making a second copy of the originals.
             state.active_mut().selection.replace_all(copies);
@@ -1311,11 +1317,13 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             // forty would drift visibly by the end.
             for step in 1..=copies {
                 let by = step as f64;
-                for id in &originals {
-                    if let Some(copy) = duplicate_one(state, *id, dx * by, dy * by) {
-                        made.push(copy);
-                    }
-                }
+                let layer = state.default_layer();
+                made.extend(state.active_mut().document_mut().copy_frames(
+                    &originals,
+                    layer,
+                    dx * by,
+                    dy * by,
+                ));
             }
 
             // The copies, not the originals — the same rule Duplicate follows,
@@ -1326,11 +1334,16 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         }
 
         Command::CopySelection => {
+            let source = std::sync::Arc::new(state.active().document().clone());
             let items: Vec<Clipboard> = state
                 .active()
                 .selection
                 .iter()
-                .filter_map(|id| clipboard_item(state.active().document(), id))
+                .filter(|id| source.frame(*id).is_some())
+                .map(|root| Clipboard {
+                    source: source.clone(),
+                    root,
+                })
                 .collect();
             if !items.is_empty() {
                 let count = items.len();
@@ -1349,31 +1362,16 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::Paste => {
             const OFFSET: f64 = 12.0;
-            let pasted: Vec<FrameId> = state
-                .clipboard
-                .clone()
-                .into_iter()
-                .map(|item| {
-                    let mut frame = item.frame;
-                    frame.bounds.x += OFFSET;
-                    frame.bounds.y += OFFSET;
-                    // A pasted text frame needs its own story rather than a
-                    // reference to the one it came from, or editing the paste
-                    // would edit the original.
-                    if let (FrameKind::Text { layout, .. }, Some(story)) = (&frame.kind, item.story)
-                    {
-                        let layout = *layout;
-                        frame.kind = FrameKind::Text {
-                            story: state.active_mut().document_mut().add_story(story),
-                            // The copy keeps its columns. Resetting them would
-                            // silently undo what somebody set.
-                            layout,
-                        };
-                    }
-                    let layer = state.default_layer();
-                    state.active_mut().document_mut().add_frame(layer, frame)
-                })
-                .collect();
+            let Some(first) = state.clipboard.first() else {
+                return;
+            };
+            let source = first.source.clone();
+            let roots: Vec<_> = state.clipboard.iter().map(|item| item.root).collect();
+            let layer = state.default_layer();
+            let pasted = state
+                .active_mut()
+                .document_mut()
+                .import_frames(&source, &roots, layer, OFFSET, OFFSET, false);
             state.active_mut().selection.replace_all(pasted);
         }
 
@@ -1915,6 +1913,9 @@ fn drop_the_untouchable(state: &mut TesseraApp) {
 /// Restore a snapshot, keeping the selection honest.
 fn restore(state: &mut TesseraApp, document: Document) {
     *state.active_mut().document_mut() = document;
+    state.active_mut().resolved.invalidate();
+    state.active_mut().recovery.last_saved_revision = u64::MAX;
+    state.preflight.recheck();
     // Undoing a delete brings frames back still selected; undoing a create
     // must not leave handles floating around a frame that is gone.
     state.active_mut().retain_existing_selection();
@@ -1922,42 +1923,12 @@ fn restore(state: &mut TesseraApp, document: Document) {
     state.active_mut().dirty = true;
 }
 
-fn clipboard_item(document: &Document, id: FrameId) -> Option<Clipboard> {
-    let frame = document.frame(id).cloned()?;
-    let story = match &frame.kind {
-        FrameKind::Text { story, .. } => document.story(*story).cloned(),
-        _ => None,
-    };
-    Some(Clipboard { frame, story })
-}
-
-/// Copy one frame, offset, with its own story if it had one.
 /// How far a plain duplicate lands from what it copied.
 ///
 /// Far enough to see that there are two, near enough to read as a copy of that
 /// one rather than as something new. Step and repeat states its own offset and
 /// does not use this.
 const DUPLICATE_OFFSET: f64 = 12.0;
-
-fn duplicate_one(state: &mut TesseraApp, id: FrameId, dx: f64, dy: f64) -> Option<FrameId> {
-    let mut frame = state.active().document().frame(id).cloned()?;
-    frame.bounds.x += dx;
-    frame.bounds.y += dy;
-
-    // Give the copy its own story, or editing the copy would edit the
-    // original — the same aliasing trap as the frame/story split.
-    if let FrameKind::Text { story, layout } = frame.kind
-        && let Some(content) = state.active().document().story(story).cloned()
-    {
-        frame.kind = FrameKind::Text {
-            story: state.active_mut().document_mut().add_story(content),
-            layout,
-        };
-    }
-
-    let layer = state.default_layer();
-    Some(state.active_mut().document_mut().add_frame(layer, frame))
-}
 
 #[cfg(test)]
 mod tests {

@@ -940,6 +940,15 @@ impl Document {
                     }
                 }
             }
+            FrameKind::Table(table) => {
+                for slot in &mut table.cells {
+                    if let Some(cell) = slot.cell_mut()
+                        && let Some(story) = self.stories.get(cell.story).cloned()
+                    {
+                        cell.story = self.stories.insert(story);
+                    }
+                }
+            }
             _ => {}
         }
 

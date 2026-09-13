@@ -340,27 +340,14 @@ pub struct CaretOnPage {
 /// application and the buffer to the open document, so the split is between
 /// two disjoint fields of `TesseraApp` and the borrow checker can see it.
 fn caret_geometry(state: &mut TesseraApp) -> Option<CaretOnPage> {
-    let key = state.active;
-    let TesseraApp {
-        documents, shaper, ..
-    } = state;
-    let open = &documents[key];
-    let (id, buffer) = open.editing.as_ref()?;
-    let frame = open.document().frame(*id)?;
-    let width = frame.bounds.width;
-
+    let shaped = editing_layout(state)?;
+    let (id, buffer) = state.active().editing.as_ref()?;
     // **Measured against the text as shown, not as stored.** The canvas lays out
     // the composition, so a caret measured without it would sit where the caret
     // was before the composition started — several characters to the left of the
     // text being typed, which looks like a broken caret rather than a preview.
     let Some((replacing, text)) = buffer.composing() else {
-        let geometry = shaper.caret_geometry(
-            buffer.story(),
-            open.document(),
-            width,
-            buffer.cursor(),
-            CARET_PX,
-        );
+        let geometry = shaped.caret_geometry(buffer.cursor(), CARET_PX);
         return Some(CaretOnPage {
             frame: *id,
             geometry,
@@ -371,14 +358,10 @@ fn caret_geometry(state: &mut TesseraApp) -> Option<CaretOnPage> {
 
     // The same replacement the layout made, so the caret and the underline are
     // measured against the text the canvas is actually showing.
-    let shown = buffer.story().with_provisional(replacing.clone(), text);
     let at = replacing.start;
     let after = at + text.len();
     // At the end of the composition, which is where the next character will go.
-    let geometry = shaper.caret_geometry(
-        &shown,
-        open.document(),
-        width,
+    let geometry = shaped.caret_geometry(
         tessera_text::edit::TextCursor {
             position: after,
             anchor: after,
@@ -389,12 +372,9 @@ fn caret_geometry(state: &mut TesseraApp) -> Option<CaretOnPage> {
     // line, which is exactly what an underline needs and what the selection
     // highlight already knows how to produce. No new machinery for a second way
     // of saying "these bytes are here".
-    let mut extent = |from: usize, to: usize| {
-        shaper
+    let extent = |from: usize, to: usize| {
+        shaped
             .caret_geometry(
-                &shown,
-                open.document(),
-                width,
                 tessera_text::edit::TextCursor {
                     position: to,
                     anchor: from,
@@ -424,49 +404,49 @@ fn caret_geometry(state: &mut TesseraApp) -> Option<CaretOnPage> {
     })
 }
 
-/// The byte offset in the story being edited that `pos` lands on.
-fn text_offset_at(state: &mut TesseraApp, rect: Rect, pos: egui::Pos2) -> Option<usize> {
-    let at = doc_pos(state, rect, pos);
-    let key = state.active;
-    let TesseraApp {
-        documents, shaper, ..
-    } = state;
-    let open = &documents[key];
-    let (id, buffer) = open.editing.as_ref()?;
-    let frame = open.document().frame(*id)?;
-    // Into the frame's own space: the text does not turn with the pointer.
-    let local = frame.to_local(at);
-    Some(shaper.offset_at(
-        buffer.story(),
-        open.document(),
-        frame.bounds.width,
-        local.x - frame.bounds.x,
-        local.y - frame.bounds.y,
-    ))
+/// Clone the lightweight shaped result so the editing buffer can be borrowed
+/// independently of the resolve cache. Paragraph layouts are shared by Arc.
+fn editing_layout(state: &mut TesseraApp) -> Option<tessera_text::shape::ShapedText> {
+    let id = state.active().editing.as_ref()?.0;
+    let cell = state.active().editing_cell;
+    let item = state
+        .resolve_active()
+        .items
+        .iter()
+        .find(|item| item.frame == id)?;
+    match &item.kind {
+        tessera_layout::ResolvedKind::Text { shaped, .. } => Some(shaped.clone()),
+        tessera_layout::ResolvedKind::Table { laid, .. } => {
+            let (row, column) = cell?;
+            laid.cells
+                .iter()
+                .find(|c| c.row == row && c.column == column)
+                .map(|c| c.shaped.clone())
+        }
+        _ => None,
+    }
 }
 
-/// The word `pos` lands in, for a double-click.
+fn editing_point(state: &TesseraApp, rect: Rect, pos: egui::Pos2) -> Option<(f64, f64)> {
+    let at = doc_pos(state, rect, pos);
+    let id = state.active().editing.as_ref()?.0;
+    let frame = state.active().document().frame(id)?;
+    let local = frame.to_local(at);
+    Some((local.x - frame.bounds.x, local.y - frame.bounds.y))
+}
+
+fn text_offset_at(state: &mut TesseraApp, rect: Rect, pos: egui::Pos2) -> Option<usize> {
+    let (x, y) = editing_point(state, rect, pos)?;
+    Some(editing_layout(state)?.offset_at(x, y))
+}
+
 fn text_word_at(
     state: &mut TesseraApp,
     rect: Rect,
     pos: egui::Pos2,
 ) -> Option<std::ops::Range<usize>> {
-    let at = doc_pos(state, rect, pos);
-    let key = state.active;
-    let TesseraApp {
-        documents, shaper, ..
-    } = state;
-    let open = &documents[key];
-    let (id, buffer) = open.editing.as_ref()?;
-    let frame = open.document().frame(*id)?;
-    let local = frame.to_local(at);
-    Some(shaper.word_at(
-        buffer.story(),
-        open.document(),
-        frame.bounds.width,
-        local.x - frame.bounds.x,
-        local.y - frame.bounds.y,
-    ))
+    let (x, y) = editing_point(state, rect, pos)?;
+    Some(editing_layout(state)?.word_at(x, y))
 }
 
 /// Whether `pos` is over the frame currently being edited.
@@ -3918,6 +3898,71 @@ mod tests {
             "the caret did not move past the composition: {} then {}",
             before.x0,
             after.x0
+        );
+    }
+
+    #[test]
+    fn table_cell_caret_composition_and_formatting_follow_the_edited_cell() {
+        let mut state = TesseraApp::headless();
+        crate::apply(
+            &mut state,
+            crate::Command::AddTable {
+                bounds: DocRect {
+                    x: 20.0,
+                    y: 20.0,
+                    width: 240.0,
+                    height: 100.0,
+                },
+                rows: 1,
+                columns: 2,
+            },
+        );
+        let id = state.active().selection.single().unwrap();
+        let sid = editing_story(&state, id, Some((0, 1))).unwrap();
+        crate::apply(
+            &mut state,
+            crate::Command::ReplaceMatches {
+                edits: vec![(sid, 0..0, "base".into())],
+            },
+        );
+        start_editing_cell(&mut state, id, Some((0, 1)));
+        state.active_mut().editing.as_mut().unwrap().1.set_cursor(0);
+        let before = caret_geometry(&mut state).unwrap().geometry.caret.unwrap();
+        assert!(before.x0 >= 120.0);
+        state
+            .active_mut()
+            .editing
+            .as_mut()
+            .unwrap()
+            .1
+            .set_ime_preedit(Some("more".into()));
+        let composing = caret_geometry(&mut state).unwrap();
+        assert!(!composing.composing.is_empty());
+        assert!(composing.geometry.caret.unwrap().x0 > before.x0);
+        state
+            .active_mut()
+            .editing
+            .as_mut()
+            .unwrap()
+            .1
+            .set_ime_preedit(None);
+        crate::apply(
+            &mut state,
+            crate::Command::SetCharacterFormat {
+                story: sid,
+                range: 0..4,
+                format: tessera_text::story::CharacterFormat {
+                    size: Some(24.0),
+                    ..Default::default()
+                },
+            },
+        );
+        let story = state.active().editing.as_ref().unwrap().1.story();
+        assert_eq!(
+            story
+                .resolve_run(&story.runs[0], state.active().document())
+                .size,
+            Some(24.0)
         );
     }
 

@@ -52,8 +52,8 @@ pub enum PackageError {
 
 /// Collect a document, its links and a summary into `folder`.
 ///
-/// The document is written first: if a link copy fails halfway, the folder still
-/// holds a readable job rather than a folder of photographs and no layout.
+/// Copy the assets and save a document whose successful links are relative to
+/// the package. Missing assets are reported without discarding the readable job.
 pub fn collect(
     doc: &Document,
     document_name: &str,
@@ -64,33 +64,61 @@ pub fn collect(
     std::fs::create_dir_all(&links_folder)
         .map_err(|_| PackageError::Folder(links_folder.clone()))?;
 
-    // The document itself, first.
     let document_path = folder.join(format!("{document_name}.tessera"));
-    tessera_document::format::save(doc, &document_path)
-        .map_err(|_| PackageError::Write(document_path.clone()))?;
-
+    let mut packaged_doc = doc.clone();
     let mut copied = Vec::new();
     let mut missing = Vec::new();
+    let mut sources = std::collections::HashMap::<PathBuf, (PathBuf, Option<u64>)>::new();
+    let mut names = std::collections::HashSet::new();
 
-    for link in doc.links.values() {
+    for link in packaged_doc.links.values_mut() {
+        let source = std::fs::canonicalize(&link.path).unwrap_or_else(|_| link.path.clone());
+        if let Some((relative, modified)) = sources.get(&source) {
+            link.path = relative.clone();
+            link.modified = *modified;
+            continue;
+        }
         let name = link
             .path
             .file_name()
             .map(|n| n.to_owned())
             .unwrap_or_else(|| link.path.as_os_str().to_owned());
-        let target = links_folder.join(&name);
-
-        // Already copied: two frames placing one file is one file, and the
-        // second copy would be the same bytes under the same name.
-        if target.exists() {
-            continue;
+        let mut chosen = PathBuf::from(&name);
+        let mut suffix = 2;
+        while !names.insert(chosen.to_string_lossy().to_lowercase()) {
+            let stem = Path::new(&name)
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy();
+            chosen = PathBuf::from(format!("{stem}-{suffix}"));
+            if let Some(ext) = Path::new(&name).extension() {
+                chosen.set_extension(ext);
+            }
+            suffix += 1;
         }
-
-        match std::fs::copy(&link.path, &target) {
-            Ok(_) => copied.push(target),
+        let relative = PathBuf::from("Links").join(chosen);
+        let target = folder.join(&relative);
+        // Atomic replacement refreshes stale copies and also permits packaging
+        // an already-packaged document back into its own directory.
+        let result = std::fs::read(&source)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| {
+                tessera_io::atomic::write_atomic(&target, &bytes).map_err(|e| e.to_string())
+            });
+        match result {
+            Ok(()) => {
+                link.path = relative.clone();
+                link.modified = std::fs::metadata(&target)
+                    .ok()
+                    .and_then(|m| tessera_document::links::modified_seconds(&m));
+                sources.insert(source, (relative, link.modified));
+                copied.push(target);
+            }
             Err(error) => missing.push(format!("{}: {error}", link.path.display())),
         }
     }
+    tessera_document::format::save(&packaged_doc, &document_path)
+        .map_err(|_| PackageError::Write(document_path.clone()))?;
 
     let fonts = families(doc);
     let summary = summarise(doc, document_name, &copied, &missing, &fonts, report);

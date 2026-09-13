@@ -21,6 +21,8 @@ use crate::prefs::Preferences;
 
 /// When the autosave copy was last written, and for which revision.
 pub struct Recovery {
+    pub copy_path: Option<PathBuf>,
+    file_name: String,
     /// The document revision the copy on disk holds.
     ///
     /// Comparing revisions is what stops an idle application rewriting the
@@ -39,7 +41,15 @@ impl Recovery {
     const FILE_NAME: &'static str = "recovery.tessera";
 
     pub fn new(revision: u64) -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
         Self {
+            copy_path: None,
+            file_name: format!("recovery-{}-{time}-{serial}.tessera", std::process::id()),
             last_saved_revision: revision,
             last_write: Instant::now(),
             announced_failure: false,
@@ -71,6 +81,34 @@ impl Recovery {
         if let Some(path) = Self::path() {
             let _ = std::fs::remove_file(path);
         }
+    }
+
+    pub fn discard_copy(&mut self) {
+        if let Some(path) = self.copy_path.take() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    pub fn save_if_due(
+        &mut self,
+        document: &Document,
+        directory: &Path,
+        now: Instant,
+        every: Duration,
+    ) -> Result<(), String> {
+        if !self.due(document.revision(), now, every) {
+            return Ok(());
+        }
+        let path = self
+            .copy_path
+            .clone()
+            .unwrap_or_else(|| directory.join(&self.file_name));
+        self.last_write = now;
+        write_copy(document, &path)?;
+        self.copy_path = Some(path);
+        self.last_saved_revision = document.revision();
+        self.announced_failure = false;
+        Ok(())
     }
 }
 
@@ -109,7 +147,10 @@ pub fn write_copy(document: &Document, path: &Path) -> Result<(), String> {
 pub fn recover_from_path(state: &mut TesseraApp, path: &Path) {
     match tessera_document::format::load(path) {
         Ok(document) => {
-            state.replace_document(document);
+            let revision = document.revision();
+            state.add_document(document, None);
+            state.active_mut().recovery.copy_path = Some(path.to_path_buf());
+            state.active_mut().recovery.last_saved_revision = revision;
             state.active_mut().current_path = None;
             // Unsaved, because it is: the user has nowhere on disk that holds
             // this yet. It also keeps the title's asterisk honest.
@@ -134,7 +175,27 @@ pub fn recover_from_path(state: &mut TesseraApp, path: &Path) {
 /// the user has still saved nothing — so it stays until either a manual save
 /// makes it redundant or the next autosave replaces it.
 pub fn offer_pending(state: &mut TesseraApp) {
-    if let Some(path) = Recovery::pending() {
+    if let Some(directory) = Preferences::directory() {
+        recover_directory(state, &directory);
+    }
+}
+
+pub fn recover_directory(state: &mut TesseraApp, directory: &Path) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    let mut paths: Vec<_> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|path| {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            path.is_file()
+                && (name == Recovery::FILE_NAME
+                    || (name.starts_with("recovery-") && name.ends_with(".tessera")))
+        })
+        .collect();
+    paths.sort();
+    for path in paths {
         recover_from_path(state, &path);
     }
 }
@@ -154,6 +215,7 @@ mod tests {
                 last_saved_revision: 7,
                 last_write: now,
                 announced_failure: false,
+                ..Recovery::default()
             },
             now + offset,
         )

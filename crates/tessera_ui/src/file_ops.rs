@@ -24,8 +24,8 @@ pub fn save_to_path(state: &mut TesseraApp, path: &Path) -> Result<(), FormatErr
     // The work is safe in the user's own file now, so the recovery copy is
     // not just redundant but misleading: left behind, it would offer to
     // recover work that was already saved.
-    crate::recovery::Recovery::discard();
-    state.recovery.last_saved_revision = state.active().document().revision();
+    state.active_mut().recovery.discard_copy();
+    state.active_mut().recovery.last_saved_revision = state.active().document().revision();
     state.status = Some(Status::info(format!("Saved {}", path.display())));
     Ok(())
 }
@@ -57,6 +57,20 @@ pub fn open_from_path(state: &mut TesseraApp, path: &Path) -> Result<(), FormatE
 pub fn new_document(state: &mut TesseraApp) {
     state.add_document(starting_document(), None);
     state.status = Some(Status::info("New document"));
+}
+
+/// Open files supplied by the shell before presenting the first window.
+/// One unreadable file must not prevent the remaining arguments from opening.
+pub fn open_startup_paths(state: &mut TesseraApp, paths: &[PathBuf]) {
+    let mut errors = Vec::new();
+    for path in paths {
+        if let Err(error) = open_from_path(state, path) {
+            errors.push(format!("Could not open {}: {error}", path.display()));
+        }
+    }
+    if !errors.is_empty() {
+        state.status = Some(Status::error(errors.join("; ")));
+    }
 }
 
 /// A new document as *Tessera* starts one, styles and all.

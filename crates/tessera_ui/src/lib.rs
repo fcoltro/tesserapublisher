@@ -84,7 +84,9 @@ impl eframe::App for TesseraApp {
     /// Only a crash should leave it behind. That is the whole point of it.
     fn on_exit(&mut self) {
         if self.quit.confirmed || !self.documents.values().any(|doc| doc.dirty) {
-            recovery::Recovery::discard();
+            for open in self.documents.values_mut() {
+                open.recovery.discard_copy();
+            }
         }
     }
 }

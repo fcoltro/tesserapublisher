@@ -171,6 +171,23 @@ impl ExportOptions {
                 self.standard.label()
             ));
         }
+        if self.standard != Standard::Plain
+            && let Some(intent) = &self.intent
+        {
+            match tessera_color::managed::OutputProfile::from_bytes(intent.profile.clone()) {
+                Err(error) => out.push(format!("Invalid output profile: {error}")),
+                Ok(profile) if self.standard == Standard::X1a && profile.space() != "CMYK" => {
+                    out.push("PDF/X-1a requires a CMYK output profile".into())
+                }
+                _ => {}
+            }
+        }
+        if self.standard == Standard::X1a
+            && self.intent.is_some()
+            && !crate::ink::Ink::for_intent(self.intent.as_ref()).is_cmyk()
+        {
+            out.push("The output profile cannot produce CMYK for PDF/X-1a".into());
+        }
 
         if self.standard.forbids_transparency() && has_transparency {
             out.push(format!(
@@ -238,7 +255,12 @@ mod tests {
                 .iter()
                 .any(|r| r.contains("transparency"))
         );
-        assert!(options.refusals(false, false).is_empty());
+        assert!(
+            options
+                .refusals(false, false)
+                .iter()
+                .any(|r| r.contains("CMYK"))
+        );
     }
 
     #[test]

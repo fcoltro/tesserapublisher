@@ -145,8 +145,13 @@ fn go_to_next(state: &mut TesseraApp) {
 
 /// Select the frame the hit is in and put the caret on the text.
 fn reveal(state: &mut TesseraApp, hit: &find::Hit) {
-    state.active_mut().selection.set(hit.frame);
-    crate::view::viewport::start_editing(state, hit.frame);
+    let chain = state.active().document().thread_of(hit.frame);
+    let frame = state.resolve_active().items.iter().find(|item| {
+        chain.contains(&item.frame) && matches!(&item.kind,
+            tessera_layout::ResolvedKind::Text { shaped, .. } if shaped.lines.iter().any(|l| l.range.contains(&hit.range.start)))
+    }).map_or(hit.frame, |item| item.frame);
+    state.active_mut().selection.set(frame);
+    crate::view::viewport::start_editing_cell(state, frame, hit.cell);
     if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
         buffer.select(hit.range.clone());
     }
@@ -307,6 +312,39 @@ mod tests {
             text_of(&state),
             "dog dog cat",
             "the second change must not skip an occurrence or repeat one"
+        );
+    }
+
+    #[test]
+    fn finding_a_table_hit_starts_editing_the_owning_cell() {
+        let mut state = TesseraApp::headless();
+        apply(
+            &mut state,
+            Command::AddTable {
+                bounds: DocRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 200.0,
+                    height: 100.0,
+                },
+                rows: 1,
+                columns: 2,
+            },
+        );
+        let frame = state.active().selection.single().unwrap();
+        let story = crate::view::viewport::editing_story(&state, frame, Some((0, 1))).unwrap();
+        apply(
+            &mut state,
+            Command::ReplaceMatches {
+                edits: vec![(story, 0..0, "needle".into())],
+            },
+        );
+        state.find.query.needle = "needle".into();
+        go_to_next(&mut state);
+        assert_eq!(state.active().editing_cell, Some((0, 1)));
+        assert_eq!(
+            state.active().editing.as_ref().unwrap().1.selected_text(),
+            Some("needle")
         );
     }
 
