@@ -28,6 +28,8 @@ pub enum Group {
     /// The arrow keys. See [`Group::menu`].
     Nudge,
     Type,
+    /// The characters with no key, a submenu of Type. See [`Group::submenu`].
+    Insert,
     Layout,
     Table,
     Window,
@@ -35,7 +37,7 @@ pub enum Group {
 }
 
 impl Group {
-    pub const ALL: [Group; 14] = [
+    pub const ALL: [Group; 15] = [
         Group::File,
         Group::Edit,
         Group::Object,
@@ -46,6 +48,7 @@ impl Group {
         Group::Tool,
         Group::Nudge,
         Group::Type,
+        Group::Insert,
         Group::Layout,
         Group::Table,
         Group::Window,
@@ -66,6 +69,9 @@ impl Group {
             Group::Arrange => Some("Arrange"),
             Group::Transform => Some("Transform"),
             Group::Align => Some("Align and distribute"),
+            // Twenty-one characters under Type would bury the styles; a
+            // submenu is what InDesign does, and for the same reason.
+            Group::Insert => Some("Insert special character"),
             _ => None,
         }
     }
@@ -92,7 +98,7 @@ impl Group {
             Group::Edit => Some("Edit"),
             Group::Object | Group::Arrange | Group::Transform | Group::Align => Some("Object"),
             Group::View => Some("View"),
-            Group::Type => Some("Type"),
+            Group::Type | Group::Insert => Some("Type"),
             Group::Layout => Some("Layout"),
             Group::Table => Some("Table"),
             Group::Window => Some("Window"),
@@ -102,9 +108,127 @@ impl Group {
     }
 }
 
+/// A character a person cannot type from the keyboard and reaches for
+/// anyway: the spaces, dashes and marks of set type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Special {
+    EmDash,
+    EnDash,
+    DiscretionaryHyphen,
+    NonBreakingHyphen,
+    NonBreakingSpace,
+    EnSpace,
+    EmSpace,
+    ThinSpace,
+    HairSpace,
+    Ellipsis,
+    OpenDoubleQuote,
+    CloseDoubleQuote,
+    OpenSingleQuote,
+    CloseSingleQuote,
+    Bullet,
+    Section,
+    Pilcrow,
+    Copyright,
+    Registered,
+    Trademark,
+    Degree,
+}
+
+impl Special {
+    pub const ALL: [Special; 21] = [
+        Special::EmDash,
+        Special::EnDash,
+        Special::DiscretionaryHyphen,
+        Special::NonBreakingHyphen,
+        Special::NonBreakingSpace,
+        Special::EnSpace,
+        Special::EmSpace,
+        Special::ThinSpace,
+        Special::HairSpace,
+        Special::Ellipsis,
+        Special::OpenDoubleQuote,
+        Special::CloseDoubleQuote,
+        Special::OpenSingleQuote,
+        Special::CloseSingleQuote,
+        Special::Bullet,
+        Special::Section,
+        Special::Pilcrow,
+        Special::Copyright,
+        Special::Registered,
+        Special::Trademark,
+        Special::Degree,
+    ];
+
+    pub fn character(self) -> char {
+        match self {
+            Special::EmDash => '\u{2014}',
+            Special::EnDash => '\u{2013}',
+            Special::DiscretionaryHyphen => '\u{00AD}',
+            Special::NonBreakingHyphen => '\u{2011}',
+            Special::NonBreakingSpace => '\u{00A0}',
+            Special::EnSpace => '\u{2002}',
+            Special::EmSpace => '\u{2003}',
+            Special::ThinSpace => '\u{2009}',
+            Special::HairSpace => '\u{200A}',
+            Special::Ellipsis => '\u{2026}',
+            Special::OpenDoubleQuote => '\u{201C}',
+            Special::CloseDoubleQuote => '\u{201D}',
+            Special::OpenSingleQuote => '\u{2018}',
+            Special::CloseSingleQuote => '\u{2019}',
+            Special::Bullet => '\u{2022}',
+            Special::Section => '\u{00A7}',
+            Special::Pilcrow => '\u{00B6}',
+            Special::Copyright => '\u{00A9}',
+            Special::Registered => '\u{00AE}',
+            Special::Trademark => '\u{2122}',
+            Special::Degree => '\u{00B0}',
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Special::EmDash => "Em dash",
+            Special::EnDash => "En dash",
+            Special::DiscretionaryHyphen => "Discretionary hyphen",
+            Special::NonBreakingHyphen => "Non-breaking hyphen",
+            Special::NonBreakingSpace => "Non-breaking space",
+            Special::EnSpace => "En space",
+            Special::EmSpace => "Em space",
+            Special::ThinSpace => "Thin space",
+            Special::HairSpace => "Hair space",
+            Special::Ellipsis => "Ellipsis",
+            Special::OpenDoubleQuote => "Double quote, open",
+            Special::CloseDoubleQuote => "Double quote, close",
+            Special::OpenSingleQuote => "Single quote, open",
+            Special::CloseSingleQuote => "Single quote, close",
+            Special::Bullet => "Bullet",
+            Special::Section => "Section mark",
+            Special::Pilcrow => "Paragraph mark",
+            Special::Copyright => "Copyright",
+            Special::Registered => "Registered",
+            Special::Trademark => "Trademark",
+            Special::Degree => "Degree",
+        }
+    }
+
+    /// InDesign's shortcuts, for the four a person types all day.
+    const fn shortcut(self) -> Option<&'static str> {
+        match self {
+            Special::EmDash => Some("Shift+Alt+-"),
+            Special::EnDash => Some("Alt+-"),
+            Special::DiscretionaryHyphen => Some("Ctrl+Shift+-"),
+            Special::NonBreakingSpace => Some("Ctrl+Alt+X"),
+            _ => None,
+        }
+    }
+}
+
 /// What an action does, named rather than performed.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Run {
+    /// Type a character the keyboard has no key for, at the caret.
+    Insert(Special),
     OpenSettings,
     ShowTour,
     Package,
@@ -207,6 +331,8 @@ pub fn guard(run: Run) -> Guard {
         | Run::TableColumn { .. }
         | Run::MergeSelectedCells
         | Run::SplitSelectedCell => Guard::Always,
+        // Only useful while typing, like the table commands.
+        Run::Insert(_) => Guard::Always,
         Run::Command(
             Cut
             | Copy
@@ -387,6 +513,125 @@ pub fn all() -> &'static [Action] {
         // about the grid rather than about the object, and filing them under
         // Object would bury them among things that act on the frame.
         a("Insert table", None, Group::Table, Run::InsertTable),
+        // The characters with no key. One action each, so the palette finds
+        // "em dash" and the Type menu lists them; the four typed all day
+        // carry InDesign's shortcuts.
+        a(
+            "Em dash",
+            Special::EmDash.shortcut(),
+            Group::Insert,
+            Run::Insert(Special::EmDash),
+        ),
+        a(
+            "En dash",
+            Special::EnDash.shortcut(),
+            Group::Insert,
+            Run::Insert(Special::EnDash),
+        ),
+        a(
+            "Discretionary hyphen",
+            Special::DiscretionaryHyphen.shortcut(),
+            Group::Insert,
+            Run::Insert(Special::DiscretionaryHyphen),
+        ),
+        a(
+            "Non-breaking hyphen",
+            None,
+            Group::Insert,
+            Run::Insert(Special::NonBreakingHyphen),
+        ),
+        a(
+            "Non-breaking space",
+            Special::NonBreakingSpace.shortcut(),
+            Group::Insert,
+            Run::Insert(Special::NonBreakingSpace),
+        ),
+        a(
+            "En space",
+            None,
+            Group::Insert,
+            Run::Insert(Special::EnSpace),
+        ),
+        a(
+            "Em space",
+            None,
+            Group::Insert,
+            Run::Insert(Special::EmSpace),
+        ),
+        a(
+            "Thin space",
+            None,
+            Group::Insert,
+            Run::Insert(Special::ThinSpace),
+        ),
+        a(
+            "Hair space",
+            None,
+            Group::Insert,
+            Run::Insert(Special::HairSpace),
+        ),
+        a(
+            "Ellipsis",
+            None,
+            Group::Insert,
+            Run::Insert(Special::Ellipsis),
+        ),
+        a(
+            "Double quote, open",
+            None,
+            Group::Insert,
+            Run::Insert(Special::OpenDoubleQuote),
+        ),
+        a(
+            "Double quote, close",
+            None,
+            Group::Insert,
+            Run::Insert(Special::CloseDoubleQuote),
+        ),
+        a(
+            "Single quote, open",
+            None,
+            Group::Insert,
+            Run::Insert(Special::OpenSingleQuote),
+        ),
+        a(
+            "Single quote, close",
+            None,
+            Group::Insert,
+            Run::Insert(Special::CloseSingleQuote),
+        ),
+        a("Bullet", None, Group::Insert, Run::Insert(Special::Bullet)),
+        a(
+            "Section mark",
+            None,
+            Group::Insert,
+            Run::Insert(Special::Section),
+        ),
+        a(
+            "Paragraph mark",
+            None,
+            Group::Insert,
+            Run::Insert(Special::Pilcrow),
+        ),
+        a(
+            "Copyright",
+            None,
+            Group::Insert,
+            Run::Insert(Special::Copyright),
+        ),
+        a(
+            "Registered",
+            None,
+            Group::Insert,
+            Run::Insert(Special::Registered),
+        ),
+        a(
+            "Trademark",
+            None,
+            Group::Insert,
+            Run::Insert(Special::Trademark),
+        ),
+        a("Degree", None, Group::Insert, Run::Insert(Special::Degree)),
         a(
             "Insert row above",
             None,
@@ -972,6 +1217,9 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             }
         }
 
+        Run::Insert(special) => {
+            crate::view::viewport::type_text(state, &special.character().to_string());
+        }
         Run::MergeSelectedCells => {
             // The cell to the right, which is the merge somebody wants nine
             // times out of ten and needs no second selection model to express.
@@ -1125,6 +1373,71 @@ fn leads_somewhere(state: &crate::app::TesseraApp, id: tessera_document::ids::Fr
 mod tests {
 
     #[test]
+    fn inserting_a_special_character_types_it_at_the_caret() {
+        use crate::app::TesseraApp;
+        use tessera_document::nodes::FrameKind;
+        use tessera_geometry::DocRect;
+
+        let mut state = TesseraApp::headless();
+        crate::apply(
+            &mut state,
+            crate::Command::AddTextFrame(DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 200.0,
+                height: 100.0,
+            }),
+        );
+        let id = state.active().selection.single().expect("selected");
+        crate::apply(
+            &mut state,
+            crate::Command::SetText {
+                id,
+                text: "ab".to_string(),
+            },
+        );
+        // Nothing being edited: nothing typed, and no panic.
+        super::run(&mut state, super::Run::Insert(super::Special::EmDash));
+
+        crate::view::viewport::start_editing(&mut state, id);
+        if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+            buffer.set_cursor(1);
+        }
+        super::run(&mut state, super::Run::Insert(super::Special::EmDash));
+        super::run(
+            &mut state,
+            super::Run::Insert(super::Special::NonBreakingSpace),
+        );
+
+        let FrameKind::Text { story, .. } = state.active().document().frame(id).unwrap().kind
+        else {
+            panic!("a text frame");
+        };
+        assert_eq!(
+            state.active().document().story(story).unwrap().text,
+            "a\u{2014}\u{00A0}b",
+            "in the document, not only in the buffer"
+        );
+        assert_eq!(
+            state.active().editing.as_ref().unwrap().1.cursor().position,
+            1 + 3 + 2,
+            "the caret moved past what it typed"
+        );
+    }
+
+    #[test]
+    fn every_special_character_has_an_action() {
+        let names: Vec<&str> = all().iter().map(|a| a.name).collect();
+        for special in super::Special::ALL {
+            assert!(
+                names.contains(&special.label()),
+                "{} has no action",
+                special.label()
+            );
+        }
+    }
+
+    #[test]
     fn every_action_with_a_shortcut_says_when_it_may_fire() {
         // `guard` matches on `Run` exhaustively, so this cannot fail to compile
         // — but it can quietly answer `NotWhileTyping` for something that should
@@ -1152,7 +1465,11 @@ mod tests {
                 | "Swatches"
                 | "Preflight"
                 | "Paragraph and character styles"
-                | "Preview view" => Guard::Always,
+                | "Preview view"
+                | "Em dash"
+                | "En dash"
+                | "Discretionary hyphen"
+                | "Non-breaking space" => Guard::Always,
                 "Cut"
                 | "Copy"
                 | "Duplicate"

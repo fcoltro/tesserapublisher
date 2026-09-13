@@ -14,7 +14,9 @@ parley.workspace = true
 serde.workspace = true
 slotmap.workspace = true
 unicode-segmentation.workspace = true
-hypher = { version = "0.1.7", default-features = false, features = ["alloc", "english"] }
+# Every language it has: 1.3 MB of patterns, which is what a layout tool for
+# more than one country costs. A `language` on the text chooses among them.
+hypher = { version = "0.1.7", default-features = false, features = ["alloc", "full"] }
 skrifa = "0.44"
 
 [dev-dependencies]

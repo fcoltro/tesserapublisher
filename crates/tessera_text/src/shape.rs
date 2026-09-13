@@ -192,9 +192,6 @@ pub(crate) struct Placed {
     /// The measure this paragraph was laid out into, from the column's left
     /// edge — which is where a column-wide rule starts.
     pub column_width: f64,
-    /// Whether this paragraph hyphenates, and so whether a line ending at a
-    /// soft hyphen needs a real one drawn.
-    pub hyphenate: bool,
 }
 
 /// The paragraph-local shaped offset a global stored offset became.
@@ -589,7 +586,25 @@ const SOFT_HYPHEN: char = '\u{00AD}';
 /// languages behind features, but a story has no language to choose between
 /// them. Shipping the rest would be paying for what nothing can select. A
 /// `language` on `CharacterFormat` is what unlocks them.
-fn syllable_breaks(text: &str, rules: &crate::story::Hyphenation) -> Vec<usize> {
+/// The hyphenation patterns for a language code, English for none and for
+/// one `hypher` has no patterns for — said rather than refused, because a
+/// word left whole is the only other answer and it is worse.
+fn patterns_for(language: Option<&str>) -> hypher::Lang {
+    language
+        .and_then(|code| {
+            let bytes = code.as_bytes();
+            (bytes.len() >= 2).then(|| [bytes[0], bytes[1]])
+        })
+        .and_then(hypher::Lang::from_iso)
+        .unwrap_or(hypher::Lang::English)
+}
+
+fn syllable_breaks(
+    text: &str,
+    rules: &crate::story::Hyphenation,
+    language: Option<&str>,
+) -> Vec<usize> {
+    let lang = patterns_for(language);
     let mut breaks = Vec::new();
 
     // Words, in the plain sense: runs of letters. Hyphenating across
@@ -601,11 +616,11 @@ fn syllable_breaks(text: &str, rules: &crate::story::Hyphenation) -> Vec<usize> 
             continue;
         }
         if let Some(from) = start.take() {
-            push_breaks(&mut breaks, text, from, offset, rules);
+            push_breaks(&mut breaks, text, from, offset, rules, lang);
         }
     }
     if let Some(from) = start {
-        push_breaks(&mut breaks, text, from, text.len(), rules);
+        push_breaks(&mut breaks, text, from, text.len(), rules, lang);
     }
 
     breaks
@@ -617,6 +632,7 @@ fn push_breaks(
     from: usize,
     to: usize,
     rules: &crate::story::Hyphenation,
+    lang: hypher::Lang,
 ) {
     let word = &text[from..to];
     let letters = word.chars().count();
@@ -630,7 +646,7 @@ fn push_breaks(
     }
     let mut at = from;
     let mut before = 0usize;
-    let mut syllables = hypher::hyphenate(word, hypher::Lang::English).peekable();
+    let mut syllables = hypher::hyphenate(word, lang).peekable();
     while let Some(syllable) = syllables.next() {
         at += syllable.len();
         before += syllable.chars().count();
@@ -713,7 +729,7 @@ fn shaping_text(
         // without them showing. What parley does *not* do is draw a hyphen
         // where it breaks — that is put back when the glyphs are built.
         let breaks: Vec<usize> = if let Some(rules) = hyphenate {
-            syllable_breaks(&story.text[from..to], rules)
+            syllable_breaks(&story.text[from..to], rules, format.language.as_deref())
         } else {
             Vec::new()
         };
@@ -2195,6 +2211,16 @@ impl Shaper {
                             local.clone(),
                         );
                     }
+                    // The language, for the font: Turkish dotted i, Serbian
+                    // italics, Polish kreska — the `locl` forms a font keeps
+                    // for a script it sets differently by country.
+                    if let Some(locale) = format
+                        .language
+                        .as_deref()
+                        .and_then(|code| parley::Language::parse(code).ok())
+                    {
+                        builder.push(parley::StyleProperty::Locale(Some(locale)), local.clone());
+                    }
                     if let Some(tracking) = format.tracking {
                         // Thousandths of an em, which is the unit a typographer
                         // uses; parley wants points at the shaped size.
@@ -2337,7 +2363,6 @@ impl Shaper {
                     paragraph: paragraph_index,
                     keep: format.keep.unwrap_or_default(),
                     column_width: width,
-                    hyphenate: false,
                 });
             }
 
@@ -2358,7 +2383,6 @@ impl Shaper {
                 paragraph: paragraph_index,
                 keep: format.keep.unwrap_or_default(),
                 column_width: width,
-                hyphenate,
             });
             y += height + f64::from(format.space_after.unwrap_or(0.0));
         }
@@ -2642,9 +2666,10 @@ impl Shaper {
                 // soft hyphen at all — so the zero-width glyph at the end of
                 // such a line is swapped for the font's real hyphen, whose
                 // width was reserved when the line was broken.
-                if paragraph.hyphenate {
-                    draw_the_hyphen(&mut runs, &fonts, &paragraph.shaped_text, &line);
-                }
+                // Whether or not the paragraph hyphenates: a discretionary
+                // hyphen typed by hand is a break the writer allowed, and it
+                // is drawn where it breaks either way.
+                draw_the_hyphen(&mut runs, &fonts, &paragraph.shaped_text, &line);
 
                 let metrics = line.metrics();
 
@@ -3503,6 +3528,80 @@ mod tests {
         );
     }
 
+    // --- language ------------------------------------------------------------
+
+    #[test]
+    fn the_language_chooses_the_hyphenation_patterns() {
+        use crate::story::Hyphenation;
+        let rules = Hyphenation::default();
+        let german = syllable_breaks("Schifffahrtsgesellschaft", &rules, Some("de"));
+        let english = syllable_breaks("Schifffahrtsgesellschaft", &rules, Some("en"));
+        assert!(!german.is_empty(), "German patterns break a German word");
+        assert_ne!(
+            german, english,
+            "and not where the English ones would: {german:?} against {english:?}"
+        );
+        assert_eq!(
+            syllable_breaks("hyphenation", &rules, None),
+            syllable_breaks("hyphenation", &rules, Some("en")),
+            "no language is English"
+        );
+        assert_eq!(
+            syllable_breaks("hyphenation", &rules, Some("xx")),
+            syllable_breaks("hyphenation", &rules, Some("en")),
+            "and so is one nobody has patterns for"
+        );
+    }
+
+    #[test]
+    fn a_run_in_german_breaks_as_german() {
+        use crate::story::{CharacterFormat, ParagraphFormat};
+        let text = "Schifffahrtsgesellschaft Schifffahrtsgesellschaft";
+        let mut story = hyphenated(text);
+        story.apply_character_format(
+            0..text.len(),
+            &CharacterFormat {
+                language: Some("de".to_string()),
+                ..CharacterFormat::default()
+            },
+        );
+        let _ = ParagraphFormat::default();
+        let mut shaper = Shaper::new();
+        let german = shaper.shape(&story, &NoStyles::default(), 90.0);
+        let english = shaper.shape(&hyphenated(text), &NoStyles::default(), 90.0);
+        let ends = |t: &ShapedText| t.lines.iter().map(|l| l.range.end).collect::<Vec<_>>();
+        assert_ne!(ends(&german), ends(&english), "the lines break differently");
+    }
+
+    #[test]
+    fn a_discretionary_hyphen_typed_by_hand_is_honoured_without_hyphenation_on() {
+        // U+00AD in the text: a break the writer allowed. It needs no
+        // setting to be honoured, and the hyphen is drawn where it breaks.
+        let text = "aaaaaaaa\u{00AD}bbbbbbbb cc";
+        let plain = Shaper::new().shape(
+            &Story::new("aaaaaaaabbbbbbbb cc"),
+            &NoStyles::default(),
+            60.0,
+        );
+        let shaped = Shaper::new().shape(&Story::new(text), &NoStyles::default(), 60.0);
+        assert!(
+            shaped.lines.len() > plain.lines.len(),
+            "the word broke at the hyphen the writer allowed"
+        );
+        let first = &shaped.lines[0];
+        assert!(
+            text[..first.range.end].ends_with('\u{00AD}'),
+            "the first line ends at the soft hyphen"
+        );
+        let a = first.glyphs().next().expect("an a").glyph_id;
+        let last = first.glyphs().last().expect("the hyphen");
+        assert_ne!(last.glyph_id, a, "the last glyph is not an a");
+        assert!(
+            last.advance > 0.0,
+            "a hyphen glyph was drawn at the line's end"
+        );
+    }
+
     // --- hyphenation and justification ---------------------------------------
 
     const COPY: &str = "The quick brown fox jumps over the lazy dog and keeps on \
@@ -3650,14 +3749,14 @@ mod tests {
             capitalised: true,
             ..Hyphenation::default()
         };
-        let all = syllable_breaks("unbelievable", &loose);
+        let all = syllable_breaks("unbelievable", &loose, None);
         assert!(all.len() >= 3, "patterns found several breaks: {all:?}");
         let strict = Hyphenation {
             min_before: 4,
             min_after: 4,
             ..loose
         };
-        for at in syllable_breaks("unbelievable", &strict) {
+        for at in syllable_breaks("unbelievable", &strict, None) {
             assert!(at >= 4 && "unbelievable".len() - at >= 4, "break at {at}");
         }
         assert!(
@@ -3666,7 +3765,8 @@ mod tests {
                 &Hyphenation {
                     capitalised: false,
                     ..loose
-                }
+                },
+                None,
             )
             .is_empty(),
             "a capitalised word is left whole when asked"
@@ -3677,7 +3777,8 @@ mod tests {
                 &Hyphenation {
                     min_word: 20,
                     ..loose
-                }
+                },
+                None,
             )
             .is_empty(),
             "a word shorter than the minimum is left whole"
@@ -4862,7 +4963,7 @@ mod tests {
     #[test]
     fn hyphenation_finds_the_places_a_word_may_break() {
         // `hypher`'s own answer for "hyphenation" is hy-phen-ation.
-        let breaks = syllable_breaks("hyphenation", &crate::story::Hyphenation::default());
+        let breaks = syllable_breaks("hyphenation", &crate::story::Hyphenation::default(), None);
         assert!(!breaks.is_empty(), "no break points at all");
         assert!(
             breaks.iter().all(|b| *b > 0 && *b < "hyphenation".len()),
@@ -4872,8 +4973,8 @@ mod tests {
 
     #[test]
     fn a_short_word_is_not_hyphenated() {
-        assert!(syllable_breaks("the", &crate::story::Hyphenation::default()).is_empty());
-        assert!(syllable_breaks("cat sat", &crate::story::Hyphenation::default()).is_empty());
+        assert!(syllable_breaks("the", &crate::story::Hyphenation::default(), None).is_empty());
+        assert!(syllable_breaks("cat sat", &crate::story::Hyphenation::default(), None).is_empty());
     }
 
     #[test]
@@ -4982,7 +5083,7 @@ mod tests {
         let story = Story::new("extraordinary");
         let placed = shaper.layout_paragraphs(&story, &NoStyles::default(), 400.0);
         assert!(
-            placed.iter().all(|p| !p.hyphenate && p.map.is_empty()),
+            placed.iter().all(|p| p.map.is_empty()),
             "no break points inserted, and so no map"
         );
     }

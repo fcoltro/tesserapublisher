@@ -146,7 +146,51 @@ pub struct CharacterFormat {
     /// Stylistic sets by number, 1 to 20: `ss01` to `ss20`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stylistic_sets: Option<Vec<u8>>,
+    /// The language of the text, as an ISO 639-1 code: what chooses the
+    /// hyphenation patterns and what the shaper is told for the font's
+    /// language-specific forms. `None` is English.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
+
+/// The languages text can be set in: ISO 639-1 code and name, the ones
+/// `hypher` carries patterns for.
+pub const LANGUAGES: &[(&str, &str)] = &[
+    ("en", "English"),
+    ("af", "Afrikaans"),
+    ("sq", "Albanian"),
+    ("be", "Belarusian"),
+    ("bg", "Bulgarian"),
+    ("ca", "Catalan"),
+    ("hr", "Croatian"),
+    ("cs", "Czech"),
+    ("da", "Danish"),
+    ("nl", "Dutch"),
+    ("et", "Estonian"),
+    ("fi", "Finnish"),
+    ("fr", "French"),
+    ("gl", "Galician"),
+    ("ka", "Georgian"),
+    ("de", "German"),
+    ("el", "Greek"),
+    ("hu", "Hungarian"),
+    ("is", "Icelandic"),
+    ("it", "Italian"),
+    ("la", "Latin"),
+    ("lt", "Lithuanian"),
+    ("mn", "Mongolian"),
+    ("no", "Norwegian"),
+    ("pl", "Polish"),
+    ("pt", "Portuguese"),
+    ("ru", "Russian"),
+    ("sr", "Serbian"),
+    ("sk", "Slovak"),
+    ("sl", "Slovenian"),
+    ("es", "Spanish"),
+    ("sv", "Swedish"),
+    ("tr", "Turkish"),
+    ("uk", "Ukrainian"),
+];
 
 impl CharacterFormat {
     /// The OpenType feature tags this format asks for, with their values,
@@ -218,6 +262,7 @@ impl CharacterFormat {
                 .stylistic_sets
                 .clone()
                 .or_else(|| base.stylistic_sets.clone()),
+            language: self.language.clone().or_else(|| base.language.clone()),
         }
     }
 

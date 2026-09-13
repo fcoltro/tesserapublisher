@@ -2143,6 +2143,28 @@ and not a list of controls.
     parser's, for one afternoon) hid every interface mutation after it. Test
     modules go at the end of a file, and now that is why.
 
+- [x] **A language on the text, and the characters with no key.** Added
+  2026-09-13 as the first thing after the milestone's list, because both
+  were blocking everyday work: hyphenation was English-only for want of a
+  language to choose patterns by, and an em dash could not be typed. **By
+  test; the hand check is owed.**
+  - `CharacterFormat.language`, an ISO 639-1 code, cascading like the rest.
+    It chooses the `hypher` patterns — all thirty-four it carries are now
+    built in, 1.3 MB — and is handed to parley as the locale, for the forms
+    a font keeps by country. A word in a German run breaks as German; a code
+    nobody has patterns for breaks as English rather than not at all.
+  - `Special` in `actions.rs`: twenty-one characters, one action each, in a
+    Type ▸ Insert special character submenu (a menu guard refused twenty-two
+    lines under Type, and it was right). The four typed all day carry
+    InDesign's shortcuts. Typed through `type_text`, which is what a
+    keystroke does, inside the editing session's undo entry.
+  - A discretionary hyphen typed by hand is honoured whether or not the
+    paragraph hyphenates: the breaker already read soft hyphens; the hyphen
+    was only *drawn* for hyphenating paragraphs, and now is drawn wherever a
+    line ends at one.
+  - Not built: typographer's quotes as you type, and glyph insertion by
+    code point or from a glyphs panel.
+
 ### Recorded, unscheduled, and probably not wanted yet
 
 Footnotes, a table of contents, an index, hyperlinks and bookmarks, type on a

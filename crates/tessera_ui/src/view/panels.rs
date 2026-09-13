@@ -3098,6 +3098,39 @@ fn text_section(
         state.active_mut().dirty = true;
     }
 
+    // The language: what the hyphenation patterns are chosen by, and what
+    // the font is told. A choice, not a toggle, so it states `Some` always;
+    // the document default is English.
+    field(ui, "Language", |ui| {
+        use tessera_text::story::LANGUAGES;
+        let current = shown.language.as_deref().unwrap_or("en");
+        let name = LANGUAGES
+            .iter()
+            .find(|(code, _)| *code == current)
+            .map_or(current, |(_, name)| *name);
+        let mut chosen = None;
+        egui::ComboBox::from_id_salt("text-language")
+            .selected_text(name)
+            .show_ui(ui, |ui| {
+                for (code, name) in LANGUAGES {
+                    if ui.selectable_label(current == *code, *name).clicked() && current != *code {
+                        chosen = Some((*code).to_string());
+                    }
+                }
+            });
+        if let Some(code) = chosen {
+            set_character(
+                state,
+                story,
+                target.clone(),
+                CharacterFormat {
+                    language: Some(code),
+                    ..CharacterFormat::default()
+                },
+            );
+        }
+    });
+
     // OpenType features. Each row states `Some(..)` either way, for the
     // reason italic does: `None` would inherit, and off has to mean off.
     // What a font lacks it ignores, so a control here can never make text

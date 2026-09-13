@@ -872,6 +872,33 @@ fn character_format_fields(ui: &mut Ui, state: &mut TesseraApp, format: &mut Cha
         decoration_editor(ui, label, slot);
     }
 
+    ui.horizontal(|ui| {
+        let mut stated = format.language.is_some();
+        if ui
+            .checkbox(&mut stated, "")
+            .on_hover_text(INHERIT_HINT)
+            .changed()
+        {
+            format.language = stated.then(|| "en".to_string());
+        }
+        ui.colored_label(Theme::text_muted(), "Language");
+        if let Some(language) = &mut format.language {
+            use tessera_text::story::LANGUAGES;
+            let name = LANGUAGES
+                .iter()
+                .find(|(code, _)| code == language)
+                .map_or(language.as_str(), |(_, name)| *name);
+            egui::ComboBox::from_id_salt("style-language")
+                .selected_text(name)
+                .show_ui(ui, |ui| {
+                    for (code, name) in LANGUAGES {
+                        if ui.selectable_label(language == code, *name).clicked() {
+                            *language = (*code).to_string();
+                        }
+                    }
+                });
+        }
+    });
     optional_flag(ui, "Ligatures", &mut format.ligatures);
     optional_flag(
         ui,

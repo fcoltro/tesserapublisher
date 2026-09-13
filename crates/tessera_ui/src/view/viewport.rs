@@ -1049,6 +1049,28 @@ fn finish_editing(state: &mut TesseraApp) {
 /// disagreed about which story is being edited, typing into a table would
 /// overwrite a different cell than the one under the caret — and the damage
 /// would be committed before anything looked wrong.
+/// Type `text` at the caret, as a keystroke would: into the buffer, and
+/// straight on into the document inside the undo entry the editing session
+/// opened. Nothing happens when nothing is being edited. Returns whether it
+/// was typed.
+pub(crate) fn type_text(state: &mut TesseraApp, text: &str) -> bool {
+    let Some((id, buffer)) = state.active_mut().editing.as_mut() else {
+        return false;
+    };
+    let id = *id;
+    buffer.insert(text);
+    let story = buffer.story().clone();
+    let cell = state.active().editing_cell;
+    // undo-bracketed: the editing session recorded its entry when it began.
+    if let Some(target) = editing_story(state, id, cell)
+        && let Some(s) = state.active_mut().document_mut().story_mut(target)
+    {
+        *s = story;
+    }
+    state.active_mut().dirty = true;
+    true
+}
+
 pub(crate) fn editing_story(
     state: &TesseraApp,
     id: FrameId,

@@ -219,6 +219,8 @@ person reaches for once they start setting copy, and none of it had a row:
 | Kerning control, optical kerning | metrics kerning only | model | **M9** (from M2) |
 | H&J parameters | ✗ | model | **M9** (from M2) |
 | Footnotes, TOC, index, hyperlinks, bookmarks | ✗ | model | — |
+| Language on text; special-character insertion | ✅ | — | done, M9 |
+| Glyphs panel, typographer's quotes | ✗ | view | — |
 | Story editor, spell check | ✗ | view | — |
 | Print dialog | ✗ — PDF export only | — | — |
 | IDML import | ✗ | — | — |

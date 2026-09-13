@@ -108,6 +108,18 @@ the inspector shows the pair's value and takes a number. The font's own pair
 kerning is applied underneath; this is added to it. Tracking, beside it, is
 the control for a range.
 
+**Language.** Text has a language, set in the Character section or on a
+character style, and it decides two things: which hyphenation patterns break
+its words — thirty-four languages are carried — and what the font is told,
+for the letterforms it keeps for one country and not another. Nothing set is
+English.
+
+**Characters with no key.** Type ▸ Insert special character lists the dashes,
+the spaces, the quotes and the marks; the palette finds each by name. An em
+dash is Shift+Alt+-, an en dash Alt+-, a discretionary hyphen Ctrl+Shift+-
+and a non-breaking space Ctrl+Alt+X. A discretionary hyphen is a break you
+allow in one word, honoured whether or not the paragraph hyphenates.
+
 **Features.** Below Case: common and discretionary ligatures on or off,
 lining or old-style figures, proportional or tabular, fractions, and
 stylistic sets by number. A font that lacks a feature ignores it — nothing
