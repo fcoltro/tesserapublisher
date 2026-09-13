@@ -337,7 +337,7 @@ fn a_version_1_document_still_opens() {
 }
 
 #[test]
-fn tab_stops_rules_and_keeps_survive_a_save_and_load() {
+fn body_copy_formatting_survives_a_save_and_load() {
     use tessera_text::story::{ParagraphFormat, Story, TabAlignment, TabStop};
 
     // Every field of a stop, including the one that is an `Option<char>` —
@@ -366,12 +366,20 @@ fn tab_stops_rules_and_keeps_survive_a_save_and_load() {
         with_next: true,
         together: tessera_text::story::KeepTogether::Ends { start: 2, end: 3 },
     };
+    let list = tessera_text::story::ListFormat {
+        kind: tessera_text::story::ListKind::Number,
+        bullet: '\u{2013}',
+        numbering: tessera_text::story::Numbering::LowerRoman,
+        suffix: ")".to_string(),
+        restart: true,
+    };
     story.apply_paragraph_format(
         0..1,
         &ParagraphFormat {
             tab_stops: Some(stops.clone()),
             rule_above: Some(rule.clone()),
             keep: Some(keep),
+            list: Some(list.clone()),
             ..ParagraphFormat::default()
         },
     );
@@ -389,6 +397,7 @@ fn tab_stops_rules_and_keeps_survive_a_save_and_load() {
     assert_eq!(loaded_story.paragraphs[0].local.rule_above, Some(rule));
     assert_eq!(loaded_story.paragraphs[0].local.rule_below, None);
     assert_eq!(loaded_story.paragraphs[0].local.keep, Some(keep));
+    assert_eq!(loaded_story.paragraphs[0].local.list, Some(list));
 }
 
 #[test]

@@ -469,6 +469,7 @@ fn shaping_text(
     styles: &dyn Styles,
     stored: std::ops::Range<usize>,
     hyphenate: bool,
+    prefix: Option<(&str, &crate::story::CharacterFormat)>,
 ) -> (String, Vec<Piece>, Vec<(usize, usize)>) {
     use crate::story::Case;
 
@@ -476,6 +477,24 @@ fn shaping_text(
     let mut pieces: Vec<Piece> = Vec::new();
     let mut map: Vec<(usize, usize)> = Vec::new();
     let mut transformed = false;
+
+    // Generated text in front of the stored text: a list marker. It maps to
+    // the paragraph's start, so a click on it lands the caret at the start —
+    // and because the pair for the first real character comes *after* this
+    // one at the same stored offset, a caret at the start is answered with
+    // the shaped offset past the marker: the marker is not somewhere a caret
+    // can be.
+    if let Some((generated, format)) = prefix
+        && !generated.is_empty()
+    {
+        map.push((0, stored.start));
+        text.push_str(generated);
+        pieces.push(Piece {
+            shaped: 0..text.len(),
+            format: format.clone(),
+        });
+        transformed = true;
+    }
 
     for run in &story.runs {
         let from = run.range.start.max(stored.start);
@@ -1472,9 +1491,38 @@ impl Shaper {
         let floor = styles.document_default();
         let mut placed = Vec::new();
         let mut y = 0.0;
+        // Where the numbering has got to. Counted for every paragraph,
+        // including those already set in an earlier frame of a thread, so the
+        // third item is the third whichever frame it lands in.
+        let mut number = 0usize;
 
         for (paragraph_index, (start, text)) in paragraphs_of(&story.text).into_iter().enumerate() {
             let end = start + text.len();
+            let format = story
+                .paragraphs
+                .iter()
+                .find(|p| p.range.contains(&start))
+                .map(|p| story.resolve_paragraph(p, styles))
+                .unwrap_or_default();
+
+            // The item's marker. A numbered item counts on from the last,
+            // unless it restarts; anything that is not a numbered item —
+            // a bullet, plain text — ends the count, so the next numbered
+            // list begins at one.
+            let marker = match &format.list {
+                Some(list) if list.kind == crate::story::ListKind::Number => {
+                    number = if list.restart { 1 } else { number + 1 };
+                    list.marker(number)
+                }
+                Some(list) => {
+                    number = 0;
+                    list.marker(0)
+                }
+                None => {
+                    number = 0;
+                    None
+                }
+            };
             // Wholly behind the starting point: already set in an earlier
             // frame of the thread.
             //
@@ -1507,12 +1555,6 @@ impl Shaper {
             // that is shaped does not.
             let text = text.strip_suffix('\n').unwrap_or(text);
             let content_end = start + text.len();
-            let format = story
-                .paragraphs
-                .iter()
-                .find(|p| p.range.contains(&start))
-                .map(|p| story.resolve_paragraph(p, styles))
-                .unwrap_or_default();
 
             let indent_left = f64::from(format.indent_left.unwrap_or(0.0));
             let indent_right = f64::from(format.indent_right.unwrap_or(0.0));
@@ -1550,7 +1592,7 @@ impl Shaper {
 
             if cap_end > start {
                 let (cap_text, cap_pieces, cap_map) =
-                    shaping_text(story, styles, start..cap_end, false);
+                    shaping_text(story, styles, start..cap_end, false, None);
 
                 // Measured once at a nominal size to learn the font's cap
                 // height, then again at the size that makes it span the lines.
@@ -1618,8 +1660,20 @@ impl Shaper {
             // while nothing in it is transformed. Setting text in capitals
             // means shaping a different string.
             let hyphenate = format.hyphenate.unwrap_or(false);
-            let (shaped_text, pieces, map) =
-                shaping_text(story, styles, cap_end.max(start)..content_end, hyphenate);
+            // The marker and the tab that carries the text to its stop. Only
+            // where the paragraph begins: carried on into another frame, an
+            // item does not get a second number.
+            let generated = marker
+                .filter(|_| begins_here)
+                .map(|m| format!("{m}\t"))
+                .unwrap_or_default();
+            let (shaped_text, pieces, map) = shaping_text(
+                story,
+                styles,
+                cap_end.max(start)..content_end,
+                hyphenate,
+                Some((generated.as_str(), &format.character)),
+            );
 
             let build = |tabs: &[TabRun],
                          ctx: &mut parley::LayoutContext<Brush>,
@@ -2985,6 +3039,107 @@ mod tests {
             second < 1.0,
             "and the one nobody aligned should still start at the left, not at {second}"
         );
+    }
+
+    // --- lists ---------------------------------------------------------------
+
+    fn listed(text: &str, at: &[usize], list: crate::story::ListFormat) -> Story {
+        use crate::story::ParagraphFormat;
+        let mut story = Story::new(text);
+        for &start in at {
+            story.apply_paragraph_format(
+                start..start + 1,
+                &ParagraphFormat {
+                    list: Some(list.clone()),
+                    ..ParagraphFormat::default()
+                },
+            );
+        }
+        story
+    }
+
+    fn numbered() -> crate::story::ListFormat {
+        crate::story::ListFormat {
+            kind: crate::story::ListKind::Number,
+            ..crate::story::ListFormat::default()
+        }
+    }
+
+    #[test]
+    fn a_bulleted_paragraph_draws_a_bullet_and_tabs_its_text_over() {
+        let story = listed("item", &[0], crate::story::ListFormat::default());
+        let shaped = Shaper::new().shape(&story, &NoStyles::default(), 400.0);
+        let glyphs: Vec<_> = shaped.lines[0].glyphs().collect();
+        assert_eq!(
+            glyphs.len(),
+            5,
+            "the bullet, then i-t-e-m; the tab draws nothing"
+        );
+        assert!(glyphs[0].x < 1.0, "the bullet at the left");
+        assert!(
+            (glyphs[1].x - 36.0).abs() < 0.5,
+            "the text at the default stop, not at {}",
+            glyphs[1].x
+        );
+    }
+
+    #[test]
+    fn numbers_count_up_and_a_restart_starts_again() {
+        let story = listed("a\nb\nc\nd", &[0, 2, 4, 6], numbered());
+        let mut story = story;
+        story.apply_paragraph_format(
+            4..5,
+            &crate::story::ParagraphFormat {
+                list: Some(crate::story::ListFormat {
+                    restart: true,
+                    ..numbered()
+                }),
+                ..crate::story::ParagraphFormat::default()
+            },
+        );
+        let placed = Shaper::new().layout_paragraphs(&story, &NoStyles::default(), 400.0);
+        let markers: Vec<&str> = placed
+            .iter()
+            .map(|p| p.shaped_text.split('\t').next().unwrap_or(""))
+            .collect();
+        assert_eq!(markers, vec!["1.", "2.", "1.", "2."]);
+    }
+
+    #[test]
+    fn a_paragraph_that_is_not_an_item_ends_the_count() {
+        let story = listed("a\nx\nb", &[0, 4], numbered());
+        let placed = Shaper::new().layout_paragraphs(&story, &NoStyles::default(), 400.0);
+        assert!(placed[0].shaped_text.starts_with("1.\t"));
+        assert_eq!(placed[1].shaped_text, "x");
+        assert!(
+            placed[2].shaped_text.starts_with("1.\t"),
+            "x broke the list"
+        );
+    }
+
+    #[test]
+    fn numbering_continues_into_the_next_frame_of_a_thread() {
+        let story = listed("a\nb\nc", &[0, 2, 4], numbered());
+        let placed = Shaper::new().layout_paragraphs_from(&story, &NoStyles::default(), 400.0, 4);
+        assert!(
+            placed[0].shaped_text.starts_with("3.\t"),
+            "the third item is still the third: {:?}",
+            placed[0].shaped_text
+        );
+    }
+
+    #[test]
+    fn the_marker_is_not_the_text() {
+        let story = listed("item", &[0], numbered());
+        let placed = Shaper::new().layout_paragraphs(&story, &NoStyles::default(), 400.0);
+        let p = &placed[0];
+        assert_eq!(
+            p.to_shaped(0),
+            "1.\t".len(),
+            "a caret at the start sits after the marker"
+        );
+        assert_eq!(p.to_stored(0), 0, "and a click on the marker is the start");
+        assert_eq!(p.to_stored(p.shaped_text.len()), 4);
     }
 
     // --- keep options --------------------------------------------------------

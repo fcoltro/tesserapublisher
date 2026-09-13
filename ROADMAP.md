@@ -2023,9 +2023,30 @@ and not a list of controls.
   - A paragraph too short to keep both `start` and `end` lines is kept
     whole; the counts are in this shaping, so a paragraph carried on from an
     earlier frame counts only what is here.
-- [ ] **Lists**: bullets and numbering as a paragraph property, with the
+- [x] **Lists**: bullets and numbering as a paragraph property, with the
   numbering restarted by a style and continued across a thread. The number is
   generated, never typed, or moving an item leaves the old number behind.
+  **By test; the hand check is owed.**
+  - **The marker is composed, not stored.** `shaping_text` takes a generated
+    prefix — the marker and a tab — in front of the paragraph's text, mapped
+    to the paragraph's start. The offset map that already served case
+    transforms serves this: a click on the marker lands at the start, and a
+    caret at the start is answered with the shaped offset *past* the marker,
+    so the marker is not somewhere a caret can be. Find, Change and the
+    file never see it.
+  - **The tab is the layout.** The marker is followed by a tab, so the item's
+    text sits at the paragraph's first stop or the default half inch, and a
+    hanging indent lines the turnover up under it. "Hang the turnover" in
+    the inspector writes the three fields that make that happen; the model
+    does not know about it.
+  - **The count is carried through the whole story**, including paragraphs
+    already set in an earlier frame, so the third item is the third in
+    whichever frame it lands. A paragraph that is not a numbered item ends
+    the count; `restart` begins it again. An item carried on into the next
+    frame does not get a second marker.
+  - Arabic, alphabetic (bijective, so 27 is AA) and roman numbering, with a
+    suffix; the marker takes the paragraph's character format, as InDesign's
+    does by default.
 - [ ] **Underline and strikethrough**, with weight, offset and colour. Drawn
   by the renderer and the PDF writer both, or the screen and the press
   disagree.

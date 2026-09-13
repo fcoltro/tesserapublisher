@@ -224,6 +224,140 @@ pub struct KeepOptions {
     pub together: KeepTogether,
 }
 
+/// What kind of list a paragraph is an item of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ListKind {
+    /// Not a list item. Stated, so a paragraph can opt out of its style's.
+    #[default]
+    None,
+    Bullet,
+    Number,
+}
+
+/// How a numbered item counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Numbering {
+    #[default]
+    Arabic,
+    LowerAlpha,
+    UpperAlpha,
+    LowerRoman,
+    UpperRoman,
+}
+
+impl Numbering {
+    /// `n` as this numbering writes it. Counting starts at one; zero is
+    /// written as it is, because a list that reached it has a bug to show.
+    pub fn label(self, n: usize) -> String {
+        match self {
+            Numbering::Arabic => n.to_string(),
+            Numbering::LowerAlpha => alpha(n).to_lowercase(),
+            Numbering::UpperAlpha => alpha(n),
+            Numbering::LowerRoman => roman(n).to_lowercase(),
+            Numbering::UpperRoman => roman(n),
+        }
+    }
+}
+
+/// 1 → A, 26 → Z, 27 → AA: the bijective base-26 that spreadsheets use.
+fn alpha(mut n: usize) -> String {
+    if n == 0 {
+        return "0".to_string();
+    }
+    let mut out = Vec::new();
+    while n > 0 {
+        n -= 1;
+        out.push(char::from(b'A' + (n % 26) as u8));
+        n /= 26;
+    }
+    out.iter().rev().collect()
+}
+
+fn roman(mut n: usize) -> String {
+    if n == 0 || n >= 4000 {
+        return n.to_string();
+    }
+    const NUMERALS: [(usize, &str); 13] = [
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    ];
+    let mut out = String::new();
+    for (value, numeral) in NUMERALS {
+        while n >= value {
+            out.push_str(numeral);
+            n -= value;
+        }
+    }
+    out
+}
+
+/// A paragraph as a list item.
+///
+/// The marker is **generated, never typed**: it is composed in front of the
+/// paragraph's text when the paragraph is laid out and is not in the story,
+/// so moving an item leaves no old number behind and a caret cannot get into
+/// it. What follows the marker is a tab, so the item's text sits at the
+/// paragraph's first tab stop — or the default half inch — and a hanging
+/// indent lines the turnover up under it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ListFormat {
+    #[serde(default)]
+    pub kind: ListKind,
+    /// The bullet character.
+    #[serde(default = "default_bullet")]
+    pub bullet: char,
+    #[serde(default)]
+    pub numbering: Numbering,
+    /// What follows a number: "." for "1.", ")" for "1)".
+    #[serde(default = "default_suffix")]
+    pub suffix: String,
+    /// This item counts from one, whatever came before it.
+    #[serde(default)]
+    pub restart: bool,
+}
+
+fn default_bullet() -> char {
+    '\u{2022}'
+}
+
+fn default_suffix() -> String {
+    ".".to_string()
+}
+
+impl Default for ListFormat {
+    fn default() -> Self {
+        Self {
+            kind: ListKind::Bullet,
+            bullet: default_bullet(),
+            numbering: Numbering::Arabic,
+            suffix: default_suffix(),
+            restart: false,
+        }
+    }
+}
+
+impl ListFormat {
+    /// The marker for item `n` of this list, or none if this is not a list.
+    pub fn marker(&self, n: usize) -> Option<String> {
+        match self.kind {
+            ListKind::None => None,
+            ListKind::Bullet => Some(self.bullet.to_string()),
+            ListKind::Number => Some(format!("{}{}", self.numbering.label(n), self.suffix)),
+        }
+    }
+}
+
 /// Paragraph formatting, every field optional, plus the character formatting
 /// a paragraph imposes before any run of its own speaks.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -267,6 +401,9 @@ pub struct ParagraphFormat {
     /// What a column break may not separate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep: Option<KeepOptions>,
+    /// The list this paragraph is an item of, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list: Option<ListFormat>,
     /// What every run in the paragraph inherits before its own style speaks.
     #[serde(default)]
     pub character: CharacterFormat,
@@ -296,6 +433,7 @@ impl ParagraphFormat {
             rule_above: self.rule_above.clone().or_else(|| base.rule_above.clone()),
             rule_below: self.rule_below.clone().or_else(|| base.rule_below.clone()),
             keep: self.keep.or(base.keep),
+            list: self.list.clone().or_else(|| base.list.clone()),
             character: self.character.over(&base.character),
         }
     }
@@ -2706,5 +2844,26 @@ mod run_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn numberings_write_their_labels() {
+        assert_eq!(Numbering::Arabic.label(12), "12");
+        assert_eq!(Numbering::LowerAlpha.label(1), "a");
+        assert_eq!(Numbering::UpperAlpha.label(26), "Z");
+        assert_eq!(Numbering::UpperAlpha.label(27), "AA");
+        assert_eq!(Numbering::LowerRoman.label(4), "iv");
+        assert_eq!(Numbering::UpperRoman.label(1994), "MCMXCIV");
+    }
+
+    #[test]
+    fn a_marker_is_what_the_kind_says() {
+        let mut list = ListFormat::default();
+        assert_eq!(list.marker(3), Some("\u{2022}".to_string()));
+        list.kind = ListKind::Number;
+        list.suffix = ")".to_string();
+        assert_eq!(list.marker(3), Some("3)".to_string()));
+        list.kind = ListKind::None;
+        assert_eq!(list.marker(3), None);
     }
 }

@@ -614,6 +614,7 @@ fn paragraph_fields(
     super::panels::paragraph_rule_editor(ui, "Rule above", &mut edited.format.rule_above, true);
     super::panels::paragraph_rule_editor(ui, "Rule below", &mut edited.format.rule_below, true);
     super::panels::keep_options_editor(ui, &mut edited.format.keep, true);
+    super::panels::list_editor(ui, &mut edited.format.list, true);
 
     if let Some(based_on) = chosen_parent {
         apply(state, Command::SetParagraphStyleBasedOn { id, based_on });

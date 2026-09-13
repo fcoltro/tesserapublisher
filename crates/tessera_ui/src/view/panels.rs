@@ -7,8 +7,8 @@ use tessera_document::nodes::{Orientation, PagePreset};
 use tessera_document::paint::Paint;
 use tessera_geometry::{Anchor, Unit};
 use tessera_text::story::{
-    Alignment, Case, CharacterFormat, CharacterStyle, CharacterStyleId, ParagraphFormat,
-    ParagraphRule, ParagraphStyle, ParagraphStyleId,
+    Alignment, Case, CharacterFormat, CharacterStyle, CharacterStyleId, ListFormat, ListKind,
+    ParagraphFormat, ParagraphRule, ParagraphStyle, ParagraphStyleId,
 };
 
 use crate::app::TesseraApp;
@@ -1391,6 +1391,151 @@ pub(crate) fn paragraph_rule_editor(
     });
 
     changed
+}
+
+/// A paragraph as a list item: none, a bullet or a number, and the shape of
+/// the marker. Returns `(changed, hang)`: whether the list changed, and
+/// whether a hanging indent was asked for — which is the caller's to write,
+/// because it is three other fields.
+///
+/// `inheritable` offers "Inherit" — `None` — which only a style can mean.
+pub(crate) fn list_editor(
+    ui: &mut Ui,
+    list: &mut Option<ListFormat>,
+    inheritable: bool,
+) -> (bool, bool) {
+    use tessera_text::story::Numbering;
+
+    let mut changed = false;
+    let mut inherit = false;
+    let mut hang = false;
+    group_label(ui, "List");
+    let stated = list.is_some();
+    let l = list.get_or_insert_with(|| ListFormat {
+        kind: ListKind::None,
+        ..ListFormat::default()
+    });
+
+    field(ui, "Kind", |ui| {
+        for (kind, text) in [
+            (ListKind::None, "None"),
+            (ListKind::Bullet, "Bullet"),
+            (ListKind::Number, "Number"),
+        ] {
+            if ui.selectable_label(l.kind == kind, text).clicked() && l.kind != kind {
+                l.kind = kind;
+                changed = true;
+            }
+        }
+        if inheritable && stated && ui.small_button("Inherit").clicked() {
+            inherit = true;
+        }
+    });
+
+    match l.kind {
+        ListKind::None => {}
+        ListKind::Bullet => {
+            field(ui, "Bullet", |ui| {
+                let mut bullet = l.bullet.to_string();
+                let response = ui.add(egui::TextEdit::singleline(&mut bullet).desired_width(24.0));
+                crate::icons::named(response.clone(), "Bullet character");
+                if response.changed()
+                    && let Some(ch) = bullet.chars().last()
+                    && ch != l.bullet
+                {
+                    l.bullet = ch;
+                    changed = true;
+                }
+                for (ch, name) in [
+                    ('\u{2022}', "Bullet"),
+                    ('\u{2013}', "En dash"),
+                    ('\u{25E6}', "White bullet"),
+                ] {
+                    if ui
+                        .selectable_label(l.bullet == ch, ch.to_string())
+                        .on_hover_text(name)
+                        .clicked()
+                        && l.bullet != ch
+                    {
+                        l.bullet = ch;
+                        changed = true;
+                    }
+                }
+            });
+        }
+        ListKind::Number => {
+            let numberings = [
+                (Numbering::Arabic, "1, 2, 3"),
+                (Numbering::LowerAlpha, "a, b, c"),
+                (Numbering::UpperAlpha, "A, B, C"),
+                (Numbering::LowerRoman, "i, ii, iii"),
+                (Numbering::UpperRoman, "I, II, III"),
+            ];
+            field(ui, "Numbers", |ui| {
+                let shown = numberings
+                    .iter()
+                    .find(|(n, _)| *n == l.numbering)
+                    .map_or("1, 2, 3", |(_, label)| *label);
+                egui::ComboBox::from_id_salt("list-numbering")
+                    .selected_text(shown)
+                    .show_ui(ui, |ui| {
+                        for (numbering, label) in numberings {
+                            if ui
+                                .selectable_label(l.numbering == numbering, label)
+                                .clicked()
+                                && l.numbering != numbering
+                            {
+                                l.numbering = numbering;
+                                changed = true;
+                            }
+                        }
+                    });
+                let mut suffix = l.suffix.clone();
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut suffix)
+                        .desired_width(24.0)
+                        .hint_text("."),
+                );
+                crate::icons::named(response.clone(), "After the number");
+                if response.changed() && suffix != l.suffix {
+                    l.suffix = suffix;
+                    changed = true;
+                }
+            });
+            ui.horizontal(|ui| {
+                let response = ui.selectable_label(l.restart, "Restart at 1");
+                if crate::icons::named_toggle(
+                    response,
+                    "Restart numbering at this paragraph",
+                    egui::WidgetType::Checkbox,
+                    l.restart,
+                )
+                .clicked()
+                {
+                    l.restart = !l.restart;
+                    changed = true;
+                }
+            });
+        }
+    }
+    if l.kind != ListKind::None
+        && !inheritable
+        && ui
+            .small_button("Hang the turnover")
+            .on_hover_text("Left indent 18 pt, first line \u{2212}18 pt, a stop at 18 pt")
+            .clicked()
+    {
+        hang = true;
+    }
+
+    if inherit {
+        *list = None;
+        return (true, hang);
+    }
+    if inheritable && !stated && !changed {
+        *list = None;
+    }
+    (changed, hang)
 }
 
 /// What a column break may not part: the paragraph from the next one, or its
@@ -3027,6 +3172,40 @@ fn text_section(
             }
             set_paragraph(state, story, target.clone(), format);
         }
+    }
+
+    // List: one value, written whole. "Hang" is a convenience over the
+    // indents below — an item whose turnover lines up under its text is what
+    // nearly every list wants, and setting two indents by hand to get it is
+    // the kind of chore a control exists to spare.
+    let mut list = paragraph.list.clone();
+    let (changed, hang) = list_editor(ui, &mut list, false);
+    if changed {
+        set_paragraph(
+            state,
+            story,
+            target.clone(),
+            ParagraphFormat {
+                list: Some(list.unwrap_or(ListFormat {
+                    kind: ListKind::None,
+                    ..ListFormat::default()
+                })),
+                ..ParagraphFormat::default()
+            },
+        );
+    }
+    if hang {
+        set_paragraph(
+            state,
+            story,
+            target.clone(),
+            ParagraphFormat {
+                indent_left: Some(18.0),
+                indent_first: Some(-18.0),
+                tab_stops: Some(vec![tessera_text::story::TabStop::at(18.0)]),
+                ..ParagraphFormat::default()
+            },
+        );
     }
 
     // Keep options: one value, written whole.
