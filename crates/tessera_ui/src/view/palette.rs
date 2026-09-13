@@ -90,7 +90,7 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
                     ui.weak("Esc to close");
                 });
             });
-            ui.add_space(Theme::SPACE_2);
+            ui.add_space(Theme::space_2());
             let field = ui.add(
                 egui::TextEdit::singleline(&mut state.palette.query)
                     .hint_text("Search tools and commands…")
@@ -118,13 +118,13 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
             if enter {
                 chosen = matches.get(state.palette.highlighted).map(|a| a.run);
             }
-            ui.add_space(Theme::SPACE_2);
+            ui.add_space(Theme::space_2());
             ui.separator();
             egui::ScrollArea::vertical()
                 .max_height((ctx.content_rect().height() - 240.0).clamp(100.0, 340.0))
                 .show(ui, |ui| {
                     if matches.is_empty() {
-                        ui.add_space(Theme::SPACE_3);
+                        ui.add_space(Theme::space_3());
                         ui.label("No available commands match your search.");
                         ui.weak("Try a tool name, such as Rectangle, or clear the search.");
                     }
@@ -137,7 +137,7 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
                             .map(|c| c.label())
                             .unwrap_or_default();
                         let row = ui.add_sized(
-                            [ui.available_width(), Theme::ROW + Theme::SPACE_1],
+                            [ui.available_width(), Theme::row() + Theme::space_1()],
                             egui::Button::new(action.name)
                                 .selected(selected)
                                 .shortcut_text(shortcut),

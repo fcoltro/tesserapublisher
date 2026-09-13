@@ -714,13 +714,13 @@ pub fn tab_button(
         egui::FontId::proportional(Theme::TYPE_MD),
         Color32::PLACEHOLDER,
     );
-    let width = Theme::ROW
+    let width = Theme::row()
         + if show_title {
-            label.size().x + Theme::SPACE_1
+            label.size().x + Theme::space_1()
         } else {
             0.0
         };
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, Theme::ROW), sense);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, Theme::row()), sense);
     if selected || response.hovered() {
         ui.painter().rect_filled(
             rect,
@@ -745,12 +745,12 @@ pub fn tab_button(
     } else {
         Theme::text_muted()
     };
-    let icon_rect = Rect::from_min_size(rect.min, egui::Vec2::splat(Theme::ROW));
+    let icon_rect = Rect::from_min_size(rect.min, egui::Vec2::splat(Theme::row()));
     paint(ui.painter(), icon_rect, icon, tint);
     if show_title {
         ui.painter().galley(
             egui::pos2(
-                rect.left() + Theme::ROW,
+                rect.left() + Theme::row(),
                 rect.center().y - label.size().y / 2.0,
             ),
             label,

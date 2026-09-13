@@ -17,7 +17,7 @@
 use egui::Ui;
 
 use crate::app::TesseraApp;
-use crate::prefs::{BLUR_LEAST, BLUR_MOST, PanelSurface, Preferences, ThemeChoice};
+use crate::prefs::{BLUR_LEAST, BLUR_MOST, Density, PanelSurface, Preferences, ThemeChoice};
 use crate::theme::Theme;
 
 /// Which page of the window is showing.
@@ -212,6 +212,7 @@ fn restore(state: &mut TesseraApp) {
         }
         Page::Appearance => {
             state.prefs.theme = fresh.theme;
+            state.prefs.density = fresh.density;
             state.prefs.panel_surface = fresh.panel_surface;
             state.prefs.blur = fresh.blur;
             state.prefs.panel_opacity = fresh.panel_opacity;
@@ -295,6 +296,25 @@ fn appearance(ui: &mut Ui, state: &mut TesseraApp) {
         }
     });
     state.prefs.theme = theme;
+
+    heading(ui, "Density");
+    let mut density = state.prefs.density;
+    ui.horizontal(|ui| {
+        for choice in [Density::Compact, Density::Standard, Density::Comfortable] {
+            if ui
+                .selectable_label(density == choice, choice.label())
+                .on_hover_text(choice.purpose())
+                .clicked()
+            {
+                density = choice;
+            }
+        }
+    });
+    state.prefs.density = density;
+    note(
+        ui,
+        "Moves the spacing and the height of every row. Type size stays where          it is: a density that scaled the text would be a zoom.",
+    );
 
     heading(ui, "Panels");
     let mut surface = state.prefs.panel_surface;
@@ -669,7 +689,7 @@ fn files(ui: &mut Ui, state: &mut TesseraApp) {
 // --- small shared pieces ---------------------------------------------------
 
 fn heading(ui: &mut Ui, text: &str) {
-    ui.add_space(Theme::SPACE_3);
+    ui.add_space(Theme::space_3());
     ui.add(
         egui::Label::new(
             egui::RichText::new(text)
@@ -678,7 +698,7 @@ fn heading(ui: &mut Ui, text: &str) {
         )
         .selectable(false),
     );
-    ui.add_space(Theme::SPACE_1);
+    ui.add_space(Theme::space_1());
 }
 
 /// A sentence under a control saying what it is for.
@@ -687,7 +707,7 @@ fn heading(ui: &mut Ui, text: &str) {
 /// purpose and is deciding. Making them hover each control to find out what it
 /// does is hiding the answer behind a gesture.
 fn note(ui: &mut Ui, text: &str) {
-    ui.add_space(Theme::SPACE_1);
+    ui.add_space(Theme::space_1());
     ui.add(
         egui::Label::new(
             egui::RichText::new(text)
@@ -757,6 +777,7 @@ mod tests {
             version: Preferences::PATH_VERSION,
             unit: tessera_geometry::Unit::Picas,
             theme: ThemeChoice::Light,
+            density: Density::Compact,
             minimum_ppi: 72.0,
             panel_surface: PanelSurface::Solid,
             blur: 15,

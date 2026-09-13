@@ -134,7 +134,7 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
-                ui.spacing_mut().item_spacing.x = Theme::SPACE_2;
+                ui.spacing_mut().item_spacing.x = Theme::space_2();
 
                 // What the row is about, at the left end, always.
                 label(ui, subject.name());
@@ -189,7 +189,7 @@ pub fn label(ui: &mut Ui, text: &str) {
 /// A hairline between groups in the row.
 pub fn separator(ui: &mut Ui) {
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(1.0, HEIGHT - Theme::SPACE_3),
+        egui::vec2(1.0, HEIGHT - Theme::space_3()),
         egui::Sense::hover(),
     );
     ui.painter().rect_filled(rect, 0.0, Theme::border());

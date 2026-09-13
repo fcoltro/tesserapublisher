@@ -149,11 +149,11 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
             ui.set_width((ctx.content_rect().width() - 80.0).clamp(280.0, 460.0));
             ui.heading("New document");
             ui.weak("Choose your page size and publishing destination.");
-            ui.add_space(Theme::SPACE_3);
+            ui.add_space(Theme::space_3());
             egui::ScrollArea::vertical()
                 .max_height((ctx.content_rect().height() - 200.0).max(160.0))
                 .show(ui, |ui| body(ui, &mut settings, unit));
-            ui.add_space(Theme::SPACE_3);
+            ui.add_space(Theme::space_3());
             ui.separator();
             ui.horizontal(|ui| {
                 ui.checkbox(&mut settings.preview, "Preview");
@@ -251,7 +251,7 @@ fn body(ui: &mut Ui, settings: &mut NewDocument, unit: tessera_geometry::Unit) {
         });
     });
 
-    ui.add_space(Theme::SPACE_2);
+    ui.add_space(Theme::space_2());
     let mut pages = settings.pages as f64;
     pair(
         ui,
@@ -278,7 +278,7 @@ fn body(ui: &mut Ui, settings: &mut NewDocument, unit: tessera_geometry::Unit) {
         }),
     );
 
-    ui.add_space(Theme::SPACE_3);
+    ui.add_space(Theme::space_3());
     ui.colored_label(Theme::text_muted(), "Colour");
     for intent in [Intent::Print, Intent::Screen] {
         if ui

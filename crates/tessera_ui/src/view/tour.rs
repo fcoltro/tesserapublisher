@@ -68,7 +68,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut TesseraApp) {
                 .fill(Theme::panel_bg_solid())
                 .stroke(Stroke::new(1.0, Theme::accent()))
                 .corner_radius(Theme::RADIUS)
-                .inner_margin(Theme::SPACING_LG)
+                .inner_margin(Theme::space_4())
                 .show(ui, |ui| {
                     ui.set_width(CARD);
                     ui.label(
@@ -77,13 +77,13 @@ pub fn show(ui: &mut egui::Ui, state: &mut TesseraApp) {
                             .color(Theme::text_primary())
                             .strong(),
                     );
-                    ui.add_space(Theme::SPACING_SM);
+                    ui.add_space(Theme::space_1());
                     ui.label(
                         egui::RichText::new(step.body)
                             .size(Theme::TYPE_MD)
                             .color(Theme::text_primary()),
                     );
-                    ui.add_space(Theme::SPACING_MD);
+                    ui.add_space(Theme::space_2());
                     ui.horizontal(|ui| {
                         if let Some((this, all)) = counted {
                             ui.label(

@@ -55,7 +55,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
 }
 
 fn body(ui: &mut Ui, state: &mut TesseraApp) {
-    ui.spacing_mut().item_spacing.y = Theme::SPACE_2;
+    ui.spacing_mut().item_spacing.y = Theme::space_2();
 
     let needle = ui.horizontal(|ui| {
         ui.label("Find");

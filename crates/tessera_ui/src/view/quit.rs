@@ -53,7 +53,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
             ui.set_width(420.0_f32.min(ctx.content_rect().width() - 64.0).max(240.0));
             ui.heading("Save changes before quitting?");
             ui.label("These documents have unsaved changes.");
-            ui.add_space(Theme::SPACE_2);
+            ui.add_space(Theme::space_2());
             egui::ScrollArea::vertical()
                 .max_height(180.0)
                 .show(ui, |ui| {
@@ -61,7 +61,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                         ui.label(format!("• {}", doc.title()));
                     }
                 });
-            ui.add_space(Theme::SPACE_3);
+            ui.add_space(Theme::space_3());
             ui.separator();
             ui.horizontal(|ui| {
                 discard = ui.button("Discard and quit").clicked();

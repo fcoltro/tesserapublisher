@@ -38,7 +38,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
         row(ui, state, swatch);
     }
 
-    ui.add_space(Theme::SPACE_2);
+    ui.add_space(Theme::space_2());
     ui.horizontal(|ui| {
         if ui
             .button("New swatch")
@@ -184,7 +184,7 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, swatch: &Swatch) {
     // edited at a time.
     if chosen {
         ui.horizontal(|ui| {
-            ui.add_space(BLOCK + Theme::SPACE_2);
+            ui.add_space(BLOCK + Theme::space_2());
             let [r, g, b, a] = swatch.colour.to_rgb_f32();
             let mut rgba = [r, g, b, a];
             if crate::view::panels::swatch_picker(ui, &mut rgba) {

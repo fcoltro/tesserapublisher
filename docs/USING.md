@@ -114,6 +114,10 @@ what makes the job printable.
   only ever written when you save it.
 - **Workspaces** (Window ▸ Workspace) remember which panels are open and how
   they are arranged — not your document, and not where you were on the page.
+- **Density** (Preferences ▸ Appearance) sets how tightly the panels are
+  packed: compact, standard or comfortable. It moves the spacing and the height
+  of every row, and deliberately leaves the type size alone — a setting that
+  scaled the text as well would be a zoom, which is a different question.
 
 ## When something is wrong
 

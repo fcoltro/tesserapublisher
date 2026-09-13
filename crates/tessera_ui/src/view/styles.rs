@@ -434,7 +434,7 @@ fn paragraph_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
                     ui.colored_label(Theme::text_muted(), "No paragraph styles yet.");
                 }
 
-                ui.add_space(Theme::SPACING_SM);
+                ui.add_space(Theme::space_1());
                 ui.horizontal(|ui| {
                     if crate::view::panels::icon_button(
                         ui,
@@ -658,7 +658,7 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
                     ui.colored_label(Theme::text_muted(), "No character styles yet.");
                 }
 
-                ui.add_space(Theme::SPACING_SM);
+                ui.add_space(Theme::space_1());
                 ui.horizontal(|ui| {
                     if crate::view::panels::icon_button(
                         ui,

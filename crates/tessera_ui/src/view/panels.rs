@@ -20,7 +20,7 @@ use crate::tools::Tool;
 
 pub fn tool_strip(ui: &mut Ui, state: &mut TesseraApp) {
     ui.vertical(|ui| {
-        ui.add_space(Theme::SPACING_SM);
+        ui.add_space(Theme::space_1());
         for tool in Tool::ALL {
             let shortcut = crate::actions::all()
                 .iter()
@@ -219,13 +219,13 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
         // Indented under its heading, which is what says the fields belong to
         // it rather than merely follow it.
         ui.scope(|ui| {
-            ui.add_space(Theme::SPACE_1);
+            ui.add_space(Theme::space_1());
             egui::Frame::NONE
                 .inner_margin(egui::Margin {
-                    left: Theme::SPACE_3 as i8,
+                    left: Theme::space_3() as i8,
                     right: 0,
                     top: 0,
-                    bottom: Theme::SPACE_2 as i8,
+                    bottom: Theme::space_2() as i8,
                 })
                 .show(ui, |ui| match section {
                     Section::Transform => transform_section(ui, state, id, &frame),
@@ -317,7 +317,7 @@ fn fill_stroke_proxy(
             apply(state, Command::ClearFill(id));
         }
     });
-    ui.add_space(Theme::SPACING_SM);
+    ui.add_space(Theme::space_1());
 }
 
 /// A small icon button, for the places a word would be worse than a picture.
@@ -1817,7 +1817,7 @@ fn text_frame_controls(
 /// Not a section heading: it does not collapse and it carries no icon. The
 /// difference in weight is what says one is a level above the other.
 fn group_label(ui: &mut Ui, text: &str) {
-    ui.add_space(Theme::SPACE_1);
+    ui.add_space(Theme::space_1());
     ui.separator();
     ui.add(
         egui::Label::new(
@@ -1833,7 +1833,7 @@ fn group_label(ui: &mut Ui, text: &str) {
 /// never modifies the document; the next edit supplies the shared value.
 fn linked_group_heading(ui: &mut Ui, id: egui::Id, title: &str, default: bool) -> bool {
     let mut linked = ui.ctx().data_mut(|data| *data.get_temp_mut_or(id, default));
-    ui.add_space(Theme::SPACE_1);
+    ui.add_space(Theme::space_1());
     ui.separator();
     ui.horizontal(|ui| {
         ui.colored_label(Theme::text_muted(), title);
@@ -1927,7 +1927,7 @@ fn linked_edges(
 
 /// A heading inside a section, with the glyph that names what follows.
 fn subheading(ui: &mut Ui, icon: crate::icons::Icon, label: &str) {
-    ui.add_space(Theme::SPACING_SM);
+    ui.add_space(Theme::space_1());
     ui.horizontal(|ui| {
         let size = Vec2::splat(Theme::ICON_SIZE);
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
@@ -2131,7 +2131,7 @@ pub(crate) fn pair<A, B>(
 
     let mut out = (None, None);
     ui.horizontal(|ui| {
-        let half = (ui.available_width() - Theme::SPACE_2) / 2.0;
+        let half = (ui.available_width() - Theme::space_2()) / 2.0;
         ui.scope(|ui| {
             ui.set_max_width(half);
             out.0 = Some(labelled(ui, first.0, NARROW, false, first.1));
@@ -2179,8 +2179,10 @@ pub(crate) fn section_heading_with(
     title: &str,
     open: bool,
 ) -> bool {
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), Theme::ROW), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), Theme::row()),
+        Sense::click(),
+    );
     let painter = ui.painter_at(rect);
 
     if response.hovered() {
@@ -2202,7 +2204,7 @@ pub(crate) fn section_heading_with(
 
     let glyph = egui::Rect::from_min_size(
         egui::pos2(
-            caret.right() + Theme::SPACE_1,
+            caret.right() + Theme::space_1(),
             rect.center().y - Theme::ICON_SIZE / 2.0,
         ),
         Vec2::splat(Theme::ICON_SIZE),
@@ -2210,7 +2212,7 @@ pub(crate) fn section_heading_with(
     crate::icons::paint(&painter, glyph, icon, Theme::text_muted());
 
     painter.text(
-        egui::pos2(glyph.right() + Theme::SPACE_2, rect.center().y),
+        egui::pos2(glyph.right() + Theme::space_2(), rect.center().y),
         egui::Align2::LEFT_CENTER,
         title,
         egui::FontId::proportional(Theme::TYPE_MD),
@@ -2899,7 +2901,7 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
 
     let mut changed = false;
 
-    ui.add_space(Theme::SPACING_SM);
+    ui.add_space(Theme::space_1());
     changed |= ui
         .checkbox(&mut setup.facing_pages, "Facing pages")
         .changed();
@@ -2920,7 +2922,7 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
                  title: &str,
                  v: (&mut f64, &mut f64),
                  h: ((&str, &mut f64), (&str, &mut f64))| {
-        ui.add_space(Theme::SPACE_3);
+        ui.add_space(Theme::space_3());
         linked_edges(
             ui,
             egui::Id::new(("page-edge-link", state.active, title)),
@@ -2950,7 +2952,7 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
         ),
     );
     // Column guides, next to the margins they subdivide.
-    ui.add_space(Theme::SPACE_3);
+    ui.add_space(Theme::space_3());
     group_label(ui, "Columns");
     let mut count = f64::from(setup.columns.max(1));
     let (i, j) = pair(
@@ -2973,7 +2975,7 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
     changed |= i || j;
 
     // The baseline grid, with the document's other page-wide rhythms.
-    ui.add_space(Theme::SPACE_3);
+    ui.add_space(Theme::space_3());
     group_label(ui, "Baseline grid");
     let mut on = setup.baseline_grid.is_some();
     if ui.checkbox(&mut on, "Use a baseline grid").changed() {
@@ -3022,7 +3024,7 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
 
     output_intent_controls(ui, state);
 
-    ui.add_space(Theme::SPACING_LG);
+    ui.add_space(Theme::space_4());
     ui.colored_label(
         Theme::text_muted(),
         format!("Measurements in {}", unit_name(unit)),
@@ -3039,7 +3041,7 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
 fn output_intent_controls(ui: &mut Ui, state: &mut TesseraApp) {
     use tessera_document::intent::Rendering;
 
-    ui.add_space(Theme::SPACING_LG);
+    ui.add_space(Theme::space_4());
     group_label(ui, "Output intent");
 
     let intent = state.active().document().output_intent.clone();
@@ -3549,7 +3551,7 @@ fn overrides_row(
         return;
     }
 
-    ui.add_space(Theme::SPACING_MD);
+    ui.add_space(Theme::space_2());
     if character_overrides || paragraph_overrides {
         ui.colored_label(
             Theme::error(),

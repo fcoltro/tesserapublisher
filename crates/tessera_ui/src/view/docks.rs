@@ -108,7 +108,7 @@ fn side(ui: &mut Ui, state: &mut TesseraApp, region: Region) {
             //
             // Its room is reserved whether it is drawn or not, so the stacks
             // do not resize under the pointer either.
-            let room = (ui.available_height() - EDGE - Theme::SPACE_2).max(0.0);
+            let room = (ui.available_height() - EDGE - Theme::space_2()).max(0.0);
             let each = room / showing.len() as f32;
             for at in showing {
                 ui.allocate_ui(egui::vec2(ui.available_width(), each), |ui| {
@@ -155,7 +155,7 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
     let mut dropped: Option<(String, usize)> = None;
 
     let bar = egui::Frame::NONE
-        .inner_margin(egui::Margin::symmetric(Theme::SPACE_1 as i8, 2))
+        .inner_margin(egui::Margin::symmetric(Theme::space_1() as i8, 2))
         .fill(Theme::panel_bg_alt())
         .show(ui, |ui| {
             // **A tab bar scrolls; it does not wrap.** Wrapped, egui put the
@@ -169,7 +169,7 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
                 .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = Theme::SPACE_1;
+                        ui.spacing_mut().item_spacing.x = Theme::space_1();
                         // Belt as well as braces: a horizontal layout is enough to stop
                         // the row wrapping, and this stops any single label breaking
                         // even if one is given less room than its own text.
@@ -265,7 +265,7 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
         return;
     };
     if !open_by_title(state, &title) {
-        ui.add_space(Theme::SPACE_2);
+        ui.add_space(Theme::space_2());
         ui.colored_label(Theme::text_muted(), format!("{title} is closed."));
         return;
     }
@@ -278,11 +278,11 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.scope(|ui| {
-                ui.spacing_mut().item_spacing.y = Theme::SPACE_1;
+                ui.spacing_mut().item_spacing.y = Theme::space_1();
                 egui::Frame::NONE
                     .inner_margin(egui::Margin::symmetric(
-                        Theme::SPACE_2 as i8,
-                        Theme::SPACE_2 as i8,
+                        Theme::space_2() as i8,
+                        Theme::space_2() as i8,
                     ))
                     .show(ui, |ui| crate::view::rail::body(ui, state, dock));
             });
@@ -367,8 +367,8 @@ mod tests {
         // would fit, but every tab is a button with padding on both sides and
         // a gap to the next one, and that is another 130.
         let words: f32 = Dock::ALL.iter().map(|d| d.title().len() as f32 * 6.0).sum();
-        let padding = Dock::ALL.len() as f32 * Theme::SPACE_2 * 2.0;
-        let gaps = (Dock::ALL.len() - 1) as f32 * Theme::SPACE_2;
+        let padding = Dock::ALL.len() as f32 * Theme::space_2() * 2.0;
+        let gaps = (Dock::ALL.len() - 1) as f32 * Theme::space_2();
         let needed = words + padding + gaps;
 
         assert!(

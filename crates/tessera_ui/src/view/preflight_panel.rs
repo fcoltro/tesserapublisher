@@ -42,7 +42,7 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
     });
 
     if report.problems.is_empty() {
-        ui.add_space(Theme::SPACE_2);
+        ui.add_space(Theme::space_2());
         ui.colored_label(
             Theme::text_muted(),
             "Nothing to fix. Links were checked when this last ran.",
@@ -63,7 +63,7 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
         .show(ui, |ui| {
             for problem in &report.problems {
                 if heading != Some(problem.rule) {
-                    ui.add_space(Theme::SPACE_2);
+                    ui.add_space(Theme::space_2());
                     ui.horizontal(|ui| {
                         ui.colored_label(
                             severity_colour(problem.severity()),

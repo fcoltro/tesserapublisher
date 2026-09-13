@@ -1,7 +1,8 @@
 # The Tessera interface — design record
 
 **Date:** 2026-09-06
-**State:** phases 1–5 in `main`; phase 6 (light theme, density) outstanding.
+**State:** phases 1–6 in `main`. The light theme landed first and the density
+preference followed it; both switch while the application is running.
 
 A companion to the visual version of this document, which carries the mockups
 and the palette swatches. This file is the part that has to survive without a
@@ -105,18 +106,35 @@ Written by eye, four of these would have shipped:
 Two further invariants now hold the scale itself: every step climbs in one
 direction, and steps 1–8 are never cool.
 
-## What is left, and why it is one job
+## Phase 6, and why it was one job
 
-A light theme and a density preference are the same piece of work. The tokens
-are compile-time constants — `Theme::PANEL_BG` and the rest — and a theme that
-can change while the application runs needs them read at runtime instead. That
-is a wide but mechanical change to every use, and it should be made in one pass
-rather than half-made: a palette that is runtime in some panels and
-compile-time in others is a window that renders two themes at once.
+A light theme and a density preference were the same piece of work, and for the
+same reason: the tokens were compile-time constants — `Theme::PANEL_BG`,
+`Theme::SPACE_2` and the rest — and anything that can change while the
+application runs has to be read at runtime instead. A wide but mechanical
+change to every use, made in one pass rather than half-made, because a scale
+that is runtime in some panels and compile-time in others draws two densities
+at once.
 
-Everything else is already in place for it. The light palette is defined and
-contrast-tested, `ThemeChoice` is saved with the preferences, and the spacing
-values that a density switch would change are already named.
+Both are done. Colours read `palette()`; the spacing scale reads `density()`
+through `Theme::space_1()` and its siblings, across eighty-seven call sites.
+
+Two things that were not in the plan came out of doing it.
+
+**There were two spacing scales.** `SPACING_SM/MD/LG` had survived beside
+`SPACE_1..4` with fifteen call sites between them — the duplication the four
+named steps were introduced to end, still there. They fold together at equal
+values, which leaves one regular scale: 4, 8, 12, 16, 20.
+
+**Half the interface is not drawn by us.** egui builds its own style once and
+draws every button, field and tab from it, so a density that moved only the
+hand-drawn spacing would have meant "the same controls, closer together" —
+which is the half of density that helps nobody. `interact_size` now reads the
+scale like everything else.
+
+What density deliberately does **not** move is the type size and the corner
+radius. Scaling the text as well would make it a zoom, which is a different
+control answering a different question, and one the platform already provides.
 
 ## On inspiration sites
 

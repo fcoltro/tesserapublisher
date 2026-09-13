@@ -200,7 +200,7 @@ pub fn confirm_close(ctx: &egui::Context, state: &mut TesseraApp) {
             ui.set_width(400.0);
             ui.heading("Save changes?");
             ui.label(format!("{name} has changes that have not been saved."));
-            ui.add_space(Theme::SPACE_2);
+            ui.add_space(Theme::space_2());
             ui.horizontal(|ui| {
                 // Save first, because it is what somebody who mis-clicked
                 // wants, and the leftmost button is the one a hand goes to.

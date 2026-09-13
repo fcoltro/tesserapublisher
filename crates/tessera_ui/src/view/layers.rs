@@ -129,7 +129,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
         apply(state, Command::MoveLayer { from, to });
     }
 
-    ui.spacing_mut().item_spacing.y = Theme::SPACING_SM;
+    ui.spacing_mut().item_spacing.y = Theme::space_1();
     ui.separator();
     ui.horizontal(|ui| {
         if icon_button(ui, Icon::Plus, "New layer", false) {
@@ -426,7 +426,7 @@ fn confirm_removal(ui: &mut Ui, state: &mut TesseraApp) {
                 "\u{201c}{name}\u{201d} holds {objects}. Deleting the layer deletes {} too.",
                 if count == 1 { "it" } else { "them" }
             ));
-            ui.add_space(Theme::SPACING_SM);
+            ui.add_space(Theme::space_1());
             ui.horizontal(|ui| {
                 if ui.button("Delete layer and its objects").clicked() {
                     go = true;

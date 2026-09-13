@@ -42,7 +42,7 @@ use crate::theme::Theme;
 pub(crate) fn dialog_frame(ctx: &egui::Context) -> egui::Frame {
     egui::Frame::popup(&ctx.style_of(ctx.theme()))
         .fill(Theme::panel_bg())
-        .inner_margin(Theme::SPACE_4)
+        .inner_margin(Theme::space_5())
         .corner_radius(10)
 }
 
@@ -66,6 +66,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // Before anything is drawn, so a theme changed in the preferences window
     // takes effect on the frame it was changed in rather than the one after.
     crate::theme::follow(ui.ctx(), state.prefs.theme);
+    crate::theme::follow_density(ui.ctx(), state.prefs.density);
 
     // The interface’s own ground, painted under everything. The document is drawn
     // over the middle of it and is opaque; what shows through the chrome is
@@ -136,7 +137,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // document is chrome that covers the thing being worked on, and the glass is
     // for showing the interface’s own ground through — not the page.
     let tools = Panel::left("tools")
-        .exact_size(Theme::TOOL_SIZE + Theme::SPACING_LG)
+        .exact_size(Theme::TOOL_SIZE + Theme::space_4())
         .frame(glass::panel_frame(state))
         .resizable(false)
         .show(ui, |ui| {
@@ -484,7 +485,7 @@ pub fn name_workspace(ctx: &egui::Context, state: &mut TesseraApp) {
                 );
             }
 
-            ui.add_space(Theme::SPACE_2);
+            ui.add_space(Theme::space_2());
             ui.horizontal(|ui| {
                 save = ui.add_enabled(named, egui::Button::new("Save")).clicked()
                     || (named

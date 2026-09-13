@@ -55,7 +55,7 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
         .auto_shrink([false, true])
         .show(ui, |ui| body(ui, state));
 
-    ui.add_space(Theme::SPACE_2);
+    ui.add_space(Theme::space_2());
     actions(ui, state);
 }
 
@@ -98,7 +98,7 @@ fn masters(ui: &mut Ui, state: &mut TesseraApp) {
     // parent" is to guess that clicking the current one twice does it.
     {
         let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), Theme::ROW),
+            egui::vec2(ui.available_width(), Theme::row()),
             egui::Sense::click(),
         );
         let painter = ui.painter_at(rect);
@@ -108,7 +108,7 @@ fn masters(ui: &mut Ui, state: &mut TesseraApp) {
             painter.rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
         }
         painter.text(
-            egui::pos2(rect.left() + Theme::SPACE_2, rect.center().y),
+            egui::pos2(rect.left() + Theme::space_2(), rect.center().y),
             egui::Align2::LEFT_CENTER,
             "None",
             egui::TextStyle::Body.resolve(ui.style()),
@@ -137,7 +137,7 @@ fn masters(ui: &mut Ui, state: &mut TesseraApp) {
         let on_this_page = pages.iter().any(|p| Some(*p) == applied);
 
         let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), Theme::ROW),
+            egui::vec2(ui.available_width(), Theme::row()),
             egui::Sense::click(),
         );
         let painter = ui.painter_at(rect);
@@ -157,14 +157,14 @@ fn masters(ui: &mut Ui, state: &mut TesseraApp) {
             painter.rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
         }
         painter.text(
-            egui::pos2(rect.left() + Theme::SPACE_2, rect.center().y),
+            egui::pos2(rect.left() + Theme::space_2(), rect.center().y),
             egui::Align2::LEFT_CENTER,
             &master.name,
             egui::TextStyle::Body.resolve(ui.style()),
             Theme::text_primary(),
         );
         painter.text(
-            egui::pos2(rect.right() - Theme::SPACE_2, rect.center().y),
+            egui::pos2(rect.right() - Theme::space_2(), rect.center().y),
             egui::Align2::RIGHT_CENTER,
             if holds == 1 {
                 "1 item".to_string()
@@ -217,7 +217,7 @@ fn masters(ui: &mut Ui, state: &mut TesseraApp) {
         state.edit_master(now);
     }
 
-    ui.add_space(Theme::SPACE_3);
+    ui.add_space(Theme::space_3());
     crate::view::panels::group_label_pub(ui, "Pages");
 }
 

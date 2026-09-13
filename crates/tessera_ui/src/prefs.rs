@@ -13,6 +13,59 @@ pub enum ThemeChoice {
     Light,
 }
 
+/// How tightly the interface is packed.
+///
+/// A preference rather than a constant, and for the reason Adobe found on its
+/// own tools: on an application somebody works inside all day, density belongs
+/// to the person and the screen rather than to the design. A fourteen-inch
+/// laptop at 150% and a thirty-two-inch display at 100% do not want the same
+/// rhythm, and neither pair of eyes is wrong.
+///
+/// It moves the **spacing scale and the row height**, and nothing else. Type
+/// size and corner radius stay put deliberately: a preference that scaled the
+/// text too would be a zoom, and a zoom is a different control answering a
+/// different question.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Density {
+    /// Tighter. More of the document and more of the panels at once.
+    Compact,
+    /// The rhythm the interface was drawn to.
+    #[default]
+    Standard,
+    /// Roomier. Bigger targets, more air between them.
+    Comfortable,
+}
+
+impl Density {
+    pub fn label(self) -> &'static str {
+        match self {
+            Density::Compact => "Compact",
+            Density::Standard => "Standard",
+            Density::Comfortable => "Comfortable",
+        }
+    }
+
+    pub fn purpose(self) -> &'static str {
+        match self {
+            Density::Compact => "Tighter rows. More on screen at once.",
+            Density::Standard => "The rhythm the interface was drawn to.",
+            Density::Comfortable => "Roomier rows and larger targets.",
+        }
+    }
+
+    /// What every spacing step and the row height are multiplied by.
+    ///
+    /// A quarter either side: enough to be worth choosing, not so much that a
+    /// panel laid out for one reflows into a different design in the other.
+    pub fn factor(self) -> f32 {
+        match self {
+            Density::Compact => 0.75,
+            Density::Standard => 1.0,
+            Density::Comfortable => 1.25,
+        }
+    }
+}
+
 /// How much the panels let the document show through.
 ///
 /// A setting rather than a decision, and for three reasons that are all real
@@ -87,6 +140,10 @@ pub struct Preferences {
     pub version: u32,
     pub unit: Unit,
     pub theme: ThemeChoice,
+
+    /// How tightly the interface is packed.
+    #[serde(default)]
+    pub density: Density,
     /// The effective resolution below which artwork is reported as too low.
     ///
     /// A preference rather than a constant: 300 is the usual bar for offset
@@ -220,6 +277,7 @@ impl Default for Preferences {
             // The unit most of the world lays out pages in.
             unit: Unit::Millimetres,
             theme: ThemeChoice::default(),
+            density: Density::default(),
             minimum_ppi: default_minimum_ppi(),
             panel_surface: PanelSurface::default(),
             blur: default_blur(),
@@ -427,6 +485,7 @@ mod tests {
             version: Preferences::PATH_VERSION,
             unit: Unit::Millimetres,
             theme: ThemeChoice::Light,
+            density: Density::Comfortable,
             minimum_ppi: 150.0,
             panel_surface: PanelSurface::Solid,
             blur: 11,
@@ -467,6 +526,11 @@ mod tests {
         assert_eq!(complaint, None, "an older file is not a damaged one");
         assert_eq!(read.unit, Unit::Points, "what they chose survived");
         assert_eq!(read.theme, ThemeChoice::Light);
+        assert_eq!(
+            read.density,
+            Density::default(),
+            "a file written before the density existed reads as somebody who never chose"
+        );
         assert_eq!(read.panel_surface, PanelSurface::default());
         assert_eq!(read.blur, default_blur());
         assert!(read.snapping, "snapping defaults on, as it always was");

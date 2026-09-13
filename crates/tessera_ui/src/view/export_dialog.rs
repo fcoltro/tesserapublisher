@@ -126,7 +126,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
         .show(ctx, |ui| {
             ui.set_width((ctx.content_rect().width() - 64.0).clamp(280.0, 420.0));
             ui.heading("Export PDF");
-            ui.add_space(Theme::SPACE_2);
+            ui.add_space(Theme::space_2());
             egui::ScrollArea::vertical()
                 .max_height((ctx.content_rect().height() - 160.0).max(160.0))
                 .show(ui, |ui| body(ui, state));
@@ -173,7 +173,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
     });
     state.export.standard = standard;
 
-    ui.add_space(Theme::SPACE_2);
+    ui.add_space(Theme::space_2());
     ui.label("Marks");
     ui.checkbox(&mut state.export.marks.crop, "Crop marks");
     ui.checkbox(&mut state.export.marks.bleed, "Bleed marks");

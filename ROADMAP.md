@@ -879,15 +879,34 @@ travel with the code.
 - [x] **Information design in the inspector**: fields fill their width, pairs
   sit side by side, sections collapse and remember, group labels are a weight
   below section headings.
-- [~] **A light theme, and a density preference.** The light theme is built and
-  switchable; the density preference is not. Both were already decided —
-  the light palette is defined and contrast-tested, and `ThemeChoice` is saved
-  — and both are blocked on the same thing: the tokens are compile-time
-  constants, and a theme that can change while running needs them read at
-  runtime. That is a wide, mechanical change to every `Theme::` use, and it
-  should be made in one pass rather than half-made.
-  - Adobe's finding is the reason to do it at all: on a professional tool,
-    density and contrast are a **preference, not a constant**.
+- [x] **A light theme, and a density preference.** Both switch while the
+  application is running. Adobe's finding is the reason to have them at all: on
+  a professional tool, density and contrast are a **preference, not a
+  constant**.
+  - The spacing scale is now **read at runtime**, the way the palette already
+    was — `Theme::space_1()` rather than `Theme::SPACE_1` — because a constant
+    cannot be re-read when the preference changes. Eighty-seven call sites, in
+    one pass: a scale that was runtime in some panels and compile-time in others
+    would draw two densities at once.
+  - **There were two spacing scales**, and folding them in was the half of this
+    job that was not planned. `SPACING_SM/MD/LG` survived beside `SPACE_1..4`
+    with fifteen call sites, so fifteen places would have sat still while
+    everything around them moved. Folded at equal values — 4, 8 and 16 — which
+    made the scale regular for the first time: 4, 8, 12, 16, 20.
+  - **egui's own measurements move too.** Half the interface asks the scale as
+    it draws and the other half is drawn by egui from a style built once, so
+    `interact_size` reads `Theme::control_height()` rather than a literal 24.
+    Left alone, compact would have meant "the same buttons, closer together".
+  - **Type size and corner radius deliberately do not follow.** A preference
+    that scaled the text would be a zoom, which is a different control
+    answering a different question, and `a_density_preference_is_not_a_zoom`
+    holds that line.
+  - The tests found two faults of their own worth recording. Three tests
+    mutating one process-wide value **raced**, reporting compact as 5 points
+    against standard's 4 — the palette tests had the same latent race and now
+    take the same lock. And the first draft read its baseline from the function
+    under test, where egui's default row height *equals* the compact height, so
+    a style that never changed would have passed as one that did.
 
 ### What the design argues from
 

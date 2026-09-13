@@ -81,6 +81,53 @@ pub fn use_palette(choice: crate::prefs::ThemeChoice) {
     ACTIVE.store(which, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// How tightly the interface is packed at the moment.
+///
+/// Process-wide for the same reason the palette is: density is a property of
+/// the screen somebody is working on, not of a document or of a widget.
+static DENSITY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1);
+
+/// Space everything to this density, from now on.
+pub fn use_density(choice: crate::prefs::Density) {
+    let which = match choice {
+        crate::prefs::Density::Compact => 0,
+        crate::prefs::Density::Standard => 1,
+        crate::prefs::Density::Comfortable => 2,
+    };
+    DENSITY.store(which, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The density in force.
+pub fn density() -> crate::prefs::Density {
+    match DENSITY.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => crate::prefs::Density::Compact,
+        2 => crate::prefs::Density::Comfortable,
+        _ => crate::prefs::Density::Standard,
+    }
+}
+
+/// Serialises the tests that change what the whole process draws.
+///
+/// The palette and the density are deliberately process-wide — a theme belongs
+/// to the screen, not to a widget — and cargo runs tests in parallel threads of
+/// one process. Without this, a test asserting that compact is tighter than
+/// standard reads whichever value another test stored a microsecond earlier;
+/// the first run of the density tests failed exactly that way, reporting
+/// compact as 5 points against standard's 4.
+///
+/// Poisoning is ignored on purpose. A failing test panics while holding the
+/// lock, and a poisoned lock would fail every other test that takes it —
+/// turning one honest failure into a page of noise pointing nowhere.
+#[cfg(test)]
+static SCREEN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+fn hold_the_screen() -> std::sync::MutexGuard<'static, ()> {
+    SCREEN
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// The palette in force.
 pub fn palette() -> Palette {
     match ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
@@ -343,18 +390,47 @@ impl Theme {
     // which applied where, so the same relationship was drawn at three sizes
     // in three panels.
 
+    /// One step of the spacing scale, in points, at the density in force.
+    ///
+    /// A function rather than a constant because the density can change while
+    /// the application is running, and a constant cannot be re-read. Rounded to
+    /// a whole point: a rule drawn at a half-pixel offset is a blurred rule.
+    fn step_of_scale(points: f32) -> f32 {
+        (points * density().factor()).round()
+    }
+
     /// Inside a control: between an icon and its label.
-    pub const SPACE_1: f32 = 4.0;
+    pub fn space_1() -> f32 {
+        Self::step_of_scale(4.0)
+    }
     /// Between controls in a row.
-    pub const SPACE_2: f32 = 8.0;
+    pub fn space_2() -> f32 {
+        Self::step_of_scale(8.0)
+    }
     /// Between groups of controls.
-    pub const SPACE_3: f32 = 12.0;
+    pub fn space_3() -> f32 {
+        Self::step_of_scale(12.0)
+    }
+    /// Inside a region: the padding around a panel's contents.
+    pub fn space_4() -> f32 {
+        Self::step_of_scale(16.0)
+    }
     /// Between regions.
-    pub const SPACE_4: f32 = 20.0;
+    pub fn space_5() -> f32 {
+        Self::step_of_scale(20.0)
+    }
 
     /// Every list row — layers, styles, swatches, links. One height, so a
     /// column of them scans as a column.
-    pub const ROW: f32 = 28.0;
+    pub fn row() -> f32 {
+        Self::step_of_scale(28.0)
+    }
+
+    /// The height of anything you can click: a button, a field, a tab.
+    pub fn control_height() -> f32 {
+        Self::step_of_scale(24.0)
+    }
+
     /// The fixed column every labelled field aligns its label to. Without
     /// one, no two panels line up and long labels clip instead of wrapping.
     pub const LABEL_COLUMN: f32 = 64.0;
@@ -367,9 +443,6 @@ impl Theme {
     /// Section headings.
     pub const TYPE_LG: f32 = 17.0;
 
-    pub const SPACING_SM: f32 = 4.0;
-    pub const SPACING_MD: f32 = 8.0;
-    pub const SPACING_LG: f32 = 16.0;
     pub const RADIUS: f32 = 3.0;
 
     /// Side of a tool button in the left strip.
@@ -442,6 +515,15 @@ pub fn follow(ctx: &Context, choice: crate::prefs::ThemeChoice) {
     apply(ctx);
 }
 
+/// Space everything to this density, and redraw from it.
+pub fn follow_density(ctx: &Context, choice: crate::prefs::Density) {
+    if density() == choice {
+        return;
+    }
+    use_density(choice);
+    apply(ctx);
+}
+
 #[cfg(test)]
 mod palette_tests {
     use super::*;
@@ -453,6 +535,7 @@ mod palette_tests {
     /// change the answer for whatever ran next.
     #[test]
     fn choosing_a_theme_really_changes_what_is_drawn() {
+        let _screen = hold_the_screen();
         // **The defect this exists for.** The preference was stored, saved and
         // shown in a switch, and every colour was hard-wired to the dark
         // palette — so the switch did nothing. A stored preference that draws
@@ -479,6 +562,7 @@ mod palette_tests {
 
     #[test]
     fn the_colours_that_are_deliberately_not_themed_stay_put() {
+        let _screen = hold_the_screen();
         // A few are documented as fixed and must not follow the palette: the
         // cursor pair is chosen by contrast against the canvas, the snap green
         // is deliberately not the accent, and the preview surround is held
@@ -506,6 +590,149 @@ mod palette_tests {
         );
 
         use_palette(ThemeChoice::Dark);
+    }
+}
+
+#[cfg(test)]
+mod density_tests {
+    use super::*;
+    use crate::prefs::Density;
+
+    /// The density is process-wide, so these run one after another rather than
+    /// beside each other, and put it back at the end.
+    #[test]
+    fn choosing_a_density_really_changes_the_spacing() {
+        let _screen = hold_the_screen();
+        // The same defect the theme test guards against, one control along: a
+        // preference that is stored, saved and shown in a switch, while every
+        // measurement it claims to move is hard-wired. A control that lies.
+        let read = || {
+            [
+                Theme::space_1(),
+                Theme::space_2(),
+                Theme::space_3(),
+                Theme::space_4(),
+                Theme::space_5(),
+                Theme::row(),
+                Theme::control_height(),
+            ]
+        };
+
+        use_density(Density::Compact);
+        let compact = read();
+        use_density(Density::Standard);
+        let standard = read();
+        use_density(Density::Comfortable);
+        let comfortable = read();
+        use_density(Density::Standard);
+
+        for (i, ((tight, usual), loose)) in compact
+            .into_iter()
+            .zip(standard)
+            .zip(comfortable)
+            .enumerate()
+        {
+            assert!(
+                tight < usual,
+                "measurement {i}: compact ({tight}) is not tighter than standard ({usual})"
+            );
+            assert!(
+                usual < loose,
+                "measurement {i}: comfortable ({loose}) is not roomier than standard ({usual})"
+            );
+        }
+    }
+
+    #[test]
+    fn a_density_chosen_in_the_preferences_reaches_egui_before_anything_is_drawn() {
+        // Half the interface asks the scale for its measurements as it draws,
+        // and the other half is drawn by egui from a style built once. A
+        // density that moved only the first half would leave every button and
+        // field at its old height inside spacing that had changed around it.
+        let _screen = hold_the_screen();
+        let ctx = Context::default();
+
+        // Built once from a known density, the way the first frame builds it.
+        // Reading the baseline from `follow_density` instead would read egui's
+        // own default, which happens to equal the compact height and would let
+        // a style that never changed pass as one that did.
+        use_density(Density::Standard);
+        apply(&ctx);
+        let standard = ctx.global_style().spacing.interact_size.y;
+
+        follow_density(&ctx, Density::Comfortable);
+        let comfortable = ctx.global_style().spacing.interact_size.y;
+
+        use_density(Density::Standard);
+
+        assert!(
+            comfortable > standard,
+            "a control is {comfortable} points high at comfortable and {standard} at standard"
+        );
+    }
+
+    #[test]
+    fn a_density_preference_is_not_a_zoom() {
+        let _screen = hold_the_screen();
+        // Type size and corner radius are deliberately outside it. Scaling the
+        // text as well would make this a zoom, which is a different control
+        // answering a different question — and one egui already has.
+        use_density(Density::Standard);
+        let fixed = (
+            Theme::TYPE_SM,
+            Theme::TYPE_MD,
+            Theme::TYPE_LG,
+            Theme::RADIUS,
+        );
+
+        use_density(Density::Comfortable);
+        assert_eq!(
+            fixed,
+            (
+                Theme::TYPE_SM,
+                Theme::TYPE_MD,
+                Theme::TYPE_LG,
+                Theme::RADIUS
+            ),
+            "a measurement that density does not own followed it anyway"
+        );
+
+        use_density(Density::Standard);
+    }
+
+    #[test]
+    fn the_scale_stays_a_scale_at_every_density() {
+        let _screen = hold_the_screen();
+        // A scale whose steps collide at one density is not a scale there: two
+        // relationships the design draws differently would come out the same.
+        // Whole points, too — half a point of padding is a blurred edge.
+        for choice in [Density::Compact, Density::Standard, Density::Comfortable] {
+            use_density(choice);
+            let steps = [
+                Theme::space_1(),
+                Theme::space_2(),
+                Theme::space_3(),
+                Theme::space_4(),
+                Theme::space_5(),
+            ];
+            for pair in steps.windows(2) {
+                assert!(
+                    pair[0] < pair[1],
+                    "{:?}: the scale stops climbing at {} then {}",
+                    choice,
+                    pair[0],
+                    pair[1]
+                );
+            }
+            for step in steps {
+                assert_eq!(
+                    step,
+                    step.round(),
+                    "{choice:?}: {step} is not a whole point"
+                );
+            }
+        }
+        use_density(Density::Standard);
     }
 }
 
@@ -581,13 +808,19 @@ pub fn apply(ctx: &Context) {
         style.visuals.widgets.hovered.expansion = 0.0;
         style.visuals.widgets.active.expansion = 0.0;
 
-        // Density, set once. Eight points of vertical spacing between every
-        // widget is a form; a panel of properties is a list, and a list wants
-        // the rhythm of a single row height.
-        style.spacing.item_spacing = egui::vec2(Theme::SPACE_2, Theme::SPACE_1);
-        style.spacing.button_padding = egui::vec2(Theme::SPACE_2, Theme::SPACE_1);
-        style.spacing.interact_size.y = 24.0;
-        style.spacing.indent = Theme::SPACE_3;
+        // Density. Eight points of vertical spacing between every widget is a
+        // form; a panel of properties is a list, and a list wants the rhythm of
+        // a single row height.
+        //
+        // Read from the scale rather than written here, so the density
+        // preference moves egui's own measurements with the hand-drawn ones.
+        // A control height left at a constant while the space around it moved
+        // would make compact mean "the same buttons, closer together", which is
+        // the half of density that does not help anybody.
+        style.spacing.item_spacing = egui::vec2(Theme::space_2(), Theme::space_1());
+        style.spacing.button_padding = egui::vec2(Theme::space_2(), Theme::space_1());
+        style.spacing.interact_size.y = Theme::control_height();
+        style.spacing.indent = Theme::space_3();
 
         // Three sizes, and every one of them named. egui's defaults run from
         // 10 to 18 across five styles, which is five sizes nobody chose.

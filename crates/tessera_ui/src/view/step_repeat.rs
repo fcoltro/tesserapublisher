@@ -63,7 +63,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
         .show(ctx, |ui| {
             ui.set_width((ctx.content_rect().width() - 64.0).clamp(280.0, 400.0));
             ui.heading("Step and repeat");
-            ui.add_space(Theme::SPACE_2);
+            ui.add_space(Theme::space_2());
             let selected = state.active().selection.as_slice().len();
             if selected == 0 {
                 // Said rather than left to a button that does nothing: an
@@ -101,7 +101,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
 
             note(ui, selected, &window);
 
-            ui.add_space(Theme::SPACE_2);
+            ui.add_space(Theme::space_2());
             ui.horizontal(|ui| {
                 go = ui.add(super::primary_button("Make copies")).clicked();
                 if ui.button("Cancel").clicked() {

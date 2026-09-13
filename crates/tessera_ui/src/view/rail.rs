@@ -128,15 +128,15 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
                 }
 
                 ui.scope(|ui| {
-                    ui.spacing_mut().item_spacing.y = Theme::SPACE_1;
+                    ui.spacing_mut().item_spacing.y = Theme::space_1();
                     egui::Frame::NONE
                         .inner_margin(egui::Margin::symmetric(
-                            Theme::SPACE_2 as i8,
-                            Theme::SPACE_2 as i8,
+                            Theme::space_2() as i8,
+                            Theme::space_2() as i8,
                         ))
                         .show(ui, |ui| body(ui, state, dock));
                 });
-                ui.add_space(Theme::SPACE_2);
+                ui.add_space(Theme::space_2());
             }
         });
 }
@@ -150,13 +150,13 @@ pub fn strip(ui: &mut Ui, state: &mut TesseraApp) {
     let mut open: Option<Dock> = None;
 
     ui.vertical_centered(|ui| {
-        ui.add_space(Theme::SPACE_2);
+        ui.add_space(Theme::space_2());
         for dock in Dock::ALL {
             if crate::view::panels::icon_button(ui, dock.icon(), dock.title(), dock.is_open(state))
             {
                 open = Some(dock);
             }
-            ui.add_space(Theme::SPACE_1);
+            ui.add_space(Theme::space_1());
         }
     });
 
