@@ -1407,25 +1407,6 @@ pub(crate) fn parse_sets(text: &str) -> Vec<u8> {
     sets
 }
 
-#[cfg(test)]
-mod set_tests {
-    #[test]
-    fn sets_are_read_out_of_whatever_was_typed() {
-        assert_eq!(super::parse_sets("1 3, 7"), vec![1, 3, 7]);
-        assert_eq!(
-            super::parse_sets("7 3 3 1"),
-            vec![1, 3, 7],
-            "sorted, once each"
-        );
-        assert_eq!(
-            super::parse_sets("0 21 ss04"),
-            vec![4],
-            "out of range dropped"
-        );
-        assert!(super::parse_sets("").is_empty());
-    }
-}
-
 /// A paragraph as a list item: none, a bullet or a number, and the shape of
 /// the marker. Returns `(changed, hang)`: whether the list changed, and
 /// whether a hanging indent was asked for — which is the caller's to write,
@@ -2946,6 +2927,28 @@ fn text_section(
                 ..CharacterFormat::default()
             },
         );
+    }
+
+    // The kern at the caret: between the character before it and the one
+    // after. Only with a caret and not a selection, because a kern is about
+    // one pair — a range has many, and tracking is the control for a range.
+    if target.is_empty()
+        && let Some(kern) = state
+            .active()
+            .editing
+            .as_ref()
+            .and_then(|(_, buffer)| buffer.kern_at_cursor())
+        && let Some(edited) = optional_number(ui, "Kern", Some(kern), 1.0, -1000.0..=1000.0, "")
+        && let Some((_, buffer)) = state.active_mut().editing.as_mut()
+    {
+        // undo-bracketed: written the way a keystroke is, straight into the
+        // story, inside the entry the editing session opened.
+        buffer.kern_by(edited - kern);
+        let updated = buffer.story().clone();
+        if let Some(s) = state.active_mut().document_mut().story_mut(story) {
+            *s = updated;
+        }
+        state.active_mut().dirty = true;
     }
 
     // OpenType features. Each row states `Some(..)` either way, for the
@@ -4922,5 +4925,24 @@ mod tests {
             current_page(&state).is_some(),
             "it clamps rather than showing nothing"
         );
+    }
+}
+
+#[cfg(test)]
+mod set_tests {
+    #[test]
+    fn sets_are_read_out_of_whatever_was_typed() {
+        assert_eq!(super::parse_sets("1 3, 7"), vec![1, 3, 7]);
+        assert_eq!(
+            super::parse_sets("7 3 3 1"),
+            vec![1, 3, 7],
+            "sorted, once each"
+        );
+        assert_eq!(
+            super::parse_sets("0 21 ss04"),
+            vec![4],
+            "out of range dropped"
+        );
+        assert!(super::parse_sets("").is_empty());
     }
 }

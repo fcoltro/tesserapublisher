@@ -398,6 +398,7 @@ fn body_copy_formatting_survives_a_save_and_load() {
                 ..Default::default()
             }),
             ligatures: Some(false),
+            kern: Some(-35.0),
             figure_case: Some(tessera_text::story::FigureCase::OldStyle),
             figure_width: Some(tessera_text::story::FigureWidth::Tabular),
             fractions: Some(true),
@@ -423,6 +424,7 @@ fn body_copy_formatting_survives_a_save_and_load() {
         Some(false),
         "off is stated, not absent"
     );
+    assert_eq!(run.local.kern, Some(-35.0));
     assert_eq!(
         run.local.features(),
         vec![

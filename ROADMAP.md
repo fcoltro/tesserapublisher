@@ -2082,8 +2082,35 @@ and not a list of controls.
   - A feature the font lacks is ignored by the shaper, so no control here
     can make text disappear — only fail to change it, which is what the
     hand check is for.
-- [ ] **Kerning control and H&J parameters** — still owed from milestone 2,
-  and recorded there. Listed here so the debt has one home.
+- [~] **Kerning control and H&J parameters** — still owed from milestone 2,
+  and recorded there. Listed here so the debt has one home. **The manual kern
+  is built (by test; hand check owed). Optical kerning and H&J are not.**
+  - **A kern is on the brush, not in the letter spacing, and that is the
+    finding.** Milestone 2 recorded that tracking one letter of a kerned pair
+    made it *wider* and did not know why. The cause: parley starts a new
+    shaping run wherever letter spacing changes, and a shaper kerns only
+    within a run — so a kern given as letter spacing on one character threw
+    away the font's own pairs on both sides of it. A brush change splits
+    nothing the shaper sees. So `CharacterFormat.kern` (thousandths of an
+    em, on the character before the gap) rides on the brush and is applied
+    *after* layout: `kern_shifts` moves every glyph after a kerned cluster,
+    and the caret, the selection edges and the click go through the same
+    sum, with a test that they agree. The cost: a manual kern does not move
+    a line break, and a tab after one lands where parley put it. A few
+    thousandths of an em buys that.
+  - Alt with an arrow at the caret, twenty thousandths a step, a hundred
+    with Shift; a Kern field in the inspector when there is a caret and no
+    selection. No style states a kern.
+  - **Optical kerning** — kerns computed from the outlines — is not built,
+    and is an algorithm rather than a setting.
+  - **H&J parameters** are not built. parley justifies by adjusting cluster
+    advances and exposes no minimum, optimum or maximum for word or letter
+    spacing, and no glyph scaling. Controlling *how* it justifies means
+    writing justification, which is a milestone of its own.
+  - A guard found lying: `tests/command_invariant.rs` stops scanning a file
+    at its first `#[cfg(test)]`, and a test module placed mid-file (the sets
+    parser's, for one afternoon) hid every interface mutation after it. Test
+    modules go at the end of a file, and now that is why.
 
 ### Recorded, unscheduled, and probably not wanted yet
 

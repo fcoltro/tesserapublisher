@@ -102,6 +102,12 @@ that cannot be honoured, because it would leave a column empty, is let go.
 where the font says they go, in the text's colour; a character style can set
 the weight, the offset and a colour of its own.
 
+**Kerning.** Put the caret between two letters and press Alt with an arrow:
+twenty thousandths of an em a step, a hundred with Shift. The Kern field in
+the inspector shows the pair's value and takes a number. The font's own pair
+kerning is applied underneath; this is added to it. Tracking, beside it, is
+the control for a range.
+
 **Features.** Below Case: common and discretionary ligatures on or off,
 lining or old-style figures, proportional or tabular, fractions, and
 stylistic sets by number. A font that lacks a feature ignores it — nothing

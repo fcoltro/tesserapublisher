@@ -90,14 +90,16 @@ impl crate::shape::ShapedText {
                 } else {
                     parley::Affinity::Downstream
                 };
-                let caret = parley::Cursor::from_byte_index(
-                    &p.layout,
-                    p.to_shaped(cursor.position),
-                    affinity,
-                );
+                let shaped = p.to_shaped(cursor.position);
+                let caret = parley::Cursor::from_byte_index(&p.layout, shaped, affinity);
+                // Moved by the manual kerns before it, as the glyphs were.
+                let kerned = p
+                    .layout
+                    .get(hit.index)
+                    .map_or(0.0, |line| crate::shape::kern_shift_at(&line, shaped));
                 result.caret = Some(translate(
                     caret.geometry(&p.layout, width).into(),
-                    hit.x,
+                    hit.x + kerned,
                     hit.y,
                 ));
             }
@@ -114,12 +116,25 @@ impl crate::shape::ShapedText {
                     p.to_shaped(end),
                     parley::Affinity::Upstream,
                 );
+                // Each edge moves by the kerns before *it*, so a selection
+                // across a kerned pair grows or shrinks with the pair.
+                let (shift_a, shift_b) = p.layout.get(hit.index).map_or((0.0, 0.0), |line| {
+                    (
+                        crate::shape::kern_shift_at(&line, p.to_shaped(start)),
+                        crate::shape::kern_shift_at(&line, p.to_shaped(end)),
+                    )
+                });
                 result.selection.extend(
                     parley::Selection::new(a, b)
                         .geometry(&p.layout)
                         .into_iter()
                         .filter(|(_, index)| *index == hit.index)
-                        .map(|(rect, _)| translate(rect.into(), hit.x, hit.y)),
+                        .map(|(rect, _)| {
+                            let mut rect: TextRect = rect.into();
+                            rect.x0 += shift_a;
+                            rect.x1 += shift_b;
+                            translate(rect, hit.x, hit.y)
+                        }),
                 );
             }
         }
@@ -151,14 +166,21 @@ impl crate::shape::ShapedText {
         let p = &hit.paragraph;
         let line = p.layout.get(hit.index).expect("stored line");
         let m = line.metrics();
-        p.to_stored(
-            parley::Cursor::from_point(
-                &p.layout,
-                (x - hit.x) as f32,
-                (m.block_min_coord + m.block_max_coord) * 0.5,
-            )
-            .index(),
-        )
+        let y_mid = (m.block_min_coord + m.block_max_coord) * 0.5;
+        let at = |x: f64| parley::Cursor::from_point(&p.layout, x as f32, y_mid).index();
+        // The glyphs moved by the kerns before them and the click did not,
+        // so the click is moved back by what the glyph it seems to be on
+        // moved — once more from there, in case that crossed a kern.
+        let mut shaped = at(x - hit.x);
+        for _ in 0..2 {
+            let shift = crate::shape::kern_shift_at(&line, shaped);
+            let again = at(x - hit.x - shift);
+            if again == shaped {
+                break;
+            }
+            shaped = again;
+        }
+        p.to_stored(shaped)
     }
 
     pub fn word_at(&self, x: f64, y: f64) -> std::ops::Range<usize> {
@@ -168,9 +190,15 @@ impl crate::shape::ShapedText {
         let p = &hit.paragraph;
         let line = p.layout.get(hit.index).expect("stored line");
         let m = line.metrics();
+        // Through `offset_at`, which already undoes the kerns' shift, so a
+        // double-click lands in the same word a click would.
+        let shaped = p.to_shaped(self.offset_at(x, y));
+        let cursor =
+            parley::Cursor::from_byte_index(&p.layout, shaped, parley::Affinity::Downstream);
+        let x_of = cursor.geometry(&p.layout, 1.0).x0;
         let range = parley::Selection::word_from_point(
             &p.layout,
-            (x - hit.x) as f32,
+            x_of as f32,
             (m.block_min_coord + m.block_max_coord) * 0.5,
         )
         .text_range();
@@ -527,6 +555,70 @@ mod tests {
         let right = shaper.offset_at(&story, &NoStyles::default(), WIDTH, 1000.0, y);
         assert_eq!(left, 0, "a click at the far left is the start");
         assert_eq!(right, story.text.len(), "and past the end is the end");
+    }
+
+    #[test]
+    fn the_caret_and_the_click_follow_a_kerned_letter() {
+        // A kern moves the glyphs after it, and the caret is drawn from
+        // parley's geometry, which did not move — so the two have to be
+        // reconciled somewhere, and this is the test that they are.
+        use crate::story::CharacterFormat;
+        let mut shaper = Shaper::new();
+        let mut story = Story::new("AVAV");
+        story.apply_character_format(
+            0..4,
+            &CharacterFormat {
+                size: Some(20.0),
+                ..CharacterFormat::default()
+            },
+        );
+        let plain = shaper.shape(&story, &NoStyles::default(), 400.0);
+        story.apply_character_format(
+            0..1,
+            &CharacterFormat {
+                kern: Some(-200.0),
+                ..CharacterFormat::default()
+            },
+        );
+        let kerned = shaper.shape(&story, &NoStyles::default(), 400.0);
+
+        let caret_x = |t: &crate::shape::ShapedText, at: usize| {
+            t.caret_geometry(cursor(at), 1.0).caret.expect("a caret").x0
+        };
+        assert!(
+            (caret_x(&plain, 0) - caret_x(&kerned, 0)).abs() < 1e-6,
+            "nothing before the kern moved"
+        );
+        assert!(
+            (caret_x(&plain, 1) - caret_x(&kerned, 1) - 4.0).abs() < 0.05,
+            "the caret after the kerned A is 4pt to the left, like the V"
+        );
+        assert!(
+            (caret_x(&plain, 3) - caret_x(&kerned, 3) - 4.0).abs() < 0.05,
+            "and so is everything after"
+        );
+        // A click on each glyph's own x lands on that glyph.
+        let baseline = kerned.lines[0].baseline;
+        for (i, glyph) in kerned.lines[0].glyphs().enumerate() {
+            assert_eq!(
+                kerned.offset_at(glyph.x + 1.0, baseline),
+                i,
+                "clicking just inside glyph {i}"
+            );
+        }
+        // And the selection's far edge moved with the kern too.
+        let selected = |t: &crate::shape::ShapedText| {
+            t.caret_geometry(
+                TextCursor {
+                    anchor: 0,
+                    position: 2,
+                },
+                1.0,
+            )
+            .selection[0]
+        };
+        assert!((selected(&plain).x1 - selected(&kerned).x1 - 4.0).abs() < 0.05);
+        assert!((selected(&plain).x0 - selected(&kerned).x0).abs() < 1e-6);
     }
 
     #[test]

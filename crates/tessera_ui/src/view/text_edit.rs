@@ -33,6 +33,16 @@ pub fn handle_events(ui: &Ui, buffer: &mut EditBuffer) -> bool {
                     buffer.delete_forward();
                     changed = true;
                 }
+                // Alt with an arrow kerns the pair at the caret, as InDesign
+                // does: twenty thousandths of an em a step, five times that
+                // with Shift. Before the plain arrows, or Alt would just move.
+                Key::ArrowLeft | Key::ArrowRight if modifiers.alt => {
+                    let step = if modifiers.shift { 100.0 } else { 20.0 };
+                    let delta = if key == Key::ArrowLeft { -step } else { step };
+                    if buffer.kern_by(delta) {
+                        changed = true;
+                    }
+                }
                 Key::ArrowLeft => buffer.move_left(modifiers.shift),
                 Key::ArrowRight => buffer.move_right(modifiers.shift),
                 Key::A if modifiers.command => buffer.select_all(),
@@ -142,6 +152,28 @@ mod tests {
         buffer.set_cursor(1);
         run_with_events(vec![key(Key::Tab, egui::Modifiers::NONE)], &mut buffer);
         assert_eq!(buffer.story().text, "a\t");
+    }
+
+    #[test]
+    fn alt_and_an_arrow_kern_the_pair_at_the_caret() {
+        // InDesign's gesture, and its step: twenty thousandths of an em,
+        // five times that with Shift. The caret does not move.
+        let mut buffer = EditBuffer::new(Story::new("AV"));
+        buffer.set_cursor(1);
+        let alt = egui::Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        run_with_events(vec![key(Key::ArrowLeft, alt)], &mut buffer);
+        assert_eq!(buffer.kern_at_cursor(), Some(-20.0));
+        assert_eq!(buffer.cursor().position, 1, "the caret stayed");
+        let alt_shift = egui::Modifiers {
+            alt: true,
+            shift: true,
+            ..Default::default()
+        };
+        run_with_events(vec![key(Key::ArrowRight, alt_shift)], &mut buffer);
+        assert_eq!(buffer.kern_at_cursor(), Some(80.0));
     }
 
     #[test]

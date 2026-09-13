@@ -109,6 +109,13 @@ pub struct CharacterFormat {
     /// Letter spacing, in thousandths of an em — the unit a typographer uses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tracking: Option<f32>,
+    /// A manual kern, in thousandths of an em, added after each character
+    /// of the run — set on a run of one character, which is what the caret
+    /// does, it is the space between that character and the next. Distinct
+    /// from tracking, which is a property of a range: a kern is a decision
+    /// about one pair, and no style states one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kern: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub case: Option<Case>,
     /// Points above the baseline; negative sinks.
@@ -190,6 +197,7 @@ impl CharacterFormat {
             weight: self.weight.or(base.weight),
             italic: self.italic.or(base.italic),
             tracking: self.tracking.or(base.tracking),
+            kern: self.kern.or(base.kern),
             case: self.case.or(base.case),
             baseline_shift: self.baseline_shift.or(base.baseline_shift),
             line_height: self.line_height.or(base.line_height),

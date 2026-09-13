@@ -41,6 +41,18 @@ pub struct PositionedGlyph {
 pub struct Brush {
     pub colour: Option<tessera_color::Color>,
     pub baseline_shift: f32,
+    /// A manual kern in points, added after every cluster of the run.
+    ///
+    /// **On the brush and not as letter spacing, and the reason is the whole
+    /// design.** parley starts a new shaping run wherever letter spacing
+    /// changes, and a shaper kerns only within a run — so a kern given as
+    /// letter spacing on one character threw away the font's own kern pairs
+    /// on both sides of it, and tightening a pair made it wider. A brush
+    /// change splits nothing the shaper sees. The price is that the kern is
+    /// applied *after* layout, by [`kern_shifts`], so it does not move a line
+    /// break; a manual kern is a few thousandths of an em and that is what
+    /// the trade buys.
+    pub kern: f32,
     /// Carried on the brush so that a change in either splits the glyph run,
     /// exactly as a change of colour does: a run is then decorated whole or
     /// not at all, and the line under it is one rectangle per run.
@@ -386,6 +398,84 @@ fn clusters_of(line: &parley::Line<'_, Brush>) -> Vec<LineCluster> {
         }
     }
     out
+}
+
+/// How far every glyph on a line moves for the manual kerns before it, in
+/// the line's visual glyph order — and how far a caret at a shaped offset
+/// does, which is the same sum stopped at that offset's cluster.
+///
+/// Both come from one walk so that the glyphs and the caret cannot disagree
+/// about where a kerned letter went. Empty when the line has no kern, which
+/// is nearly every line, so the ordinary case pays a scan and nothing else.
+pub(crate) struct KernShifts {
+    /// Per glyph, in visual order.
+    pub glyphs: Vec<f64>,
+    /// Per cluster: `(shaped text start, shift before it)`, in visual order.
+    pub clusters: Vec<(usize, f64)>,
+}
+
+pub(crate) fn kern_shifts(line: &parley::Line<'_, Brush>) -> Option<KernShifts> {
+    let mut glyphs = Vec::new();
+    let mut clusters = Vec::new();
+    let mut shift = 0.0f64;
+    let mut any = false;
+    let mut seen: Option<std::ops::Range<usize>> = None;
+    for item in line.items() {
+        let parley::PositionedLayoutItem::GlyphRun(run) = item else {
+            continue;
+        };
+        let inner = run.run();
+        let key = inner.text_range();
+        if seen.as_ref() == Some(&key) {
+            continue;
+        }
+        seen = Some(key);
+        for cluster in inner.visual_clusters() {
+            clusters.push((cluster.text_range().start, shift));
+            let n = cluster.glyphs().count();
+            glyphs.extend(std::iter::repeat_n(shift, n));
+            let kern = f64::from(cluster.first_style().brush.kern);
+            if kern != 0.0 {
+                any = true;
+                shift += kern;
+            }
+        }
+    }
+    any.then_some(KernShifts { glyphs, clusters })
+}
+
+/// The kern shift of a caret at `shaped` on `line`: what the glyph there
+/// moved by, or, past the line's last cluster, what the line's end did.
+pub(crate) fn kern_shift_at(line: &parley::Line<'_, Brush>, shaped: usize) -> f64 {
+    let Some(shifts) = kern_shifts(line) else {
+        return 0.0;
+    };
+    // The cluster holding `shaped`, or the one after the last if `shaped` is
+    // beyond them all — where the shift is the total.
+    let mut total = 0.0;
+    let mut seen: Option<std::ops::Range<usize>> = None;
+    for item in line.items() {
+        let parley::PositionedLayoutItem::GlyphRun(run) = item else {
+            continue;
+        };
+        let inner = run.run();
+        let key = inner.text_range();
+        if seen.as_ref() == Some(&key) {
+            continue;
+        }
+        seen = Some(key);
+        for cluster in inner.visual_clusters() {
+            if cluster.text_range().contains(&shaped) {
+                return shifts
+                    .clusters
+                    .iter()
+                    .find(|(start, _)| *start == cluster.text_range().start)
+                    .map_or(0.0, |(_, shift)| *shift);
+            }
+            total += f64::from(cluster.first_style().brush.kern);
+        }
+    }
+    total
 }
 
 /// Decide every tab's width from where the last pass put it.
@@ -1879,6 +1969,9 @@ impl Shaper {
                         parley::StyleProperty::Brush(Brush {
                             colour: format.colour.clone(),
                             baseline_shift: format.baseline_shift.unwrap_or(0.0),
+                            kern: format.kern.map_or(0.0, |kern| {
+                                kern / 1000.0 * format.size.or(floor.size).unwrap_or(12.0)
+                            }),
                             underline: format.underline.clone().filter(|d| d.on),
                             strikethrough: format.strikethrough.clone().filter(|d| d.on),
                         }),
@@ -2174,6 +2267,7 @@ impl Shaper {
                         .collect()
                 };
                 let mut glyph_index = 0usize;
+                let kerns = kern_shifts(&line);
 
                 let mut objects = Vec::new();
                 // Underlines and strikethroughs, one rectangle per run.
@@ -2220,8 +2314,13 @@ impl Shaper {
                     let mut glyphs = Vec::new();
                     for g in run.positioned_glyphs() {
                         let tab = tab_glyphs.get(glyph_index).copied().flatten();
+                        let kerned = kerns
+                            .as_ref()
+                            .and_then(|k| k.glyphs.get(glyph_index))
+                            .copied()
+                            .unwrap_or(0.0);
                         glyph_index += 1;
-                        let x = f64::from(g.x) + paragraph.x;
+                        let x = f64::from(g.x) + paragraph.x + kerned;
                         let y = f64::from(g.y) + paragraph.y - f64::from(shift);
                         if let Some(tab) = tab {
                             // A tab draws nothing of its own. Its leader, if
@@ -3157,6 +3256,46 @@ mod tests {
             second < 1.0,
             "and the one nobody aligned should still start at the left, not at {second}"
         );
+    }
+
+    // --- manual kerning ------------------------------------------------------
+
+    #[test]
+    fn a_kern_moves_the_next_character_by_what_it_says() {
+        // 200/1000 em at 20pt is 4pt, and a kern of minus that on the A
+        // brings the V exactly that much closer. The pair kern the font
+        // carries is still applied underneath: a manual kern is added to it,
+        // as InDesign adds it.
+        use crate::story::CharacterFormat;
+
+        let at_twenty = |kern: Option<f32>| {
+            let mut story = Story::new("AV");
+            story.apply_character_format(
+                0..2,
+                &CharacterFormat {
+                    size: Some(20.0),
+                    ..CharacterFormat::default()
+                },
+            );
+            story.apply_character_format(
+                0..1,
+                &CharacterFormat {
+                    kern,
+                    ..CharacterFormat::default()
+                },
+            );
+            let shaped = Shaper::new().shape(&story, &NoStyles::default(), 400.0);
+            shaped.lines[0].glyphs().nth(1).expect("the V").x
+        };
+        let plain = at_twenty(None);
+        let tight = at_twenty(Some(-200.0));
+        let loose = at_twenty(Some(100.0));
+        assert!(
+            (plain - tight - 4.0).abs() < 0.05,
+            "the V should be 4pt closer, not {} closer",
+            plain - tight
+        );
+        assert!((loose - plain - 2.0).abs() < 0.05, "and 2pt further");
     }
 
     // --- OpenType features ---------------------------------------------------

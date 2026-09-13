@@ -168,6 +168,53 @@ impl EditBuffer {
         self.story.apply_character_format(range, format);
     }
 
+    /// The manual kern at the caret: between the character before it and
+    /// the one after. `None` with nothing before the caret, or a selection.
+    pub fn kern_at_cursor(&self) -> Option<f32> {
+        let (before, _) = self.pair_at_cursor()?;
+        Some(
+            self.story
+                .runs
+                .iter()
+                .find(|r| r.range.contains(&before))
+                .and_then(|r| r.local.kern)
+                .unwrap_or(0.0),
+        )
+    }
+
+    /// Change the kern at the caret by `delta` thousandths of an em.
+    ///
+    /// Nothing happens with a selection or at the start of the text: a kern
+    /// is about one pair, and there is no pair. Returns whether it changed.
+    pub fn kern_by(&mut self, delta: f32) -> bool {
+        let Some((before, cursor)) = self.pair_at_cursor() else {
+            return false;
+        };
+        let current = self.kern_at_cursor().unwrap_or(0.0);
+        self.story.apply_character_format(
+            before..cursor,
+            &crate::story::CharacterFormat {
+                kern: Some(current + delta),
+                ..crate::story::CharacterFormat::default()
+            },
+        );
+        true
+    }
+
+    /// The character before the caret, as a range, when the caret is
+    /// collapsed and not at the start.
+    fn pair_at_cursor(&self) -> Option<(usize, usize)> {
+        if self.cursor.position != self.cursor.anchor || self.cursor.position == 0 {
+            return None;
+        }
+        let cursor = self.cursor.position.min(self.story.text.len());
+        let before = self.story.text[..cursor]
+            .char_indices()
+            .next_back()
+            .map(|(i, _)| i)?;
+        Some((before, cursor))
+    }
+
     /// As above, for the paragraphs a range touches.
     pub fn apply_paragraph_format(
         &mut self,
@@ -748,5 +795,28 @@ mod run_integrity {
         let story = buffer.story();
         assert_eq!(story.text, "Xlo world");
         assert!(story.runs_are_sound());
+    }
+
+    #[test]
+    fn a_kern_at_the_caret_is_between_the_pair_and_accumulates() {
+        let mut buffer = EditBuffer::new(Story::new("AV"));
+        buffer.set_cursor(1);
+        assert_eq!(buffer.kern_at_cursor(), Some(0.0));
+        assert!(buffer.kern_by(-20.0));
+        assert!(buffer.kern_by(-20.0));
+        assert_eq!(buffer.kern_at_cursor(), Some(-40.0));
+        let run = buffer
+            .story()
+            .runs
+            .iter()
+            .find(|r| r.range == (0..1))
+            .expect("a run of the A alone");
+        assert_eq!(run.local.kern, Some(-40.0));
+
+        buffer.set_cursor(0);
+        assert_eq!(buffer.kern_at_cursor(), None, "no pair before the start");
+        assert!(!buffer.kern_by(-20.0));
+        buffer.select(0..2);
+        assert_eq!(buffer.kern_at_cursor(), None, "a selection is not a pair");
     }
 }
