@@ -2996,6 +2996,31 @@ fn text_section(
                 },
             );
         }
+        // Underline and strikethrough, the same way. Off keeps the
+        // decoration's settings and states `on: false`, for the reason
+        // italic states `Some(false)`.
+        for (icon, name, strike) in [
+            (crate::icons::Icon::Underline, "Underline", false),
+            (crate::icons::Icon::Strikethrough, "Strikethrough", true),
+        ] {
+            let current = if strike {
+                &shown.strikethrough
+            } else {
+                &shown.underline
+            };
+            let on = current.as_ref().is_some_and(|d| d.on);
+            if icon_button(ui, icon, name, on) {
+                let mut decoration = current.clone().unwrap_or_default();
+                decoration.on = !on;
+                let mut format = CharacterFormat::default();
+                if strike {
+                    format.strikethrough = Some(decoration);
+                } else {
+                    format.underline = Some(decoration);
+                }
+                set_character(state, story, target.clone(), format);
+            }
+        }
         ui.separator();
         for (label, weight) in [("300", 300u16), ("400", 400), ("500", 500), ("700", 700)] {
             if ui

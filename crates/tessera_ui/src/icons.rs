@@ -75,6 +75,8 @@ pub enum Icon {
     // styles window.
     Bold,
     Italic,
+    Underline,
+    Strikethrough,
     AlignJustify,
     TextAlignLeft,
     TextAlignCentre,
@@ -378,6 +380,14 @@ impl Icon {
             }
             // lucide: italic — three <line> elements, written as paths
             Self::Italic => &["M19 4 10 4", "M14 20 5 20", "M15 4 9 20"],
+            // lucide: underline
+            Self::Underline => &["M6 4v6a6 6 0 0 0 12 0V4", "M4 20h16"],
+            // lucide: strikethrough
+            Self::Strikethrough => &[
+                "M16 4H9a3 3 0 0 0-2.83 4",
+                "M14 12a4 4 0 0 1 0 8H6",
+                "M4 12h16",
+            ],
             // lucide: align-justify
             Self::AlignJustify => &["M3 5h18", "M3 12h18", "M3 19h18"],
             // The paragraph alignments. **Not the object ones**, which is what
@@ -553,6 +563,8 @@ impl Icon {
             // Typography glyphs sit in buttons, never under the pointer.
             | Self::Bold
             | Self::Italic
+            | Self::Underline
+            | Self::Strikethrough
             | Self::AlignJustify
             | Self::TextAlignLeft
             | Self::TextAlignCentre
@@ -873,7 +885,7 @@ pub fn paint_rotated(
 /// icon rather than returning nothing, so the cost of forgetting is a slower
 /// first draw instead of an invisible button; this list is the fast path, not
 /// the only one.
-pub const ALL: [Icon; 68] = [
+pub const ALL: [Icon; 70] = [
     Icon::Sun,
     Icon::Moon,
     Icon::DirectSelect,
@@ -919,6 +931,8 @@ pub const ALL: [Icon; 68] = [
     Icon::RotateCcw,
     Icon::Bold,
     Icon::Italic,
+    Icon::Underline,
+    Icon::Strikethrough,
     Icon::AlignJustify,
     Icon::Palette,
     Icon::Pilcrow,
@@ -1121,7 +1135,7 @@ mod tests {
         // fails this rather than shipping an invisible button.
         assert_eq!(
             ALL.len(),
-            68,
+            70,
             "an icon was added to the enum without being added to ALL"
         );
     }
@@ -1132,6 +1146,8 @@ mod tests {
         for icon in [
             Icon::Bold,
             Icon::Italic,
+            Icon::Underline,
+            Icon::Strikethrough,
             Icon::AlignJustify,
             Icon::Palette,
             Icon::Pilcrow,

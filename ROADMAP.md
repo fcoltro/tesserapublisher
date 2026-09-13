@@ -2047,9 +2047,23 @@ and not a list of controls.
   - Arabic, alphabetic (bijective, so 27 is AA) and roman numbering, with a
     suffix; the marker takes the paragraph's character format, as InDesign's
     does by default.
-- [ ] **Underline and strikethrough**, with weight, offset and colour. Drawn
+- [x] **Underline and strikethrough**, with weight, offset and colour. Drawn
   by the renderer and the PDF writer both, or the screen and the press
-  disagree.
+  disagree. **By test; the hand check is owed.**
+  - **They are rules.** A decoration is placed by the shaper as a
+    `PlacedRule` on the line, one rectangle per run, beside the paragraph
+    rules — so the renderer and the PDF writer, which already fill those,
+    needed no change at all and cannot disagree.
+  - **Carried on the parley brush**, so a change in decoration splits the
+    glyph run as a change in colour does: a run is decorated whole or not at
+    all, and the rectangle is the run's ink from first glyph to last advance.
+    A shifted run's underline rises with it.
+  - **Where the font says.** Every font states an underline position and
+    thickness and most a strikeout; skrifa reads them, and only a font that
+    does not say gets a guess (a tenth of the size below, three tenths
+    above, a twentieth thick). A stated weight or offset wins.
+  - The colour is the run's unless the decoration has its own — a red word's
+    underline is red, which is what "text colour" has to mean.
 - [ ] **OpenType features**: ligatures on and off, old-style and tabular
   figures, fractions, and a way to reach a font's stylistic sets. Small caps
   already ask the font for `smcp` and synthesise where it has none, which is

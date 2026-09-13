@@ -14,8 +14,8 @@ use egui::Ui;
 use tessera_color::Color;
 
 use tessera_text::story::{
-    Alignment, Case, CharacterFormat, CharacterStyle, CharacterStyleId, ParagraphFormat,
-    ParagraphStyle, ParagraphStyleId,
+    Alignment, Case, CharacterFormat, CharacterStyle, CharacterStyleId, Decoration,
+    ParagraphFormat, ParagraphStyle, ParagraphStyleId,
 };
 
 use crate::app::{StyleKind, TesseraApp};
@@ -861,6 +861,14 @@ fn character_format_fields(ui: &mut Ui, state: &mut TesseraApp, format: &mut Cha
         ],
     );
     optional_flag(ui, "Italic", &mut format.italic);
+    for (label, strike) in [("Underline", false), ("Strikethrough", true)] {
+        let slot = if strike {
+            &mut format.strikethrough
+        } else {
+            &mut format.underline
+        };
+        decoration_editor(ui, label, slot);
+    }
 
     optional_choice(
         ui,
@@ -1005,6 +1013,77 @@ fn optional_count(ui: &mut Ui, label: &str, value: &mut Option<u8>, default: u8)
 /// Three states rather than two, because "this style does not mention italic"
 /// and "this style says not italic" are different instructions to the cascade:
 /// the first inherits italic from a parent, the second overrules it.
+/// A decoration in a style: inherit, off, or on — and when on, its weight and
+/// offset (the font's own until stated) and its colour (the text's own until
+/// stated).
+fn decoration_editor(ui: &mut Ui, label: &str, value: &mut Option<Decoration>) {
+    use super::panels::field;
+
+    field(ui, label, |ui| {
+        let state = match value {
+            None => 0,
+            Some(d) if !d.on => 1,
+            Some(_) => 2,
+        };
+        for (choice, text) in [(0, "Inherit"), (1, "Off"), (2, "On")] {
+            if ui.selectable_label(state == choice, text).clicked() && state != choice {
+                *value = match choice {
+                    0 => None,
+                    1 => Some(Decoration {
+                        on: false,
+                        ..value.clone().unwrap_or_default()
+                    }),
+                    _ => Some(Decoration {
+                        on: true,
+                        ..value.clone().unwrap_or_default()
+                    }),
+                };
+            }
+        }
+    });
+    let Some(d) = value.as_mut().filter(|d| d.on) else {
+        return;
+    };
+    optional_number(
+        ui,
+        &format!("{label} weight"),
+        &mut d.weight,
+        1.0,
+        0.1,
+        0.1..=20.0,
+        " pt",
+    );
+    optional_number(
+        ui,
+        &format!("{label} offset"),
+        &mut d.offset,
+        0.0,
+        0.1,
+        -50.0..=50.0,
+        " pt",
+    );
+    field(ui, &format!("{label} colour"), |ui| {
+        let own = d.colour.is_some();
+        if ui.selectable_label(!own, "Text").clicked() && own {
+            d.colour = None;
+        }
+        let [r, g, b, a] = d
+            .colour
+            .clone()
+            .unwrap_or(tessera_color::Color::BLACK)
+            .to_rgb_f32();
+        let mut rgba = [r, g, b, a];
+        if super::panels::swatch_picker(ui, &mut rgba) {
+            d.colour = Some(tessera_color::Color::Rgb {
+                r: rgba[0],
+                g: rgba[1],
+                b: rgba[2],
+                a: rgba[3],
+            });
+        }
+    });
+}
+
 fn optional_flag(ui: &mut Ui, label: &str, value: &mut Option<bool>) {
     ui.horizontal(|ui| {
         let mut on = value.is_some();

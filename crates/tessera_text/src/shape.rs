@@ -41,6 +41,83 @@ pub struct PositionedGlyph {
 pub struct Brush {
     pub colour: Option<tessera_color::Color>,
     pub baseline_shift: f32,
+    /// Carried on the brush so that a change in either splits the glyph run,
+    /// exactly as a change of colour does: a run is then decorated whole or
+    /// not at all, and the line under it is one rectangle per run.
+    pub underline: Option<crate::story::Decoration>,
+    pub strikethrough: Option<crate::story::Decoration>,
+}
+
+/// Where a font puts a decoration, at `size`: the top of the line below (or
+/// above) the baseline in our downward `y`, and its thickness.
+///
+/// Every font states an underline; not every one states a strikeout. What a
+/// font does not say is taken as a tenth of the size below the baseline for
+/// the underline, three tenths above for the strikeout, and a twentieth thick
+/// — near what type designers choose, and only reached for when they did not.
+fn decoration_metrics(font: &FontData, size: f32, strike: bool) -> (f64, f64) {
+    use skrifa::MetadataProvider as _;
+
+    let stated = skrifa::FontRef::from_index(font.data.as_ref(), font.index)
+        .ok()
+        .and_then(|font| {
+            let metrics = font.metrics(
+                skrifa::instance::Size::new(size),
+                skrifa::instance::LocationRef::default(),
+            );
+            if strike {
+                metrics.strikeout
+            } else {
+                metrics.underline
+            }
+        })
+        .filter(|d| d.thickness > 0.0);
+    match stated {
+        // skrifa's offset is to the *top* of the decoration, upward.
+        Some(d) => (-f64::from(d.offset), f64::from(d.thickness)),
+        None => {
+            let thickness = f64::from(size) * 0.05;
+            let centre = if strike {
+                -f64::from(size) * 0.3
+            } else {
+                f64::from(size) * 0.1
+            };
+            (centre - thickness / 2.0, thickness)
+        }
+    }
+}
+
+/// The rectangle a decoration draws under (or through) a run's glyphs.
+fn place_decoration(
+    decoration: &crate::story::Decoration,
+    strike: bool,
+    run: &ShapedRun,
+    font: &FontData,
+    baseline: f64,
+) -> Option<PlacedRule> {
+    if !decoration.on {
+        return None;
+    }
+    let mut ink: Option<(f64, f64)> = None;
+    for g in &run.glyphs {
+        let (a, b) = ink.unwrap_or((g.x, g.x + g.advance));
+        ink = Some((a.min(g.x), b.max(g.x + g.advance)));
+    }
+    let (x0, x1) = ink?;
+    let (font_top, font_weight) = decoration_metrics(font, run.size, strike);
+    let weight = decoration.weight.map_or(font_weight, f64::from);
+    // A stated offset is to the line's centre, positive above the baseline.
+    let top = match decoration.offset {
+        Some(offset) => -f64::from(offset) - weight / 2.0,
+        None => font_top + (font_weight - weight) / 2.0,
+    };
+    Some(PlacedRule {
+        x0,
+        x1,
+        top: baseline + top,
+        weight,
+        colour: decoration.colour.clone().or_else(|| run.colour.clone()),
+    })
 }
 
 /// A drop cap, laid out and waiting for the body to say where it goes.
@@ -1787,6 +1864,8 @@ impl Shaper {
                         parley::StyleProperty::Brush(Brush {
                             colour: format.colour.clone(),
                             baseline_shift: format.baseline_shift.unwrap_or(0.0),
+                            underline: format.underline.clone().filter(|d| d.on),
+                            strikethrough: format.strikethrough.clone().filter(|d| d.on),
                         }),
                         local.clone(),
                     );
@@ -2082,6 +2161,8 @@ impl Shaper {
                 let mut glyph_index = 0usize;
 
                 let mut objects = Vec::new();
+                // Underlines and strikethroughs, one rectangle per run.
+                let mut decorations: Vec<PlacedRule> = Vec::new();
                 for item in line.items() {
                     let run = match item {
                         parley::PositionedLayoutItem::GlyphRun(run) => run,
@@ -2168,12 +2249,33 @@ impl Shaper {
                     // line up.
                     let colour = run.style().brush.colour.clone();
 
-                    runs.push(ShapedRun {
+                    let shaped_run = ShapedRun {
                         font_index,
                         size,
                         colour,
                         glyphs,
-                    });
+                    };
+                    // Against the run's own baseline: a shifted run's
+                    // underline rises with it.
+                    let run_baseline = baseline - f64::from(shift);
+                    let brush = &run.style().brush;
+                    for (decoration, strike) in [
+                        (brush.underline.as_ref(), false),
+                        (brush.strikethrough.as_ref(), true),
+                    ] {
+                        if let Some(decoration) = decoration
+                            && let Some(placed) = place_decoration(
+                                decoration,
+                                strike,
+                                &shaped_run,
+                                font,
+                                run_baseline,
+                            )
+                        {
+                            decorations.push(placed);
+                        }
+                    }
+                    runs.push(shaped_run);
                 }
 
                 // A line that broke at a soft hyphen has to show one. parley
@@ -2231,6 +2333,7 @@ impl Shaper {
                 {
                     rules.push(placed);
                 }
+                rules.append(&mut decorations);
 
                 // Back through the offset map: parley works in the shaped
                 // text, which is a different string whenever a case transform
@@ -3038,6 +3141,120 @@ mod tests {
         assert!(
             second < 1.0,
             "and the one nobody aligned should still start at the left, not at {second}"
+        );
+    }
+
+    // --- underline and strikethrough -----------------------------------------
+
+    fn decorated(
+        text: &str,
+        range: std::ops::Range<usize>,
+        format: crate::story::CharacterFormat,
+    ) -> ShapedText {
+        let mut story = Story::new(text);
+        story.apply_character_format(range, &format);
+        Shaper::new().shape(&story, &NoStyles::default(), 400.0)
+    }
+
+    fn underlined() -> crate::story::CharacterFormat {
+        crate::story::CharacterFormat {
+            underline: Some(crate::story::Decoration::default()),
+            ..crate::story::CharacterFormat::default()
+        }
+    }
+
+    #[test]
+    fn an_underline_runs_under_the_run_it_belongs_to() {
+        let shaped = decorated("ab cd", 3..5, underlined());
+        let line = &shaped.lines[0];
+        let glyphs: Vec<_> = line.glyphs().collect();
+        assert_eq!(line.rules.len(), 1, "one line under one word");
+        let rule = &line.rules[0];
+        assert!(
+            rule.top > line.baseline,
+            "under the baseline, not through it"
+        );
+        assert!(rule.weight > 0.0);
+        assert!(
+            (rule.x0 - glyphs[3].x).abs() < 1e-6,
+            "it starts where the word does"
+        );
+        let last = glyphs[4];
+        assert!((rule.x1 - (last.x + last.advance)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_strikethrough_crosses_the_letters() {
+        let format = crate::story::CharacterFormat {
+            size: Some(20.0),
+            strikethrough: Some(crate::story::Decoration::default()),
+            ..crate::story::CharacterFormat::default()
+        };
+        let shaped = decorated("ab", 0..2, format);
+        let line = &shaped.lines[0];
+        let rule = &line.rules[0];
+        let centre = rule.top + rule.weight / 2.0;
+        assert!(centre < line.baseline, "above the baseline");
+        assert!(centre > line.baseline - 20.0, "and below the ascender");
+    }
+
+    #[test]
+    fn a_decoration_takes_the_run_colour_unless_it_has_its_own() {
+        let red = tessera_color::Color::Rgb {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        };
+        let mut format = underlined();
+        format.colour = Some(red.clone());
+        let shaped = decorated("ab", 0..2, format.clone());
+        assert_eq!(shaped.lines[0].rules[0].colour, Some(red.clone()));
+
+        let blue = tessera_color::Color::Rgb {
+            r: 0.0,
+            g: 0.0,
+            b: 1.0,
+            a: 1.0,
+        };
+        format.underline = Some(crate::story::Decoration {
+            colour: Some(blue.clone()),
+            ..crate::story::Decoration::default()
+        });
+        let shaped = decorated("ab", 0..2, format);
+        assert_eq!(shaped.lines[0].rules[0].colour, Some(blue));
+    }
+
+    #[test]
+    fn a_decoration_switched_off_draws_nothing() {
+        let format = crate::story::CharacterFormat {
+            underline: Some(crate::story::Decoration {
+                on: false,
+                ..crate::story::Decoration::default()
+            }),
+            ..crate::story::CharacterFormat::default()
+        };
+        let shaped = decorated("ab", 0..2, format);
+        assert!(shaped.lines[0].rules.is_empty());
+    }
+
+    #[test]
+    fn a_stated_weight_and_offset_win_over_the_font() {
+        let format = crate::story::CharacterFormat {
+            underline: Some(crate::story::Decoration {
+                weight: Some(3.0),
+                offset: Some(-5.0),
+                ..crate::story::Decoration::default()
+            }),
+            ..crate::story::CharacterFormat::default()
+        };
+        let shaped = decorated("ab", 0..2, format);
+        let line = &shaped.lines[0];
+        let rule = &line.rules[0];
+        assert!((rule.weight - 3.0).abs() < 1e-6);
+        assert!(
+            (rule.top + 1.5 - (line.baseline + 5.0)).abs() < 1e-6,
+            "its centre is 5 below the baseline"
         );
     }
 

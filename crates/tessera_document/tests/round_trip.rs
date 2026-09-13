@@ -383,6 +383,23 @@ fn body_copy_formatting_survives_a_save_and_load() {
             ..ParagraphFormat::default()
         },
     );
+    let underline = tessera_text::story::Decoration {
+        on: true,
+        weight: Some(0.75),
+        offset: Some(-2.0),
+        colour: Some(tessera_color::Color::BLACK),
+    };
+    story.apply_character_format(
+        0..4,
+        &tessera_text::story::CharacterFormat {
+            underline: Some(underline.clone()),
+            strikethrough: Some(tessera_text::story::Decoration {
+                on: false,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    );
     let story = doc.add_story(story);
 
     format::save(&doc, &path).expect("save");
@@ -390,6 +407,17 @@ fn body_copy_formatting_survives_a_save_and_load() {
 
     let loaded_story = loaded.story(story).expect("story survived");
     assert_eq!(loaded_story.text, "Item\t12.50");
+    let run = loaded_story
+        .runs
+        .iter()
+        .find(|r| r.range.start == 0)
+        .expect("the underlined run");
+    assert_eq!(run.local.underline, Some(underline));
+    assert_eq!(
+        run.local.strikethrough.as_ref().map(|d| d.on),
+        Some(false),
+        "off is stated, not absent"
+    );
     assert_eq!(
         loaded_story.paragraphs[0].local.tab_stops.as_deref(),
         Some(stops.as_slice())

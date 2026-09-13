@@ -98,6 +98,10 @@ the column that holds the next paragraph's first — what a heading wants — an
 each end so no line is left alone at the bottom or top of a column. A keep
 that cannot be honoured, because it would leave a column empty, is let go.
 
+**Underline and strikethrough** sit beside Bold and Italic. They are drawn
+where the font says they go, in the text's colour; a character style can set
+the weight, the offset and a colour of its own.
+
 **Lists.** *List* in the Paragraph section makes a paragraph a bulleted or
 numbered item. The marker is generated, not typed — you cannot put a caret
 in it, and moving an item renumbers the list — and a tab follows it, so the

@@ -37,6 +37,39 @@ pub enum Alignment {
 
 /// Character formatting, every field optional.
 ///
+/// A line drawn through or under a run of text.
+///
+/// Weight and offset default to what the font says — every font carries an
+/// underline position and thickness, and most a strikeout — so a decoration
+/// nobody has adjusted sits where the type designer put it. `on` is kept as
+/// it is for paragraph rules: off keeps the settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Decoration {
+    #[serde(default)]
+    pub on: bool,
+    /// Points; `None` is the font's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight: Option<f32>,
+    /// Points from the baseline to the line's centre, positive above; `None`
+    /// is the font's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<f32>,
+    /// `None` is the text's own colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colour: Option<Color>,
+}
+
+impl Default for Decoration {
+    fn default() -> Self {
+        Self {
+            on: true,
+            weight: None,
+            offset: None,
+            colour: None,
+        }
+    }
+}
+
 /// `None` means **inherit**. That is the whole mechanism behind a style that
 /// cascades: a run holds a reference to a style and a set of overrides, never
 /// a resolved copy, so there is nothing to go stale when the style changes.
@@ -68,6 +101,10 @@ pub struct CharacterFormat {
     pub line_height: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colour: Option<Color>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underline: Option<Decoration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strikethrough: Option<Decoration>,
 }
 
 impl CharacterFormat {
@@ -87,6 +124,11 @@ impl CharacterFormat {
             baseline_shift: self.baseline_shift.or(base.baseline_shift),
             line_height: self.line_height.or(base.line_height),
             colour: self.colour.clone().or_else(|| base.colour.clone()),
+            underline: self.underline.clone().or_else(|| base.underline.clone()),
+            strikethrough: self
+                .strikethrough
+                .clone()
+                .or_else(|| base.strikethrough.clone()),
         }
     }
 
