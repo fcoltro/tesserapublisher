@@ -2307,7 +2307,61 @@ line of copy. The renderer and the PDF writer draw them without knowing.
 
 # Milestone 12 — Import
 
-IDML and Word. After the model can hold what they carry.
+IDML and Word. After the model can hold what they carry — which is why it
+is last: a footnote or a page-number marker in a file needs somewhere to go.
+
+**The rule: what cannot be carried is dropped out loud.** Every import
+returns the document *and* a list of what it could not bring, and the status
+line says it item by item. An importer that silently approximates leaves a
+person trusting a page that is not the one they made.
+
+**The finding: IDML places everything in spread space, and Tessera does not
+have to.** Each page carries its own transform into the spread; an item is
+placed *relative to the page whose rectangle holds its centre*, and that
+offset lands on wherever Tessera laid the page. An item's matrix is kept and
+re-based to turn about its own origin. The package's wrapper elements share
+their local names with the document's (`<idPkg:Spread>` around `<Spread>`),
+which cost one afternoon's confusion and a namespace check.
+
+### Acceptance
+
+> Open an InDesign package and find its pages, parents, threads, styles,
+> swatches, sections and footnotes where they were. Place a Word file into a
+> frame and see its headings in the document's own heading style.
+
+- [x] **`tessera_import`**, a crate with no UI in it, over `roxmltree` (which
+  usvg already brought in) and `zip`. `idml::import` reads `designmap.xml`
+  and then the resources it names, in the order the document depends on
+  itself: colours, page setup, styles, stories, layers, parents, spreads,
+  threads, sections. `docx::import` yields one story and the styles it uses
+  by name. **By test against packages built by hand from the specification;
+  the hand check against a real InDesign export is owed, and is the one that
+  matters.**
+- [x] **IDML carries**: page size, facing pages, bleed, slug, margins;
+  parents by name and their application per page; text frames with columns,
+  gutter, insets and vertical alignment; rectangles, ovals, polygons and
+  lines with fill, tint and stroke; placed images as links, fitted
+  proportionally; groups flattened; layers with visibility and lock;
+  paragraph and character styles with based-on, fonts, size, leading,
+  alignment, indents, spacing, keeps, lists, tabs, case, underline,
+  language; stories with local formatting, footnotes, and the page-number,
+  section and next/previous markers (`<?ACE 18?>` and kin); sections with
+  style, start, prefix and marker. Threads are reconnected from
+  `NextTextFrame`.
+- [x] **Word carries**: paragraphs with their gallery style names, direct
+  bold/italic/size/caps/underline/colour/tracking, alignment, spacing,
+  indents, keep-with-next, footnotes, tabs and breaks; tables as tabbed
+  text. File ▸ Place with a text frame or nothing selected offers `.docx`;
+  the styles are merged by name inside `Command::PlaceText`, the document's
+  own winning.
+- [x] File ▸ Open offers `.idml`; a package opens as a new *untitled*
+  document, so saving never overwrites the file it came from. `.idml` on
+  the command line opens the same way.
+- Dropped out loud: tables (their text is kept, tabbed), anchored objects,
+  images' crops, parents with more pages than the setup allows, and the
+  index. Not read: object styles, gradients, effects, text wrap, corner
+  options, hyperlinks, XML structure, cross-references, conditional text,
+  and `.doc`/`.rtf`.
 
 ---
 

@@ -22,6 +22,23 @@ use tessera_text::story::{
 
 use crate::app::{Clipboard, TesseraApp};
 
+/// Text from another application, with the styles it needs by name.
+///
+/// The styles are merged **by name, the document's first**: a "Heading 1"
+/// the document already defines wins over the file's, because a person who
+/// has set up their heading wants theirs. Names rather than ids, because the
+/// file's ids mean nothing here.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlacedText {
+    pub story: Story,
+    pub paragraph_styles: Vec<tessera_text::story::ParagraphStyle>,
+    pub character_styles: Vec<tessera_text::story::CharacterStyle>,
+    /// One per paragraph of `story`, `None` for the default.
+    pub paragraph_style_names: Vec<Option<String>>,
+    /// One per run of `story`.
+    pub run_style_names: Vec<Option<String>>,
+}
+
 #[derive(Debug, Clone)]
 pub enum Command {
     AddRectangle(DocRect),
@@ -524,6 +541,12 @@ pub enum Command {
     UpdateContents,
     SetIndex(tessera_document::contents::Index),
     UpdateIndex,
+    /// Text read from another application's file, into `id` — replacing what
+    /// it held — or into a new frame filling the current page's margins.
+    PlaceText {
+        id: Option<FrameId>,
+        text: PlacedText,
+    },
     /// Resize every page in the document.
     SetPageSize {
         width: f64,
@@ -1769,6 +1792,53 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::SetIndex(index) => {
             state.active_mut().document_mut().set_index(index);
+        }
+
+        Command::PlaceText { id, text } => {
+            let PlacedText {
+                mut story,
+                paragraph_styles,
+                character_styles,
+                paragraph_style_names,
+                run_style_names,
+            } = text;
+            let doc = state.active_mut().document_mut();
+            let mut paragraph_ids = std::collections::HashMap::new();
+            for style in paragraph_styles {
+                let existing = doc
+                    .paragraph_styles
+                    .iter()
+                    .find(|(_, s)| s.name == style.name)
+                    .map(|(id, _)| id);
+                let name = style.name.clone();
+                let id = existing.unwrap_or_else(|| doc.add_paragraph_style(style));
+                paragraph_ids.insert(name, id);
+            }
+            let mut character_ids = std::collections::HashMap::new();
+            for style in character_styles {
+                let existing = doc
+                    .character_styles
+                    .iter()
+                    .find(|(_, s)| s.name == style.name)
+                    .map(|(id, _)| id);
+                let name = style.name.clone();
+                let id = existing.unwrap_or_else(|| doc.add_character_style(style));
+                character_ids.insert(name, id);
+            }
+            for (paragraph, name) in story.paragraphs.iter_mut().zip(&paragraph_style_names) {
+                paragraph.style = name.as_ref().and_then(|n| paragraph_ids.get(n)).copied();
+            }
+            for (run, name) in story.runs.iter_mut().zip(&run_style_names) {
+                run.style = name.as_ref().and_then(|n| character_ids.get(n)).copied();
+            }
+            let into =
+                id.and_then(
+                    |id| match state.active().document().frame(id).map(|f| &f.kind) {
+                        Some(FrameKind::Text { story, .. }) => Some(*story),
+                        _ => None,
+                    },
+                );
+            place_generated(state, story, into, |_, _| {});
         }
 
         Command::UpdateIndex => {

@@ -227,7 +227,8 @@ person reaches for once they start setting copy, and none of it had a row:
 | Glyphs panel, typographer's quotes | ✗ | view | — |
 | Story editor, spell check | ✗ | view | — |
 | Print dialog | ✗ — PDF export only | — | — |
-| IDML import | ✗ | — | — |
+| IDML import | ✅ pages, parents, threads, styles, swatches, sections, footnotes; tables and anchored objects dropped out loud | — | done, M12 |
+| Word import | ✅ File ▸ Place a `.docx`; styles merged by name | — | done, M12 |
 
 ---
 

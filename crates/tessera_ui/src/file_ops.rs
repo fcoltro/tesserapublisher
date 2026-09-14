@@ -51,6 +51,39 @@ pub fn save_to_path(state: &mut TesseraApp, path: &Path) -> Result<(), FormatErr
     Ok(())
 }
 
+/// An InDesign package, read as a new untitled document.
+///
+/// Untitled rather than bound to the `.idml`: saving must not overwrite the
+/// file that was imported, and a person who opened a package expects to be
+/// asked where the Tessera document goes. What could not come across is said
+/// in the status line, item by item — see `tessera_import::Dropped`.
+pub fn import_idml(state: &mut TesseraApp, path: &Path) -> Result<(), tessera_import::ImportError> {
+    let imported = tessera_import::idml::import(path)?;
+    state.add_document(imported.document, None);
+    state.active_mut().dirty = true;
+    state.status = Some(if imported.dropped.is_empty() {
+        Status::info(format!("Imported {}", path.display()))
+    } else {
+        Status::error(format!(
+            "Imported {} — not carried: {}",
+            path.display(),
+            imported.dropped.0.join("; ")
+        ))
+    });
+    Ok(())
+}
+
+/// The extension says which reader a file gets.
+pub fn is_idml(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("idml"))
+}
+
+pub fn is_docx(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("docx"))
+}
+
 pub fn open_from_path(state: &mut TesseraApp, path: &Path) -> Result<(), FormatError> {
     // Already open? Go to it rather than opening a second copy. Two tabs of one
     // file are two histories of one file, and whichever is saved last wins
@@ -87,7 +120,12 @@ pub fn new_document(state: &mut TesseraApp) {
 pub fn open_startup_paths(state: &mut TesseraApp, paths: &[PathBuf]) {
     let mut errors = Vec::new();
     for path in paths {
-        if let Err(error) = open_from_path(state, path) {
+        let result = if is_idml(path) {
+            import_idml(state, path).map_err(|e| e.to_string())
+        } else {
+            open_from_path(state, path).map_err(|e| e.to_string())
+        };
+        if let Err(error) = result {
             errors.push(format!("Could not open {}: {error}", path.display()));
         }
     }
@@ -221,15 +259,31 @@ pub enum ExportError {
 pub fn place(state: &mut crate::app::TesseraApp) {
     use tessera_document::nodes::FrameKind;
 
-    let Some(id) = state.active().selection.single() else {
-        return;
-    };
-    if !matches!(
-        state.active().document().frame(id).map(|f| &f.kind),
-        Some(FrameKind::Graphic { .. })
-    ) {
+    // Text goes into a text frame, or a new one; artwork into a graphic
+    // frame. With nothing or a text frame selected, the dialog offers Word.
+    let selected = state.active().selection.single();
+    let graphic = selected.is_some_and(|id| {
+        matches!(
+            state.active().document().frame(id).map(|f| &f.kind),
+            Some(FrameKind::Graphic { .. })
+        )
+    });
+    if !graphic {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Word document", &["docx"])
+            .pick_file()
+        else {
+            return;
+        };
+        if is_docx(&path) {
+            let result = place_text(state, &path);
+            set_error(state, result);
+        }
         return;
     }
+    let Some(id) = selected else {
+        return;
+    };
     let Some(path) = pick_artwork() else {
         return;
     };
@@ -400,12 +454,61 @@ pub fn export_pdf(state: &mut TesseraApp) {
 pub fn open(state: &mut TesseraApp) {
     let Some(path) = rfd::FileDialog::new()
         .add_filter(FILTER_NAME, &[EXTENSION])
+        .add_filter("InDesign package", &["idml"])
         .pick_file()
     else {
         return; // cancelled
     };
+    if is_idml(&path) {
+        let result = import_idml(state, &path);
+        set_error(state, result);
+        return;
+    }
     let result = open_from_path(state, &path);
     set_error(state, result);
+}
+
+/// A Word file's text, into the selected text frame — or a new one filling
+/// the current page's margins when nothing is selected.
+///
+/// Word's styles are added by name where the document has none of that name;
+/// where it has, the document's own wins, because a person who has set up a
+/// "Heading 1" wants their heading, not Word's.
+pub fn place_text(state: &mut TesseraApp, path: &Path) -> Result<(), tessera_import::ImportError> {
+    use tessera_document::nodes::FrameKind;
+
+    let imported = tessera_import::docx::import(path)?;
+    let target = state.active().selection.single().filter(|id| {
+        matches!(
+            state.active().document().frame(*id).map(|f| &f.kind),
+            Some(FrameKind::Text { .. })
+        )
+    });
+    // The styles travel with the text and are merged inside the command, so
+    // placing is one undo entry: the words and the styles they need.
+    crate::command::apply(
+        state,
+        crate::command::Command::PlaceText {
+            id: target,
+            text: crate::command::PlacedText {
+                story: imported.story,
+                paragraph_styles: imported.paragraph_styles,
+                character_styles: imported.character_styles,
+                paragraph_style_names: imported.paragraph_style_names,
+                run_style_names: imported.run_style_names,
+            },
+        },
+    );
+    state.status = Some(if imported.dropped.is_empty() {
+        Status::info(format!("Placed {}", path.display()))
+    } else {
+        Status::error(format!(
+            "Placed {} — not carried: {}",
+            path.display(),
+            imported.dropped.0.join("; ")
+        ))
+    });
+    Ok(())
 }
 
 /// Every failure is surfaced. Nothing is swallowed — including the
@@ -435,6 +538,109 @@ mod tests {
             width: 3.0,
             height: 4.0,
         }
+    }
+
+    /// A Word file with one heading and one body paragraph.
+    fn a_docx(name: &str) -> PathBuf {
+        use std::io::Write as _;
+        let path = temp(name);
+        let ns = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).expect("file"));
+        zip.start_file("word/styles.xml", zip::write::SimpleFileOptions::default())
+            .expect("entry");
+        zip.write_all(
+            format!(
+                r#"<w:styles {ns}><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:rPr><w:sz w:val="32"/></w:rPr></w:style></w:styles>"#
+            )
+            .as_bytes(),
+        )
+        .expect("write");
+        zip.start_file(
+            "word/document.xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .expect("entry");
+        zip.write_all(
+            format!(
+                r#"<w:document {ns}><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Alpha</w:t></w:r></w:p><w:p><w:r><w:t>Body.</w:t></w:r></w:p></w:body></w:document>"#
+            )
+            .as_bytes(),
+        )
+        .expect("write");
+        zip.finish().expect("finish");
+        path
+    }
+
+    #[test]
+    fn placing_a_word_file_with_nothing_selected_makes_a_frame_with_its_styles() {
+        use tessera_document::nodes::FrameKind;
+        let path = a_docx("place.docx");
+        let mut state = TesseraApp::headless();
+        let before = state.active().document().paint_order().len();
+        place_text(&mut state, &path).expect("place");
+        let doc = state.active().document();
+        assert_eq!(doc.paint_order().len(), before + 1, "a frame was made");
+        let id = doc.paint_order().last().copied().unwrap();
+        let FrameKind::Text { story, .. } = &doc.frame(id).unwrap().kind else {
+            panic!("a text frame")
+        };
+        let story = doc.story(*story).unwrap();
+        assert_eq!(story.text, "Alpha\nBody.");
+        let heading = doc
+            .paragraph_styles
+            .iter()
+            .find(|(_, s)| s.name == "Heading 1")
+            .map(|(id, _)| id)
+            .expect("Heading 1 was added");
+        assert_eq!(story.paragraphs[0].style, Some(heading));
+        assert_eq!(story.paragraphs[1].style, None);
+    }
+
+    #[test]
+    fn placing_into_a_selected_frame_replaces_its_text_and_keeps_the_documents_style() {
+        use tessera_document::nodes::FrameKind;
+        use tessera_text::story::{ParagraphFormat, ParagraphStyle};
+        let path = a_docx("place-into.docx");
+        let mut state = TesseraApp::headless();
+        // The document already has a Heading 1 of its own: 30pt, not Word's 16.
+        let mine = state
+            .active_mut()
+            .document_mut()
+            .add_paragraph_style(ParagraphStyle {
+                name: "Heading 1".into(),
+                based_on: None,
+                format: ParagraphFormat {
+                    character: tessera_text::story::CharacterFormat {
+                        size: Some(30.0),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            });
+        apply(&mut state, Command::AddTextFrame(bounds()));
+        let id = state.active().selection.single().expect("selected");
+        let before = state.active().document().paint_order().len();
+        place_text(&mut state, &path).expect("place");
+        let doc = state.active().document();
+        assert_eq!(doc.paint_order().len(), before, "no new frame");
+        let FrameKind::Text { story, .. } = &doc.frame(id).unwrap().kind else {
+            panic!()
+        };
+        let story = doc.story(*story).unwrap();
+        assert_eq!(story.text, "Alpha\nBody.");
+        assert_eq!(
+            story.paragraphs[0].style,
+            Some(mine),
+            "the document's own style won"
+        );
+        assert_eq!(
+            doc.paragraph_styles
+                .iter()
+                .filter(|(_, s)| s.name == "Heading 1")
+                .count(),
+            1,
+            "and Word's was not added beside it"
+        );
     }
 
     #[test]

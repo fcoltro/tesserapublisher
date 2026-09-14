@@ -10,6 +10,7 @@ members = [
     "crates/tessera_render",
     "crates/tessera_preflight",
     "crates/tessera_pdf",
+    "crates/tessera_import",
     "crates/tessera_ui",
     "apps/tessera_app",
 ]
@@ -62,6 +63,7 @@ tessera_layout   = { path = "crates/tessera_layout" }
 tessera_render   = { path = "crates/tessera_render" }
 tessera_pdf      = { path = "crates/tessera_pdf" }
 tessera_preflight = { path = "crates/tessera_preflight" }
+tessera_import   = { path = "crates/tessera_import" }
 tessera_ui       = { path = "crates/tessera_ui" }
 
 # Interface. Pinned to 0.35 to match oxiDRAFT, the reference implementation —
@@ -108,6 +110,8 @@ serde      = { version = "1", features = ["derive"] }
 # on every save. Found by the round-trip property test on its first run.
 serde_json = { version = "1", features = ["float_roundtrip"] }
 zip        = "8"
+# The XML reader usvg already brings in, so IDML costs no second parser.
+roxmltree  = "0.21"
 
 # One HTTP request a day, for the version check, and nothing else in the
 # workspace reaches the network. `platform-verifier` rather than a bundled root

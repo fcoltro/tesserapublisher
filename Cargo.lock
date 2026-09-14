@@ -3910,6 +3910,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "tessera_import"
+version = "0.1.0"
+dependencies = [
+ "kurbo",
+ "roxmltree",
+ "tessera_color",
+ "tessera_document",
+ "tessera_geometry",
+ "tessera_text",
+ "thiserror 2.0.20",
+ "zip",
+]
+
+[[package]]
 name = "tessera_io"
 version = "0.1.0"
 dependencies = [
@@ -4015,6 +4029,7 @@ dependencies = [
  "tessera_color",
  "tessera_document",
  "tessera_geometry",
+ "tessera_import",
  "tessera_io",
  "tessera_layout",
  "tessera_pdf",
@@ -4023,6 +4038,7 @@ dependencies = [
  "tessera_text",
  "thiserror 2.0.20",
  "vello",
+ "zip",
 ]
 
 [[package]]
