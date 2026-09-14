@@ -299,6 +299,8 @@ pub enum Run {
     Hyperlink,
     /// How the document numbers and sets its footnotes.
     FootnoteOptions,
+    /// Walk the unknown words, one at a time.
+    CheckSpelling,
     /// Add a row or column beside the cell being edited.
     TableRow {
         above: bool,
@@ -369,6 +371,7 @@ pub fn guard(run: Run) -> Guard {
         // Acts on the selected text, so it is only useful while typing.
         Run::Hyperlink => Guard::Always,
         Run::FootnoteOptions => Guard::Always,
+        Run::CheckSpelling => Guard::NotWhileTyping,
         // Only useful while typing, like the special characters.
         Run::InsertFootnote | Run::EditFootnote | Run::InsertIndexEntry => Guard::Always,
         // Opening a search box is not an edit and needs no selection. It is
@@ -561,6 +564,13 @@ pub fn all() -> &'static [Action] {
             Some("Ctrl+F"),
             Group::Edit,
             Run::FindAndChange,
+        ),
+        // Ctrl+I, InDesign's key for it.
+        a(
+            "Check spelling\u{2026}",
+            Some("Ctrl+I"),
+            Group::Edit,
+            Run::CheckSpelling,
         ),
         // A menu of its own, as every layout tool gives it: the operations are
         // about the grid rather than about the object, and filing them under
@@ -1335,6 +1345,12 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         Run::TableOfContents => state.contents.open = true,
         Run::InsertGlyph => state.glyph.open = true,
         Run::FootnoteOptions => state.footnote_options.open = true,
+        Run::CheckSpelling => {
+            state.dictionaries.load_user_words();
+            let mut window = std::mem::take(&mut state.spelling);
+            window.open(state);
+            state.spelling = window;
+        }
         Run::Hyperlink => {
             let mut window = std::mem::take(&mut state.hyperlink);
             window.open(state);

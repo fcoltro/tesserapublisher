@@ -352,6 +352,9 @@ pub struct TesseraApp {
     pub glyph: crate::view::glyph::GlyphWindow,
     pub hyperlink: crate::view::hyperlink::HyperlinkWindow,
     pub footnote_options: crate::view::footnote_options::FootnoteOptionsWindow,
+    pub spelling: crate::view::spelling::SpellingWindow,
+    /// The Hunspell dictionaries loaded this session, by language.
+    pub dictionaries: crate::view::spelling::Dictionaries,
     /// Find and Change. Modeless, so it is not in `modal_open`.
     pub find: crate::view::find::FindWindow,
 
@@ -501,6 +504,8 @@ impl TesseraApp {
             glyph: crate::view::glyph::GlyphWindow::default(),
             hyperlink: crate::view::hyperlink::HyperlinkWindow::default(),
             footnote_options: crate::view::footnote_options::FootnoteOptionsWindow::default(),
+            spelling: crate::view::spelling::SpellingWindow::default(),
+            dictionaries: crate::view::spelling::Dictionaries::default(),
             editing_master: None,
             rail_open: true,
             sections: Sections::default(),

@@ -12,6 +12,7 @@
 pub mod caret;
 pub mod edit;
 pub mod shape;
+pub mod spell;
 pub mod story;
 pub mod variables;
 pub mod wrap;

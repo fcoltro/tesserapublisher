@@ -2391,6 +2391,20 @@ which cost one afternoon's confusion and a namespace check.
   bounds were always per page — but an older build's reflow would square
   them to the first, so it refuses. Not built: dragging a page's edge with
   a tool, and "objects move with page edge" options.
+- [x] **Check spelling** (added 2026-09-14, after milestone 12).
+  `tessera_text::spell` reads Hunspell dictionaries — the `.dic` word list
+  and the `.aff` prefix and suffix rules, in all three flag encodings, with
+  cross-product — which is enough to check a word against the dictionaries
+  LibreOffice and Firefox ship. **No dictionary is bundled**: the lists are
+  large and each has its own licence, and this machine has none, so the
+  reader is tested against a dictionary written by hand and the check
+  against a real one is owed. Tessera reads `<config>/Tessera/dictionaries/
+  <lang>.dic` by the text's language, says which languages have none, and
+  keeps the person's own words in `user.dic` beside them. Edit ▸ Check
+  spelling… (Ctrl+I) walks the story being edited or every story: Change,
+  Ignore, Ignore all, Add to dictionary. Not built: suggestions (the
+  replacement is what the person types), squiggles on the canvas as you
+  type, compounding and the other `.aff` tables.
 - [x] **Hyperlinks** (added 2026-09-13, after milestone 12). A link rides on
   the character format — `CharacterFormat.link`, a URL or a named
   destination — so it cascades and travels with the words. Destinations are

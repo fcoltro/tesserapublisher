@@ -225,7 +225,8 @@ person reaches for once they start setting copy, and none of it had a row:
 | Hyperlinks | ✅ URL and page links on text, PDF annotations, contents entries link; no bookmarks | — | done |
 | Language on text; special-character insertion | ✅ | — | done, M9 |
 | Typographer's quotes; glyph by code point | ✅ a preference, and a box; no panel drawing the font | — | done |
-| Story editor, spell check | ✗ | view | — |
+| Spell check | ✅ Hunspell dictionaries from a folder; no bundled list, no suggestions, no squiggles | — | done |
+| Story editor | ✗ | view | — |
 | Print dialog | ✗ — PDF export only | — | — |
 | IDML import | ✅ pages, parents, threads, styles, swatches, sections, footnotes; tables and anchored objects dropped out loud | — | done, M12 |
 | Word import | ✅ File ▸ Place a `.docx`; styles merged by name | — | done, M12 |

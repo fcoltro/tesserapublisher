@@ -31,6 +31,7 @@ pub mod rail;
 pub mod rulers;
 pub mod sections;
 pub mod settings;
+pub mod spelling;
 pub mod step_repeat;
 pub mod styles;
 pub mod swatches;
@@ -134,6 +135,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     glyph::show(ui.ctx(), state);
     hyperlink::show(ui.ctx(), state);
     footnote_options::show(ui.ctx(), state);
+    spelling::show(ui.ctx(), state);
     styles::editor(ui.ctx(), state);
     find::show(ui.ctx(), state);
 
