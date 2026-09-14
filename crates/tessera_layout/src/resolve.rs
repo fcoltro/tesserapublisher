@@ -479,9 +479,14 @@ fn obstacles_for(
             if other == id {
                 continue;
             }
-            let Some(standoff) = doc.frame(other).map(|f| f.wrap).and_then(|w| w.standoff()) else {
+            let Some(wrap) = doc
+                .frame(other)
+                .map(|f| f.wrap)
+                .filter(|w| w.standoff().is_some())
+            else {
                 continue;
             };
+            let standoff = wrap.standoff().unwrap_or_default();
             let Some(bounds) = doc.visual_bounds(other) else {
                 continue;
             };
@@ -498,11 +503,32 @@ fn obstacles_for(
             if x > measure || x + width < 0.0 || y + height < 0.0 {
                 continue;
             }
+            // The shape, when the wrap asks for it: the outline in document
+            // space, flattened to a polyline and moved into the text's space
+            // the same way the box was.
+            let shape = match wrap {
+                tessera_document::nodes::TextWrap::Contour { standoff } => doc
+                    .outline(other)
+                    .map(|path| {
+                        let mut outline: Vec<(f64, f64)> = Vec::new();
+                        kurbo::flatten(path.iter(), 0.25, |el| match el {
+                            kurbo::PathEl::MoveTo(p) | kurbo::PathEl::LineTo(p) => {
+                                outline.push((p.x - mine.x, p.y - mine.y));
+                            }
+                            _ => {}
+                        });
+                        tessera_text::wrap::Blocking::Contour { outline, standoff }
+                    })
+                    .unwrap_or_default(),
+                tessera_document::nodes::TextWrap::Jump => tessera_text::wrap::Blocking::Jump,
+                _ => tessera_text::wrap::Blocking::Bounds,
+            };
             out.push(tessera_text::wrap::Obstacle {
                 x,
                 y,
                 width,
                 height,
+                shape,
             });
         }
     }
@@ -1698,6 +1724,79 @@ Some body copy.",
             "the note leads with the number it is cited by"
         );
         assert_eq!(item.on, Some(page));
+    }
+
+    #[test]
+    fn a_shape_wrap_takes_less_room_at_the_shoulder_than_at_the_waist() {
+        use tessera_document::nodes::TextWrap;
+        // A wide frame of many short lines, and an ellipse standing at its
+        // left edge, level with the first lines.
+        let mut doc = Document::default();
+        let page = doc.page_ids().next().expect("a page");
+        let layer = doc.default_layer().expect("a layer");
+        let bounds = doc.pages[page].bounds;
+        let words = "word ".repeat(200);
+        let story = doc.add_story(Story::new(words));
+        let host = doc.add_frame(layer, {
+            let mut f = rect(bounds.x + 20.0, bounds.y + 20.0, 400.0, 400.0);
+            f.kind = FrameKind::text(story);
+            f
+        });
+        let mut oval = rect(bounds.x + 20.0, bounds.y + 20.0, 120.0, 120.0);
+        oval.kind = FrameKind::Ellipse;
+        oval.wrap = TextWrap::Contour { standoff: 0.0 };
+        let oval = doc.add_frame(layer, oval);
+
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+        let item = item_for(&resolved, host).expect("resolved");
+        let ResolvedKind::Text { shaped, .. } = &item.kind else {
+            panic!("text");
+        };
+        // Where each line starts: the first glyph's x.
+        let starts: Vec<f64> = shaped
+            .lines
+            .iter()
+            .filter_map(|l| l.glyphs().next().map(|g| g.x))
+            .collect();
+        assert!(starts.len() > 6, "enough lines: {}", starts.len());
+        // The line nearest the ellipse's middle (y ≈ 60) starts furthest
+        // right; the first line, at its shoulder, starts further left; the
+        // lines below it start at the margin.
+        let waist = shaped
+            .lines
+            .iter()
+            .min_by(|a, b| {
+                (a.baseline - 60.0)
+                    .abs()
+                    .total_cmp(&(b.baseline - 60.0).abs())
+            })
+            .and_then(|l| l.glyphs().next().map(|g| g.x))
+            .expect("a line at the waist");
+        assert!(waist > starts[0], "waist {waist} vs shoulder {}", starts[0]);
+        assert!(starts[0] > 0.0, "the shoulder still pushes the first line");
+        assert!(
+            *starts.last().unwrap() < 1.0,
+            "below the ellipse, the margin"
+        );
+
+        // The box wrap, for contrast, pushes every crossing line the same.
+        doc.frames[oval].wrap = TextWrap::Bounds {
+            standoff: Default::default(),
+        };
+        doc.touch();
+        let resolved = resolve(&doc, &mut shaper);
+        let item = item_for(&resolved, host).expect("resolved");
+        let ResolvedKind::Text { shaped, .. } = &item.kind else {
+            panic!("text");
+        };
+        let boxed: Vec<f64> = shaped
+            .lines
+            .iter()
+            .take(2)
+            .filter_map(|l| l.glyphs().next().map(|g| g.x))
+            .collect();
+        assert!((boxed[0] - boxed[1]).abs() < 1e-6, "the box: {boxed:?}");
     }
 
     #[test]

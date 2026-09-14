@@ -386,12 +386,15 @@ pub enum TextWrap {
     #[default]
     None,
     /// Text keeps clear of the object's box, plus a standoff on each side.
-    ///
-    /// The box rather than the shape. Wrapping to a contour needs the outline
-    /// and a way to intersect it with each line, which is a different piece of
-    /// work; this is InDesign's "wrap around bounding box" and is what most
-    /// wraps actually are.
+    /// InDesign's "wrap around bounding box", and what most wraps are.
     Bounds { standoff: Insets },
+    /// Text keeps clear of the object's outline — an ellipse's curve, a
+    /// pen-drawn shape, a turned rectangle's corners — plus one standoff all
+    /// round. "Wrap around object shape".
+    Contour { standoff: f64 },
+    /// Text stops above the object and resumes below it, however narrow the
+    /// object is. "Jump object".
+    Jump,
 }
 
 impl TextWrap {
@@ -400,6 +403,13 @@ impl TextWrap {
         match self {
             TextWrap::None => None,
             TextWrap::Bounds { standoff } => Some(*standoff),
+            TextWrap::Contour { standoff } => Some(Insets {
+                top: *standoff,
+                bottom: *standoff,
+                left: *standoff,
+                right: *standoff,
+            }),
+            TextWrap::Jump => Some(Insets::default()),
         }
     }
 }

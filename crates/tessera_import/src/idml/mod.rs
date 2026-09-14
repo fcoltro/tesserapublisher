@@ -603,6 +603,7 @@ impl Items<'_> {
             )),
         };
 
+        let wrap = text_wrap(node);
         let layer = attr(node, "ItemLayer")
             .and_then(|l| self.layers.get(l))
             .copied()
@@ -615,7 +616,7 @@ impl Items<'_> {
                 transform: frame_transform,
                 fill: Paint::Solid(fill),
                 stroke,
-                wrap: tessera_document::nodes::TextWrap::None,
+                wrap,
                 blend: tessera_document::blending::Blending::PLAIN,
                 corners: tessera_document::corners::Corners::SQUARE,
                 shadow: None,
@@ -749,6 +750,31 @@ fn bez_path(points: &[PathPoint], local: DocRect, open: bool) -> kurbo::BezPath 
         path.close_path();
     }
     path
+}
+
+/// `<TextWrapPreference TextWrapMode="…">` with its offsets.
+fn text_wrap(node: Node) -> tessera_document::nodes::TextWrap {
+    use tessera_document::nodes::TextWrap;
+    let Some(pref) = child(node, "TextWrapPreference") else {
+        return TextWrap::None;
+    };
+    let offset = child(pref, "Properties")
+        .and_then(|p| child(p, "TextWrapOffset"))
+        .map(|o| Insets {
+            top: attr_f64(o, "Top").unwrap_or(0.0),
+            left: attr_f64(o, "Left").unwrap_or(0.0),
+            bottom: attr_f64(o, "Bottom").unwrap_or(0.0),
+            right: attr_f64(o, "Right").unwrap_or(0.0),
+        })
+        .unwrap_or_default();
+    match attr(pref, "TextWrapMode") {
+        Some("BoundingBoxTextWrap") => TextWrap::Bounds { standoff: offset },
+        Some("Contour") => TextWrap::Contour {
+            standoff: offset.top,
+        },
+        Some("JumpObjectTextWrap") | Some("NextFrameTextWrap") => TextWrap::Jump,
+        _ => TextWrap::None,
+    }
 }
 
 /// A text frame's columns, insets and vertical alignment.

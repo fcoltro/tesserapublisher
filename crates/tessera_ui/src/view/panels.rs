@@ -2336,35 +2336,85 @@ fn wrap_controls(
 ) {
     use tessera_document::nodes::TextWrap;
 
-    let mut on = frame.wrap != TextWrap::None;
+    #[derive(PartialEq, Clone, Copy)]
+    enum How {
+        Off,
+        Bounds,
+        Contour,
+        Jump,
+    }
+    let mut how = match frame.wrap {
+        TextWrap::None => How::Off,
+        TextWrap::Bounds { .. } => How::Bounds,
+        TextWrap::Contour { .. } => How::Contour,
+        TextWrap::Jump => How::Jump,
+    };
     let mut standoff = frame.wrap.standoff().unwrap_or_default();
     let mut changed = false;
 
-    if ui.checkbox(&mut on, "Text runs around this").changed() {
-        changed = true;
-    }
-    if on {
-        let unit = state.prefs.unit;
-        changed |= linked_edges(
-            ui,
-            egui::Id::new(("wrap-link", state.active, id)),
-            "Standoff",
-            ["Top", "Bottom", "Left", "Right"],
-            [
-                &mut standoff.top,
-                &mut standoff.bottom,
-                &mut standoff.left,
-                &mut standoff.right,
-            ],
-            unit,
-        );
+    field(ui, "Text wrap", |ui| {
+        let shown = match how {
+            How::Off => "None",
+            How::Bounds => "Around the box",
+            How::Contour => "Around the shape",
+            How::Jump => "Jump over",
+        };
+        egui::ComboBox::from_id_salt(("wrap-how", id))
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                for (choice, label) in [
+                    (How::Off, "None"),
+                    (How::Bounds, "Around the box"),
+                    (How::Contour, "Around the shape"),
+                    (How::Jump, "Jump over"),
+                ] {
+                    if ui.selectable_value(&mut how, choice, label).changed() {
+                        changed = true;
+                    }
+                }
+            });
+    });
+    let unit = state.prefs.unit;
+    match how {
+        How::Bounds => {
+            changed |= linked_edges(
+                ui,
+                egui::Id::new(("wrap-link", state.active, id)),
+                "Standoff",
+                ["Top", "Bottom", "Left", "Right"],
+                [
+                    &mut standoff.top,
+                    &mut standoff.bottom,
+                    &mut standoff.left,
+                    &mut standoff.right,
+                ],
+                unit,
+            );
+        }
+        How::Contour => {
+            // One distance all round: a contour has no top and no left.
+            let mut all = standoff.top;
+            if field(ui, "Standoff", |ui| measure_bare(ui, &mut all, unit)) {
+                standoff = tessera_document::nodes::Insets {
+                    top: all,
+                    bottom: all,
+                    left: all,
+                    right: all,
+                };
+                changed = true;
+            }
+        }
+        How::Off | How::Jump => {}
     }
 
     if changed {
-        let wrap = if on {
-            TextWrap::Bounds { standoff }
-        } else {
-            TextWrap::None
+        let wrap = match how {
+            How::Off => TextWrap::None,
+            How::Bounds => TextWrap::Bounds { standoff },
+            How::Contour => TextWrap::Contour {
+                standoff: standoff.top,
+            },
+            How::Jump => TextWrap::Jump,
         };
         apply(state, Command::SetTextWrap { id, wrap });
     }

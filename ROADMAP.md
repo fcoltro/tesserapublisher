@@ -1108,7 +1108,17 @@ full argument, with sources, is in `docs/superpowers/specs/`.
   - The bounding box, not the contour. Wrapping to an outline needs the shape
     intersected with each line, which is a separate piece of work; this is
     InDesign's "wrap around bounding box" and is what most wraps are.
-    **Not built: contour wrap, and text on both sides of an object.**
+    **Contour wrap and jump object were added 2026-09-13**, after milestone
+    12: `TextWrap::Contour { standoff }` and `TextWrap::Jump`. The obstacle
+    carries its outline as a polyline (the frame's `outline` in document
+    space, flattened), and each line asks how far the outline reaches
+    across its own band — so a line through an ellipse's waist is pushed
+    further than one through its shoulder. Jump blocks the whole measure.
+    The inspector offers None / Around the box / Around the shape / Jump
+    over; IDML's `TextWrapPreference` imports to the same three.
+    **Not built: text on both sides of an object.** A line is one parley
+    line, and a line in two pieces either side of an object is two; that
+    is a change to the breaker, not to the wrap.
 
 ---
 

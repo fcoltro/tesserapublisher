@@ -6474,6 +6474,7 @@ mod tests {
             y: 0.0,
             width: 80.0,
             height: 1000.0,
+            shape: crate::wrap::Blocking::Bounds,
         };
         let around = shaper.shape_around(&story, &NoStyles::default(), 300.0, 0, &[obstacle]);
 
@@ -6501,6 +6502,7 @@ mod tests {
                 y: 0.0,
                 width: 180.0,
                 height: 1000.0,
+                shape: crate::wrap::Blocking::Bounds,
             }],
         );
 
@@ -6532,6 +6534,7 @@ mod tests {
                 // Two lines deep at most.
                 width: 120.0,
                 height: 20.0,
+                shape: crate::wrap::Blocking::Bounds,
             }],
         );
 
