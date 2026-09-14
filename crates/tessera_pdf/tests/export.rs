@@ -181,8 +181,14 @@ fn hyperlinks_become_link_annotations_on_the_page_they_land_on() {
 
     let bytes = tessera_pdf::export(&resolved).expect("export");
     let text = String::from_utf8_lossy(&bytes);
-    assert!(text.contains("/Subtype /Link"), "a link annotation is written");
-    assert!(text.contains("/URI (https://example.org/a)"), "with the address");
+    assert!(
+        text.contains("/Subtype /Link"),
+        "a link annotation is written"
+    );
+    assert!(
+        text.contains("/URI (https://example.org/a)"),
+        "with the address"
+    );
     assert!(text.contains("/S /GoTo"), "and a go-to for the page link");
     assert!(text.contains("/Fit"), "fitting the page");
     assert!(text.contains("/Annots"), "named from the page");
