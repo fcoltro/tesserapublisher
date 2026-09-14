@@ -1473,6 +1473,7 @@ mod tests {
             items: vec![ResolvedItem {
                 frame: FrameId::default(),
                 on: None,
+                links: Vec::new(),
                 transform: Transform::IDENTITY,
                 spread_area: None,
                 blend: tessera_document::blending::Blending::PLAIN,

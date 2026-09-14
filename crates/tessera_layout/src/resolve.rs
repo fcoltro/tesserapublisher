@@ -91,9 +91,29 @@ pub enum ResolvedKind {
     },
 }
 
+/// A hyperlink, placed: the rectangles its text covers and where it goes.
+///
+/// Rectangles are in the frame's own space, before its transform, like the
+/// glyphs; whoever writes them applies the item's transform as for ink.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedLink {
+    pub rects: Vec<DocRect>,
+    pub target: LinkTarget,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LinkTarget {
+    Url(String),
+    /// The page's index in the reading order.
+    Page(usize),
+}
+
 #[derive(Debug, Clone)]
 pub struct ResolvedItem {
     pub frame: FrameId,
+    /// The hyperlinks in this item's text, with the rectangles they cover.
+    /// Empty for anything that is not text or has no link.
+    pub links: Vec<ResolvedLink>,
     /// The page this item was resolved for.
     ///
     /// Not always the page the frame stands on: a parent's item is resolved
@@ -658,6 +678,60 @@ fn compose_frame(
 /// Air between the last line of copy and the rule above the footnotes.
 const FOOTNOTE_GAP: f64 = 6.0;
 
+/// The hyperlinks in `story` as laid out in `shaped`: each linked run's
+/// rectangles, from the same geometry a selection is drawn with, so a link
+/// covers exactly what looks linked.
+fn links_in(
+    doc: &Document,
+    story: &TextStory,
+    shaped: &ShapedText,
+    width: f32,
+) -> Vec<ResolvedLink> {
+    use tessera_text::edit::TextCursor;
+    use tessera_text::story::Hyperlink;
+
+    let pages: Vec<PageId> = doc.page_ids().collect();
+    let mut out = Vec::new();
+    for run in &story.runs {
+        let target = match story.resolve_run(run, doc).link {
+            Some(Hyperlink::Url(url)) if !url.trim().is_empty() => LinkTarget::Url(url),
+            Some(Hyperlink::Destination(name)) => {
+                let Some(page) = doc.destination_page(&name) else {
+                    continue; // a link to nowhere is no link
+                };
+                let Some(index) = pages.iter().position(|p| *p == page) else {
+                    continue;
+                };
+                LinkTarget::Page(index)
+            }
+            _ => continue,
+        };
+        let geometry = shaped.caret_geometry(
+            TextCursor {
+                position: run.range.end,
+                anchor: run.range.start,
+            },
+            width,
+        );
+        let rects: Vec<DocRect> = geometry
+            .selection
+            .iter()
+            .filter(|r| r.width() > 0.0 && r.height() > 0.0)
+            .map(|r| DocRect {
+                x: r.x0,
+                y: r.y0,
+                width: r.width(),
+                height: r.height(),
+            })
+            .collect();
+        if rects.is_empty() {
+            continue;
+        }
+        out.push(ResolvedLink { rects, target });
+    }
+    out
+}
+
 /// What the markers in `frame`'s text read as when it stands on `on`.
 ///
 /// A page not in the reading order — a parent's — has no number, and its
@@ -722,6 +796,7 @@ fn resolve_one<'a>(
     on: PageId,
     running: &Running,
 ) -> Option<ResolvedItem> {
+    let mut links = Vec::new();
     let kind = match &frame.kind {
         FrameKind::Rectangle => ResolvedKind::Rectangle {
             outline: frame.corners.outline(frame.bounds),
@@ -812,6 +887,7 @@ fn resolve_one<'a>(
             let from = story_starts_at(doc, shaper, id, composed, running);
             let flowed = compose_frame(doc, shaper, id, frame, *story_id, story, from, on, running);
 
+            links = links_in(doc, story, &flowed.text, frame.bounds.width as f32);
             ResolvedKind::Text {
                 shaped: flowed.text,
                 color: colour,
@@ -822,6 +898,7 @@ fn resolve_one<'a>(
 
     Some(ResolvedItem {
         frame: id,
+        links,
         on: Some(on),
         bounds: frame.bounds,
         transform: frame.transform,

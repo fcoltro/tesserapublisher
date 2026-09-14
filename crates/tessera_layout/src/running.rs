@@ -101,22 +101,27 @@ impl Running {
             let Some(story) = doc.story(*story) else {
                 continue;
             };
-            // Each paragraph once, however many of its lines are here.
+            // Each paragraph once, however many of its lines are here — the
+            // paragraphs, not the runs, which fold neighbours set alike.
             let mut seen: Vec<usize> = Vec::new();
+            let paragraphs = story.paragraph_ranges();
             for line in &shaped.lines {
-                for para in &story.paragraphs {
-                    if para.range.start >= line.range.end || para.range.end <= line.range.start {
+                for range in &paragraphs {
+                    if range.start >= line.range.end || range.end <= line.range.start {
                         continue;
                     }
-                    let Some(style) = para.style.filter(|s| wanted.contains(s)) else {
+                    let Some(style) = story
+                        .paragraph_run_at(range.start)
+                        .and_then(|p| p.style)
+                        .filter(|s| wanted.contains(s))
+                    else {
                         continue;
                     };
-                    if seen.contains(&para.range.start) {
+                    if seen.contains(&range.start) {
                         continue;
                     }
-                    seen.push(para.range.start);
-                    let text =
-                        tessera_text::variables::expand(&story.text[para.range.clone()], None);
+                    seen.push(range.start);
+                    let text = tessera_text::variables::expand(&story.text[range.clone()], None);
                     let text = text.trim_end_matches('\n').to_owned();
                     let slot = headers
                         .entry((on, style))

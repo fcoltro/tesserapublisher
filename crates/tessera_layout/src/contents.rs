@@ -14,7 +14,9 @@ use tessera_document::contents::Level;
 use tessera_document::document::Document;
 use tessera_document::ids::{PageId, StoryId};
 use tessera_document::nodes::FrameKind;
-use tessera_text::story::{ParagraphRun, ParagraphStyleId, Run, Story, TabAlignment, TabStop};
+use tessera_text::story::{
+    Hyperlink, ParagraphRun, ParagraphStyleId, Run, Story, TabAlignment, TabStop,
+};
 use tessera_text::variables::expand;
 
 use crate::resolve::{ResolvedDocument, ResolvedItem, ResolvedKind};
@@ -72,28 +74,32 @@ pub fn headings(
         let Some(story) = doc.story(*id) else {
             continue;
         };
+        // The paragraphs, not the paragraph runs: two headings in a row
+        // share one run and are still two headings.
+        let paragraphs = story.paragraph_ranges();
         for line in &shaped.lines {
             if line.range.is_empty() {
                 continue; // a footnote's line
             }
-            for para in &story.paragraphs {
+            for range in &paragraphs {
                 // Its first line: the paragraph starts inside this line.
-                if !line.range.contains(&para.range.start) {
+                if !line.range.contains(&range.start) {
                     continue;
                 }
-                let Some(style) = para.style.filter(|s| styles.contains(s)) else {
+                let Some(style) = story
+                    .paragraph_run_at(range.start)
+                    .and_then(|p| p.style)
+                    .filter(|s| styles.contains(s))
+                else {
                     continue;
                 };
-                if out
-                    .iter()
-                    .any(|h| h.story == *id && h.start == para.range.start)
-                {
+                if out.iter().any(|h| h.story == *id && h.start == range.start) {
                     continue;
                 }
-                let text = expand(&story.text[para.range.clone()], None);
+                let text = expand(&story.text[range.clone()], None);
                 out.push(Heading {
                     story: *id,
-                    start: para.range.start,
+                    start: range.start,
                     style,
                     text: text.trim_end_matches('\n').to_owned(),
                     page,
@@ -152,24 +158,50 @@ pub fn table_of_contents(
     title_style: Option<ParagraphStyleId>,
     levels: &[Level],
     measure: f32,
-) -> Story {
+) -> Generated {
     let styles: Vec<ParagraphStyleId> = levels.iter().map(|l| l.style).collect();
     let found = headings(doc, resolved, &styles);
 
-    let mut paragraphs: Vec<(String, Option<ParagraphStyleId>, bool)> = Vec::new();
+    let mut paragraphs: Vec<Paragraph> = Vec::new();
     if !title.is_empty() {
-        paragraphs.push((title.to_owned(), title_style, false));
+        paragraphs.push((title.to_owned(), title_style, false, None));
     }
-    for heading in &found {
+    let mut destinations = Vec::new();
+    for (n, heading) in found.iter().enumerate() {
         let label = doc.page_label(heading.page).unwrap_or_default();
         let entry_style = levels
             .iter()
             .find(|l| l.style == heading.style)
             .and_then(|l| l.entry_style);
-        paragraphs.push((format!("{}\t{label}", heading.text), entry_style, true));
+        // Each entry links to its heading's page through a destination
+        // named for it — numbered as well, so two chapters with one title
+        // do not share a destination.
+        let name = format!("Contents {}: {}", n + 1, heading.text);
+        destinations.push((name.clone(), heading.page));
+        paragraphs.push((
+            format!("{}\t{label}", heading.text),
+            entry_style,
+            true,
+            Some(Hyperlink::Destination(name)),
+        ));
     }
-    assemble(paragraphs, measure)
+    Generated {
+        story: assemble(paragraphs, measure),
+        destinations,
+    }
 }
+
+/// A generated story, and the destinations its links name.
+#[derive(Debug, Clone)]
+pub struct Generated {
+    pub story: Story,
+    /// Name and page, for the caller to record with `set_destination`.
+    pub destinations: Vec<(String, PageId)>,
+}
+
+/// One paragraph to assemble: its words, style, whether it is tabbed, and
+/// what it links to.
+type Paragraph = (String, Option<ParagraphStyleId>, bool, Option<Hyperlink>);
 
 /// Build the index story: topics sorted, each with the labels of every page
 /// it is mentioned on, once per page, in page order.
@@ -190,28 +222,39 @@ pub fn index(doc: &Document, resolved: &ResolvedDocument, title: &str) -> Story 
     }
     by_topic.sort_by_key(|(t, _)| t.to_lowercase());
 
-    let mut paragraphs: Vec<(String, Option<ParagraphStyleId>, bool)> = Vec::new();
+    let mut paragraphs: Vec<Paragraph> = Vec::new();
     if !title.is_empty() {
-        paragraphs.push((title.to_owned(), None, false));
+        paragraphs.push((title.to_owned(), None, false, None));
     }
     for (topic, mut on) in by_topic {
         on.sort_by_key(|p| pages.iter().position(|q| q == p));
         let labels: Vec<String> = on.iter().filter_map(|p| doc.page_label(*p)).collect();
-        paragraphs.push((format!("{topic}\t{}", labels.join(", ")), None, true));
+        paragraphs.push((format!("{topic}\t{}", labels.join(", ")), None, true, None));
     }
     assemble(paragraphs, 0.0)
 }
 
 /// Paragraphs into a story, each with its style; the tabbed ones with a
 /// right stop at `measure` when there is a measure to stop at.
-fn assemble(paragraphs: Vec<(String, Option<ParagraphStyleId>, bool)>, measure: f32) -> Story {
+fn assemble(paragraphs: Vec<Paragraph>, measure: f32) -> Story {
     let mut text = String::new();
     let mut runs = Vec::new();
-    for (i, (words, style, tabbed)) in paragraphs.iter().enumerate() {
+    let mut links: Vec<Run> = Vec::new();
+    for (i, (words, style, tabbed, link)) in paragraphs.iter().enumerate() {
         let start = text.len();
         text.push_str(words);
+        // The link covers the words and not the break after them.
+        links.push(Run {
+            range: start..text.len(),
+            style: None,
+            local: tessera_text::story::CharacterFormat {
+                link: link.clone(),
+                ..Default::default()
+            },
+        });
         if i + 1 < paragraphs.len() {
             text.push('\n');
+            links.push(Run::plain(text.len() - 1..text.len()));
         }
         let mut local = tessera_text::story::ParagraphFormat::default();
         if *tabbed && measure > 0.0 {
@@ -229,8 +272,10 @@ fn assemble(paragraphs: Vec<(String, Option<ParagraphStyleId>, bool)>, measure: 
     }
     let mut story = Story::new(text);
     if !story.text.is_empty() {
-        story.runs = vec![Run::plain(0..story.text.len())];
+        story.runs = links.into_iter().filter(|r| !r.range.is_empty()).collect();
         story.paragraphs = runs;
+        story.merge_equal_neighbours();
+        debug_assert!(story.runs_are_sound());
     }
     story
 }
@@ -318,11 +363,20 @@ mod tests {
             }],
             300.0,
         );
+        assert_eq!(toc.destinations.len(), 2, "one destination per heading");
+        assert_eq!(toc.destinations[1].1, pages[1]);
+        let toc = toc.story;
         assert_eq!(toc.text, "Contents\nAlpha\t1\nBeta\t2");
         assert!(toc.runs_are_sound());
-        assert_eq!(toc.paragraphs.len(), 3);
+        let linked = toc
+            .runs
+            .iter()
+            .filter(|r| matches!(r.local.link, Some(Hyperlink::Destination(_))))
+            .count();
+        assert_eq!(linked, 2, "each entry links to its page");
+        assert_eq!(toc.paragraph_ranges().len(), 3);
         assert!(
-            toc.paragraphs[1].local.tab_stops.is_some(),
+            toc.paragraph_run_at(9).unwrap().local.tab_stops.is_some(),
             "entries carry the right tab"
         );
         assert!(

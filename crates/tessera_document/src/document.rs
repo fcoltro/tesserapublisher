@@ -175,6 +175,11 @@ pub struct Document {
     #[serde(default)]
     pub index: crate::contents::Index,
 
+    /// Where named hyperlink destinations point. A link in text names one
+    /// of these; a table of contents makes one per heading.
+    #[serde(default)]
+    pub destinations: Vec<crate::contents::Destination>,
+
     /// Bumped on every mutation. The renderer rebuilds its scene only when
     /// this moves, so panning the camera does not rebuild anything.
     ///
@@ -224,6 +229,7 @@ impl Document {
             variables: Vec::new(),
             contents: crate::contents::Contents::default(),
             index: crate::contents::Index::default(),
+            destinations: Vec::new(),
             revision: 0,
         };
 
@@ -719,6 +725,28 @@ impl Document {
     pub fn set_index(&mut self, index: crate::contents::Index) {
         self.index = index;
         self.touch();
+    }
+
+    /// Point `name` at `page`, adding the destination or moving it.
+    pub fn set_destination(&mut self, name: impl Into<String>, page: PageId) {
+        let name = name.into();
+        match self.destinations.iter_mut().find(|d| d.name == name) {
+            Some(existing) => existing.page = page,
+            None => self
+                .destinations
+                .push(crate::contents::Destination { name, page }),
+        }
+        self.touch();
+    }
+
+    /// The page a named destination points at, if the name is known and the
+    /// page still exists.
+    pub fn destination_page(&self, name: &str) -> Option<PageId> {
+        self.destinations
+            .iter()
+            .find(|d| d.name == name)
+            .map(|d| d.page)
+            .filter(|p| self.pages.contains_key(*p))
     }
 
     /// Every document page's number, in reading order.

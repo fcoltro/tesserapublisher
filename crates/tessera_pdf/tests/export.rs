@@ -46,6 +46,7 @@ fn one(kind: ResolvedKind, bounds: DocRect) -> ResolvedDocument {
         items: vec![ResolvedItem {
             frame: FrameId::default(),
             on: None,
+            links: Vec::new(),
             transform: Transform::IDENTITY,
             spread_area: None,
             blend: tessera_document::blending::Blending::PLAIN,
@@ -116,6 +117,75 @@ fn a_rectangle_is_flipped_into_pdf_coordinates() {
         text.contains("732"),
         "the y coordinate must be flipped, not copied"
     );
+}
+
+#[test]
+fn hyperlinks_become_link_annotations_on_the_page_they_land_on() {
+    use tessera_document::document::Document;
+    use tessera_document::nodes::{Frame, FrameKind};
+    use tessera_text::story::{CharacterFormat, Hyperlink};
+
+    // A real document, resolved: the link rectangles come from the layout.
+    let mut doc = Document::default();
+    let first = doc.page_ids().next().expect("a page");
+    let second = doc.add_page();
+    doc.set_destination("Page 2", second);
+    let layer = doc.default_layer().expect("layer");
+    let mut story = Story::new("see the site, and page two");
+    story.apply_character_format(
+        4..12,
+        &CharacterFormat {
+            link: Some(Hyperlink::Url("https://example.org/a".into())),
+            ..Default::default()
+        },
+    );
+    story.apply_character_format(
+        18..26,
+        &CharacterFormat {
+            link: Some(Hyperlink::Destination("Page 2".into())),
+            ..Default::default()
+        },
+    );
+    let story = doc.add_story(story);
+    let bounds = doc.pages[first].bounds;
+    doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: bounds.x + 20.0,
+                y: bounds.y + 20.0,
+                width: 400.0,
+                height: 60.0,
+            },
+            kind: FrameKind::text(story),
+            transform: Transform::IDENTITY,
+            fill: Paint::Solid(Color::BLACK),
+            stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
+            shadow: None,
+            anchor: None,
+            style: None,
+        },
+    );
+    let mut shaper = Shaper::new();
+    let resolved = tessera_layout::resolve(&doc, &mut shaper);
+    let item = resolved
+        .items
+        .iter()
+        .find(|i| !i.links.is_empty())
+        .expect("the frame carries links");
+    assert_eq!(item.links.len(), 2, "one link per linked run");
+    assert!(item.links.iter().all(|l| !l.rects.is_empty()));
+
+    let bytes = tessera_pdf::export(&resolved).expect("export");
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("/Subtype /Link"), "a link annotation is written");
+    assert!(text.contains("/URI (https://example.org/a)"), "with the address");
+    assert!(text.contains("/S /GoTo"), "and a go-to for the page link");
+    assert!(text.contains("/Fit"), "fitting the page");
+    assert!(text.contains("/Annots"), "named from the page");
 }
 
 #[test]
@@ -263,6 +333,7 @@ fn several_items_all_reach_the_content_stream() {
             ResolvedItem {
                 frame: FrameId::default(),
                 on: None,
+                links: Vec::new(),
                 transform: Transform::IDENTITY,
                 spread_area: None,
                 blend: tessera_document::blending::Blending::PLAIN,
@@ -277,6 +348,7 @@ fn several_items_all_reach_the_content_stream() {
             ResolvedItem {
                 frame: FrameId::default(),
                 on: None,
+                links: Vec::new(),
                 transform: Transform::IDENTITY,
                 spread_area: None,
                 blend: tessera_document::blending::Blending::PLAIN,
@@ -290,6 +362,7 @@ fn several_items_all_reach_the_content_stream() {
             ResolvedItem {
                 frame: FrameId::default(),
                 on: None,
+                links: Vec::new(),
                 transform: Transform::IDENTITY,
                 spread_area: None,
                 blend: tessera_document::blending::Blending::PLAIN,
@@ -949,6 +1022,7 @@ fn one_file_placed_twice_is_embedded_once() {
     let item = |bounds: DocRect, source: std::path::PathBuf| ResolvedItem {
         frame: FrameId::default(),
         on: None,
+        links: Vec::new(),
         transform: Transform::IDENTITY,
         spread_area: None,
         blend: tessera_document::blending::Blending::PLAIN,
@@ -1152,6 +1226,7 @@ fn one_ink_used_twice_is_one_plate() {
     let item = |bounds: DocRect, tint: f32| ResolvedItem {
         frame: FrameId::default(),
         on: None,
+        links: Vec::new(),
         transform: Transform::IDENTITY,
         spread_area: None,
         blend: tessera_document::blending::Blending::PLAIN,

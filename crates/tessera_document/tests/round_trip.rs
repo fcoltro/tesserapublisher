@@ -762,7 +762,7 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_twenty_four() {
+fn the_format_version_is_twenty_five() {
     // A tripwire, not a fact worth asserting on its own: changing it means
     // stopping to ask whether a migration step is owed. Sometimes the answer is
     // no — version 19 added `corners`, whose default is exactly what older
@@ -773,8 +773,38 @@ fn the_format_version_is_twenty_four() {
     // — and the point is that somebody had to answer; 23 added footnotes,
     // index entries, and the contents and index recipes, all empty before;
     // 24 let a page be its own size, which an older build's reflow would
-    // silently undo.
-    assert_eq!(format::FORMAT_VERSION, 24);
+    // silently undo; 25 added hyperlinks and their destinations.
+    assert_eq!(format::FORMAT_VERSION, 25);
+}
+
+#[test]
+fn a_link_and_its_destination_survive_a_round_trip() {
+    use tessera_text::story::{CharacterFormat, Hyperlink};
+    let mut doc = Document::default();
+    let page = doc.page_ids().next().expect("a page");
+    doc.set_destination("Chapter One", page);
+    let mut story = tessera_text::Story::new("see the site and the chapter");
+    story.apply_character_format(
+        4..12,
+        &CharacterFormat {
+            link: Some(Hyperlink::Url("https://example.org".into())),
+            ..Default::default()
+        },
+    );
+    story.apply_character_format(
+        21..28,
+        &CharacterFormat {
+            link: Some(Hyperlink::Destination("Chapter One".into())),
+            ..Default::default()
+        },
+    );
+    let id = doc.add_story(story.clone());
+    let path = std::env::temp_dir().join(format!("tessera-links-{}.tessera", std::process::id()));
+    format::save(&doc, &path).expect("save");
+    let back = format::load(&path).expect("load");
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(back.story(id).unwrap().runs, story.runs);
+    assert_eq!(back.destination_page("Chapter One"), Some(page));
 }
 
 #[test]

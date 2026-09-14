@@ -541,6 +541,11 @@ pub enum Command {
     UpdateContents,
     SetIndex(tessera_document::contents::Index),
     UpdateIndex,
+    /// Point a named hyperlink destination at a page.
+    SetDestination {
+        name: String,
+        page: PageId,
+    },
     /// Text read from another application's file, into `id` — replacing what
     /// it held — or into a new frame filling the current page's margins.
     PlaceText {
@@ -1783,7 +1788,7 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                         .map(|r| r.width as f32)
                 })
                 .unwrap_or(0.0);
-            let story = tessera_layout::contents::table_of_contents(
+            let generated = tessera_layout::contents::table_of_contents(
                 doc,
                 &resolved,
                 &contents.title,
@@ -1791,13 +1796,26 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 &contents.levels,
                 measure,
             );
-            place_generated(state, story, contents.story, |doc, id| {
+            for (name, page) in &generated.destinations {
+                state
+                    .active_mut()
+                    .document_mut()
+                    .set_destination(name.clone(), *page);
+            }
+            place_generated(state, generated.story, contents.story, |doc, id| {
                 doc.contents.story = Some(id);
             });
         }
 
         Command::SetIndex(index) => {
             state.active_mut().document_mut().set_index(index);
+        }
+
+        Command::SetDestination { name, page } => {
+            state
+                .active_mut()
+                .document_mut()
+                .set_destination(name, page);
         }
 
         Command::PlaceText { id, text } => {

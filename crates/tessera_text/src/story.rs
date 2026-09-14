@@ -18,6 +18,19 @@ slotmap::new_key_type! {
     pub struct ParagraphStyleId;
 }
 
+/// Where a hyperlink goes.
+///
+/// A URL, or a named destination the document resolves to a page — named
+/// rather than a page id, because this crate has no pages and a name
+/// survives the page being moved. `None` is a link explicitly removed, which
+/// a cascade has to be able to say over a style that set one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Hyperlink {
+    None,
+    Url(String),
+    Destination(String),
+}
+
 /// How a run's letters are cased when drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Case {
@@ -152,6 +165,14 @@ pub struct CharacterFormat {
     /// language-specific forms. `None` is English.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+
+    /// Where this text goes when clicked, in a reader that can.
+    ///
+    /// On the character format, so it cascades and travels with the run like
+    /// bold does, and so a style can carry one. `None` says nothing;
+    /// [`Hyperlink::None`] says "no link", which is what removing one sets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<Hyperlink>,
 }
 
 /// The languages text can be set in: ISO 639-1 code and name, the ones
@@ -264,6 +285,7 @@ impl CharacterFormat {
                 .clone()
                 .or_else(|| base.stylistic_sets.clone()),
             language: self.language.clone().or_else(|| base.language.clone()),
+            link: self.link.clone().or_else(|| base.link.clone()),
         }
     }
 
@@ -1030,6 +1052,32 @@ impl Story {
             .filter(|(_, c)| Marker::of(*c) == Some(Marker::IndexEntry))
             .map(|(at, _)| at)
             .collect()
+    }
+
+    /// Every paragraph of the text as a byte range, newline included.
+    ///
+    /// **Not `paragraphs`**, which is a list of formatting *runs*: two
+    /// neighbouring paragraphs set the same fold into one run, and a walk
+    /// over the runs would see one paragraph where a reader sees two. This
+    /// is the list to walk when the paragraphs themselves are the question —
+    /// the headings a contents page lists, the heading a running header
+    /// reads — with [`Story::paragraph_run_at`] for what each is set in.
+    pub fn paragraph_ranges(&self) -> Vec<Range<usize>> {
+        let mut out = Vec::new();
+        let mut start = 0;
+        for piece in self.text.split_inclusive('\n') {
+            out.push(start..start + piece.len());
+            start += piece.len();
+        }
+        out
+    }
+
+    /// The paragraph run covering `offset`.
+    pub fn paragraph_run_at(&self, offset: usize) -> Option<&ParagraphRun> {
+        self.paragraphs
+            .iter()
+            .find(|p| p.range.start <= offset && offset < p.range.end)
+            .or_else(|| self.paragraphs.last().filter(|p| p.range.end == offset))
     }
 
     /// Whether the notes and entries still match their markers.

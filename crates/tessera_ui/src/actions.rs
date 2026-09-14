@@ -295,6 +295,8 @@ pub enum Run {
     GenerateIndex,
     /// A character by its code point, at the caret.
     InsertGlyph,
+    /// Where the selected words go when clicked.
+    Hyperlink,
     /// Add a row or column beside the cell being edited.
     TableRow {
         above: bool,
@@ -362,6 +364,8 @@ pub fn guard(run: Run) -> Guard {
         // Dialogs over the document, not over the text.
         Run::SectionOptions | Run::TextVariables => Guard::Always,
         Run::TableOfContents | Run::GenerateIndex | Run::InsertGlyph => Guard::Always,
+        // Acts on the selected text, so it is only useful while typing.
+        Run::Hyperlink => Guard::Always,
         // Only useful while typing, like the special characters.
         Run::InsertFootnote | Run::EditFootnote | Run::InsertIndexEntry => Guard::Always,
         // Opening a search box is not an edit and needs no selection. It is
@@ -1041,6 +1045,14 @@ pub fn all() -> &'static [Action] {
             Group::Type,
             Run::EditFootnote,
         ),
+        // Ctrl+K, which is what a hyperlink is in every editor a person has
+        // used, InDesign included.
+        a(
+            "Hyperlink\u{2026}",
+            Some("Ctrl+K"),
+            Group::Type,
+            Run::Hyperlink,
+        ),
         a(
             "Insert index entry\u{2026}",
             None,
@@ -1313,6 +1325,11 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         }
         Run::TableOfContents => state.contents.open = true,
         Run::InsertGlyph => state.glyph.open = true,
+        Run::Hyperlink => {
+            let mut window = std::mem::take(&mut state.hyperlink);
+            window.open(state);
+            state.hyperlink = window;
+        }
         Run::GenerateIndex => state.index.open = true,
         Run::FindAndChange => state.find.open(),
         Run::InsertTable => {
@@ -1700,6 +1717,7 @@ mod tests {
                 | "Preview view"
                 | "Current page number"
                 | "Insert footnote"
+                | "Hyperlink\u{2026}"
                 | "Em dash"
                 | "En dash"
                 | "Discretionary hyphen"

@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use tessera_text::story::ParagraphStyleId;
 
-use crate::ids::StoryId;
+use crate::ids::{PageId, StoryId};
 
 /// One level of the contents: paragraphs in `style` are listed, and each
 /// entry is set in `entry_style` — or the document default, when none.
@@ -43,6 +43,13 @@ impl Default for Contents {
             story: None,
         }
     }
+}
+
+/// A place a hyperlink can point at: a name, and the page it means.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Destination {
+    pub name: String,
+    pub page: PageId,
 }
 
 /// The recipe for the index, and where it went.

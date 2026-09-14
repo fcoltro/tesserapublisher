@@ -2372,6 +2372,23 @@ which cost one afternoon's confusion and a namespace check.
   bounds were always per page — but an older build's reflow would square
   them to the first, so it refuses. Not built: dragging a page's edge with
   a tool, and "objects move with page edge" options.
+- [x] **Hyperlinks** (added 2026-09-13, after milestone 12). A link rides on
+  the character format — `CharacterFormat.link`, a URL or a named
+  destination — so it cascades and travels with the words. Destinations are
+  names on the document pointing at a `PageId`, so a page link follows its
+  page when the pages move. The layout gives each linked run the
+  rectangles a selection would be drawn with (`ResolvedItem.links`); the
+  PDF writes a `/Link` annotation per rectangle on the page whose trim
+  holds it — a URI action, or a GoTo that fits the page — with no border.
+  Type ▸ Hyperlink… (Ctrl+K) on a selection: a web address, or a page of
+  this document; Remove link. **Contents entries link to their pages**, one
+  destination per heading. Nothing is drawn on the canvas. Format **25**.
+  **Also found and fixed:** two neighbouring paragraphs set alike fold into
+  one paragraph *run*, and the contents and running-header walks were
+  walking runs — two headings in a row listed as one. `Story::paragraph_ranges`
+  and `paragraph_run_at` are what to walk when paragraphs are the question.
+  Not built: bookmarks, cross-references, anchored-text destinations,
+  hyperlink appearance on screen, and IDML hyperlinks.
 - Dropped out loud: tables (their text is kept, tabbed), anchored objects,
   images' crops, parents with more pages than the setup allows, and the
   index. Not read: object styles, gradients, effects, text wrap, corner

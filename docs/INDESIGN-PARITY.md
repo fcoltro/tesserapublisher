@@ -222,7 +222,7 @@ person reaches for once they start setting copy, and none of it had a row:
 | Text variables; running header (paragraph style) | ✅ custom text and running header | — | done, M10 |
 | Footnotes | ✅ reference, note at the column foot, box to edit it; no footnote options yet | — | done, M11 |
 | Table of contents, index | ✅ generated stories, placed and updated from Layout | — | done, M11 |
-| Hyperlinks, bookmarks | ✗ | model | — |
+| Hyperlinks | ✅ URL and page links on text, PDF annotations, contents entries link; no bookmarks | — | done |
 | Language on text; special-character insertion | ✅ | — | done, M9 |
 | Typographer's quotes; glyph by code point | ✅ a preference, and a box; no panel drawing the font | — | done |
 | Story editor, spell check | ✗ | view | — |

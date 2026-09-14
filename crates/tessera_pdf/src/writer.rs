@@ -10,7 +10,7 @@ use tessera_color::Color;
 use tessera_document::blending::Blending;
 use tessera_document::nodes::{LineCap, LineJoin, Stroke};
 use tessera_document::paint::Paint;
-use tessera_geometry::{DocRect, Transform};
+use tessera_geometry::{DocPoint, DocRect, Transform};
 use tessera_layout::resolve::{ResolvedDocument, ResolvedKind};
 
 use crate::ink::Ink;
@@ -78,6 +78,117 @@ const LETTER: DocRect = DocRect {
 
 fn to_pdf_y(page: DocRect, doc_y: f64, height: f64) -> f64 {
     page.height - doc_y - height
+}
+
+/// A hyperlink annotation, ready to write: on which page, over what
+/// rectangle in that page's PDF space, going where.
+struct PlacedLink {
+    id: Ref,
+    page: usize,
+    rect: Rect,
+    target: tessera_layout::LinkTarget,
+    /// The page object a page target goes to.
+    to: Option<Ref>,
+}
+
+/// Every link in the document, each on the page whose trim holds the centre
+/// of its rectangle. A link that turns over a line becomes one annotation per
+/// line, which is what a reader expects to click.
+fn collect_links(
+    resolved: &ResolvedDocument,
+    pages: &[tessera_layout::ResolvedPage],
+    page_ids: &[Ref],
+    alloc: &mut impl FnMut() -> Ref,
+) -> Vec<PlacedLink> {
+    let mut out = Vec::new();
+    for item in &resolved.items {
+        for link in &item.links {
+            for rect in &link.rects {
+                // Through the item's transform, as the ink is; a rotated
+                // frame's link is the box round where its words landed.
+                let corners = [
+                    (rect.x, rect.y),
+                    (rect.x + rect.width, rect.y),
+                    (rect.x, rect.y + rect.height),
+                    (rect.x + rect.width, rect.y + rect.height),
+                ]
+                .map(|(x, y)| {
+                    item.transform.apply(DocPoint {
+                        x: item.bounds.x + x,
+                        y: item.bounds.y + y,
+                    })
+                });
+                let x0 = corners.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                let x1 = corners
+                    .iter()
+                    .map(|p| p.x)
+                    .fold(f64::NEG_INFINITY, f64::max);
+                let y0 = corners.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                let y1 = corners
+                    .iter()
+                    .map(|p| p.y)
+                    .fold(f64::NEG_INFINITY, f64::max);
+                let centre = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+                let Some((page_index, page)) = pages.iter().enumerate().find(|(_, p)| {
+                    let b = p.bounds;
+                    centre.0 >= b.x
+                        && centre.0 <= b.x + b.width
+                        && centre.1 >= b.y
+                        && centre.1 <= b.y + b.height
+                }) else {
+                    continue; // off every page: nothing to click on
+                };
+                let page = page.bounds;
+                let to = match &link.target {
+                    tessera_layout::LinkTarget::Page(index) => page_ids.get(*index).copied(),
+                    tessera_layout::LinkTarget::Url(_) => None,
+                };
+                if matches!(link.target, tessera_layout::LinkTarget::Page(_)) && to.is_none() {
+                    continue;
+                }
+                out.push(PlacedLink {
+                    id: alloc(),
+                    page: page_index,
+                    rect: Rect::new(
+                        (x0 - page.x) as f32,
+                        to_pdf_y(page, y1 - page.y, 0.0) as f32,
+                        (x1 - page.x) as f32,
+                        to_pdf_y(page, y0 - page.y, 0.0) as f32,
+                    ),
+                    target: link.target.clone(),
+                    to,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// One `/Link` annotation: a URI action, or a GoTo that fits the page.
+/// No border, as every layout tool exports them: the link is the words.
+fn write_link(pdf: &mut Pdf, link: &PlacedLink) {
+    use pdf_writer::types::{ActionType, AnnotationType};
+    let mut annotation = pdf.annotation(link.id);
+    annotation.subtype(AnnotationType::Link).rect(link.rect);
+    annotation.border(0.0, 0.0, 0.0, None);
+    match (&link.target, link.to) {
+        (tessera_layout::LinkTarget::Url(url), _) => {
+            annotation
+                .action()
+                .action_type(ActionType::Uri)
+                .uri(Str(url.as_bytes()));
+        }
+        (tessera_layout::LinkTarget::Page(_), Some(to)) => {
+            annotation
+                .action()
+                .action_type(ActionType::GoTo)
+                .destination()
+                .page(to)
+                .fit();
+        }
+        (tessera_layout::LinkTarget::Page(_), None) => {}
+    }
+    annotation.finish();
 }
 
 /// One embedded font: its subset bytes, its glyph mapping and its metrics.
@@ -304,7 +415,14 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
         info.finish();
     }
 
-    for (resolved_page, page_id) in pages.iter().zip(page_ids) {
+    // Every hyperlink, on the page whose trim holds its rectangle's centre;
+    // the rectangles are allocated now so the page can name them before the
+    // annotation objects are written.
+    let links = collect_links(resolved, &pages, &page_ids, &mut alloc);
+
+    for (page_index, (resolved_page, page_id)) in
+        pages.iter().zip(page_ids.iter().copied()).enumerate()
+    {
         let page = resolved_page.bounds;
         let content_id = alloc();
         let shadings = collect_shadings(resolved, page, &mut alloc, &ink);
@@ -406,7 +524,14 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
             spaces.finish();
         }
         resources.finish();
+        let mine: Vec<&PlacedLink> = links.iter().filter(|l| l.page == page_index).collect();
+        if !mine.is_empty() {
+            page_obj.annotations(mine.iter().map(|l| l.id));
+        }
         page_obj.finish();
+        for link in mine {
+            write_link(&mut pdf, link);
+        }
         pdf.stream(content_id, &content);
         for shading in shadings.iter().flatten() {
             write_shading(&mut pdf, shading, &ink);

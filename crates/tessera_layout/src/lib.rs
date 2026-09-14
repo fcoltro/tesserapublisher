@@ -12,4 +12,7 @@ pub mod snap;
 pub mod table;
 
 pub use cache::ResolveCache;
-pub use resolve::{ResolvedDocument, ResolvedItem, ResolvedKind, ResolvedPage, StoryMap, resolve};
+pub use resolve::{
+    LinkTarget, ResolvedDocument, ResolvedItem, ResolvedKind, ResolvedLink, ResolvedPage, StoryMap,
+    resolve,
+};

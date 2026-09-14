@@ -350,6 +350,7 @@ pub struct TesseraApp {
     pub contents: crate::view::long_document::ContentsWindow,
     pub index: crate::view::long_document::IndexWindow,
     pub glyph: crate::view::glyph::GlyphWindow,
+    pub hyperlink: crate::view::hyperlink::HyperlinkWindow,
     /// Find and Change. Modeless, so it is not in `modal_open`.
     pub find: crate::view::find::FindWindow,
 
@@ -497,6 +498,7 @@ impl TesseraApp {
             contents: crate::view::long_document::ContentsWindow::default(),
             index: crate::view::long_document::IndexWindow::default(),
             glyph: crate::view::glyph::GlyphWindow::default(),
+            hyperlink: crate::view::hyperlink::HyperlinkWindow::default(),
             editing_master: None,
             rail_open: true,
             sections: Sections::default(),
