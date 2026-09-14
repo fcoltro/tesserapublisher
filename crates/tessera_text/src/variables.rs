@@ -131,6 +131,10 @@ pub struct Variables {
     pub footnote_number: Option<u32>,
     /// The same, written: what the number marker reads as.
     pub footnote_text: Option<String>,
+    /// What each footnote *reference* in the story reads as, by the note's
+    /// index. Set by whoever knows the numbering and where it restarts;
+    /// absent, a reference reads as its ordinal in arabic.
+    pub footnote_labels: Vec<String>,
 }
 
 impl Variables {
@@ -158,6 +162,15 @@ impl Variables {
         Self {
             footnote_number: Some(number),
             footnote_text: Some(number.to_string()),
+            ..Default::default()
+        }
+    }
+
+    /// Ready to shape a footnote's own text, numbered as `label` says.
+    pub fn for_footnote_labelled(number: u32, label: impl Into<String>) -> Self {
+        Self {
+            footnote_number: Some(number),
+            footnote_text: Some(label.into()),
             ..Default::default()
         }
     }

@@ -297,6 +297,8 @@ pub enum Run {
     InsertGlyph,
     /// Where the selected words go when clicked.
     Hyperlink,
+    /// How the document numbers and sets its footnotes.
+    FootnoteOptions,
     /// Add a row or column beside the cell being edited.
     TableRow {
         above: bool,
@@ -366,6 +368,7 @@ pub fn guard(run: Run) -> Guard {
         Run::TableOfContents | Run::GenerateIndex | Run::InsertGlyph => Guard::Always,
         // Acts on the selected text, so it is only useful while typing.
         Run::Hyperlink => Guard::Always,
+        Run::FootnoteOptions => Guard::Always,
         // Only useful while typing, like the special characters.
         Run::InsertFootnote | Run::EditFootnote | Run::InsertIndexEntry => Guard::Always,
         // Opening a search box is not an edit and needs no selection. It is
@@ -1045,6 +1048,12 @@ pub fn all() -> &'static [Action] {
             Group::Type,
             Run::EditFootnote,
         ),
+        a(
+            "Footnote options\u{2026}",
+            None,
+            Group::Type,
+            Run::FootnoteOptions,
+        ),
         // Ctrl+K, which is what a hyperlink is in every editor a person has
         // used, InDesign included.
         a(
@@ -1325,6 +1334,7 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         }
         Run::TableOfContents => state.contents.open = true,
         Run::InsertGlyph => state.glyph.open = true,
+        Run::FootnoteOptions => state.footnote_options.open = true,
         Run::Hyperlink => {
             let mut window = std::mem::take(&mut state.hyperlink);
             window.open(state);

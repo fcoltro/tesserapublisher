@@ -13,6 +13,7 @@ pub mod docks;
 pub mod document_tabs;
 pub mod export_dialog;
 pub mod find;
+pub mod footnote_options;
 pub mod glass;
 pub mod glyph;
 pub mod hyperlink;
@@ -132,6 +133,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     long_document::show(ui.ctx(), state);
     glyph::show(ui.ctx(), state);
     hyperlink::show(ui.ctx(), state);
+    footnote_options::show(ui.ctx(), state);
     styles::editor(ui.ctx(), state);
     find::show(ui.ctx(), state);
 

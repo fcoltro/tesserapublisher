@@ -2313,11 +2313,20 @@ line of copy. The renderer and the PDF writer draw them without knowing.
   The recipe (`Contents`, `Index`) is stored with the story it was written
   into, so Layout ▸ Table of contents… and Layout ▸ Index… say **Place** the
   first time and **Update** after, and an update rewrites the same frame.
-- Not built: footnote text edited on the canvas (the box does it), footnote
-  options (numbering style, restart per page, spacing), notes that split
-  across columns, endnotes, index sub-topics and cross-references, page
-  ranges ("12–15"), contents entries that are hyperlinks, and a contents
-  that includes paragraphs from other documents (a book).
+- [x] **Footnote options** (added 2026-09-13, after milestone 12):
+  `tessera_document::footnotes::FootnoteOptions` — numbering (arabic,
+  roman, alpha, or `* † ‡ §` doubled and tripled), start at, restart
+  never or every page, space before the notes, space between them, and
+  the rule's presence, weight and width. The labels are computed by the
+  layout and handed to the shaper through `Variables::footnote_labels`;
+  restarting per page counts from the first frame of the thread on the
+  page, which costs one more composition of the frames before it. Type ▸
+  Footnote options…. Format **26**.
+- Not built: footnote text edited on the canvas (the box does it), notes
+  that split across columns, endnotes, index sub-topics and
+  cross-references, page ranges ("12–15"), and a contents that includes
+  paragraphs from other documents (a book). Contents entries *are*
+  hyperlinks now — see below.
 
 ---
 

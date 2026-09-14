@@ -13,6 +13,7 @@ pub mod blending;
 pub mod contents;
 pub mod corners;
 pub mod document;
+pub mod footnotes;
 pub mod format;
 pub mod graphic;
 pub mod history;

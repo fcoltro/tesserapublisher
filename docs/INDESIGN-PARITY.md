@@ -220,7 +220,7 @@ person reaches for once they start setting copy, and none of it had a row:
 | H&J parameters | ✗ | model | **M9** (from M2) |
 | Auto page number, sections, section marker | ✅ | — | done, M10 |
 | Text variables; running header (paragraph style) | ✅ custom text and running header | — | done, M10 |
-| Footnotes | ✅ reference, note at the column foot, box to edit it; no footnote options yet | — | done, M11 |
+| Footnotes | ✅ reference, note at the column foot, box to edit it, document footnote options | — | done, M11 |
 | Table of contents, index | ✅ generated stories, placed and updated from Layout | — | done, M11 |
 | Hyperlinks | ✅ URL and page links on text, PDF annotations, contents entries link; no bookmarks | — | done |
 | Language on text; special-character insertion | ✅ | — | done, M9 |

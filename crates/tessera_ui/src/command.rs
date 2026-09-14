@@ -546,6 +546,8 @@ pub enum Command {
         name: String,
         page: PageId,
     },
+    /// Replace the document's footnote options.
+    SetFootnoteOptions(tessera_document::footnotes::FootnoteOptions),
     /// Text read from another application's file, into `id` — replacing what
     /// it held — or into a new frame filling the current page's margins.
     PlaceText {
@@ -1816,6 +1818,13 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 .active_mut()
                 .document_mut()
                 .set_destination(name, page);
+        }
+
+        Command::SetFootnoteOptions(options) => {
+            state
+                .active_mut()
+                .document_mut()
+                .set_footnote_options(options);
         }
 
         Command::PlaceText { id, text } => {

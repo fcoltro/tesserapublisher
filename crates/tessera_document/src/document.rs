@@ -180,6 +180,10 @@ pub struct Document {
     #[serde(default)]
     pub destinations: Vec<crate::contents::Destination>,
 
+    /// How footnotes are numbered and set, document-wide.
+    #[serde(default)]
+    pub footnotes: crate::footnotes::FootnoteOptions,
+
     /// Bumped on every mutation. The renderer rebuilds its scene only when
     /// this moves, so panning the camera does not rebuild anything.
     ///
@@ -230,6 +234,7 @@ impl Document {
             contents: crate::contents::Contents::default(),
             index: crate::contents::Index::default(),
             destinations: Vec::new(),
+            footnotes: crate::footnotes::FootnoteOptions::default(),
             revision: 0,
         };
 
@@ -724,6 +729,12 @@ impl Document {
     /// Replace the index recipe.
     pub fn set_index(&mut self, index: crate::contents::Index) {
         self.index = index;
+        self.touch();
+    }
+
+    /// Replace the footnote options. One call, one undo entry.
+    pub fn set_footnote_options(&mut self, options: crate::footnotes::FootnoteOptions) {
+        self.footnotes = options;
         self.touch();
     }
 

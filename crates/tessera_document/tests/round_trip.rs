@@ -762,7 +762,7 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_twenty_five() {
+fn the_format_version_is_twenty_six() {
     // A tripwire, not a fact worth asserting on its own: changing it means
     // stopping to ask whether a migration step is owed. Sometimes the answer is
     // no — version 19 added `corners`, whose default is exactly what older
@@ -773,8 +773,29 @@ fn the_format_version_is_twenty_five() {
     // — and the point is that somebody had to answer; 23 added footnotes,
     // index entries, and the contents and index recipes, all empty before;
     // 24 let a page be its own size, which an older build's reflow would
-    // silently undo; 25 added hyperlinks and their destinations.
-    assert_eq!(format::FORMAT_VERSION, 25);
+    // silently undo; 25 added hyperlinks and their destinations; 26 the
+    // footnote options, whose defaults are what the notes were set with.
+    assert_eq!(format::FORMAT_VERSION, 26);
+}
+
+#[test]
+fn footnote_options_survive_a_round_trip() {
+    use tessera_document::footnotes::{FootnoteNumbering, FootnoteOptions, Restart};
+    let mut doc = Document::default();
+    doc.set_footnote_options(FootnoteOptions {
+        numbering: FootnoteNumbering::Symbols,
+        restart: Restart::Page,
+        start_at: 2,
+        space_before: 9.0,
+        space_between: 3.0,
+        rule: false,
+        ..Default::default()
+    });
+    let path = std::env::temp_dir().join(format!("tessera-fnopts-{}.tessera", std::process::id()));
+    format::save(&doc, &path).expect("save");
+    let back = format::load(&path).expect("load");
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(back.footnotes, doc.footnotes);
 }
 
 #[test]

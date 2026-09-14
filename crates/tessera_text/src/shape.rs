@@ -757,13 +757,17 @@ fn shaping_text(
                 // this marker is the nth — and set as a superior figure,
                 // which no page needs to answer.
                 let (expansion, format) = if marker == Marker::FootnoteReference {
-                    let number = story.footnote_index_at(at) + 1;
+                    let index = story.footnote_index_at(at);
+                    let label = styles
+                        .variables()
+                        .and_then(|v| v.footnote_labels.get(index).cloned())
+                        .unwrap_or_else(|| (index + 1).to_string());
                     let mut raised = format.clone();
                     let size = format.size.unwrap_or(12.0);
                     raised.size = Some(size * SUPERIOR_SCALE);
                     raised.baseline_shift =
                         Some(format.baseline_shift.unwrap_or(0.0) + size * SUPERIOR_RAISE);
-                    (number.to_string(), raised)
+                    (label, raised)
                 } else {
                     (
                         styles
@@ -1549,7 +1553,7 @@ pub fn flow_on_grid(
     vertical: Vertical,
     grid: Option<Grid>,
 ) -> Flowed {
-    flow_with_notes(text, columns, vertical, grid, &[], 0.0)
+    flow_with_notes(text, columns, vertical, grid, &[], &NoteLayout::default())
 }
 
 /// A footnote's text, shaped, waiting for the line that refers to it.
@@ -1573,14 +1577,37 @@ pub struct Note {
 /// the first — and their lines join the output with no `hit`, so a caret
 /// cannot get into them, and an empty `range` at the marker, so a thread does
 /// not mistake a note for text it has placed.
+/// How the notes sit at the foot of a column.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NoteLayout {
+    /// Air between the last line of copy and the notes (or their rule).
+    pub space_before: f64,
+    /// Air between one note and the next.
+    pub space_between: f64,
+    /// A rule above the first note: its weight and how much of the column
+    /// it runs across, or none.
+    pub rule: Option<(f64, f64)>,
+}
+
+impl Default for NoteLayout {
+    fn default() -> Self {
+        Self {
+            space_before: 0.0,
+            space_between: 0.0,
+            rule: Some((NOTE_RULE_WEIGHT, NOTE_RULE_FRACTION)),
+        }
+    }
+}
+
 pub fn flow_with_notes(
     text: ShapedText,
     columns: &[Column],
     vertical: Vertical,
     grid: Option<Grid>,
     notes: &[Note],
-    gap: f64,
+    layout: &NoteLayout,
 ) -> Flowed {
+    let gap = layout.space_before;
     let vertical = match grid {
         Some(_) => Vertical::Top,
         None => vertical,
@@ -1607,17 +1634,22 @@ pub fn flow_with_notes(
             .map(|l| l.baseline + l.descent)
             .fold(0.0, f64::max)
     };
+    let rule_air = if layout.rule.is_some() {
+        NOTE_RULE_GAP
+    } else {
+        0.0
+    };
     let room_for = |placed: &[&ShapedLine]| -> f64 {
         let mut total = 0.0;
-        let mut any = false;
+        let mut count = 0usize;
         for line in placed {
             for note in notes_of(line) {
                 total += note_height(note);
-                any = true;
+                count += 1;
             }
         }
-        if any {
-            total + gap + NOTE_RULE_GAP
+        if count > 0 {
+            total + gap + rule_air + layout.space_between * (count - 1) as f64
         } else {
             0.0
         }
@@ -1769,7 +1801,8 @@ pub fn flow_with_notes(
         if cited.is_empty() {
             continue;
         }
-        let total: f64 = cited.iter().map(|n| note_height(n)).sum();
+        let total: f64 = cited.iter().map(|n| note_height(n)).sum::<f64>()
+            + layout.space_between * cited.len().saturating_sub(1) as f64;
         let mut y = box_.y + box_.height - total;
         let mut first = true;
         for note in cited {
@@ -1787,19 +1820,21 @@ pub fn flow_with_notes(
                 if first {
                     // A short rule above the first note, as every book sets
                     // it: the notes are not the copy.
-                    line.rules.push(PlacedRule {
-                        x0: box_.x,
-                        x1: box_.x + (box_.width * NOTE_RULE_FRACTION).min(box_.width),
-                        top: y - NOTE_RULE_GAP,
-                        weight: NOTE_RULE_WEIGHT,
-                        colour: None,
-                    });
+                    if let Some((weight, fraction)) = layout.rule {
+                        line.rules.push(PlacedRule {
+                            x0: box_.x,
+                            x1: box_.x + (box_.width * fraction.clamp(0.0, 1.0)).min(box_.width),
+                            top: y - NOTE_RULE_GAP,
+                            weight,
+                            colour: None,
+                        });
+                    }
                     first = false;
                 }
                 out.lines.push(line);
             }
             out.fonts.extend(note.text.fonts.iter().cloned());
-            y += note_height(note);
+            y += note_height(note) + layout.space_between;
         }
     }
     if out.lines.len() > body {
@@ -4406,7 +4441,7 @@ mod tests {
             Vertical::Top,
             None,
             &[note],
-            0.0,
+            &NoteLayout::default(),
         );
         let body: Vec<&ShapedLine> = flowed
             .text
@@ -4472,7 +4507,7 @@ mod tests {
                 at: 25,
                 text: ruled(2),
             }],
-            0.0,
+            &NoteLayout::default(),
         );
         let third = flowed
             .text

@@ -579,7 +579,9 @@ fn story_starts_at<'a>(
         let Some(on) = doc.page_of_frame(*id) else {
             continue;
         };
-        let flowed = compose_frame(doc, shaper, *id, before, *story, text, from, on, running);
+        let flowed = compose_frame(
+            doc, shaper, *id, before, *story, text, from, on, running, composed,
+        );
         // A frame that held nothing hands the story on untouched rather than
         // restarting it: treating "placed nothing" as zero would loop the
         // whole chain back to the beginning.
@@ -601,6 +603,7 @@ fn compose_frame(
     from: usize,
     on: PageId,
     running: &Running,
+    composed: Option<(StoryId, &TextStory)>,
 ) -> tessera_text::shape::Flowed {
     let FrameKind::Text { layout, .. } = &frame.kind else {
         unreachable!()
@@ -674,16 +677,22 @@ fn compose_frame(
         .into_iter()
         .map(|(at, _, width, height)| tessera_text::shape::InlineObject { at, width, height })
         .collect();
+    // What each footnote is numbered, by the document's options: the
+    // count restarts where the options say, and is written as they say.
+    let labels = footnote_labels(doc, shaper, id, story, composed, running, on);
+
     // The document resolves the styles; the page says what the markers read
     // as. One object answering both, so the shaper asks one question.
-    let styles = OnPage::new(doc, variables_for(doc, id, on, running));
+    let mut variables = variables_for(doc, id, on, running);
+    variables.footnote_labels = labels.clone();
+    let styles = OnPage::new(doc, variables);
     let shaped =
         shaper.shape_around_with_objects(story, &styles, measure, from, &obstacles, &anchored);
 
-    // The footnotes, shaped at the column's measure and numbered in text
-    // order, for the flow to set at the foot of whichever column their
-    // references land in. Shaped here because the flow has no shaper, and
-    // all of them rather than the ones after `from`: the flow keeps only
+    // The footnotes, shaped at the column's measure and numbered as the
+    // references are, for the flow to set at the foot of whichever column
+    // their references land in. Shaped here because the flow has no shaper,
+    // and all of them rather than the ones after `from`: the flow keeps only
     // those whose line it places.
     let notes: Vec<tessera_text::shape::Note> = story
         .footnote_offsets()
@@ -691,18 +700,74 @@ fn compose_frame(
         .zip(&story.footnotes)
         .enumerate()
         .map(|(n, (at, note))| {
-            let numbered = OnPage::new(doc, Variables::for_footnote(n as u32 + 1));
+            let label = labels
+                .get(n)
+                .cloned()
+                .unwrap_or_else(|| (n + 1).to_string());
+            let numbered = OnPage::new(doc, Variables::for_footnote_labelled(n as u32 + 1, label));
             tessera_text::shape::Note {
                 at,
                 text: shaper.shape(note, &numbered, measure),
             }
         })
         .collect();
-    tessera_text::shape::flow_with_notes(shaped, &boxes, vertical, grid, &notes, FOOTNOTE_GAP)
+    let options = doc.footnotes;
+    let note_layout = tessera_text::shape::NoteLayout {
+        space_before: options.space_before,
+        space_between: options.space_between,
+        rule: options
+            .rule
+            .then_some((options.rule_weight, options.rule_fraction)),
+    };
+    tessera_text::shape::flow_with_notes(shaped, &boxes, vertical, grid, &notes, &note_layout)
 }
 
-/// Air between the last line of copy and the rule above the footnotes.
-const FOOTNOTE_GAP: f64 = 6.0;
+/// The label of every footnote in `story`, for the frame `id` on page `on`.
+///
+/// Counting from the options' start, in their numbering; restarting per
+/// page means counting from the first reference in the first frame of the
+/// thread that stands on this page — the frames before it are composed to
+/// find where that frame begins, which is the same work `story_starts_at`
+/// does and costs the same.
+fn footnote_labels(
+    doc: &Document,
+    shaper: &mut Shaper,
+    id: FrameId,
+    story: &TextStory,
+    composed: Option<(StoryId, &TextStory)>,
+    running: &Running,
+    on: PageId,
+) -> Vec<String> {
+    let options = doc.footnotes;
+    let count = story.footnotes.len();
+    if count == 0 {
+        return Vec::new();
+    }
+    let base = match options.restart {
+        tessera_document::footnotes::Restart::Never => 0,
+        tessera_document::footnotes::Restart::Page => {
+            // The first frame of the chain on this page, and where it starts.
+            let chain = doc.thread_of(id);
+            let first_here = chain
+                .iter()
+                .copied()
+                .find(|f| doc.page_of_frame(*f) == Some(on))
+                .unwrap_or(id);
+            let from = if first_here == id {
+                story_starts_at(doc, shaper, id, composed, running)
+            } else {
+                story_starts_at(doc, shaper, first_here, composed, running)
+            };
+            story.footnote_index_at(from)
+        }
+    };
+    (0..count)
+        .map(|n| {
+            let number = (n as i64 - base as i64 + i64::from(options.start_at)).max(1) as u32;
+            options.numbering.label(number)
+        })
+        .collect()
+}
 
 /// The hyperlinks in `story` as laid out in `shaped`: each linked run's
 /// rectangles, from the same geometry a selection is drawn with, so a link
@@ -804,6 +869,7 @@ fn variables_for(doc: &Document, frame: FrameId, on: PageId, running: &Running) 
             .collect(),
         footnote_number: None,
         footnote_text: None,
+        footnote_labels: Vec::new(),
     }
 }
 
@@ -911,7 +977,9 @@ fn resolve_one<'a>(
                 .unwrap_or(tessera_color::Color::BLACK);
             let colour = doc.resolve_colour(&colour);
             let from = story_starts_at(doc, shaper, id, composed, running);
-            let flowed = compose_frame(doc, shaper, id, frame, *story_id, story, from, on, running);
+            let flowed = compose_frame(
+                doc, shaper, id, frame, *story_id, story, from, on, running, composed,
+            );
 
             links = links_in(doc, story, &flowed.text, frame.bounds.width as f32);
             ResolvedKind::Text {
@@ -1724,6 +1792,94 @@ Some body copy.",
             "the note leads with the number it is cited by"
         );
         assert_eq!(item.on, Some(page));
+    }
+
+    #[test]
+    fn footnotes_count_as_the_options_say_and_restart_per_page() {
+        use tessera_document::footnotes::{FootnoteNumbering, FootnoteOptions, Restart};
+        use tessera_text::variables::Marker;
+        // Two frames threaded across two pages, one note in each.
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        let second = doc.add_page();
+        let first = doc.page_ids().next().unwrap();
+        let layer = doc.default_layer().unwrap();
+        let r = Marker::FootnoteReference.character();
+        let text = format!("{}{r}\n{}{r}", "word ".repeat(12), "more ".repeat(12));
+        let story = doc.add_story(Story::new(text));
+        let a = doc.add_frame(layer, {
+            let b = doc.pages[first].bounds;
+            // Room for the first paragraph and its note, not the second.
+            let mut f = rect(b.x + 20.0, b.y + 20.0, 200.0, 90.0);
+            f.kind = FrameKind::text(story);
+            f
+        });
+        let b = doc.add_frame(layer, {
+            let bb = doc.pages[second].bounds;
+            let mut f = rect(bb.x + 20.0, bb.y + 20.0, 200.0, 400.0);
+            f.kind = FrameKind::text(story);
+            f
+        });
+        assert!(doc.thread(a, b));
+        doc.set_footnote_options(FootnoteOptions {
+            numbering: FootnoteNumbering::Symbols,
+            restart: Restart::Page,
+            ..Default::default()
+        });
+
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+        let reference_glyph = |frame: FrameId| -> Option<u32> {
+            let item = item_for(&resolved, frame)?;
+            let ResolvedKind::Text { shaped, .. } = &item.kind else {
+                return None;
+            };
+            shaped
+                .lines
+                .iter()
+                .filter(|l| !l.range.is_empty())
+                .flat_map(|l| l.runs.iter())
+                .find(|r| r.size < 12.0)
+                .and_then(|r| r.glyphs.first().map(|g| g.glyph_id))
+        };
+        let star = glyphs_for(&mut shaper, "*");
+        assert_eq!(
+            reference_glyph(a),
+            star.first().copied(),
+            "the first note is *"
+        );
+        assert_eq!(
+            reference_glyph(b),
+            star.first().copied(),
+            "and so is the first note on the next page, restarted"
+        );
+
+        doc.set_footnote_options(FootnoteOptions {
+            numbering: FootnoteNumbering::Symbols,
+            restart: Restart::Never,
+            ..Default::default()
+        });
+        let resolved = resolve(&doc, &mut shaper);
+        let reference_glyph = |frame: FrameId| -> Option<u32> {
+            let item = item_for(&resolved, frame)?;
+            let ResolvedKind::Text { shaped, .. } = &item.kind else {
+                return None;
+            };
+            shaped
+                .lines
+                .iter()
+                .filter(|l| !l.range.is_empty())
+                .flat_map(|l| l.runs.iter())
+                .find(|r| r.size < 12.0)
+                .and_then(|r| r.glyphs.first().map(|g| g.glyph_id))
+        };
+        let dagger = glyphs_for(&mut shaper, "\u{2020}");
+        assert_eq!(
+            reference_glyph(b),
+            dagger.first().copied(),
+            "counting on: \u{2020}"
+        );
     }
 
     #[test]

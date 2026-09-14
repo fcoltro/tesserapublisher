@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 25;
+pub const FORMAT_VERSION: u32 = 26;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -105,6 +105,12 @@ pub fn load(path: &Path) -> Result<Document, FormatError> {
 /// ago follows exactly the path a document written two versions ago does, and
 /// each step only has to know about its own change.
 fn migrate(value: &mut serde_json::Value, from: u32) {
+    // 25 -> 26: the document gained `footnotes`, its footnote options. **No
+    // step, on purpose**: the defaults are what every note was set with
+    // before there were options. The version moves so an older build
+    // refuses a document whose notes count in roman or restart per page,
+    // rather than numbering them 1, 2, 3 and saving that.
+
     // 24 -> 25: runs may carry `link`, the document `destinations`. **No
     // step, on purpose** — both default to nothing, which is what every
     // earlier document meant. The version moves so an older build refuses a
