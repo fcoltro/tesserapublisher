@@ -226,7 +226,7 @@ person reaches for once they start setting copy, and none of it had a row:
 | Language on text; special-character insertion | ✅ | — | done, M9 |
 | Typographer's quotes; glyph by code point | ✅ a preference, and a box; no panel drawing the font | — | done |
 | Spell check | ✅ Hunspell dictionaries from a folder; no bundled list, no suggestions, no squiggles | — | done |
-| Story editor | ✗ | view | — |
+| Story editor | ✅ a plain box over the story, applied as a minimal edit | — | done |
 | Print dialog | ✗ — PDF export only | — | — |
 | IDML import | ✅ pages, parents, threads, styles, swatches, sections, footnotes, anchored objects, tables | — | done, M12 |
 | Word import | ✅ File ▸ Place a `.docx`; styles merged by name | — | done, M12 |

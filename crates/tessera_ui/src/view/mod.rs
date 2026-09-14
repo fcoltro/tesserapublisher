@@ -33,6 +33,7 @@ pub mod sections;
 pub mod settings;
 pub mod spelling;
 pub mod step_repeat;
+pub mod story_editor;
 pub mod styles;
 pub mod swatches;
 pub mod text_edit;
@@ -136,6 +137,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     hyperlink::show(ui.ctx(), state);
     footnote_options::show(ui.ctx(), state);
     spelling::show(ui.ctx(), state);
+    story_editor::show(ui.ctx(), state);
     styles::editor(ui.ctx(), state);
     find::show(ui.ctx(), state);
 

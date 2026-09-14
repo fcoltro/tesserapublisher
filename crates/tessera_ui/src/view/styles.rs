@@ -1245,8 +1245,8 @@ mod tests {
         assert_eq!(typed[0], "Paragraph and character styles");
         assert_eq!(
             typed.len(),
-            8,
-            "styles, variables, footnotes and their options, hyperlink, index entry, paste anchored"
+            9,
+            "styles, variables, footnotes and their options, hyperlink, index entry, paste anchored, story editor"
         );
         assert_eq!(Group::Type.menu(), Some("Type"));
     }

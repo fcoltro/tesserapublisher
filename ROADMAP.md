@@ -2401,6 +2401,13 @@ which cost one afternoon's confusion and a namespace check.
   bounds were always per page — but an older build's reflow would square
   them to the first, so it refuses. Not built: dragging a page's edge with
   a tool, and "objects move with page edge" options.
+- [x] **Story editor** (added 2026-09-14). Type ▸ Edit in story editor…: the
+  whole story's words in a plain box, overset included. Applied as the
+  smallest edit the two texts disagree on — common prefix, common suffix —
+  through the story's own operations, so formatting either side survives
+  and a marker taken out takes its frame. Find and Change's replacements
+  now go through the same anchor-aware path. Not built: styles shown in
+  the editor, and a live link between the box and the page.
 - [x] **Check spelling** (added 2026-09-14, after milestone 12).
   `tessera_text::spell` reads Hunspell dictionaries — the `.dic` word list
   and the `.aff` prefix and suffix rules, in all three flag encodings, with

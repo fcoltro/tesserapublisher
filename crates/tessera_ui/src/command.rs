@@ -1040,7 +1040,7 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::ReplaceMatches { edits } => {
             for (story, range, with) in edits {
-                let Some(s) = state.active_mut().document_mut().story_mut(story) else {
+                let Some(mut s) = state.active().document().story(story).cloned() else {
                     continue;
                 };
                 // A range that no longer fits is one the document changed
@@ -1057,6 +1057,12 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 // describing a length the text no longer has.
                 s.delete_range(range.clone());
                 s.insert_text(range.start, &with);
+                // As an edit, so a marker replaced away takes its anchored
+                // frame with it rather than leaving it pointing at nothing.
+                state
+                    .active_mut()
+                    .document_mut()
+                    .replace_story_from_edit(story, s);
             }
         }
 

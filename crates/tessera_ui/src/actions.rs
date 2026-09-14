@@ -303,6 +303,8 @@ pub enum Run {
     CheckSpelling,
     /// Paste the copied object into the text at the caret, anchored.
     PasteAnchored,
+    /// The story's words in a plain box, without the page.
+    StoryEditor,
     /// Add a row or column beside the cell being edited.
     TableRow {
         above: bool,
@@ -376,6 +378,7 @@ pub fn guard(run: Run) -> Guard {
         Run::CheckSpelling => Guard::NotWhileTyping,
         // Only means anything while typing, like the special characters.
         Run::PasteAnchored => Guard::Always,
+        Run::StoryEditor => Guard::NotWhileTyping,
         // Only useful while typing, like the special characters.
         Run::InsertFootnote | Run::EditFootnote | Run::InsertIndexEntry => Guard::Always,
         // Opening a search box is not an edit and needs no selection. It is
@@ -1046,6 +1049,12 @@ pub fn all() -> &'static [Action] {
         // is at its dozen lines.
         a("Paste as anchored", None, Group::Type, Run::PasteAnchored),
         a(
+            "Edit in story editor\u{2026}",
+            None,
+            Group::Type,
+            Run::StoryEditor,
+        ),
+        a(
             "Text variables\u{2026}",
             None,
             Group::Type,
@@ -1353,6 +1362,11 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         Run::InsertGlyph => state.glyph.open = true,
         Run::FootnoteOptions => state.footnote_options.open = true,
         Run::PasteAnchored => crate::apply(state, crate::Command::PasteAnchored),
+        Run::StoryEditor => {
+            let mut window = std::mem::take(&mut state.story_editor);
+            window.open(state);
+            state.story_editor = window;
+        }
         Run::CheckSpelling => {
             state.dictionaries.load_user_words();
             let mut window = std::mem::take(&mut state.spelling);
