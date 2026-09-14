@@ -45,6 +45,7 @@ fn one(kind: ResolvedKind, bounds: DocRect) -> ResolvedDocument {
         pages: vec![resolved_page()],
         items: vec![ResolvedItem {
             frame: FrameId::default(),
+            on: None,
             transform: Transform::IDENTITY,
             spread_area: None,
             blend: tessera_document::blending::Blending::PLAIN,
@@ -261,6 +262,7 @@ fn several_items_all_reach_the_content_stream() {
         items: vec![
             ResolvedItem {
                 frame: FrameId::default(),
+                on: None,
                 transform: Transform::IDENTITY,
                 spread_area: None,
                 blend: tessera_document::blending::Blending::PLAIN,
@@ -274,6 +276,7 @@ fn several_items_all_reach_the_content_stream() {
             },
             ResolvedItem {
                 frame: FrameId::default(),
+                on: None,
                 transform: Transform::IDENTITY,
                 spread_area: None,
                 blend: tessera_document::blending::Blending::PLAIN,
@@ -286,6 +289,7 @@ fn several_items_all_reach_the_content_stream() {
             },
             ResolvedItem {
                 frame: FrameId::default(),
+                on: None,
                 transform: Transform::IDENTITY,
                 spread_area: None,
                 blend: tessera_document::blending::Blending::PLAIN,
@@ -944,6 +948,7 @@ fn one_file_placed_twice_is_embedded_once() {
     let path = a_jpeg("twice.jpg", 16, 16);
     let item = |bounds: DocRect, source: std::path::PathBuf| ResolvedItem {
         frame: FrameId::default(),
+        on: None,
         transform: Transform::IDENTITY,
         spread_area: None,
         blend: tessera_document::blending::Blending::PLAIN,
@@ -1146,6 +1151,7 @@ fn one_ink_used_twice_is_one_plate() {
     // twice.
     let item = |bounds: DocRect, tint: f32| ResolvedItem {
         frame: FrameId::default(),
+        on: None,
         transform: Transform::IDENTITY,
         spread_area: None,
         blend: tessera_document::blending::Blending::PLAIN,

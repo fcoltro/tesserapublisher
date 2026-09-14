@@ -1233,7 +1233,7 @@ mod tests {
     }
 
     #[test]
-    fn the_type_menu_has_exactly_this_one_entry() {
+    fn the_type_menu_lists_the_styles_window_first() {
         // The menu bar is generated from the action list, so this is what
         // proves a Type menu appears at all — milestone 1.5 recorded C12 as
         // partial precisely because Type had no commands.
@@ -1242,7 +1242,10 @@ mod tests {
             .filter(|a| a.group == Group::Type)
             .map(|a| a.name)
             .collect();
-        assert_eq!(typed, vec!["Paragraph and character styles"]);
+        assert_eq!(
+            typed,
+            vec!["Paragraph and character styles", "Text variables\u{2026}"]
+        );
         assert_eq!(Group::Type.menu(), Some("Type"));
     }
 

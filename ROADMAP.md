@@ -2167,10 +2167,93 @@ and not a list of controls.
 
 ### Recorded, unscheduled, and probably not wanted yet
 
-Footnotes, a table of contents, an index, hyperlinks and bookmarks, type on a
-path, a story editor, spell checking, a print dialog (there is PDF export and
-nothing that talks to a printer), and IDML import. Each is a milestone of its
-own, and none is what a person misses in the first hour.
+Hyperlinks and bookmarks, type on a path, a story editor, spell checking, and
+a print dialog (there is PDF export and nothing that talks to a printer). Each
+is a milestone of its own, and none is what a person misses in the first
+hour. Footnotes, the table of contents and the index moved to milestone 11;
+IDML import to milestone 12.
+
+---
+
+# Milestone 10 — Page Numbers and Running Heads
+
+**Named on 2026-09-13, late.** A parent page that cannot carry a folio cannot
+do its most common job, and nine milestones went by without one: the parity
+file had a row for the pages panel and none for the number on the page. This
+milestone is the smallest thing that makes a master page a master page —
+and the thing the table of contents (milestone 11) depends on, which is why
+it comes first.
+
+**The finding: the marker is a character, and the number is a synthesis.**
+A page number cannot be stored in the story — the same story shows on page 12
+and page 13 — so the story holds one Private Use character and the shaper
+swaps it for the page's answer in `shaping_text`, exactly where small caps
+and list markers are already synthesised. The offset map that lets a caret
+find its way back through a synthesised capital serves a page number for
+free: a click on "142" lands the caret at the marker, Backspace deletes the
+marker, and Find, copy and paste never learn it exists. **Nothing new was
+built for editing**, and that is the design.
+
+The shaper never learns what a page is. `Styles` gained one provided method,
+`variables()`, and the layout crate hands the shaper an `OnPage` — the
+document's styles with one page's answers attached. The shape cache keys on
+those answers only when the story carries a marker, so two pages sharing one
+master story cannot share one layout and an ordinary story keys as before.
+
+### Acceptance
+
+> Put a page number on a parent page and apply it to twelve pages; each
+> shows its own. Number the front matter in roman from i and the body in
+> arabic from 1. Put a running header on the parent that reads each page's
+> chapter heading. Type "continued on page" and the number of the page the
+> story continues on.
+
+- [x] **Markers** (`tessera_text::variables`): current, next and previous
+  page number, section marker, and `Variable(n)`; `expand` for anything that
+  wants the words rather than the layout. Four `Special`s in a Type ▸ Insert
+  marker submenu; the current page number carries InDesign's
+  Ctrl+Alt+Shift+N. **By test; the hand check is owed.**
+- [x] **Sections** (`tessera_document::sections`): a section is a page the
+  numbering restarts at, with a start (or "continue"), a style — the five
+  `Numbering`s lists already had — a prefix and a marker text. The first
+  section is implied, so a document with none reads as it always did; a
+  section starts at a `PageId`, so it moves with its page and dies with it.
+  Format **22**, no step. `Document::page_label` is what the pages panel and
+  the folio both print, so the two cannot disagree. Layout ▸ Numbering and
+  section options, on the current page.
+- [x] **Text variables** (`tessera_document::variables`): custom text, and
+  **running header (paragraph style)** — first or last paragraph in the
+  style on the page. A story names a variable by its index, so removing one
+  blanks it rather than renumbering the rest; the dialog says "(removed)".
+  Type ▸ Text variables, with Insert at the caret.
+- [x] **Running headers are read off the page.** `resolve_pages` now resolves
+  a page's own frames *before* the parent items it inherits, though they
+  paint after; `Running::read` walks the resolved lines for paragraphs in
+  the named styles. A parent's item is resolved once per inheriting page —
+  `ResolvedItem.on` says which — so one folio frame reads "12" on page 12.
+  A body frame carrying a running header of its own page reads as nothing,
+  which is what keeps it from being circular.
+- [x] **On the parent itself** the folio reads the parent's prefix — "A" for
+  "A-Master" — as every layout tool shows it.
+- [x] **Threads compose on their own pages.** `story_starts_at` composes each
+  earlier frame with that frame's page, so a "continued on page 98" in frame
+  one is measured at its real width before this frame's start is decided.
+- Not built: the section prefix as a separate "include prefix" toggle (the
+  prefix is always in the label), chapter numbers as a variable, "last page
+  number", file name and date variables, and a variable in a table cell.
+
+---
+
+# Milestone 11 — The Long Document
+
+Footnotes, a table of contents, and an index. Depends on milestone 10: a
+table of contents is a list of headings and the page labels they landed on.
+
+---
+
+# Milestone 12 — Import
+
+IDML and Word. After the model can hold what they carry.
 
 ---
 

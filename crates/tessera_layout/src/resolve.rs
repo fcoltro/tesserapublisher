@@ -6,13 +6,16 @@
 
 use tessera_color::Color;
 use tessera_document::document::Document;
-use tessera_document::ids::{FrameId, StoryId};
+use tessera_document::ids::{FrameId, PageId, StoryId};
 use tessera_document::nodes::{FrameKind, Stroke};
 use tessera_document::paint::Paint;
 use tessera_document::path::fit_to_bounds;
 use tessera_geometry::{DocRect, Transform};
 use tessera_text::shape::{ShapedText, Shaper};
 use tessera_text::story::Story as TextStory;
+use tessera_text::variables::Variables;
+
+pub use crate::running::{OnPage, Running};
 
 pub use tessera_document::document::StoryMap;
 
@@ -91,6 +94,13 @@ pub enum ResolvedKind {
 #[derive(Debug, Clone)]
 pub struct ResolvedItem {
     pub frame: FrameId,
+    /// The page this item was resolved for.
+    ///
+    /// Not always the page the frame stands on: a parent's item is resolved
+    /// once per page that inherits it, and this is which. It is what makes
+    /// one master folio read "12" on page 12 and "13" on page 13, and what
+    /// lets an object anchored in a parent's text find the same page.
+    pub on: Option<PageId>,
     pub bounds: DocRect,
     /// The frame's own space, mapped onto the document. Both the renderer
     /// and the PDF writer apply this the same way, from this one value.
@@ -254,6 +264,41 @@ fn resolve_pages<'a>(
         })
         .collect();
 
+    // Everything standing on a page this scope is showing. A parent's own
+    // items are drawn when the parent is what is being looked at, and only
+    // then — otherwise a parent spread would sit in the scroll a person is
+    // trying to lay out in.
+    //
+    // **Resolved before the parent items, though painted after them.** A
+    // running header on a parent reads the headings on the page, and what is
+    // on the page is not known until the page's own text has been laid out.
+    // Nothing on a page reads a running header of its own page's content —
+    // a body frame carrying one reads as nothing — which is what keeps this
+    // from being circular.
+    let mut own = Vec::new();
+    let running = Running::default();
+    for id in doc.paint_order() {
+        let Some(on) = doc.page_of_frame(id) else {
+            continue;
+        };
+        if !shown.contains(&on) {
+            continue;
+        }
+        let Some(frame) = doc.frame(id) else { continue };
+        // An anchored frame is placed by the text it sits in, below. Its own
+        // bounds say how big it is and nothing about where it goes, so drawing
+        // it here would put it wherever it was last left.
+        if frame.anchor.is_some() {
+            continue;
+        }
+        if let Some(item) = resolve_one(doc, shaper, id, frame, composed, on, &running) {
+            own.push(item);
+        }
+    }
+
+    // What each page's headings say, read off the layout just made.
+    let running = Running::read(doc, &own);
+
     let mut items = Vec::new();
 
     // What each page inherits from its parent, drawn **behind** its own
@@ -263,7 +308,9 @@ fn resolve_pages<'a>(
     // The offset is applied to the resolved item rather than to the frame,
     // because nothing is moved. One master item is drawn once per page that
     // inherits it, from a single frame — copying it onto each page is the
-    // thing a master exists in order not to do.
+    // thing a master exists in order not to do. What *is* per page is what
+    // the text says: the item is resolved once per inheriting page, with that
+    // page's number, so one master folio reads "12" on page 12.
     for page in shown.iter().copied() {
         let Some(area) = doc.spread_of(page).and_then(|s| doc.spread_area(s)) else {
             continue;
@@ -280,7 +327,9 @@ fn resolve_pages<'a>(
                 let Some(frame) = doc.frame(leaf) else {
                     continue;
                 };
-                let Some(mut resolved) = resolve_one(doc, shaper, leaf, frame, composed) else {
+                let Some(mut resolved) =
+                    resolve_one(doc, shaper, leaf, frame, composed, page, &running)
+                else {
                     continue;
                 };
                 resolved.transform = resolved.transform.then(Transform::translate(dx, dy));
@@ -290,32 +339,11 @@ fn resolve_pages<'a>(
         }
     }
 
-    // Everything standing on a page this scope is showing. A parent's own
-    // items are drawn when the parent is what is being looked at, and only
-    // then — otherwise a parent spread would sit in the scroll a person is
-    // trying to lay out in.
-    for id in doc.paint_order() {
-        let Some(on) = doc.page_of_frame(id) else {
-            continue;
-        };
-        if !shown.contains(&on) {
-            continue;
-        }
-        let Some(frame) = doc.frame(id) else { continue };
-        // An anchored frame is placed by the text it sits in, below. Its own
-        // bounds say how big it is and nothing about where it goes, so drawing
-        // it here would put it wherever it was last left.
-        if frame.anchor.is_some() {
-            continue;
-        }
-        if let Some(item) = resolve_one(doc, shaper, id, frame, composed) {
-            items.push(item);
-        }
-    }
+    items.extend(own);
 
     // After the hosts, because where an anchored object lands is not known
     // until the text around it has been broken into lines.
-    let anchored = resolve_anchored(doc, shaper, composed, &items);
+    let anchored = resolve_anchored(doc, shaper, composed, &items, &running);
     items.extend(anchored);
 
     ResolvedDocument { items, pages }
@@ -335,6 +363,7 @@ fn resolve_anchored(
     shaper: &mut Shaper,
     composed: Option<(StoryId, &TextStory)>,
     hosts: &[ResolvedItem],
+    running: &Running,
 ) -> Vec<ResolvedItem> {
     let mut out = Vec::new();
 
@@ -364,7 +393,10 @@ fn resolve_anchored(
                 continue;
             };
             let Some(frame) = doc.frame(id) else { continue };
-            let Some(mut item) = resolve_one(doc, shaper, id, frame, composed) else {
+            // On whichever page its host was resolved for: an object anchored
+            // in a parent's text is drawn on every page inheriting it.
+            let Some(on) = host.on else { continue };
+            let Some(mut item) = resolve_one(doc, shaper, id, frame, composed, on, running) else {
                 continue;
             };
 
@@ -472,6 +504,7 @@ fn story_starts_at<'a>(
     shaper: &mut Shaper,
     frame: FrameId,
     composed: Option<(StoryId, &'a TextStory)>,
+    running: &Running,
 ) -> usize {
     let chain = doc.thread_of(frame);
     let Some(at) = chain.iter().position(|f| *f == frame) else {
@@ -493,7 +526,14 @@ fn story_starts_at<'a>(
             continue;
         };
 
-        let flowed = compose_frame(doc, shaper, *id, before, *story, text, from);
+        // Each earlier frame is composed on its own page: a "continued on
+        // page 9" in frame one is one character wide on page 8 and could be
+        // two on page 98, and the break it moves decides where this frame's
+        // text starts.
+        let Some(on) = doc.page_of_frame(*id) else {
+            continue;
+        };
+        let flowed = compose_frame(doc, shaper, *id, before, *story, text, from, on, running);
         // A frame that held nothing hands the story on untouched rather than
         // restarting it: treating "placed nothing" as zero would loop the
         // whole chain back to the beginning.
@@ -504,6 +544,7 @@ fn story_starts_at<'a>(
     from
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compose_frame(
     doc: &Document,
     shaper: &mut Shaper,
@@ -512,6 +553,8 @@ fn compose_frame(
     story_id: StoryId,
     story: &TextStory,
     from: usize,
+    on: PageId,
+    running: &Running,
 ) -> tessera_text::shape::Flowed {
     let FrameKind::Text { layout, .. } = &frame.kind else {
         unreachable!()
@@ -585,8 +628,59 @@ fn compose_frame(
         .into_iter()
         .map(|(at, _, width, height)| tessera_text::shape::InlineObject { at, width, height })
         .collect();
-    let shaped = shaper.shape_around_with_objects(story, doc, measure, from, &obstacles, &anchored);
+    // The document resolves the styles; the page says what the markers read
+    // as. One object answering both, so the shaper asks one question.
+    let styles = OnPage::new(doc, variables_for(doc, id, on, running));
+    let shaped =
+        shaper.shape_around_with_objects(story, &styles, measure, from, &obstacles, &anchored);
     tessera_text::shape::flow_on_grid(shaped, &boxes, vertical, grid)
+}
+
+/// What the markers in `frame`'s text read as when it stands on `on`.
+///
+/// A page not in the reading order — a parent's — has no number, and its
+/// marker reads as the parent's prefix, which is what every layout tool shows
+/// on a parent page and what tells a person the marker is there.
+fn variables_for(doc: &Document, frame: FrameId, on: PageId, running: &Running) -> Variables {
+    let label_of = |page: PageId| -> String {
+        doc.page_label(page).unwrap_or_else(|| {
+            doc.master_ids()
+                .find(|m| doc.pages_of_master(*m).contains(&page))
+                .and_then(|m| doc.masters.get(m))
+                .map(|m| m.name.split('-').next().unwrap_or("").trim().to_owned())
+                .unwrap_or_default()
+        })
+    };
+    let number = doc.page_number(on);
+
+    // The pages holding the frames either side of this one in its thread —
+    // "continued on page 9", "continued from page 7".
+    let chain = doc.thread_of(frame);
+    let at = chain.iter().position(|f| *f == frame);
+    let neighbour = |offset: isize| -> String {
+        at.and_then(|i| i.checked_add_signed(offset))
+            .and_then(|i| chain.get(i))
+            .and_then(|f| doc.page_of_frame(*f))
+            .map(label_of)
+            .unwrap_or_default()
+    };
+
+    Variables {
+        page_number: label_of(on),
+        next_page_number: neighbour(1),
+        previous_page_number: neighbour(-1),
+        section_marker: number.map(|n| n.marker).unwrap_or_default(),
+        variables: doc
+            .variables
+            .iter()
+            .map(|v| match &v.kind {
+                tessera_document::variables::VariableKind::Custom(text) => text.clone(),
+                tessera_document::variables::VariableKind::RunningHeader { style, which } => {
+                    running.header(on, *style, *which).unwrap_or_default()
+                }
+            })
+            .collect(),
+    }
 }
 
 /// One frame, resolved.
@@ -601,6 +695,8 @@ fn resolve_one<'a>(
     id: FrameId,
     frame: &tessera_document::nodes::Frame,
     composed: Option<(StoryId, &'a TextStory)>,
+    on: PageId,
+    running: &Running,
 ) -> Option<ResolvedItem> {
     let kind = match &frame.kind {
         FrameKind::Rectangle => ResolvedKind::Rectangle {
@@ -689,8 +785,8 @@ fn resolve_one<'a>(
                 .and_then(|f| f.colour)
                 .unwrap_or(tessera_color::Color::BLACK);
             let colour = doc.resolve_colour(&colour);
-            let from = story_starts_at(doc, shaper, id, composed);
-            let flowed = compose_frame(doc, shaper, id, frame, *story_id, story, from);
+            let from = story_starts_at(doc, shaper, id, composed, running);
+            let flowed = compose_frame(doc, shaper, id, frame, *story_id, story, from, on, running);
 
             ResolvedKind::Text {
                 shaped: flowed.text,
@@ -702,6 +798,7 @@ fn resolve_one<'a>(
 
     Some(ResolvedItem {
         frame: id,
+        on: Some(on),
         bounds: frame.bounds,
         transform: frame.transform,
         spread_area: doc.spread_of_frame(id).and_then(|s| doc.spread_area(s)),
@@ -722,6 +819,7 @@ fn resolve_one<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tessera_document::ids::MasterId;
     use tessera_document::nodes::Frame;
     use tessera_text::story::Story;
 
@@ -1271,6 +1369,177 @@ mod tests {
             "every inherited item knows its sheet"
         );
         assert_ne!(areas[0], areas[1], "and they are different sheets");
+    }
+
+    // --- page numbers, sections, running headers -----------------------------
+
+    /// A document of `pages` pages, none facing, every one built on a master
+    /// that carries one text frame saying `text`.
+    fn a_master_folio(pages: usize, text: &str) -> (Document, FrameId, MasterId) {
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        let master = doc.add_master("A-Master");
+        let on = doc.pages_of_master(master)[0];
+        let bounds = doc.pages[on].bounds;
+        let layer = doc.default_layer().expect("layer");
+        let story = doc.add_story(Story::new(text));
+        let folio = doc.add_frame(layer, {
+            let mut f = rect(bounds.x + 10.0, bounds.y + 10.0, 300.0, 40.0);
+            f.kind = FrameKind::text(story);
+            f
+        });
+        for _ in 1..pages {
+            doc.add_page();
+        }
+        for page in doc.page_ids().collect::<Vec<_>>() {
+            doc.apply_master(page, Some(master));
+        }
+        (doc, folio, master)
+    }
+
+    fn glyphs_of(item: &ResolvedItem) -> Vec<u32> {
+        let ResolvedKind::Text { shaped, .. } = &item.kind else {
+            panic!("not text");
+        };
+        shaped
+            .lines
+            .iter()
+            .flat_map(|l| l.glyphs().map(|g| g.glyph_id))
+            .collect()
+    }
+
+    /// The glyphs `text` shapes to, for comparing against what a marker
+    /// became: the resolved item holds glyphs, not characters.
+    fn glyphs_for(shaper: &mut Shaper, text: &str) -> Vec<u32> {
+        let shaped = shaper.shape(
+            &Story::new(text),
+            &tessera_text::story::NoStyles::default(),
+            300.0,
+        );
+        shaped
+            .lines
+            .iter()
+            .flat_map(|l| l.glyphs().map(|g| g.glyph_id))
+            .collect()
+    }
+
+    #[test]
+    fn a_master_folio_reads_each_pages_own_number() {
+        use tessera_text::variables::Marker;
+        let (doc, folio, _) = a_master_folio(3, &Marker::PageNumber.character().to_string());
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+
+        let folios: Vec<&ResolvedItem> =
+            resolved.items.iter().filter(|i| i.frame == folio).collect();
+        assert_eq!(folios.len(), 3, "one frame, three pages");
+        let pages: Vec<PageId> = doc.page_ids().collect();
+        for (n, page) in pages.iter().enumerate() {
+            let on_page = folios
+                .iter()
+                .find(|i| i.on == Some(*page))
+                .expect("resolved for the page");
+            assert_eq!(
+                glyphs_of(on_page),
+                glyphs_for(&mut shaper, &(n + 1).to_string()),
+                "page {} reads its own number",
+                n + 1
+            );
+        }
+    }
+
+    #[test]
+    fn a_section_restarts_the_count_in_its_own_style() {
+        use tessera_document::sections::Section;
+        use tessera_text::story::Numbering;
+        use tessera_text::variables::Marker;
+        let (mut doc, folio, _) = a_master_folio(3, &Marker::PageNumber.character().to_string());
+        let pages: Vec<PageId> = doc.page_ids().collect();
+        doc.set_sections(vec![Section {
+            first: pages[1],
+            start: Some(1),
+            style: Numbering::LowerRoman,
+            prefix: String::new(),
+            marker: String::new(),
+        }]);
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+        let on = |page: PageId| {
+            resolved
+                .items
+                .iter()
+                .find(|i| i.frame == folio && i.on == Some(page))
+                .map(glyphs_of)
+                .expect("resolved")
+        };
+        assert_eq!(on(pages[0]), glyphs_for(&mut shaper, "1"));
+        assert_eq!(on(pages[1]), glyphs_for(&mut shaper, "i"));
+        assert_eq!(on(pages[2]), glyphs_for(&mut shaper, "ii"));
+    }
+
+    #[test]
+    fn on_the_parent_itself_the_folio_reads_the_parents_prefix() {
+        use tessera_text::variables::Marker;
+        let (doc, folio, master) = a_master_folio(1, &Marker::PageNumber.character().to_string());
+        let mut shaper = Shaper::new();
+        let resolved = resolve_scope(&doc, &mut shaper, Scope::Master(master));
+        let item = resolved
+            .items
+            .iter()
+            .find(|i| i.frame == folio)
+            .expect("the parent shows it");
+        assert_eq!(glyphs_of(item), glyphs_for(&mut shaper, "A"));
+    }
+
+    #[test]
+    fn a_running_header_reads_the_pages_heading() {
+        use tessera_document::variables::{TextVariable, Which};
+        use tessera_text::story::{ParagraphFormat, ParagraphStyle};
+        use tessera_text::variables::Marker;
+        let (mut doc, folio, _) = a_master_folio(2, &Marker::Variable(0).character().to_string());
+        let heading = doc.add_paragraph_style(ParagraphStyle {
+            name: "Heading".into(),
+            based_on: None,
+            format: ParagraphFormat::default(),
+        });
+        doc.set_variables(vec![TextVariable::running_header(
+            "Chapter",
+            heading,
+            Which::First,
+        )]);
+
+        // Page two carries a heading; page one carries nothing in that style.
+        let pages: Vec<PageId> = doc.page_ids().collect();
+        let bounds = doc.pages[pages[1]].bounds;
+        let layer = doc.default_layer().expect("layer");
+        let mut story = Story::new(
+            "Alpha
+Some body copy.",
+        );
+        story.set_paragraph_style(0..6, Some(heading));
+        let story = doc.add_story(story);
+        doc.add_frame(layer, {
+            let mut f = rect(bounds.x + 10.0, bounds.y + 100.0, 300.0, 200.0);
+            f.kind = FrameKind::text(story);
+            f
+        });
+
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+        let on = |page: PageId| {
+            resolved
+                .items
+                .iter()
+                .find(|i| i.frame == folio && i.on == Some(page))
+                .map(glyphs_of)
+                .expect("resolved")
+        };
+        assert_eq!(on(pages[1]), glyphs_for(&mut shaper, "Alpha"));
+        assert!(
+            on(pages[0]).is_empty(),
+            "no heading on page one, so nothing to say"
+        );
     }
 
     #[test]

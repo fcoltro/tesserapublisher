@@ -218,7 +218,10 @@ person reaches for once they start setting copy, and none of it had a row:
 | OpenType features (figures, ligatures, stylistic sets) | small caps only | model | **M9** |
 | Kerning control, optical kerning | metrics kerning only | model | **M9** (from M2) |
 | H&J parameters | ✗ | model | **M9** (from M2) |
-| Footnotes, TOC, index, hyperlinks, bookmarks | ✗ | model | — |
+| Auto page number, sections, section marker | ✅ | — | done, M10 |
+| Text variables; running header (paragraph style) | ✅ custom text and running header | — | done, M10 |
+| Footnotes, TOC, index | ✗ | model | **M11** |
+| Hyperlinks, bookmarks | ✗ | model | — |
 | Language on text; special-character insertion | ✅ | — | done, M9 |
 | Glyphs panel, typographer's quotes | ✗ | view | — |
 | Story editor, spell check | ✗ | view | — |

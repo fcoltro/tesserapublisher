@@ -742,6 +742,16 @@ pub trait Styles {
         None
     }
 
+    /// What the page-number and variable markers read as, where this text is
+    /// being laid out.
+    ///
+    /// `None` when whoever is shaping has no page in mind — a test, the caret
+    /// measuring a line — and every marker then reads as its placeholder. See
+    /// [`crate::variables`].
+    fn variables(&self) -> Option<&crate::variables::Variables> {
+        None
+    }
+
     /// `id`'s formatting with its whole based-on chain folded in.
     ///
     /// Oldest ancestor first, so a child overrides its parent — which is what

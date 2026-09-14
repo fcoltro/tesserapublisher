@@ -471,17 +471,16 @@ fn actions(ui: &mut Ui, state: &mut TesseraApp) {
 /// "4" or "2–3", by where the spread's pages fall in the reading order.
 fn page_numbers(state: &TesseraApp, spread: SpreadId) -> Option<String> {
     let doc = state.active().document();
-    let all: Vec<_> = doc.page_ids().collect();
     let pages = doc.pages_of(spread);
 
-    let first = all
-        .iter()
-        .position(|p| Some(*p) == pages.first().copied())?
-        + 1;
+    // As the section writes it — "iv", "A-12" — because that is what the
+    // folio on the page says, and a panel that said "4" under a page printed
+    // "iv" would be describing a different book.
+    let first = doc.page_label(*pages.first()?)?;
     if pages.len() < 2 {
-        return Some(first.to_string());
+        return Some(first);
     }
-    let last = all.iter().position(|p| Some(*p) == pages.last().copied())? + 1;
+    let last = doc.page_label(*pages.last()?)?;
     Some(format!("{first}–{last}"))
 }
 

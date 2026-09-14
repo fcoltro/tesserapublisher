@@ -156,6 +156,17 @@ pub struct Document {
     /// a default it never chose.
     #[serde(default)]
     pub setup: DocumentSetup,
+
+    /// Where page numbering restarts. Empty means 1, 2, 3 from the first
+    /// page; see [`crate::sections`].
+    #[serde(default)]
+    pub sections: Vec<crate::sections::Section>,
+
+    /// The text variables this document defines, in marker order: a story's
+    /// `Marker::Variable(n)` is the `n`th of these. See [`crate::variables`].
+    #[serde(default)]
+    pub variables: Vec<crate::variables::TextVariable>,
+
     /// Bumped on every mutation. The renderer rebuilds its scene only when
     /// this moves, so panning the camera does not rebuild anything.
     ///
@@ -201,6 +212,8 @@ impl Document {
                 facing_pages: true,
                 ..DocumentSetup::default()
             },
+            sections: Vec::new(),
+            variables: Vec::new(),
             revision: 0,
         };
 
@@ -661,6 +674,50 @@ impl Document {
         self.reflow_spreads();
     }
 
+    /// Replace the sections. One call for all of them, so a dialog that
+    /// edits one is one undo entry.
+    pub fn set_sections(&mut self, sections: Vec<crate::sections::Section>) {
+        self.sections = sections;
+        self.touch();
+    }
+
+    /// Replace the text variables.
+    ///
+    /// **Positions are identities**: a story refers to a variable by its
+    /// index, so a caller removing one from the middle renumbers every marker
+    /// after it. The number is capped at what a marker can name.
+    pub fn set_variables(&mut self, mut variables: Vec<crate::variables::TextVariable>) {
+        variables.truncate(crate::variables::MOST_VARIABLES);
+        self.variables = variables;
+        self.touch();
+    }
+
+    /// Every document page's number, in reading order.
+    pub fn page_numbers(&self) -> Vec<(PageId, crate::sections::PageNumber)> {
+        let pages: Vec<PageId> = self.page_ids().collect();
+        let numbers = crate::sections::number_pages(&pages, &self.sections);
+        pages.into_iter().zip(numbers).collect()
+    }
+
+    /// The number of one page, as its section writes it. `None` for a page
+    /// that is not in the reading order — a master's.
+    pub fn page_number(&self, page: PageId) -> Option<crate::sections::PageNumber> {
+        self.page_numbers()
+            .into_iter()
+            .find(|(id, _)| *id == page)
+            .map(|(_, n)| n)
+    }
+
+    /// What a page's number is printed as: "iv", "A-12".
+    pub fn page_label(&self, page: PageId) -> Option<String> {
+        self.page_number(page).map(|n| n.label)
+    }
+
+    /// The section `page` is in, if it is a stored one.
+    pub fn section_of(&self, page: PageId) -> Option<usize> {
+        self.page_number(page).and_then(|n| n.section)
+    }
+
     /// Resize every page. Per-page sizes are milestone 3.
     pub fn set_page_size(&mut self, width: f64, height: f64) {
         let ids: Vec<_> = self.pages.keys().collect();
@@ -827,6 +884,10 @@ impl Document {
             self.remove_frame(frame);
         }
         self.pages.remove(id);
+        // A section that began on this page has nowhere to begin. The pages
+        // after it fall into the section before, which is where they would
+        // have been had this page never existed.
+        self.sections.retain(|s| s.first != id);
 
         // The sequence without it, then repacked: taking page two out of
         // 1 | 2-3 | 4-5 has to give 1 | 3-4 | 5, not 1 | 3 | 4-5, or every

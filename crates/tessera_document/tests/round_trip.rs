@@ -762,15 +762,57 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_twenty_one() {
+fn the_format_version_is_twenty_two() {
     // A tripwire, not a fact worth asserting on its own: changing it means
     // stopping to ask whether a migration step is owed. Sometimes the answer is
     // no — version 19 added `corners`, whose default is exactly what older
     // documents meant; 20 added a `Table` frame kind, which no older document
     // can contain; 21 added `anchor`, whose default of `None` is what every
-    // frame written before anchoring meant — and the point is that somebody had
-    // to answer.
-    assert_eq!(format::FORMAT_VERSION, 21);
+    // frame written before anchoring meant; 22 added `sections` and
+    // `variables`, whose empty defaults are what every earlier document meant
+    // — and the point is that somebody had to answer.
+    assert_eq!(format::FORMAT_VERSION, 22);
+}
+
+#[test]
+fn sections_and_variables_survive_a_round_trip() {
+    use tessera_document::sections::Section;
+    use tessera_document::variables::{TextVariable, Which};
+    use tessera_text::story::{Numbering, ParagraphStyle};
+
+    let mut doc = Document::default();
+    let first = doc.page_ids().next().expect("a page");
+    let second = doc.add_page();
+    let style = doc.add_paragraph_style(ParagraphStyle {
+        name: "Heading".into(),
+        based_on: None,
+        format: Default::default(),
+    });
+    doc.set_sections(vec![
+        Section {
+            first,
+            start: Some(1),
+            style: Numbering::LowerRoman,
+            prefix: String::new(),
+            marker: "Front matter".into(),
+        },
+        Section::starting_at(second),
+    ]);
+    doc.set_variables(vec![
+        TextVariable::custom("Product", "Tessera"),
+        TextVariable::running_header("Chapter", style, Which::Last),
+    ]);
+    assert_eq!(doc.page_label(first).as_deref(), Some("i"));
+    assert_eq!(doc.page_label(second).as_deref(), Some("1"));
+
+    let path =
+        std::env::temp_dir().join(format!("tessera-sections-{}.tessera", std::process::id()));
+    format::save(&doc, &path).expect("save");
+    let back = format::load(&path).expect("load");
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(back.sections, doc.sections);
+    assert_eq!(back.variables, doc.variables);
+    assert_eq!(back.page_label(second).as_deref(), Some("1"));
 }
 
 #[test]

@@ -25,12 +25,14 @@ pub mod preflight_panel;
 pub mod quit;
 pub mod rail;
 pub mod rulers;
+pub mod sections;
 pub mod settings;
 pub mod step_repeat;
 pub mod styles;
 pub mod swatches;
 pub mod text_edit;
 pub mod tour;
+pub mod variables;
 pub mod vello_host;
 pub mod viewport;
 
@@ -122,6 +124,8 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     export_dialog::show(ui.ctx(), state);
     new_document::show(ui.ctx(), state);
     step_repeat::show(ui.ctx(), state);
+    sections::show(ui.ctx(), state);
+    variables::show(ui.ctx(), state);
     styles::editor(ui.ctx(), state);
     find::show(ui.ctx(), state);
 

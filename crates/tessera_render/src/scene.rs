@@ -1472,6 +1472,7 @@ mod tests {
             pages: vec![resolved_page()],
             items: vec![ResolvedItem {
                 frame: FrameId::default(),
+                on: None,
                 transform: Transform::IDENTITY,
                 spread_area: None,
                 blend: tessera_document::blending::Blending::PLAIN,

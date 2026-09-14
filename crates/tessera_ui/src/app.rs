@@ -343,6 +343,8 @@ pub struct TesseraApp {
 
     /// The Step and Repeat box, and what it was last asked for.
     pub step: crate::view::step_repeat::StepWindow,
+    pub numbering: crate::view::sections::SectionsWindow,
+    pub variables: crate::view::variables::VariablesWindow,
     /// Find and Change. Modeless, so it is not in `modal_open`.
     pub find: crate::view::find::FindWindow,
 
@@ -483,6 +485,8 @@ impl TesseraApp {
             picked_anchor: None,
             new_document: crate::view::new_document::NewDocument::default(),
             step: crate::view::step_repeat::StepWindow::default(),
+            numbering: crate::view::sections::SectionsWindow::default(),
+            variables: crate::view::variables::VariablesWindow::default(),
             editing_master: None,
             rail_open: true,
             sections: Sections::default(),
@@ -674,6 +678,28 @@ impl TesseraApp {
     /// A parent whose id has gone — deleted while it was open — falls back to
     /// the document rather than showing nothing, which is what a stale id
     /// would otherwise buy.
+    /// The document page a person is working on: the selection's, else the
+    /// first of the spread the view is turned to. `None` while a parent is
+    /// being edited, since a parent's pages are nobody's page number.
+    pub fn current_page(&self) -> Option<tessera_document::ids::PageId> {
+        if self.editing_master.is_some() {
+            return None;
+        }
+        let doc = self.active().document();
+        let shown: Vec<_> = doc.page_ids().collect();
+        self.active()
+            .selection
+            .as_slice()
+            .iter()
+            .find_map(|id| doc.page_of_frame(*id).filter(|page| shown.contains(page)))
+            .or_else(|| {
+                doc.spread_ids()
+                    .nth(self.active().current_spread)
+                    .and_then(|spread| doc.pages_of(spread).into_iter().next())
+            })
+            .or_else(|| shown.first().copied())
+    }
+
     pub fn scope(&self) -> tessera_layout::resolve::Scope {
         match self.editing_master {
             Some(id) if self.active().document().masters.contains_key(id) => {

@@ -6,6 +6,7 @@
 
 pub mod cache;
 pub mod resolve;
+pub mod running;
 pub mod snap;
 pub mod table;
 

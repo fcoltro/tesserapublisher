@@ -24,9 +24,11 @@ pub mod object_style;
 pub mod paint;
 pub mod path;
 pub mod polygon;
+pub mod sections;
 pub mod shadow;
 pub mod table;
 mod transfer;
+pub mod variables;
 
 pub use document::{Document, StoryMap, ZMove};
 pub use history::History;

@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 21;
+pub const FORMAT_VERSION: u32 = 22;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -105,6 +105,15 @@ pub fn load(path: &Path) -> Result<Document, FormatError> {
 /// ago follows exactly the path a document written two versions ago does, and
 /// each step only has to know about its own change.
 fn migrate(value: &mut serde_json::Value, from: u32) {
+    // 21 -> 22: the document gained `sections` and `variables`. **No step, on
+    // purpose.** Both carry `serde(default)` and both default to empty, and
+    // empty is the truth: a document written before sections existed numbers
+    // 1, 2, 3 from its first page, which is exactly what no sections means,
+    // and it defines no variables. The version moves so that an older build
+    // refuses a document whose page numbers restart or whose stories carry
+    // variable markers, rather than opening it with every page numbered from
+    // one and every marker reading as nothing.
+
     // 20 -> 21: frames gained `anchor`. **No step, on purpose.** It carries
     // `serde(default)` and its default is `None` — not anchored — which is what
     // every frame written before anchoring existed meant. The version moves so

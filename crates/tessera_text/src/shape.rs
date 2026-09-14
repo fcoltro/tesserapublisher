@@ -745,6 +745,38 @@ fn shaping_text(
             map.push((text.len(), at));
 
             let piece_start = text.len();
+
+            // A marker reads as what the page says it does — see
+            // `crate::variables`. The whole expansion maps back to the one
+            // stored character, the way a capital synthesised from `ß` does,
+            // so a caret cannot get inside a page number.
+            if let Some(marker) = crate::variables::Marker::of(character) {
+                transformed = true;
+                let expansion = styles
+                    .variables()
+                    .map(|v| v.text_of(marker).to_owned())
+                    .unwrap_or_else(|| marker.placeholder().to_owned());
+                match case {
+                    Case::Normal | Case::SmallCaps => text.push_str(&expansion),
+                    Case::Upper => text.push_str(&expansion.to_uppercase()),
+                    Case::Lower => text.push_str(&expansion.to_lowercase()),
+                }
+                if text.len() > piece_start {
+                    match pieces.last_mut() {
+                        Some(previous)
+                            if previous.shaped.end == piece_start && previous.format == format =>
+                        {
+                            previous.shaped.end = text.len();
+                        }
+                        _ => pieces.push(Piece {
+                            shaped: piece_start..text.len(),
+                            format: format.clone(),
+                        }),
+                    }
+                }
+                continue;
+            }
+
             let scale = match case {
                 Case::Normal => {
                     text.push(character);
@@ -1730,6 +1762,16 @@ impl ShapeKey {
                 para.range,
                 story.resolve_paragraph(para, styles)
             );
+        }
+        // A page number is part of what the text says, so two pages showing
+        // the same master story must not share a layout. Written only when
+        // the story carries a marker, so ordinary stories key as before.
+        if story
+            .text
+            .chars()
+            .any(|c| crate::variables::Marker::of(c).is_some())
+        {
+            let _ = write!(runs, "{:?}", styles.variables());
         }
 
         Self {
@@ -4076,6 +4118,78 @@ mod tests {
         );
         assert_eq!(p.to_stored(0), 0, "and a click on the marker is the start");
         assert_eq!(p.to_stored(p.shaped_text.len()), 4);
+    }
+
+    // --- page numbers and variables ------------------------------------------
+
+    /// Styles that know what page they are on.
+    struct OnPage(crate::variables::Variables);
+
+    impl Styles for OnPage {
+        fn character(
+            &self,
+            _: crate::story::CharacterStyleId,
+        ) -> Option<&crate::story::CharacterFormat> {
+            None
+        }
+        fn paragraph(
+            &self,
+            _: crate::story::ParagraphStyleId,
+        ) -> Option<&crate::story::ParagraphFormat> {
+            None
+        }
+        fn document_default(&self) -> crate::story::CharacterFormat {
+            crate::story::CharacterFormat::default()
+        }
+        fn variables(&self) -> Option<&crate::variables::Variables> {
+            Some(&self.0)
+        }
+    }
+
+    fn page(number: &str) -> OnPage {
+        OnPage(crate::variables::Variables {
+            page_number: number.into(),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn a_page_number_marker_reads_as_the_page_and_maps_back_to_one_character() {
+        use crate::variables::Marker;
+        let story = Story::new(format!("p. {}!", Marker::PageNumber.character()));
+        let marker_at = 3;
+        let placed = Shaper::new().layout_paragraphs(&story, &page("142"), 400.0);
+        let p = &placed[0];
+        assert_eq!(p.shaped_text, "p. 142!");
+        // The whole number is the one stored character: a click anywhere in
+        // it lands on the marker, and the character after it is one past.
+        assert_eq!(p.to_stored("p. 1".len()), marker_at);
+        assert_eq!(p.to_stored("p. 14".len()), marker_at);
+        assert_eq!(p.to_stored("p. 142".len()), marker_at + 3);
+        assert_eq!(p.to_shaped(marker_at + 3), "p. 142".len());
+    }
+
+    #[test]
+    fn without_a_page_the_marker_reads_as_a_number_sign() {
+        use crate::variables::Marker;
+        let story = Story::new(format!("p. {}", Marker::PageNumber.character()));
+        let placed = Shaper::new().layout_paragraphs(&story, &NoStyles::default(), 400.0);
+        assert_eq!(placed[0].shaped_text, "p. #");
+    }
+
+    #[test]
+    fn two_pages_do_not_share_one_layout() {
+        use crate::variables::Marker;
+        let story = Story::new(format!("{}", Marker::PageNumber.character()));
+        let mut shaper = Shaper::new();
+        let one = shaper.shape(&story, &page("1"), 400.0);
+        let two = shaper.shape(&story, &page("2"), 400.0);
+        let glyph = |t: &ShapedText| t.lines[0].glyphs().next().map(|g| g.glyph_id);
+        assert_ne!(
+            glyph(&one),
+            glyph(&two),
+            "the cache handed page 2 page 1's layout"
+        );
     }
 
     // --- keep options --------------------------------------------------------

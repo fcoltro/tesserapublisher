@@ -61,6 +61,7 @@ fn rect_doc(bounds: DocRect, fill: Color) -> ResolvedDocument {
     ResolvedDocument {
         items: vec![ResolvedItem {
             frame: FrameId::default(),
+            on: None,
             bounds,
             transform: Transform::IDENTITY,
             spread_area: None,
@@ -347,6 +348,7 @@ fn text_puts_dark_pixels_on_the_page() {
             pages: vec![resolved_page()],
             items: vec![ResolvedItem {
                 frame: FrameId::default(),
+                on: None,
                 bounds: DocRect {
                     x: 2.0,
                     y: 2.0,

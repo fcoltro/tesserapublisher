@@ -504,6 +504,12 @@ pub enum Command {
     /// One command for the whole struct rather than one per field, so that a
     /// page-setup edit is a single undo entry instead of four.
     SetDocumentSetup(tessera_document::nodes::DocumentSetup),
+    /// Replace where page numbering restarts. The whole list at once, so a
+    /// section dialog is one undo entry.
+    SetSections(Vec<tessera_document::sections::Section>),
+    /// Replace the document's text variables. The whole list, for the same
+    /// reason — and because a story names a variable by its position.
+    SetVariables(Vec<tessera_document::variables::TextVariable>),
     /// Resize every page in the document.
     SetPageSize {
         width: f64,
@@ -1676,6 +1682,14 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::SetDocumentSetup(setup) => {
             state.active_mut().document_mut().set_setup(setup);
+        }
+
+        Command::SetSections(sections) => {
+            state.active_mut().document_mut().set_sections(sections);
+        }
+
+        Command::SetVariables(variables) => {
+            state.active_mut().document_mut().set_variables(variables);
         }
 
         Command::SetPageSize { width, height } => {

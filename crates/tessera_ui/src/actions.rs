@@ -13,6 +13,7 @@ use tessera_document::nodes::Axis;
 
 use crate::app::ScreenMode;
 use crate::tools::Tool;
+use tessera_text::variables::Marker;
 
 /// Which menu an action belongs under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +31,9 @@ pub enum Group {
     Type,
     /// The characters with no key, a submenu of Type. See [`Group::submenu`].
     Insert,
+    /// The characters that read as what the page knows — a page number, a
+    /// section marker — a second submenu of Type.
+    Markers,
     Layout,
     Table,
     Window,
@@ -37,7 +41,7 @@ pub enum Group {
 }
 
 impl Group {
-    pub const ALL: [Group; 15] = [
+    pub const ALL: [Group; 16] = [
         Group::File,
         Group::Edit,
         Group::Object,
@@ -49,6 +53,7 @@ impl Group {
         Group::Nudge,
         Group::Type,
         Group::Insert,
+        Group::Markers,
         Group::Layout,
         Group::Table,
         Group::Window,
@@ -72,6 +77,7 @@ impl Group {
             // Twenty-one characters under Type would bury the styles; a
             // submenu is what InDesign does, and for the same reason.
             Group::Insert => Some("Insert special character"),
+            Group::Markers => Some("Insert marker"),
             _ => None,
         }
     }
@@ -98,7 +104,7 @@ impl Group {
             Group::Edit => Some("Edit"),
             Group::Object | Group::Arrange | Group::Transform | Group::Align => Some("Object"),
             Group::View => Some("View"),
-            Group::Type | Group::Insert => Some("Type"),
+            Group::Type | Group::Insert | Group::Markers => Some("Type"),
             Group::Layout => Some("Layout"),
             Group::Table => Some("Table"),
             Group::Window => Some("Window"),
@@ -133,10 +139,16 @@ pub enum Special {
     Registered,
     Trademark,
     Degree,
+    /// The markers: one character each, read as what the page says when the
+    /// text is laid out. See `tessera_text::variables`.
+    CurrentPageNumber,
+    NextPageNumber,
+    PreviousPageNumber,
+    SectionMarker,
 }
 
 impl Special {
-    pub const ALL: [Special; 21] = [
+    pub const ALL: [Special; 25] = [
         Special::EmDash,
         Special::EnDash,
         Special::DiscretionaryHyphen,
@@ -158,6 +170,10 @@ impl Special {
         Special::Registered,
         Special::Trademark,
         Special::Degree,
+        Special::CurrentPageNumber,
+        Special::NextPageNumber,
+        Special::PreviousPageNumber,
+        Special::SectionMarker,
     ];
 
     pub fn character(self) -> char {
@@ -183,6 +199,10 @@ impl Special {
             Special::Registered => '\u{00AE}',
             Special::Trademark => '\u{2122}',
             Special::Degree => '\u{00B0}',
+            Special::CurrentPageNumber => Marker::PageNumber.character(),
+            Special::NextPageNumber => Marker::NextPageNumber.character(),
+            Special::PreviousPageNumber => Marker::PreviousPageNumber.character(),
+            Special::SectionMarker => Marker::SectionMarker.character(),
         }
     }
 
@@ -209,6 +229,10 @@ impl Special {
             Special::Registered => "Registered",
             Special::Trademark => "Trademark",
             Special::Degree => "Degree",
+            Special::CurrentPageNumber => "Current page number",
+            Special::NextPageNumber => "Next page number",
+            Special::PreviousPageNumber => "Previous page number",
+            Special::SectionMarker => "Section marker",
         }
     }
 
@@ -219,6 +243,7 @@ impl Special {
             Special::EnDash => Some("Alt+-"),
             Special::DiscretionaryHyphen => Some("Ctrl+Shift+-"),
             Special::NonBreakingSpace => Some("Ctrl+Alt+X"),
+            Special::CurrentPageNumber => Some("Ctrl+Alt+Shift+N"),
             _ => None,
         }
     }
@@ -254,6 +279,10 @@ pub enum Run {
     FindAndChange,
     /// Draw a table into the frame the next drag makes, or ask how big.
     InsertTable,
+    /// Where the numbering restarts, and how it runs: the section options.
+    SectionOptions,
+    /// Define the document's text variables, and put one at the caret.
+    TextVariables,
     /// Add a row or column beside the cell being edited.
     TableRow {
         above: bool,
@@ -318,6 +347,8 @@ pub fn guard(run: Run) -> Guard {
 
         // Something has to be selected for these to mean anything.
         Run::StepAndRepeat => Guard::NeedsSelection,
+        // Dialogs over the document, not over the text.
+        Run::SectionOptions | Run::TextVariables => Guard::Always,
         // Opening a search box is not an edit and needs no selection. It is
         // guarded against typing all the same: Ctrl+F inside the search box
         // itself must not reopen the window under the caret.
@@ -513,6 +544,38 @@ pub fn all() -> &'static [Action] {
         // about the grid rather than about the object, and filing them under
         // Object would bury them among things that act on the frame.
         a("Insert table", None, Group::Table, Run::InsertTable),
+        a(
+            "Numbering and section options\u{2026}",
+            None,
+            Group::Layout,
+            Run::SectionOptions,
+        ),
+        // The markers. A page number typed on a parent page reads as each
+        // page's own; the shortcut is InDesign's.
+        a(
+            "Current page number",
+            Special::CurrentPageNumber.shortcut(),
+            Group::Markers,
+            Run::Insert(Special::CurrentPageNumber),
+        ),
+        a(
+            "Next page number",
+            None,
+            Group::Markers,
+            Run::Insert(Special::NextPageNumber),
+        ),
+        a(
+            "Previous page number",
+            None,
+            Group::Markers,
+            Run::Insert(Special::PreviousPageNumber),
+        ),
+        a(
+            "Section marker",
+            None,
+            Group::Markers,
+            Run::Insert(Special::SectionMarker),
+        ),
         // The characters with no key. One action each, so the palette finds
         // "em dash" and the Type menu lists them; the four typed all day
         // carry InDesign's shortcuts.
@@ -938,6 +1001,12 @@ pub fn all() -> &'static [Action] {
             Group::Type,
             ToggleStyles,
         ),
+        a(
+            "Text variables\u{2026}",
+            None,
+            Group::Type,
+            Run::TextVariables,
+        ),
         // The Layout menu, which milestone 1.5 left empty for want of exactly
         // these commands. The menu bar is generated from this list, so adding
         // them is what makes the menu appear.
@@ -1167,6 +1236,13 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         // Opens the box rather than doing anything: how many and how far are
         // the whole question, and guessing them would make a mess to undo.
         Run::StepAndRepeat => state.step.open = true,
+        Run::SectionOptions => {
+            let page = state.current_page();
+            let mut window = std::mem::take(&mut state.numbering);
+            window.open(state.active().document(), page);
+            state.numbering = window;
+        }
+        Run::TextVariables => state.variables.open = true,
         Run::FindAndChange => state.find.open(),
         Run::InsertTable => {
             // Into the type area of the first page, which is where a table
@@ -1373,6 +1449,91 @@ fn leads_somewhere(state: &crate::app::TesseraApp, id: tessera_document::ids::Fr
 mod tests {
 
     #[test]
+    fn a_page_number_typed_on_a_parent_reads_as_each_pages_own() {
+        use crate::app::TesseraApp;
+        use tessera_document::nodes::FrameKind;
+        use tessera_geometry::DocRect;
+        use tessera_layout::resolve::ResolvedKind;
+
+        let mut state = TesseraApp::headless();
+        state.active_mut().document_mut().setup.facing_pages = false;
+        state.active_mut().document_mut().reflow_spreads();
+        crate::apply(&mut state, crate::Command::AddPage);
+        crate::apply(&mut state, crate::Command::AddMaster);
+        let master = state
+            .active()
+            .document()
+            .master_ids()
+            .next()
+            .expect("a master");
+        crate::apply(
+            &mut state,
+            crate::Command::ApplyMasterToAll {
+                master: Some(master),
+            },
+        );
+        let on = state.active().document().pages_of_master(master)[0];
+        let bounds = state.active().document().pages[on].bounds;
+
+        // Draw on the parent, type the marker there.
+        state.editing_master = Some(master);
+        crate::apply(
+            &mut state,
+            crate::Command::AddTextFrame(DocRect {
+                x: bounds.x + 10.0,
+                y: bounds.y + 10.0,
+                width: 200.0,
+                height: 40.0,
+            }),
+        );
+        let folio = state.active().selection.single().expect("selected");
+        crate::view::viewport::start_editing(&mut state, folio);
+        super::run(
+            &mut state,
+            super::Run::Insert(super::Special::CurrentPageNumber),
+        );
+        state.active_mut().editing = None;
+
+        let FrameKind::Text { story, .. } = state.active().document().frame(folio).unwrap().kind
+        else {
+            panic!("a text frame");
+        };
+        assert_eq!(
+            state.active().document().story(story).unwrap().text,
+            tessera_text::variables::Marker::PageNumber
+                .character()
+                .to_string(),
+            "the story holds the marker, not a number"
+        );
+
+        // Back on the document, each page shows its own number: the two
+        // resolved copies of the one frame hold different glyphs.
+        state.editing_master = None;
+        let doc = state.active().document().clone();
+        let mut shaper = tessera_text::Shaper::new();
+        let resolved = tessera_layout::resolve(&doc, &mut shaper);
+        let glyphs: Vec<Vec<u32>> = resolved
+            .items
+            .iter()
+            .filter(|i| i.frame == folio)
+            .map(|i| match &i.kind {
+                ResolvedKind::Text { shaped, .. } => shaped
+                    .lines
+                    .iter()
+                    .flat_map(|l| l.glyphs().map(|g| g.glyph_id))
+                    .collect(),
+                _ => panic!("text"),
+            })
+            .collect();
+        assert_eq!(glyphs.len(), 2, "one frame, two pages");
+        assert_eq!(glyphs[0].len(), 1);
+        assert_ne!(
+            glyphs[0], glyphs[1],
+            "page one and page two read differently"
+        );
+    }
+
+    #[test]
     fn inserting_a_special_character_types_it_at_the_caret() {
         use crate::app::TesseraApp;
         use tessera_document::nodes::FrameKind;
@@ -1466,6 +1627,7 @@ mod tests {
                 | "Preflight"
                 | "Paragraph and character styles"
                 | "Preview view"
+                | "Current page number"
                 | "Em dash"
                 | "En dash"
                 | "Discretionary hyphen"
