@@ -916,11 +916,12 @@ fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
             return;
         }
     }
+    let smart_quotes = state.prefs.typographers_quotes;
     let Some((id, buffer)) = state.active_mut().editing.as_mut() else {
         return;
     };
     let id = *id;
-    let changed = text_edit::handle_events(ui, buffer);
+    let changed = text_edit::handle_events(ui, buffer, smart_quotes);
     // The whole story, not just its text. The buffer's copy carries the runs
     // its own edits maintained; copying the string alone would leave the
     // document's runs describing a length its text no longer has, on every

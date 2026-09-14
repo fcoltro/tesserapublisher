@@ -14,6 +14,7 @@ pub mod document_tabs;
 pub mod export_dialog;
 pub mod find;
 pub mod glass;
+pub mod glyph;
 pub mod identity;
 pub mod layers;
 pub mod long_document;
@@ -128,6 +129,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     sections::show(ui.ctx(), state);
     variables::show(ui.ctx(), state);
     long_document::show(ui.ctx(), state);
+    glyph::show(ui.ctx(), state);
     styles::editor(ui.ctx(), state);
     find::show(ui.ctx(), state);
 

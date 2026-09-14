@@ -224,7 +224,7 @@ person reaches for once they start setting copy, and none of it had a row:
 | Table of contents, index | ✅ generated stories, placed and updated from Layout | — | done, M11 |
 | Hyperlinks, bookmarks | ✗ | model | — |
 | Language on text; special-character insertion | ✅ | — | done, M9 |
-| Glyphs panel, typographer's quotes | ✗ | view | — |
+| Typographer's quotes; glyph by code point | ✅ a preference, and a box; no panel drawing the font | — | done |
 | Story editor, spell check | ✗ | view | — |
 | Print dialog | ✗ — PDF export only | — | — |
 | IDML import | ✅ pages, parents, threads, styles, swatches, sections, footnotes; tables and anchored objects dropped out loud | — | done, M12 |

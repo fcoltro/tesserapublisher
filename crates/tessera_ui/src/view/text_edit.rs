@@ -9,14 +9,21 @@ use egui::{Event, ImeEvent, Key, Ui};
 use tessera_text::edit::EditBuffer;
 
 /// Feed this frame's input into the buffer. Returns whether the text changed.
-pub fn handle_events(ui: &Ui, buffer: &mut EditBuffer) -> bool {
+///
+/// `smart_quotes` turns straight quotes typographic as they are typed; it is
+/// a preference, and this is the one place it is read for the canvas.
+pub fn handle_events(ui: &Ui, buffer: &mut EditBuffer, smart_quotes: bool) -> bool {
     let mut changed = false;
 
     let events = ui.input(|i| i.events.clone());
     for event in events {
         match event {
             Event::Text(text) => {
-                buffer.insert(&text);
+                if smart_quotes {
+                    buffer.insert_typed(&text);
+                } else {
+                    buffer.insert(&text);
+                }
                 changed = true;
             }
             Event::Key {
@@ -122,7 +129,7 @@ mod tests {
         // `run_ui` hands the closure the root Ui directly, matching how
         // eframe 0.35 drives an application.
         let _ = ctx.run_ui(input, |ui| {
-            handle_events(ui, buffer);
+            handle_events(ui, buffer, false);
         });
     }
 

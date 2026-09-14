@@ -176,6 +176,14 @@ pub struct Preferences {
     #[serde(default = "yes")]
     pub snapping: bool,
 
+    /// Whether a straight quote typed on the canvas becomes a typographic one.
+    ///
+    /// On by default, as it is in every layout tool: a straight quote in set
+    /// copy is a mistake nobody makes on purpose. Off for the person setting
+    /// code, or feet and inches.
+    #[serde(default = "yes")]
+    pub typographers_quotes: bool,
+
     /// Whether Tessera keeps a recovery copy of unsaved work.
     ///
     /// **Not "save my file automatically".** It writes a separate copy that is
@@ -283,6 +291,7 @@ impl Default for Preferences {
             blur: default_blur(),
             panel_opacity: default_panel_opacity(),
             snapping: yes(),
+            typographers_quotes: yes(),
             recovery_copy: yes(),
             recovery_seconds: default_recovery_seconds(),
             export_presets: crate::view::export_dialog::Preset::usual(),
@@ -491,6 +500,7 @@ mod tests {
             blur: 11,
             panel_opacity: 0.5,
             snapping: false,
+            typographers_quotes: false,
             recovery_copy: false,
             recovery_seconds: 42,
             export_presets: crate::view::export_dialog::Preset::usual(),

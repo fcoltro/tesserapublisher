@@ -293,6 +293,8 @@ pub enum Run {
     TableOfContents,
     /// The index recipe, and placing or updating the index.
     GenerateIndex,
+    /// A character by its code point, at the caret.
+    InsertGlyph,
     /// Add a row or column beside the cell being edited.
     TableRow {
         above: bool,
@@ -359,7 +361,7 @@ pub fn guard(run: Run) -> Guard {
         Run::StepAndRepeat => Guard::NeedsSelection,
         // Dialogs over the document, not over the text.
         Run::SectionOptions | Run::TextVariables => Guard::Always,
-        Run::TableOfContents | Run::GenerateIndex => Guard::Always,
+        Run::TableOfContents | Run::GenerateIndex | Run::InsertGlyph => Guard::Always,
         // Only useful while typing, like the special characters.
         Run::InsertFootnote | Run::EditFootnote | Run::InsertIndexEntry => Guard::Always,
         // Opening a search box is not an edit and needs no selection. It is
@@ -589,7 +591,12 @@ pub fn all() -> &'static [Action] {
             Group::Markers,
             Run::Insert(Special::SectionMarker),
         ),
-        // The characters with no key. One action each, so the palette finds
+        a(
+            "Glyph by code point\u{2026}",
+            None,
+            Group::Markers,
+            Run::InsertGlyph,
+        ), // The characters with no key. One action each, so the palette finds
         // "em dash" and the Type menu lists them; the four typed all day
         // carry InDesign's shortcuts.
         a(
@@ -1305,6 +1312,7 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             }
         }
         Run::TableOfContents => state.contents.open = true,
+        Run::InsertGlyph => state.glyph.open = true,
         Run::GenerateIndex => state.index.open = true,
         Run::FindAndChange => state.find.open(),
         Run::InsertTable => {

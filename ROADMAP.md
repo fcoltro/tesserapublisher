@@ -2162,8 +2162,14 @@ and not a list of controls.
     paragraph hyphenates: the breaker already read soft hyphens; the hyphen
     was only *drawn* for hyphenating paragraphs, and now is drawn wherever a
     line ends at one.
-  - Not built: typographer's quotes as you type, and glyph insertion by
-    code point or from a glyphs panel.
+  - **Typographer's quotes as you type** and **a glyph by code point** were
+    added 2026-09-13, after milestone 12. `EditBuffer::insert_typed` turns
+    `"` and `'` by the character before the caret — opening after nothing,
+    a space, a bracket or a dash; closing otherwise, which makes an
+    apostrophe right and "’90s" the one case left to the menu. A preference,
+    on by default, under Typing. Type ▸ Insert marker ▸ Glyph by code point…
+    takes `2026`, `U+2026` or `&#x2026;` and shows the character before
+    inserting it. Not built: a panel that draws the font's glyphs.
 
 ### Recorded, unscheduled, and probably not wanted yet
 

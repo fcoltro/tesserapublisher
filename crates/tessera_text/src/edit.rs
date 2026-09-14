@@ -305,6 +305,34 @@ impl EditBuffer {
     /// composition is dropped, the selection it stood in for is deleted, and
     /// the text lands where the selection was — which is exactly the picture
     /// [`EditBuffer::composing`] was showing while it was being composed.
+    /// Insert `text` as typed, with straight quotes turned typographic.
+    ///
+    /// Each `"` and `'` becomes the opening or closing form by what stands
+    /// before it — see [`smart_quote`] — where "before" is the character in
+    /// front of the caret, or of the selection about to be replaced, or the
+    /// character just pushed when the text has several. Everything else is
+    /// [`EditBuffer::insert`].
+    pub fn insert_typed(&mut self, text: &str) {
+        if !text.contains(['"', '\'']) {
+            self.insert(text);
+            return;
+        }
+        let at = self
+            .selection_range()
+            .map_or(self.cursor.position, |r| r.start);
+        let mut before = self.story.text[..at].chars().next_back();
+        let mut out = String::with_capacity(text.len() + 4);
+        for c in text.chars() {
+            let c = match c {
+                '"' | '\'' => smart_quote(before, c),
+                other => other,
+            };
+            out.push(c);
+            before = Some(c);
+        }
+        self.insert(&out);
+    }
+
     pub fn insert(&mut self, text: &str) {
         self.set_ime_preedit(None);
         self.delete_selection();
@@ -454,6 +482,65 @@ impl EditBuffer {
             .grapheme_indices(true)
             .next()
             .map(|(_, g)| from + g.len())
+    }
+}
+
+/// The typographic form of a straight quote typed after `before`.
+///
+/// Opening at the start of the text, after a space or an opening bracket or
+/// dash; closing otherwise — which makes an apostrophe inside a word a
+/// closing single quote, as it should be, and "’90s" the one case a person
+/// still has to reach for the menu for. InDesign's rule, near enough.
+pub fn smart_quote(before: Option<char>, quote: char) -> char {
+    let opening = match before {
+        None => true,
+        Some(c) => {
+            c.is_whitespace()
+                || matches!(
+                    c,
+                    '(' | '[' | '{' | '\u{2014}' | '\u{2013}' | '-' | '/' | '\u{201C}' | '\u{2018}'
+                )
+        }
+    };
+    match (quote, opening) {
+        ('"', true) => '\u{201C}',
+        ('"', false) => '\u{201D}',
+        ('\'', true) => '\u{2018}',
+        (_, false) => '\u{2019}',
+        (other, _) => other,
+    }
+}
+
+#[cfg(test)]
+mod quote_tests {
+    use super::*;
+
+    #[test]
+    fn quotes_open_after_space_and_close_after_a_word() {
+        let mut b = EditBuffer::new(crate::story::Story::new(""));
+        b.insert_typed("\"Don't\" she said, 'no'.");
+        assert_eq!(
+            b.story().text,
+            "\u{201C}Don\u{2019}t\u{201D} she said, \u{2018}no\u{2019}."
+        );
+    }
+
+    #[test]
+    fn a_quote_typed_alone_reads_what_is_before_the_caret() {
+        let mut b = EditBuffer::new(crate::story::Story::new("said "));
+        b.set_cursor(5);
+        b.insert_typed("\"");
+        assert!(b.story().text.ends_with('\u{201C}'));
+        b.insert_typed("x");
+        b.insert_typed("\"");
+        assert!(b.story().text.ends_with('\u{201D}'));
+    }
+
+    #[test]
+    fn text_without_a_quote_is_untouched() {
+        let mut b = EditBuffer::new(crate::story::Story::new(""));
+        b.insert_typed("plain");
+        assert_eq!(b.story().text, "plain");
     }
 }
 

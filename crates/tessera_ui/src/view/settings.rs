@@ -208,6 +208,7 @@ fn restore(state: &mut TesseraApp) {
         Page::General => {
             state.prefs.unit = fresh.unit;
             state.prefs.snapping = fresh.snapping;
+            state.prefs.typographers_quotes = fresh.typographers_quotes;
             state.prefs.updates.enabled = fresh.updates.enabled;
         }
         Page::Appearance => {
@@ -282,6 +283,17 @@ fn general(ui: &mut Ui, state: &mut TesseraApp) {
         ui,
         "Remembered between runs. Somebody who turns snapping off is not \
          turning it off for a minute.",
+    );
+
+    heading(ui, "Typing");
+    ui.checkbox(
+        &mut state.prefs.typographers_quotes,
+        "Use typographer\u{2019}s quotes",
+    );
+    note(
+        ui,
+        "A straight quote typed on the canvas becomes \u{201C} \u{201D} \u{2018} \u{2019} by \
+         what is before it. Turn off for code, or feet and inches.",
     );
 }
 
@@ -783,6 +795,7 @@ mod tests {
             blur: 15,
             panel_opacity: 0.4,
             snapping: false,
+            typographers_quotes: false,
             recovery_copy: false,
             recovery_seconds: 11,
             export_presets: crate::view::export_dialog::Preset::usual(),
