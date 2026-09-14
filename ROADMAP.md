@@ -2247,7 +2247,61 @@ master story cannot share one layout and an ordinary story keys as before.
 # Milestone 11 — The Long Document
 
 Footnotes, a table of contents, and an index. Depends on milestone 10: a
-table of contents is a list of headings and the page labels they landed on.
+table of contents is a list of headings and the page labels they landed on,
+and a footnote reference is a marker the way a page number is.
+
+**The finding: everything here is a marker and a list beside it.** A
+footnote is one character in the story and a `Story` in `footnotes[n]`; an
+index entry is one character and a topic in `index_entries[n]`; the `n`th
+marker is the `n`th entry, the arrangement anchored objects earned first. So
+the two places that know notes exist are `insert_text` and `delete_range`,
+and every other edit — moving, copying, Find and Change, undo — keeps a note
+with its reference without learning it is there.
+
+**Footnotes are set by the flow, not the shaper.** `flow_with_notes` is the
+column-filling pass with one more question per line: do this line's notes,
+and the notes of the lines already in this column, fit under it? A line that
+cannot bring its notes moves to the next column and takes them with it. The
+notes' lines join the output with no hit geometry, so a caret cannot get into
+them, and an empty range at the marker, so a thread continues from the last
+line of copy. The renderer and the PDF writer draw them without knowing.
+
+### Acceptance
+
+> Cite a source in a footnote and see the note at the foot of the column the
+> citation lands in, numbered. Mark three topics and generate an index that
+> lists each with its pages. Pick the heading styles and place a table of
+> contents; add a chapter, update it, and see the page numbers move.
+
+- [x] **Footnotes**: `Marker::FootnoteReference` reads as the note's ordinal
+  as a superior figure (58.3%, raised a third — InDesign's superscript); the
+  note begins with `Marker::FootnoteNumber` and a tab, so renumbering costs
+  nothing and deleting the number is a choice. `Story::footnotes`,
+  `footnote_offsets`, `notes_are_sound`. Type ▸ Insert footnote (Ctrl+Alt+F)
+  opens the box on the new note; Edit footnote… reopens it. **By test; the
+  hand check is owed.** Format **23**, no step.
+- [x] **Footnote layout**: `tessera_text::shape::flow_with_notes`, and
+  `compose_frame` shapes each note at the column's measure with
+  `Variables::for_footnote(n)`. A rule a third of the measure above the first
+  note; the vertical-justify slack stops above the notes.
+- [x] **Index entries**: `Marker::IndexEntry` reads as nothing;
+  `Story::index_entries[n].topic`. Type ▸ Insert index entry… files the
+  caret's place — in front of the selection, keeping it — under a topic
+  defaulting to the selected words.
+- [x] **Contents and index are generated stories**
+  (`tessera_layout::contents`): `headings` lists paragraphs in the chosen
+  styles with the page their first line fell on; `mentions` lists every index
+  marker with its page; both read the resolved document in reading order.
+  `table_of_contents` sets "heading, tab, label" with a right, dot-leadered
+  stop at the frame's measure; `index` sorts topics and lists each page once.
+  The recipe (`Contents`, `Index`) is stored with the story it was written
+  into, so Layout ▸ Table of contents… and Layout ▸ Index… say **Place** the
+  first time and **Update** after, and an update rewrites the same frame.
+- Not built: footnote text edited on the canvas (the box does it), footnote
+  options (numbering style, restart per page, spacing), notes that split
+  across columns, endnotes, index sub-topics and cross-references, page
+  ranges ("12–15"), contents entries that are hyperlinks, and a contents
+  that includes paragraphs from other documents (a book).
 
 ---
 

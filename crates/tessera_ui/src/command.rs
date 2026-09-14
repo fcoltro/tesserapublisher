@@ -510,6 +510,20 @@ pub enum Command {
     /// Replace the document's text variables. The whole list, for the same
     /// reason — and because a story names a variable by its position.
     SetVariables(Vec<tessera_document::variables::TextVariable>),
+    /// Reword one footnote. The number and tab a fresh note begins with are
+    /// kept in front of `text`, so the note keeps its shape.
+    SetFootnoteText {
+        story: StoryId,
+        index: usize,
+        text: String,
+    },
+    /// The recipe for the table of contents.
+    SetContents(tessera_document::contents::Contents),
+    /// Rebuild the contents from the document as it is laid out now, into
+    /// the story it was placed in — or into a new frame on the current page.
+    UpdateContents,
+    SetIndex(tessera_document::contents::Index),
+    UpdateIndex,
     /// Resize every page in the document.
     SetPageSize {
         width: f64,
@@ -1692,6 +1706,81 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             state.active_mut().document_mut().set_variables(variables);
         }
 
+        Command::SetFootnoteText { story, index, text } => {
+            if let Some(note) = state
+                .active_mut()
+                .document_mut()
+                .story_mut(story)
+                .and_then(|s| s.footnotes.get_mut(index))
+            {
+                let prefix = crate::view::long_document::split_prefix(&note.text)
+                    .0
+                    .to_owned();
+                note.set_text(format!("{prefix}{text}"));
+            }
+            state.active_mut().document_mut().touch();
+            // The buffer holds its own copy of the story it is editing.
+            if let Some((id, buffer)) = state.active_mut().editing.as_mut()
+                && let Some(note) = buffer.story_mut().footnotes.get_mut(index)
+            {
+                let _ = id;
+                let prefix = crate::view::long_document::split_prefix(&note.text)
+                    .0
+                    .to_owned();
+                note.set_text(format!("{prefix}{text}"));
+            }
+        }
+
+        Command::SetContents(contents) => {
+            state.active_mut().document_mut().set_contents(contents);
+        }
+
+        Command::UpdateContents => {
+            // Built from the layout as it stands, so the resolve comes first
+            // and the write after; the frame the contents go into is the one
+            // they were placed in, measured for the right tab.
+            let contents = state.active().document().contents.clone();
+            let resolved = state.resolve_active().clone();
+            let doc = state.active().document();
+            let measure = contents
+                .story
+                .and_then(|s| frame_of_story(doc, s))
+                .and_then(|f| doc.frame(f))
+                .map(|f| f.bounds.width as f32)
+                .or_else(|| {
+                    state
+                        .current_page()
+                        .and_then(|p| doc.margin_rect(p))
+                        .map(|r| r.width as f32)
+                })
+                .unwrap_or(0.0);
+            let story = tessera_layout::contents::table_of_contents(
+                doc,
+                &resolved,
+                &contents.title,
+                contents.title_style,
+                &contents.levels,
+                measure,
+            );
+            place_generated(state, story, contents.story, |doc, id| {
+                doc.contents.story = Some(id);
+            });
+        }
+
+        Command::SetIndex(index) => {
+            state.active_mut().document_mut().set_index(index);
+        }
+
+        Command::UpdateIndex => {
+            let index = state.active().document().index.clone();
+            let resolved = state.resolve_active().clone();
+            let story =
+                tessera_layout::contents::index(state.active().document(), &resolved, &index.title);
+            place_generated(state, story, index.story, |doc, id| {
+                doc.index.story = Some(id);
+            });
+        }
+
         Command::SetPageSize { width, height } => {
             // Every page, because per-page sizes are milestone 3. One command
             // for all of them keeps it one undo entry.
@@ -1896,6 +1985,59 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             if let Some(next) = state.active_mut().redo() {
                 restore(state, next);
             }
+        }
+    }
+}
+
+/// The text frame showing `story`, if one does.
+fn frame_of_story(doc: &tessera_document::Document, story: StoryId) -> Option<FrameId> {
+    doc.paint_order().into_iter().find(|id| {
+        matches!(doc.frame(*id).map(|f| &f.kind), Some(FrameKind::Text { story: s, .. }) if *s == story)
+    })
+}
+
+/// Write a generated story where it was last put, or into a new frame filling
+/// the current page's margins, and record where.
+///
+/// The words are replaced and the formatting is not: `Story::set_text` keeps
+/// the first run's and paragraph's formatting, but a generated story carries
+/// its own paragraph styles per entry, so the whole story is written and only
+/// the frame is kept.
+fn place_generated(
+    state: &mut TesseraApp,
+    generated: Story,
+    into: Option<StoryId>,
+    record: impl FnOnce(&mut tessera_document::Document, StoryId),
+) {
+    let existing = into.filter(|s| state.active().document().story(*s).is_some());
+    match existing {
+        Some(id) => {
+            if let Some(story) = state.active_mut().document_mut().story_mut(id) {
+                *story = generated;
+            }
+            state.active_mut().document_mut().touch();
+            record(state.active_mut().document_mut(), id);
+        }
+        None => {
+            let Some(page) = state.current_page() else {
+                return;
+            };
+            let Some(bounds) = state.active().document().margin_rect(page) else {
+                return;
+            };
+            let id = state.active_mut().document_mut().add_story(generated);
+            add(
+                state,
+                bounds,
+                FrameKind::text(id),
+                Color::Rgb {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.0,
+                },
+            );
+            record(state.active_mut().document_mut(), id);
         }
     }
 }

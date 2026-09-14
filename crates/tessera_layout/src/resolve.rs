@@ -633,8 +633,30 @@ fn compose_frame(
     let styles = OnPage::new(doc, variables_for(doc, id, on, running));
     let shaped =
         shaper.shape_around_with_objects(story, &styles, measure, from, &obstacles, &anchored);
-    tessera_text::shape::flow_on_grid(shaped, &boxes, vertical, grid)
+
+    // The footnotes, shaped at the column's measure and numbered in text
+    // order, for the flow to set at the foot of whichever column their
+    // references land in. Shaped here because the flow has no shaper, and
+    // all of them rather than the ones after `from`: the flow keeps only
+    // those whose line it places.
+    let notes: Vec<tessera_text::shape::Note> = story
+        .footnote_offsets()
+        .into_iter()
+        .zip(&story.footnotes)
+        .enumerate()
+        .map(|(n, (at, note))| {
+            let numbered = OnPage::new(doc, Variables::for_footnote(n as u32 + 1));
+            tessera_text::shape::Note {
+                at,
+                text: shaper.shape(note, &numbered, measure),
+            }
+        })
+        .collect();
+    tessera_text::shape::flow_with_notes(shaped, &boxes, vertical, grid, &notes, FOOTNOTE_GAP)
 }
+
+/// Air between the last line of copy and the rule above the footnotes.
+const FOOTNOTE_GAP: f64 = 6.0;
 
 /// What the markers in `frame`'s text read as when it stands on `on`.
 ///
@@ -680,6 +702,8 @@ fn variables_for(doc: &Document, frame: FrameId, on: PageId, running: &Running) 
                 }
             })
             .collect(),
+        footnote_number: None,
+        footnote_text: None,
     }
 }
 
@@ -1540,6 +1564,63 @@ Some body copy.",
             on(pages[0]).is_empty(),
             "no heading on page one, so nothing to say"
         );
+    }
+
+    #[test]
+    fn a_footnote_is_set_at_the_foot_of_the_frame_that_cites_it() {
+        use tessera_text::variables::Marker;
+        let mut doc = Document::default();
+        let page = doc.page_ids().next().expect("a page");
+        let layer = doc.default_layer().expect("a layer");
+        let bounds = doc.pages[page].bounds;
+        let mut story = Story::new(format!(
+            "A claim{} and more copy.",
+            Marker::FootnoteReference.character()
+        ));
+        let end = story.footnotes[0].text.len();
+        story.footnotes[0].insert_text(end, "The source.");
+        let story = doc.add_story(story);
+        let host = doc.add_frame(layer, {
+            let mut f = rect(bounds.x + 20.0, bounds.y + 20.0, 300.0, 300.0);
+            f.kind = FrameKind::text(story);
+            f
+        });
+
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+        let item = item_for(&resolved, host).expect("resolved");
+        let ResolvedKind::Text { shaped, .. } = &item.kind else {
+            panic!("text");
+        };
+        let notes: Vec<_> = shaped.lines.iter().filter(|l| l.range.is_empty()).collect();
+        let body: Vec<_> = shaped
+            .lines
+            .iter()
+            .filter(|l| !l.range.is_empty())
+            .collect();
+        assert_eq!(notes.len(), 1, "one note, one line");
+        assert!(notes[0].hit.is_none(), "a caret cannot get into it");
+        assert!(
+            notes[0].baseline > body[0].baseline,
+            "the note sits below the copy"
+        );
+        assert!(
+            notes[0].baseline + notes[0].descent <= 300.0 + 1e-6,
+            "and inside the frame"
+        );
+        // Numbered: the note's first glyph is the figure 1, the same glyph
+        // as the reference's.
+        let reference_glyph = body[0]
+            .runs
+            .iter()
+            .find(|r| r.size < 12.0)
+            .map(|r| r.glyphs[0].glyph_id);
+        let note_glyph = notes[0].runs[0].glyphs.first().map(|g| g.glyph_id);
+        assert_eq!(
+            reference_glyph, note_glyph,
+            "the note leads with the number it is cited by"
+        );
+        assert_eq!(item.on, Some(page));
     }
 
     #[test]

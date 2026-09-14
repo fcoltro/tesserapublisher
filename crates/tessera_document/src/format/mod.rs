@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 22;
+pub const FORMAT_VERSION: u32 = 23;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -105,6 +105,14 @@ pub fn load(path: &Path) -> Result<Document, FormatError> {
 /// ago follows exactly the path a document written two versions ago does, and
 /// each step only has to know about its own change.
 fn migrate(value: &mut serde_json::Value, from: u32) {
+    // 22 -> 23: stories gained `footnotes` and `index_entries`, the document
+    // `contents` and `index`. **No step, on purpose.** All four default to
+    // empty, and a story written before footnotes existed carries no
+    // reference marker, so empty is the truth. The version moves so that an
+    // older build refuses a document with notes in it rather than opening it
+    // with every reference numbered and every note gone — which is what
+    // loading a story that skips the field would silently do.
+
     // 21 -> 22: the document gained `sections` and `variables`. **No step, on
     // purpose.** Both carry `serde(default)` and both default to empty, and
     // empty is the truth: a document written before sections existed numbers

@@ -345,6 +345,10 @@ pub struct TesseraApp {
     pub step: crate::view::step_repeat::StepWindow,
     pub numbering: crate::view::sections::SectionsWindow,
     pub variables: crate::view::variables::VariablesWindow,
+    pub footnote: crate::view::long_document::FootnoteWindow,
+    pub index_entry: crate::view::long_document::IndexEntryWindow,
+    pub contents: crate::view::long_document::ContentsWindow,
+    pub index: crate::view::long_document::IndexWindow,
     /// Find and Change. Modeless, so it is not in `modal_open`.
     pub find: crate::view::find::FindWindow,
 
@@ -487,6 +491,10 @@ impl TesseraApp {
             step: crate::view::step_repeat::StepWindow::default(),
             numbering: crate::view::sections::SectionsWindow::default(),
             variables: crate::view::variables::VariablesWindow::default(),
+            footnote: crate::view::long_document::FootnoteWindow::default(),
+            index_entry: crate::view::long_document::IndexEntryWindow::default(),
+            contents: crate::view::long_document::ContentsWindow::default(),
+            index: crate::view::long_document::IndexWindow::default(),
             editing_master: None,
             rail_open: true,
             sections: Sections::default(),

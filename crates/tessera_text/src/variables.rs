@@ -37,6 +37,16 @@ pub enum Marker {
     PreviousPageNumber,
     /// The section marker text of the section the page is in.
     SectionMarker,
+    /// A footnote's reference in the body: reads as the note's number, raised.
+    /// The `n`th of these in a story is [`crate::story::Story::footnotes`]`[n]`.
+    FootnoteReference,
+    /// The number at the head of a footnote's own text. Reads as
+    /// [`Variables::footnote_number`], which the layout sets while it shapes
+    /// the note, and as a number sign anywhere else.
+    FootnoteNumber,
+    /// An index entry: reads as nothing, and marks where a topic is. The
+    /// `n`th of these in a story is [`crate::story::Story::index_entries`]`[n]`.
+    IndexEntry,
     /// The document's `n`th text variable.
     Variable(u8),
 }
@@ -55,6 +65,9 @@ impl Marker {
             Marker::NextPageNumber => BUILT_IN + 1,
             Marker::PreviousPageNumber => BUILT_IN + 2,
             Marker::SectionMarker => BUILT_IN + 3,
+            Marker::FootnoteReference => BUILT_IN + 4,
+            Marker::FootnoteNumber => BUILT_IN + 5,
+            Marker::IndexEntry => BUILT_IN + 6,
             Marker::Variable(index) => VARIABLE + u32::from(index),
         };
         char::from_u32(code).expect("a Private Use code point is a character")
@@ -68,6 +81,9 @@ impl Marker {
             c if c == BUILT_IN + 1 => Some(Marker::NextPageNumber),
             c if c == BUILT_IN + 2 => Some(Marker::PreviousPageNumber),
             c if c == BUILT_IN + 3 => Some(Marker::SectionMarker),
+            c if c == BUILT_IN + 4 => Some(Marker::FootnoteReference),
+            c if c == BUILT_IN + 5 => Some(Marker::FootnoteNumber),
+            c if c == BUILT_IN + 6 => Some(Marker::IndexEntry),
             c if (VARIABLE..VARIABLE + 256).contains(&c) => {
                 Some(Marker::Variable((c - VARIABLE) as u8))
             }
@@ -84,8 +100,14 @@ impl Marker {
     /// would say.
     pub fn placeholder(self) -> &'static str {
         match self {
-            Marker::PageNumber | Marker::NextPageNumber | Marker::PreviousPageNumber => "#",
-            Marker::SectionMarker | Marker::Variable(_) => "",
+            Marker::PageNumber
+            | Marker::NextPageNumber
+            | Marker::PreviousPageNumber
+            | Marker::FootnoteNumber => "#",
+            Marker::SectionMarker | Marker::Variable(_) | Marker::IndexEntry => "",
+            // Numbered from the story itself, so it never needs a page; the
+            // shaper answers it before asking here. See `shaping_text`.
+            Marker::FootnoteReference => "",
         }
     }
 }
@@ -105,6 +127,10 @@ pub struct Variables {
     /// By index, in the order the document defines them. A marker past the
     /// end reads as nothing.
     pub variables: Vec<String>,
+    /// Set while a footnote's own text is being shaped: which note it is.
+    pub footnote_number: Option<u32>,
+    /// The same, written: what the number marker reads as.
+    pub footnote_text: Option<String>,
 }
 
 impl Variables {
@@ -115,11 +141,24 @@ impl Variables {
             Marker::NextPageNumber => &self.next_page_number,
             Marker::PreviousPageNumber => &self.previous_page_number,
             Marker::SectionMarker => &self.section_marker,
+            Marker::FootnoteReference | Marker::IndexEntry => "",
+            Marker::FootnoteNumber => self.footnote_text.as_deref().unwrap_or("#"),
             Marker::Variable(index) => self
                 .variables
                 .get(usize::from(index))
                 .map(String::as_str)
                 .unwrap_or(""),
+        }
+    }
+}
+
+impl Variables {
+    /// Ready to shape footnote `number`'s own text.
+    pub fn for_footnote(number: u32) -> Self {
+        Self {
+            footnote_number: Some(number),
+            footnote_text: Some(number.to_string()),
+            ..Default::default()
         }
     }
 }
@@ -156,6 +195,9 @@ mod tests {
             Marker::NextPageNumber,
             Marker::PreviousPageNumber,
             Marker::SectionMarker,
+            Marker::FootnoteReference,
+            Marker::FootnoteNumber,
+            Marker::IndexEntry,
             Marker::Variable(0),
             Marker::Variable(7),
             Marker::Variable(255),

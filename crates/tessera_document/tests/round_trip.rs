@@ -762,7 +762,7 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_twenty_two() {
+fn the_format_version_is_twenty_three() {
     // A tripwire, not a fact worth asserting on its own: changing it means
     // stopping to ask whether a migration step is owed. Sometimes the answer is
     // no — version 19 added `corners`, whose default is exactly what older
@@ -770,8 +770,51 @@ fn the_format_version_is_twenty_two() {
     // can contain; 21 added `anchor`, whose default of `None` is what every
     // frame written before anchoring meant; 22 added `sections` and
     // `variables`, whose empty defaults are what every earlier document meant
-    // — and the point is that somebody had to answer.
-    assert_eq!(format::FORMAT_VERSION, 22);
+    // — and the point is that somebody had to answer; 23 added footnotes,
+    // index entries, and the contents and index recipes, all empty before.
+    assert_eq!(format::FORMAT_VERSION, 23);
+}
+
+#[test]
+fn footnotes_and_the_contents_recipe_survive_a_round_trip() {
+    use tessera_document::contents::{Contents, Level};
+    use tessera_text::story::ParagraphStyle;
+    use tessera_text::variables::Marker;
+
+    let mut doc = Document::default();
+    let style = doc.add_paragraph_style(ParagraphStyle {
+        name: "Heading".into(),
+        based_on: None,
+        format: Default::default(),
+    });
+    let mut story = tessera_text::Story::new(format!(
+        "Cited{} and indexed{}",
+        Marker::FootnoteReference.character(),
+        Marker::IndexEntry.character()
+    ));
+    let end = story.footnotes[0].text.len();
+    story.footnotes[0].insert_text(end, "A note.");
+    story.index_entries[0].topic = "Citations".into();
+    let id = doc.add_story(story.clone());
+    doc.set_contents(Contents {
+        title: "Contents".into(),
+        title_style: Some(style),
+        levels: vec![Level {
+            style,
+            entry_style: None,
+        }],
+        story: Some(id),
+    });
+
+    let path = std::env::temp_dir().join(format!("tessera-notes-{}.tessera", std::process::id()));
+    format::save(&doc, &path).expect("save");
+    let back = format::load(&path).expect("load");
+    let _ = std::fs::remove_file(&path);
+    let back_story = back.story(id).expect("the story");
+    assert_eq!(back_story.footnotes, story.footnotes);
+    assert_eq!(back_story.index_entries, story.index_entries);
+    assert!(back_story.notes_are_sound());
+    assert_eq!(back.contents, doc.contents);
 }
 
 #[test]

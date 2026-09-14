@@ -167,6 +167,14 @@ pub struct Document {
     #[serde(default)]
     pub variables: Vec<crate::variables::TextVariable>,
 
+    /// How the table of contents is built, and where it was put.
+    #[serde(default)]
+    pub contents: crate::contents::Contents,
+
+    /// The same for the index.
+    #[serde(default)]
+    pub index: crate::contents::Index,
+
     /// Bumped on every mutation. The renderer rebuilds its scene only when
     /// this moves, so panning the camera does not rebuild anything.
     ///
@@ -214,6 +222,8 @@ impl Document {
             },
             sections: Vec::new(),
             variables: Vec::new(),
+            contents: crate::contents::Contents::default(),
+            index: crate::contents::Index::default(),
             revision: 0,
         };
 
@@ -689,6 +699,18 @@ impl Document {
     pub fn set_variables(&mut self, mut variables: Vec<crate::variables::TextVariable>) {
         variables.truncate(crate::variables::MOST_VARIABLES);
         self.variables = variables;
+        self.touch();
+    }
+
+    /// Replace the contents recipe. One call, one undo entry.
+    pub fn set_contents(&mut self, contents: crate::contents::Contents) {
+        self.contents = contents;
+        self.touch();
+    }
+
+    /// Replace the index recipe.
+    pub fn set_index(&mut self, index: crate::contents::Index) {
+        self.index = index;
         self.touch();
     }
 

@@ -283,6 +283,16 @@ pub enum Run {
     SectionOptions,
     /// Define the document's text variables, and put one at the caret.
     TextVariables,
+    /// A footnote reference at the caret, and a note to go with it.
+    InsertFootnote,
+    /// Reword the footnote the caret is at.
+    EditFootnote,
+    /// An index marker at the caret, filed under a topic the box asks for.
+    InsertIndexEntry,
+    /// The contents recipe, and placing or updating the contents.
+    TableOfContents,
+    /// The index recipe, and placing or updating the index.
+    GenerateIndex,
     /// Add a row or column beside the cell being edited.
     TableRow {
         above: bool,
@@ -349,6 +359,9 @@ pub fn guard(run: Run) -> Guard {
         Run::StepAndRepeat => Guard::NeedsSelection,
         // Dialogs over the document, not over the text.
         Run::SectionOptions | Run::TextVariables => Guard::Always,
+        Run::TableOfContents | Run::GenerateIndex => Guard::Always,
+        // Only useful while typing, like the special characters.
+        Run::InsertFootnote | Run::EditFootnote | Run::InsertIndexEntry => Guard::Always,
         // Opening a search box is not an edit and needs no selection. It is
         // guarded against typing all the same: Ctrl+F inside the search box
         // itself must not reopen the window under the caret.
@@ -1007,6 +1020,33 @@ pub fn all() -> &'static [Action] {
             Group::Type,
             Run::TextVariables,
         ),
+        // The long document. A footnote is InDesign's Ctrl+Alt+F; the index
+        // entry its Ctrl+Alt+Shift+[ is a chord nobody remembers, so none.
+        a(
+            "Insert footnote",
+            Some("Ctrl+Alt+F"),
+            Group::Type,
+            Run::InsertFootnote,
+        ),
+        a(
+            "Edit footnote\u{2026}",
+            None,
+            Group::Type,
+            Run::EditFootnote,
+        ),
+        a(
+            "Insert index entry\u{2026}",
+            None,
+            Group::Type,
+            Run::InsertIndexEntry,
+        ),
+        a(
+            "Table of contents\u{2026}",
+            None,
+            Group::Layout,
+            Run::TableOfContents,
+        ),
+        a("Index\u{2026}", None, Group::Layout, Run::GenerateIndex),
         // The Layout menu, which milestone 1.5 left empty for want of exactly
         // these commands. The menu bar is generated from this list, so adding
         // them is what makes the menu appear.
@@ -1243,6 +1283,29 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             state.numbering = window;
         }
         Run::TextVariables => state.variables.open = true,
+        Run::InsertFootnote => {
+            crate::view::viewport::type_text(
+                state,
+                &Marker::FootnoteReference.character().to_string(),
+            );
+            // Straight into the box, so the note gets its words now.
+            let mut window = std::mem::take(&mut state.footnote);
+            window.open(state);
+            state.footnote = window;
+        }
+        Run::EditFootnote => {
+            let mut window = std::mem::take(&mut state.footnote);
+            window.open(state);
+            state.footnote = window;
+        }
+        Run::InsertIndexEntry => {
+            if let Some((_, buffer)) = state.active().editing.as_ref() {
+                state.index_entry.topic = buffer.selected_text().unwrap_or("").trim().to_owned();
+                state.index_entry.open = true;
+            }
+        }
+        Run::TableOfContents => state.contents.open = true,
+        Run::GenerateIndex => state.index.open = true,
         Run::FindAndChange => state.find.open(),
         Run::InsertTable => {
             // Into the type area of the first page, which is where a table
@@ -1628,6 +1691,7 @@ mod tests {
                 | "Paragraph and character styles"
                 | "Preview view"
                 | "Current page number"
+                | "Insert footnote"
                 | "Em dash"
                 | "En dash"
                 | "Discretionary hyphen"

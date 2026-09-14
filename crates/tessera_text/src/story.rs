@@ -2,6 +2,7 @@
 
 use std::ops::Range;
 
+use crate::variables::Marker;
 use serde::{Deserialize, Serialize};
 use tessera_color::Color;
 
@@ -920,6 +921,28 @@ pub struct Story {
     /// Paragraph formatting, under the same invariant.
     #[serde(default)]
     pub paragraphs: Vec<ParagraphRun>,
+
+    /// The footnotes, in text order: the `n`th
+    /// [`crate::variables::Marker::FootnoteReference`] in `text` is this
+    /// list's `n`th entry. The marker is the footnote and the index is only
+    /// a name for it, the arrangement anchored objects earned first — so
+    /// every edit that moves a marker keeps the note with it for free, and
+    /// [`Story::insert_text`] and [`Story::delete_range`] are the only two
+    /// places that have to know notes exist.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub footnotes: Vec<Story>,
+
+    /// The index entries, in text order, under the same arrangement: the
+    /// `n`th [`crate::variables::Marker::IndexEntry`] is the `n`th of these.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub index_entries: Vec<IndexEntry>,
+}
+
+/// Where a topic is mentioned, for the index to collect.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexEntry {
+    /// What the index lists it under: "Typography", "Caslon, William".
+    pub topic: String,
 }
 
 impl Story {
@@ -939,11 +962,81 @@ impl Story {
                 local: ParagraphFormat::default(),
             }]
         };
-        Self {
+        let mut story = Self {
             text,
             runs,
             paragraphs,
-        }
+            footnotes: Vec::new(),
+            index_entries: Vec::new(),
+        };
+        // A story made from text carrying markers owes a note per marker, or
+        // the invariant is broken before the first edit.
+        let notes = story.count_markers(0..story.text.len(), Marker::FootnoteReference);
+        story.footnotes = (0..notes).map(|_| Story::new_footnote()).collect();
+        let entries = story.count_markers(0..story.text.len(), Marker::IndexEntry);
+        story.index_entries = vec![IndexEntry::default(); entries];
+        story
+    }
+
+    /// What a fresh footnote says: its number, a tab, and nothing yet.
+    ///
+    /// The number is a marker rather than digits, so renumbering — a note
+    /// inserted before this one — costs nothing and deleting it is a choice.
+    pub fn new_footnote() -> Story {
+        let mut note = Story::default();
+        note.text = format!("{}\t", Marker::FootnoteNumber.character());
+        note.runs = vec![Run::plain(0..note.text.len())];
+        note.paragraphs = vec![ParagraphRun {
+            range: 0..note.text.len(),
+            style: None,
+            local: ParagraphFormat::default(),
+        }];
+        note
+    }
+
+    /// How many `marker`s the text carries in `range`.
+    fn count_markers(&self, range: Range<usize>, marker: Marker) -> usize {
+        let start = range.start.min(self.text.len());
+        let end = range.end.clamp(start, self.text.len());
+        self.text[start..end]
+            .chars()
+            .filter(|c| Marker::of(*c) == Some(marker))
+            .count()
+    }
+
+    /// Which footnote the marker at `at` is: its index in `footnotes`.
+    pub fn footnote_index_at(&self, at: usize) -> usize {
+        self.count_markers(0..at, Marker::FootnoteReference)
+    }
+
+    /// Which index entry the marker at `at` is.
+    pub fn index_entry_at(&self, at: usize) -> usize {
+        self.count_markers(0..at, Marker::IndexEntry)
+    }
+
+    /// Stored offset of every footnote marker, in order.
+    pub fn footnote_offsets(&self) -> Vec<usize> {
+        self.text
+            .char_indices()
+            .filter(|(_, c)| Marker::of(*c) == Some(Marker::FootnoteReference))
+            .map(|(at, _)| at)
+            .collect()
+    }
+
+    /// Stored offset of every index marker, in order.
+    pub fn index_offsets(&self) -> Vec<usize> {
+        self.text
+            .char_indices()
+            .filter(|(_, c)| Marker::of(*c) == Some(Marker::IndexEntry))
+            .map(|(at, _)| at)
+            .collect()
+    }
+
+    /// Whether the notes and entries still match their markers.
+    pub fn notes_are_sound(&self) -> bool {
+        self.footnotes.len() == self.count_markers(0..self.text.len(), Marker::FootnoteReference)
+            && self.index_entries.len()
+                == self.count_markers(0..self.text.len(), Marker::IndexEntry)
     }
 
     /// Whether the run lists still describe this text.
@@ -1054,6 +1147,27 @@ impl Story {
         }
         let at = at.min(self.text.len());
         let n = text.len();
+
+        // A marker arriving — typed, or pasted with text around it — brings
+        // a note with it, so the lists never say fewer than the markers do.
+        let notes_before = self.footnote_index_at(at);
+        let notes_in: usize = text
+            .chars()
+            .filter(|c| Marker::of(*c) == Some(Marker::FootnoteReference))
+            .count();
+        for _ in 0..notes_in {
+            self.footnotes.insert(notes_before, Story::new_footnote());
+        }
+        let entries_before = self.index_entry_at(at);
+        let entries_in: usize = text
+            .chars()
+            .filter(|c| Marker::of(*c) == Some(Marker::IndexEntry))
+            .count();
+        for _ in 0..entries_in {
+            self.index_entries
+                .insert(entries_before, IndexEntry::default());
+        }
+
         self.text.insert_str(at, text);
 
         if self.runs.is_empty() {
@@ -1085,6 +1199,19 @@ impl Story {
         if start >= end {
             return;
         }
+
+        // The notes whose markers go, go with them.
+        let first = self.footnote_index_at(start);
+        let gone = self.count_markers(start..end, Marker::FootnoteReference);
+        if gone > 0 && first + gone <= self.footnotes.len() {
+            self.footnotes.drain(first..first + gone);
+        }
+        let first = self.index_entry_at(start);
+        let gone = self.count_markers(start..end, Marker::IndexEntry);
+        if gone > 0 && first + gone <= self.index_entries.len() {
+            self.index_entries.drain(first..first + gone);
+        }
+
         self.text.replace_range(start..end, "");
 
         self.runs = shrink(
@@ -1760,6 +1887,71 @@ fn shrink<T>(
 #[cfg(test)]
 mod provisional_tests {
     use super::*;
+
+    // --- footnotes and index entries ----------------------------------------
+
+    fn reference() -> char {
+        Marker::FootnoteReference.character()
+    }
+
+    #[test]
+    fn typing_a_reference_makes_a_note_and_deleting_it_takes_the_note_away() {
+        let mut story = Story::new("abc");
+        assert!(story.footnotes.is_empty());
+        story.insert_text(1, &reference().to_string());
+        assert_eq!(story.footnotes.len(), 1);
+        assert!(story.notes_are_sound());
+        story.footnotes[0].set_text("first");
+        // A second, before the first: the lists stay in text order.
+        story.insert_text(0, &reference().to_string());
+        assert_eq!(story.footnotes.len(), 2);
+        assert_eq!(
+            story.footnotes[1].text, "first",
+            "the old note is now second"
+        );
+        assert_eq!(story.footnote_index_at(0), 0);
+        assert_eq!(story.footnote_offsets().len(), 2);
+        // Delete across the first marker only.
+        story.delete_range(0..reference().len_utf8());
+        assert_eq!(story.footnotes.len(), 1);
+        assert_eq!(story.footnotes[0].text, "first");
+        assert!(story.notes_are_sound());
+    }
+
+    #[test]
+    fn a_fresh_note_begins_with_its_number_and_a_tab() {
+        let note = Story::new_footnote();
+        assert!(note.text.starts_with(Marker::FootnoteNumber.character()));
+        assert!(note.text.ends_with('\t'));
+        assert!(note.runs_are_sound());
+    }
+
+    #[test]
+    fn a_story_built_from_marked_text_owes_a_note_per_marker() {
+        let story = Story::new(format!(
+            "x{}y{}",
+            reference(),
+            Marker::IndexEntry.character()
+        ));
+        assert_eq!(story.footnotes.len(), 1);
+        assert_eq!(story.index_entries.len(), 1);
+        assert!(story.notes_are_sound());
+    }
+
+    #[test]
+    fn index_entries_follow_their_markers_too() {
+        let e = Marker::IndexEntry.character();
+        let mut story = Story::new("ab");
+        story.insert_text(2, &e.to_string());
+        story.index_entries[0].topic = "b".into();
+        story.insert_text(0, &e.to_string());
+        story.index_entries[0].topic = "a".into();
+        assert_eq!(story.index_offsets(), vec![0, e.len_utf8() + 2]);
+        // "ab" and the second marker go; the first marker stays.
+        story.delete_range(e.len_utf8()..e.len_utf8() + 2 + e.len_utf8());
+        assert_eq!(story.index_entries.len(), 1);
+        assert_eq!(story.index_entries[0].topic, "a");
+    }
 
     #[test]
     fn a_provisional_splice_leaves_the_story_alone() {

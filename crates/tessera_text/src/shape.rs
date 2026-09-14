@@ -751,11 +751,28 @@ fn shaping_text(
             // stored character, the way a capital synthesised from `ß` does,
             // so a caret cannot get inside a page number.
             if let Some(marker) = crate::variables::Marker::of(character) {
+                use crate::variables::Marker;
                 transformed = true;
-                let expansion = styles
-                    .variables()
-                    .map(|v| v.text_of(marker).to_owned())
-                    .unwrap_or_else(|| marker.placeholder().to_owned());
+                // A footnote's reference is numbered from the story itself —
+                // this marker is the nth — and set as a superior figure,
+                // which no page needs to answer.
+                let (expansion, format) = if marker == Marker::FootnoteReference {
+                    let number = story.footnote_index_at(at) + 1;
+                    let mut raised = format.clone();
+                    let size = format.size.unwrap_or(12.0);
+                    raised.size = Some(size * SUPERIOR_SCALE);
+                    raised.baseline_shift =
+                        Some(format.baseline_shift.unwrap_or(0.0) + size * SUPERIOR_RAISE);
+                    (number.to_string(), raised)
+                } else {
+                    (
+                        styles
+                            .variables()
+                            .map(|v| v.text_of(marker).to_owned())
+                            .unwrap_or_else(|| marker.placeholder().to_owned()),
+                        format.clone(),
+                    )
+                };
                 match case {
                     Case::Normal | Case::SmallCaps => text.push_str(&expansion),
                     Case::Upper => text.push_str(&expansion.to_uppercase()),
@@ -770,7 +787,7 @@ fn shaping_text(
                         }
                         _ => pieces.push(Piece {
                             shaped: piece_start..text.len(),
-                            format: format.clone(),
+                            format,
                         }),
                     }
                 }
@@ -831,6 +848,12 @@ fn shaping_text(
     }
     (text, pieces, map)
 }
+
+/// A superior figure — a footnote reference — as a fraction of the size it
+/// sits in, and how far above the baseline it is raised. InDesign's defaults
+/// for superscript: 58.3% and 33.3%.
+const SUPERIOR_SCALE: f32 = 0.583;
+const SUPERIOR_RAISE: f32 = 0.333;
 
 /// How much smaller a synthesised small capital is than a full one.
 ///
@@ -1526,6 +1549,38 @@ pub fn flow_on_grid(
     vertical: Vertical,
     grid: Option<Grid>,
 ) -> Flowed {
+    flow_with_notes(text, columns, vertical, grid, &[], 0.0)
+}
+
+/// A footnote's text, shaped, waiting for the line that refers to it.
+///
+/// Laid out already — at the column's measure, by whoever has a shaper —
+/// because the flow has none and needs only the height. `at` is the stored
+/// offset of the reference marker, which is how the note finds its line.
+#[derive(Debug, Clone)]
+pub struct Note {
+    pub at: usize,
+    pub text: ShapedText,
+}
+
+/// The same, with footnotes set at the foot of the column their references
+/// land in.
+///
+/// A note takes its room from the column holding the line that cites it, so
+/// a line only fits if it and its notes fit together; a line pushed to the
+/// next column takes its notes with it. The notes are stacked at the bottom
+/// of the column, `gap` below the last line's room, with a short rule above
+/// the first — and their lines join the output with no `hit`, so a caret
+/// cannot get into them, and an empty `range` at the marker, so a thread does
+/// not mistake a note for text it has placed.
+pub fn flow_with_notes(
+    text: ShapedText,
+    columns: &[Column],
+    vertical: Vertical,
+    grid: Option<Grid>,
+    notes: &[Note],
+    gap: f64,
+) -> Flowed {
     let vertical = match grid {
         Some(_) => Vertical::Top,
         None => vertical,
@@ -1536,6 +1591,37 @@ pub fn flow_on_grid(
             ..Flowed::default()
         };
     }
+
+    // The room a line's notes take: every note whose marker is on the line,
+    // each as tall as its lines, plus the gap once for the first.
+    let notes_of = |line: &ShapedLine| -> Vec<&Note> {
+        notes
+            .iter()
+            .filter(|n| line.range.contains(&n.at))
+            .collect()
+    };
+    let note_height = |note: &Note| -> f64 {
+        note.text
+            .lines
+            .iter()
+            .map(|l| l.baseline + l.descent)
+            .fold(0.0, f64::max)
+    };
+    let room_for = |placed: &[&ShapedLine]| -> f64 {
+        let mut total = 0.0;
+        let mut any = false;
+        for line in placed {
+            for note in notes_of(line) {
+                total += note_height(note);
+                any = true;
+            }
+        }
+        if any {
+            total + gap + NOTE_RULE_GAP
+        } else {
+            0.0
+        }
+    };
 
     let mut out = ShapedText {
         lines: Vec::with_capacity(text.lines.len()),
@@ -1595,7 +1681,14 @@ pub fn flow_on_grid(
             None => baseline,
         };
         let shift_by = baseline - line.baseline;
-        let fits = baseline + below <= box_.y + box_.height;
+        // This line's notes and those of the lines already in the column
+        // have to fit under it.
+        let reserved = {
+            let mut placed: Vec<&ShapedLine> = lines[column_first..i].iter().collect::<Vec<_>>();
+            placed.push(line);
+            room_for(&placed)
+        };
+        let fits = baseline + below <= box_.y + box_.height - reserved;
 
         // A line taller than the column fits nowhere; putting it in
         // anyway is better than dropping every line of a story because
@@ -1644,9 +1737,79 @@ pub fn flow_on_grid(
         .map(|l| l.baseline + extent(l).1)
         .fold(0.0, f64::max);
 
-    justify(&mut out, &boxes, columns, vertical);
+    // What each column has given up to its notes, so the slack shared out by
+    // the vertical setting stops above them.
+    let reserved: Vec<f64> = (0..columns.len())
+        .map(|c| {
+            let mine: Vec<&ShapedLine> = out
+                .lines
+                .iter()
+                .zip(&boxes)
+                .filter(|(_, b)| **b == c)
+                .map(|(l, _)| l)
+                .collect();
+            room_for(&mine)
+        })
+        .collect();
+    justify(&mut out, &boxes, columns, vertical, &reserved);
 
+    // Before the notes join, so a thread continues from the last line of
+    // body copy and not from a footnote.
     let consumed_to = out.lines.last().map(|l| l.range.end);
+
+    // The notes, stacked at the foot of their column.
+    let body = out.lines.len();
+    for (c, box_) in columns.iter().enumerate() {
+        let cited: Vec<&Note> = out.lines[..body]
+            .iter()
+            .zip(&boxes)
+            .filter(|(_, b)| **b == c)
+            .flat_map(|(l, _)| notes_of(l))
+            .collect();
+        if cited.is_empty() {
+            continue;
+        }
+        let total: f64 = cited.iter().map(|n| note_height(n)).sum();
+        let mut y = box_.y + box_.height - total;
+        let mut first = true;
+        for note in cited {
+            for line in &note.text.lines {
+                let mut line = line.clone();
+                // The note's fonts follow it into the output table.
+                let base = out.fonts.len();
+                for run in &mut line.runs {
+                    run.font_index += base;
+                }
+                shift(&mut line, box_.x, y);
+                line.hit = None;
+                line.range = note.at..note.at;
+                line.keep = LineKeep::default();
+                if first {
+                    // A short rule above the first note, as every book sets
+                    // it: the notes are not the copy.
+                    line.rules.push(PlacedRule {
+                        x0: box_.x,
+                        x1: box_.x + (box_.width * NOTE_RULE_FRACTION).min(box_.width),
+                        top: y - NOTE_RULE_GAP,
+                        weight: NOTE_RULE_WEIGHT,
+                        colour: None,
+                    });
+                    first = false;
+                }
+                out.lines.push(line);
+            }
+            out.fonts.extend(note.text.fonts.iter().cloned());
+            y += note_height(note);
+        }
+    }
+    if out.lines.len() > body {
+        out.height = out
+            .lines
+            .iter()
+            .map(|l| l.baseline + extent(l).1)
+            .fold(0.0, f64::max);
+    }
+
     Flowed {
         text: out,
         overset_lines: overset,
@@ -1654,12 +1817,24 @@ pub fn flow_on_grid(
     }
 }
 
+/// The rule above a column's footnotes: a third of the measure, half a point,
+/// with a little air under it. InDesign's defaults, near enough.
+const NOTE_RULE_FRACTION: f64 = 0.33;
+const NOTE_RULE_WEIGHT: f64 = 0.5;
+const NOTE_RULE_GAP: f64 = 4.0;
+
 /// Move each box's lines to sit where `vertical` asks.
 ///
 /// A box whose text overflows it has no slack to share, and one with a single
 /// line has no gap to put it in — both are left where they are rather than
 /// given a special case that reads as a bug when it fires.
-fn justify(text: &mut ShapedText, boxes: &[usize], columns: &[Column], vertical: Vertical) {
+fn justify(
+    text: &mut ShapedText,
+    boxes: &[usize],
+    columns: &[Column],
+    vertical: Vertical,
+    reserved: &[f64],
+) {
     if vertical == Vertical::Top || text.lines.is_empty() {
         return;
     }
@@ -1677,7 +1852,8 @@ fn justify(text: &mut ShapedText, boxes: &[usize], columns: &[Column], vertical:
 
         let top = text.lines[first].baseline - text.lines[first].ascent;
         let bottom = text.lines[last].baseline + text.lines[last].descent;
-        let slack = (box_.y + box_.height) - bottom - (top - box_.y);
+        let foot = reserved.get(index).copied().unwrap_or(0.0);
+        let slack = (box_.y + box_.height - foot) - bottom - (top - box_.y);
         if slack <= 0.0 {
             continue;
         }
@@ -4189,6 +4365,131 @@ mod tests {
             glyph(&one),
             glyph(&two),
             "the cache handed page 2 page 1's layout"
+        );
+    }
+
+    // --- footnotes -----------------------------------------------------------
+
+    #[test]
+    fn a_footnote_reference_reads_as_its_number_raised_and_small() {
+        use crate::variables::Marker;
+        let r = Marker::FootnoteReference.character();
+        let story = Story::new(format!("a{r} b{r}"));
+        let mut shaper = Shaper::new();
+        let placed = shaper.layout_paragraphs(&story, &NoStyles::default(), 400.0);
+        assert_eq!(placed[0].shaped_text, "a1 b2", "numbered in text order");
+        // The figure is a run of its own, smaller and raised.
+        let shaped = shaper.shape(&story, &NoStyles::default(), 400.0);
+        let sizes: Vec<f32> = shaped.runs().map(|r| r.size).collect();
+        assert!(
+            sizes.iter().any(|s| *s < 12.0),
+            "a superior figure is smaller: {sizes:?}"
+        );
+        assert!(sizes.contains(&12.0), "and the copy is not: {sizes:?}");
+    }
+
+    #[test]
+    fn footnotes_are_stacked_at_the_foot_of_the_column_that_cites_them() {
+        // Six lines of 12 in a column of 60, so five fit; a note on the
+        // second line takes 24 and its rule's gap, so only two do.
+        let text = ruled(6);
+        let note = Note {
+            at: 15,
+            text: ruled(2),
+        };
+        let flowed = flow_with_notes(
+            text,
+            &[
+                column(0.0, 0.0, 100.0, 60.0),
+                column(200.0, 0.0, 100.0, 100.0),
+            ],
+            Vertical::Top,
+            None,
+            &[note],
+            0.0,
+        );
+        let body: Vec<&ShapedLine> = flowed
+            .text
+            .lines
+            .iter()
+            .filter(|l| l.hit.is_none() && !l.range.is_empty())
+            .collect();
+        let notes: Vec<&ShapedLine> = flowed
+            .text
+            .lines
+            .iter()
+            .filter(|l| l.range.is_empty())
+            .collect();
+        assert_eq!(notes.len(), 2, "the note's two lines are in the output");
+        assert!(
+            notes.iter().all(|l| l.runs[0].glyphs[0].x < 100.0),
+            "in the first column"
+        );
+        // Room for the note (24) and its rule gap under the column bottom.
+        let lowest_body = body
+            .iter()
+            .filter(|l| l.runs[0].glyphs[0].x < 100.0)
+            .map(|l| l.baseline + l.descent)
+            .fold(0.0, f64::max);
+        let note_top = notes[0].baseline - notes[0].ascent;
+        assert!(
+            lowest_body <= note_top,
+            "body {lowest_body} above notes {note_top}"
+        );
+        assert!(
+            notes[1].baseline + notes[1].descent <= 60.0 + 1e-6,
+            "notes end at the foot"
+        );
+        assert_eq!(
+            body.iter()
+                .filter(|l| l.runs[0].glyphs[0].x < 100.0)
+                .count(),
+            2
+        );
+        assert!(notes[0].rules.len() == 1, "a rule above the first note");
+        // The lines the note displaced went on to the second column.
+        assert!(body.iter().any(|l| l.runs[0].glyphs[0].x >= 200.0));
+        assert_eq!(
+            flowed.consumed_to,
+            Some(60),
+            "a thread continues after the copy, not a note"
+        );
+    }
+
+    #[test]
+    fn a_line_whose_note_will_not_fit_takes_the_note_to_the_next_column() {
+        // Column of 40: three 12pt lines fit alone. A note of 24 on the
+        // third line does not fit with it, so line three and its note move.
+        let flowed = flow_with_notes(
+            ruled(3),
+            &[
+                column(0.0, 0.0, 100.0, 40.0),
+                column(200.0, 0.0, 100.0, 100.0),
+            ],
+            Vertical::Top,
+            None,
+            &[Note {
+                at: 25,
+                text: ruled(2),
+            }],
+            0.0,
+        );
+        let third = flowed
+            .text
+            .lines
+            .iter()
+            .find(|l| l.range == (20..30))
+            .expect("placed");
+        assert!(third.runs[0].glyphs[0].x >= 200.0, "the citing line moved");
+        let notes: Vec<&ShapedLine> = flowed
+            .text
+            .lines
+            .iter()
+            .filter(|l| l.range.is_empty())
+            .collect();
+        assert!(
+            notes.iter().all(|l| l.runs[0].glyphs[0].x >= 200.0),
+            "and its note with it"
         );
     }
 

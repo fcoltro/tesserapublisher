@@ -16,6 +16,7 @@ pub mod find;
 pub mod glass;
 pub mod identity;
 pub mod layers;
+pub mod long_document;
 pub mod new_document;
 pub mod pages;
 pub mod palette;
@@ -126,6 +127,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     step_repeat::show(ui.ctx(), state);
     sections::show(ui.ctx(), state);
     variables::show(ui.ctx(), state);
+    long_document::show(ui.ctx(), state);
     styles::editor(ui.ctx(), state);
     find::show(ui.ctx(), state);
 

@@ -5,6 +5,7 @@
 //! needs the same answers a screen redraw does.
 
 pub mod cache;
+pub mod contents;
 pub mod resolve;
 pub mod running;
 pub mod snap;

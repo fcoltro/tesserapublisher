@@ -93,6 +93,15 @@ impl EditBuffer {
         &self.story
     }
 
+    /// The story, to change something beside the text — a footnote's words,
+    /// an index entry's topic — without going through a keystroke.
+    ///
+    /// The caller keeps the text and its runs as they are; the cursor is not
+    /// re-clamped, so an edit that shortened the text would leave it dangling.
+    pub fn story_mut(&mut self) -> &mut Story {
+        &mut self.story
+    }
+
     pub fn cursor(&self) -> TextCursor {
         self.cursor
     }

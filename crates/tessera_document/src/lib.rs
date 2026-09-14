@@ -10,6 +10,7 @@
 pub mod anchored;
 pub mod anchors;
 pub mod blending;
+pub mod contents;
 pub mod corners;
 pub mod document;
 pub mod format;
