@@ -991,6 +991,171 @@ struct Composition<'a> {
     rules: &'a crate::story::Justification,
     /// Lines in a row that may end in a hyphen; 0 for no limit.
     hyphen_limit: u8,
+    /// Whether to weigh the whole paragraph's breaks together rather than
+    /// take each line as it comes.
+    total_fit: bool,
+}
+
+/// One line a plan has chosen: units taken, ink width, spaces, hyphenated.
+type Chosen = (usize, f64, usize, bool);
+
+/// Knuth and Plass, over the units: every way of breaking the paragraph is
+/// scored by how far each line's spaces have to stretch or squeeze, and the
+/// breaks whose lines are together the evenest win.
+///
+/// Dynamic programming over break positions. A break may fall after a space
+/// (which hangs) or at a soft hyphen (which costs its hyphen's width and a
+/// penalty), and the last line is free. A line whose spaces cannot stretch
+/// far enough is allowed at a steep price rather than forbidden, because a
+/// paragraph with one impossible line still has to be set; a line that
+/// overflows is forbidden unless it is the only way on from its start.
+///
+/// `room_for(n)` is the width of the paragraph's `n`th line, which the
+/// obstacles and the first-line indent make different from the next.
+fn plan_total_fit(
+    units: &[Unit],
+    room_for: &dyn Fn(usize) -> f64,
+    composition: &Composition<'_>,
+    desired: f64,
+    squeeze: f64,
+) -> Vec<Chosen> {
+    let n = units.len();
+    let rules = composition.rules;
+    let stretch = if composition.justify {
+        (f64::from(rules.word_max) - f64::from(rules.word_desired)).max(0.0) / 100.0
+    } else {
+        0.0
+    };
+    // best[j]: the cheapest way to have broken after unit j (0 = nothing
+    // taken yet), with where the line before it started, which line number
+    // it is, how many hyphens in a row ended here, and what it chose.
+    #[derive(Clone, Copy)]
+    struct Node {
+        cost: f64,
+        from: usize,
+        line: usize,
+        hyphens: u8,
+        chosen: Chosen,
+    }
+    let mut best: Vec<Option<Node>> = vec![None; n + 1];
+    best[0] = Some(Node {
+        cost: 0.0,
+        from: 0,
+        line: 0,
+        hyphens: 0,
+        chosen: (0, 0.0, 0, false),
+    });
+
+    for i in 0..n {
+        let Some(start) = best[i] else { continue };
+        let room = room_for(start.line).max(1.0);
+        let mut width = 0.0f64;
+        let mut spaces = 0usize;
+        let mut space_width = 0.0f64;
+        let mut any = false;
+        let mut j = i;
+        while j < n {
+            let unit = &units[j];
+            // A candidate end after unit j.
+            let candidate: Option<(f64, bool)> = match unit.kind {
+                UnitKind::Space => Some((width, false)),
+                UnitKind::SoftHyphen => Some((width + unit.hyphen, true)),
+                UnitKind::Text => None,
+            };
+            let is_last = j + 1 == n;
+            let end_candidate = if is_last && candidate.is_none() {
+                Some((width + unit.width, false))
+            } else {
+                candidate
+            };
+            if let Some((ink, hyphenated)) = end_candidate {
+                let hyphens = if hyphenated { start.hyphens + 1 } else { 0 };
+                let allowed = !hyphenated
+                    || composition.hyphen_limit == 0
+                    || start.hyphens < composition.hyphen_limit;
+                let take = j + 1 - i;
+                let last = j + 1 == n;
+                let slack = room - ink;
+                let min_ink = ink - spaces as f64 * space_width * squeeze;
+                let fits = min_ink <= room + 1e-6;
+                if allowed && (fits || !any) {
+                    // Badness: how far the spaces stretch or squeeze, cubed,
+                    // as Knuth has it; a ragged line's slack against the
+                    // measure instead. The last line is free unless it had
+                    // to squeeze.
+                    let badness = if last && slack >= 0.0 {
+                        0.0
+                    } else if !fits {
+                        10_000.0
+                    } else if composition.justify {
+                        let capacity = if slack >= 0.0 {
+                            spaces as f64 * space_width * stretch
+                        } else {
+                            spaces as f64 * space_width * squeeze
+                        };
+                        if capacity <= 0.0 {
+                            if slack.abs() < 1e-6 { 0.0 } else { 1_000.0 }
+                        } else {
+                            let r = slack.abs() / capacity;
+                            100.0 * r * r * r + if r > 1.0 { 1_000.0 } else { 0.0 }
+                        }
+                    } else {
+                        let r = slack.max(0.0) / room;
+                        100.0 * r * r * r
+                    };
+                    let penalty = if hyphenated { 50.0 } else { 0.0 }
+                        + if hyphenated && start.hyphens > 0 {
+                            30.0
+                        } else {
+                            0.0
+                        };
+                    let cost = start.cost + (1.0 + badness + penalty).powi(2);
+                    let node = Node {
+                        cost,
+                        from: i,
+                        line: start.line + 1,
+                        hyphens,
+                        chosen: (take, ink, spaces, hyphenated),
+                    };
+                    if best[j + 1].is_none_or(|b| cost < b.cost) {
+                        best[j + 1] = Some(node);
+                    }
+                    any = true;
+                }
+                // Past the room with a way out: no longer line can help.
+                if !fits && any {
+                    break;
+                }
+            }
+            match unit.kind {
+                UnitKind::Space => {
+                    width += unit.width * desired;
+                    spaces += 1;
+                    space_width = unit.width;
+                }
+                UnitKind::Text => width += unit.width,
+                UnitKind::SoftHyphen => {}
+            }
+            j += 1;
+        }
+    }
+
+    // Walk back from the end.
+    let mut plan = Vec::new();
+    let mut at = n;
+    while at > 0 {
+        let Some(node) = best[at] else {
+            // Unreachable in practice: every position can be left by taking
+            // one unit. Fall back to one unit per line from here.
+            plan.push((1, units[at - 1].width, 0, false));
+            at -= 1;
+            continue;
+        };
+        plan.push(node.chosen);
+        at = node.from;
+    }
+    plan.reverse();
+    plan
 }
 
 /// Break `layout` into lines, and say what each line does with its slack.
@@ -1037,7 +1202,6 @@ fn break_lines_with_room(
     breaker.state_mut().set_layout_max_advance(f32::INFINITY);
 
     let mut line = 0usize;
-    let mut top = 0.0f64;
     let height = line_hint.max(1.0);
     let mut i = 0usize;
     let mut hyphens_in_a_row = 0u8;
@@ -1049,15 +1213,31 @@ fn break_lines_with_room(
         return vec![LineSpacing::default()];
     }
 
-    while i < units.len() {
-        let indent = if line == 0 { first } else { 0.0 } + if line < cap_lines { cap } else { 0.0 };
+    // Where line `n` may run: the same arithmetic the loop below does, so
+    // the paragraph composer plans against the rooms the lines will have.
+    let room_of_line = |n: usize| -> (f64, f64) {
+        let indent = if n == 0 { first } else { 0.0 } + if n < cap_lines { cap } else { 0.0 };
+        let top = n as f64 * height;
         let (offset, available) = if obstacles.is_empty() {
             (0.0, measure)
         } else {
             crate::wrap::available_run(measure, from_y + top, from_y + top + height, obstacles)
         };
         let x = indent.max(offset);
-        let room = ((offset + available) - x).max(1.0);
+        (x, ((offset + available) - x).max(1.0))
+    };
+    let plan: Option<Vec<Chosen>> = composition.total_fit.then(|| {
+        plan_total_fit(
+            &units,
+            &|n| room_of_line(n).1,
+            composition,
+            desired,
+            squeeze,
+        )
+    });
+
+    while i < units.len() {
+        let (x, room) = room_of_line(line);
         // The line's own edges, which alignment measures against: the
         // breaker by count would otherwise leave the right edge at infinity
         // and a centred line with nowhere to be centred in.
@@ -1115,11 +1295,27 @@ fn break_lines_with_room(
             }
             j += 1;
         }
-        let (take, ink, spaces_on_line, hyphenated) = match best {
+        let greedy = match best {
             // Everything left fits: the last line.
             _ if j >= units.len() => (units.len() - i, width, spaces, false),
             Some(best) => best,
             None => (1, units[i].width, 0, false),
+        };
+        // The plan's line, when there is a plan; the space width the
+        // spacing needs is the last space's, as the greedy walk found it.
+        let (take, ink, spaces_on_line, hyphenated) = match plan.as_ref().and_then(|p| p.get(line))
+        {
+            Some(chosen) => {
+                // The last space's width on the planned line.
+                let end = (i + chosen.0).min(units.len());
+                space_width = units[i..end]
+                    .iter()
+                    .rev()
+                    .find(|u| u.kind == UnitKind::Space)
+                    .map_or(space_width, |u| u.width);
+                *chosen
+            }
+            None => greedy,
         };
         let is_last = i + take >= units.len();
         hyphens_in_a_row = if hyphenated { hyphens_in_a_row + 1 } else { 0 };
@@ -1170,11 +1366,11 @@ fn break_lines_with_room(
         if breaker.break_next_with_length(take as u32).is_none() {
             break;
         }
-        // The line's height, for the next line's obstacles: parley has it
-        // once the line exists, which is after the breaker is done — so the
-        // paragraph's leading is used throughout, as it is nearly always
-        // right and is what the first line had anyway.
-        top += height;
+        // The next line's room is measured `height` further down (see
+        // `room_of_line`): parley knows a line's real height only once the
+        // line exists, which is after the breaker is done, so the
+        // paragraph's leading is used throughout — nearly always right, and
+        // what the first line had anyway.
         i += take;
         line += 1;
     }
@@ -2534,6 +2730,7 @@ impl Shaper {
                         justify: format.alignment == Some(crate::story::Alignment::Justify),
                         rules: &justification,
                         hyphen_limit: hyphenation.limit,
+                        total_fit: format.composer == Some(crate::story::Composer::Paragraph),
                     },
                 );
                 (layout, spacings)
@@ -4401,6 +4598,103 @@ mod tests {
             glyph(&two),
             "the cache handed page 2 page 1's layout"
         );
+    }
+
+    // --- the paragraph composer ---------------------------------------------
+
+    fn unit(kind: UnitKind, width: f64) -> Unit {
+        Unit {
+            kind,
+            width,
+            hyphen: 3.0,
+        }
+    }
+
+    /// Words of `widths`, a space of 2 between each.
+    fn words_of(widths: &[f64]) -> Vec<Unit> {
+        let mut out = Vec::new();
+        for (i, w) in widths.iter().enumerate() {
+            if i > 0 {
+                out.push(unit(UnitKind::Space, 2.0));
+            }
+            out.push(unit(UnitKind::Text, *w));
+        }
+        out
+    }
+
+    fn justified_rules() -> crate::story::Justification {
+        crate::story::Justification {
+            word_min: 80.0,
+            word_desired: 100.0,
+            word_max: 133.0,
+            letter_min: 0.0,
+            letter_desired: 0.0,
+            letter_max: 0.0,
+        }
+    }
+
+    #[test]
+    fn the_plan_covers_every_unit_once_and_no_line_overflows() {
+        let units = words_of(&[10.0, 4.0, 12.0, 6.0, 10.0, 10.0, 3.0, 9.0, 11.0, 5.0]);
+        let rules = justified_rules();
+        let composition = Composition {
+            justify: true,
+            rules: &rules,
+            hyphen_limit: 0,
+            total_fit: true,
+        };
+        let room = 30.0;
+        let plan = plan_total_fit(&units, &|_| room, &composition, 1.0, 0.2);
+        let taken: usize = plan.iter().map(|c| c.0).sum();
+        assert_eq!(taken, units.len(), "every unit is on exactly one line");
+        for (take, ink, spaces, _) in &plan {
+            assert!(*take > 0);
+            // Squeezed as far as the rules allow, the line fits.
+            assert!(
+                ink - *spaces as f64 * 2.0 * 0.2 <= room + 1e-6,
+                "{ink} in {room}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_paragraph_set_by_the_composer_still_fits_its_measure() {
+        let mut story = Story::new(
+            "The quick brown fox jumps over the lazy dog and keeps on running through \
+             the long afternoon until the light goes and the words run out at last.",
+        );
+        story.paragraphs[0].local.composer = Some(crate::story::Composer::Paragraph);
+        story.paragraphs[0].local.alignment = Some(crate::story::Alignment::Justify);
+        let mut shaper = Shaper::new();
+        let composed = shaper.shape(&story, &NoStyles::default(), 180.0);
+        story.paragraphs[0].local.composer = None;
+        let greedy = shaper.shape(&story, &NoStyles::default(), 180.0);
+        assert!(!composed.lines.is_empty());
+        // Measured the same way for both: a justified line's last glyph
+        // ends where the greedy breaker's does, give or take a hanging
+        // space, so the composer is held to the greedy breaker's reach.
+        let reach = |t: &ShapedText| {
+            t.lines
+                .iter()
+                .map(|l| l.glyphs().map(|g| g.x + g.advance).fold(0.0, f64::max))
+                .fold(0.0, f64::max)
+        };
+        assert!(
+            reach(&composed) <= reach(&greedy) + 1.0,
+            "the composer ran past the measure: {} vs {}",
+            reach(&composed),
+            reach(&greedy)
+        );
+        // The same words, about as many lines: the composer moves breaks,
+        // it does not lose text.
+        assert!(
+            (composed.lines.len() as i64 - greedy.lines.len() as i64).abs() <= 1,
+            "{} vs {}",
+            composed.lines.len(),
+            greedy.lines.len()
+        );
+        let last = |t: &ShapedText| t.lines.last().map(|l| l.range.end);
+        assert_eq!(last(&composed), last(&greedy), "both reach the end");
     }
 
     // --- footnotes -----------------------------------------------------------

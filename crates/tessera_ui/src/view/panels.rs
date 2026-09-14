@@ -3561,6 +3561,44 @@ fn text_section(
         }
     });
 
+    // The composer: which breaker chooses the lines.
+    {
+        use tessera_text::story::Composer;
+        let current = paragraph.composer.unwrap_or_default();
+        ui.horizontal(|ui| {
+            ui.colored_label(Theme::text_muted(), "Composer");
+            for (choice, label, hint) in [
+                (
+                    Composer::SingleLine,
+                    "Single-line",
+                    "Each line as far as it fits",
+                ),
+                (
+                    Composer::Paragraph,
+                    "Paragraph",
+                    "The whole paragraph's breaks weighed together, for the evenest spacing",
+                ),
+            ] {
+                if ui
+                    .selectable_label(current == choice, label)
+                    .on_hover_text(hint)
+                    .clicked()
+                    && current != choice
+                {
+                    set_paragraph(
+                        state,
+                        story,
+                        target.clone(),
+                        ParagraphFormat {
+                            composer: Some(choice),
+                            ..ParagraphFormat::default()
+                        },
+                    );
+                }
+            }
+        });
+    }
+
     // Tab stops. Edited as a whole: the list is one value in the cascade,
     // so a change to any stop writes the whole list back.
     let mut stops = paragraph.tab_stops.clone();

@@ -31,6 +31,21 @@ pub enum Hyperlink {
     Destination(String),
 }
 
+/// Which breaker chooses a paragraph's lines.
+///
+/// The single-line composer takes each line as far as it fits and moves
+/// on: fast, and what every word processor does. The paragraph composer
+/// weighs every way of breaking the whole paragraph and takes the one whose
+/// lines are, together, the evenest — Knuth and Plass's method, and what
+/// InDesign sets body copy with by default. It costs more and it is what
+/// makes a justified column read as a column rather than as lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Composer {
+    #[default]
+    SingleLine,
+    Paragraph,
+}
+
 /// How a run's letters are cased when drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Case {
@@ -671,6 +686,9 @@ pub struct ParagraphFormat {
     /// Where a word may be broken, when `hyphenate` says words may be.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hyphenation: Option<Hyphenation>,
+    /// How the lines are chosen. `None` is the single-line composer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composer: Option<Composer>,
     /// What every run in the paragraph inherits before its own style speaks.
     #[serde(default)]
     pub character: CharacterFormat,
@@ -703,6 +721,7 @@ impl ParagraphFormat {
             list: self.list.clone().or_else(|| base.list.clone()),
             justification: self.justification.or(base.justification),
             hyphenation: self.hyphenation.or(base.hyphenation),
+            composer: self.composer.or(base.composer),
             character: self.character.over(&base.character),
         }
     }

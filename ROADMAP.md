@@ -2123,9 +2123,19 @@ and not a list of controls.
     and `Hyphenation` (shortest word, letters before and after, lines in a
     row, capitalised words) on `ParagraphFormat`, `None` being InDesign's
     defaults; the consecutive-hyphen limit is honoured by the breaker.
-  - **Not built:** glyph scaling, single-word justification, the paragraph
-    composer (a line-by-line greedy breaker is what this is; Knuth–Plass
-    over the paragraph is the next order of quality), and optical kerning.
+  - **The paragraph composer was added 2026-09-14**, after milestone 12:
+    `ParagraphFormat.composer`, single-line (the default, the greedy
+    breaker) or paragraph. `plan_total_fit` is Knuth and Plass over the
+    same units the greedy breaker reads: every way of breaking the
+    paragraph is scored by how far each line's spaces stretch or squeeze
+    against the justification rules, cubed, plus a hyphen penalty, and the
+    cheapest set of lines wins; the last line is free. The plan is then
+    fed through the same spacing and `break_next_with_length` as the
+    greedy path, so the two cannot disagree about what a line does with
+    its slack. A Composer toggle in the paragraph inspector. **By test;
+    the eye is the real judge and has not seen it.**
+  - **Not built:** glyph scaling, single-word justification, and optical
+    kerning.
   - **A kern is on the brush, not in the letter spacing, and that is the
     finding.** Milestone 2 recorded that tracking one letter of a kerned pair
     made it *wider* and did not know why. The cause: parley starts a new
