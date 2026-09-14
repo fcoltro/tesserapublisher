@@ -228,10 +228,52 @@ pub fn index(doc: &Document, resolved: &ResolvedDocument, title: &str) -> Story 
     }
     for (topic, mut on) in by_topic {
         on.sort_by_key(|p| pages.iter().position(|q| q == p));
-        let labels: Vec<String> = on.iter().filter_map(|p| doc.page_label(*p)).collect();
-        paragraphs.push((format!("{topic}\t{}", labels.join(", ")), None, true, None));
+        let labels = page_ranges(doc, &pages, &on);
+        paragraphs.push((format!("{topic}\t{labels}"), None, true, None));
     }
     assemble(paragraphs, 0.0)
+}
+
+/// "1, 3–5, 8": the pages a topic is on, with runs of neighbours joined
+/// by an en dash, as every index sets them. Pages in different sections
+/// are never joined — "iv–2" would be nonsense — so a run is neighbours in
+/// the reading order *and* in the same section.
+fn page_ranges(doc: &Document, order: &[PageId], on: &[PageId]) -> String {
+    let numbered = doc.page_numbers();
+    let info = |p: PageId| {
+        numbered
+            .iter()
+            .find(|(id, _)| *id == p)
+            .map(|(_, n)| (n.label.clone(), n.section))
+    };
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < on.len() {
+        let Some((start_label, section)) = info(on[i]) else {
+            i += 1;
+            continue;
+        };
+        let mut j = i;
+        while j + 1 < on.len() {
+            let here = order.iter().position(|p| *p == on[j]);
+            let next = order.iter().position(|p| *p == on[j + 1]);
+            let neighbours = matches!((here, next), (Some(a), Some(b)) if b == a + 1);
+            let same_section = info(on[j + 1]).is_some_and(|(_, s)| s == section);
+            if neighbours && same_section {
+                j += 1;
+            } else {
+                break;
+            }
+        }
+        if j > i {
+            let end_label = info(on[j]).map(|(l, _)| l).unwrap_or_default();
+            out.push(format!("{start_label}\u{2013}{end_label}"));
+        } else {
+            out.push(start_label);
+        }
+        i = j + 1;
+    }
+    out.join(", ")
 }
 
 /// Paragraphs into a story, each with its style; the tabbed ones with a
@@ -408,6 +450,34 @@ mod tests {
         let mut shaper = Shaper::new();
         let resolved = crate::resolve(&doc, &mut shaper);
         let story = index(&doc, &resolved, "");
-        assert_eq!(story.text, "Ink\t1\nType\t1, 2");
+        assert_eq!(story.text, "Ink\t1\nType\t1\u{2013}2", "neighbours join");
+    }
+
+    #[test]
+    fn page_runs_join_within_a_section_and_not_across_one() {
+        use tessera_document::sections::Section;
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        for _ in 0..5 {
+            doc.add_page();
+        }
+        let pages: Vec<PageId> = doc.page_ids().collect();
+        // 1 2 3 | 4 5 6 -> the second section restarts at 1.
+        doc.set_sections(vec![Section::starting_at(pages[3])]);
+        assert_eq!(
+            page_ranges(
+                &doc,
+                &pages,
+                &[pages[0], pages[1], pages[2], pages[4], pages[5]]
+            ),
+            "1\u{2013}3, 2\u{2013}3"
+        );
+        assert_eq!(
+            page_ranges(&doc, &pages, &[pages[2], pages[3]]),
+            "3, 1",
+            "neighbours in different sections stay apart"
+        );
+        assert_eq!(page_ranges(&doc, &pages, &[pages[0], pages[2]]), "1, 3");
     }
 }

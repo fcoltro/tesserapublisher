@@ -25,6 +25,7 @@ fn page() -> DocRect {
 /// The test page, resolved with no margins, bleed or slug.
 fn empty_doc() -> ResolvedDocument {
     ResolvedDocument {
+        bookmarks: Vec::new(),
         items: Vec::new(),
         pages: vec![resolved_page()],
     }
@@ -42,6 +43,7 @@ fn resolved_page() -> tessera_layout::ResolvedPage {
 
 fn one(kind: ResolvedKind, bounds: DocRect) -> ResolvedDocument {
     ResolvedDocument {
+        bookmarks: Vec::new(),
         pages: vec![resolved_page()],
         items: vec![ResolvedItem {
             frame: FrameId::default(),
@@ -117,6 +119,40 @@ fn a_rectangle_is_flipped_into_pdf_coordinates() {
         text.contains("732"),
         "the y coordinate must be flipped, not copied"
     );
+}
+
+#[test]
+fn the_contents_headings_become_the_outline() {
+    use tessera_layout::Bookmark;
+    let mut resolved = empty_doc();
+    resolved.pages.push(resolved_page());
+    resolved.bookmarks = vec![
+        Bookmark {
+            title: "Part One".into(),
+            page: 0,
+            level: 0,
+        },
+        Bookmark {
+            title: "Chapter 1".into(),
+            page: 0,
+            level: 1,
+        },
+        Bookmark {
+            title: "Part Two".into(),
+            page: 0,
+            level: 0,
+        },
+    ];
+    let bytes = tessera_pdf::export(&resolved).expect("export");
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("/Outlines"), "the catalog names an outline");
+    assert!(text.contains("/Title (Part One)"));
+    assert!(text.contains("/Title (Chapter 1)"));
+    assert!(text.contains("/Fit"), "each goes to its page");
+    // Nesting: the chapter's parent is not the root, and the root counts
+    // every item.
+    assert!(text.contains("/Count 3"));
+    assert!(text.contains("/Count 1"), "Part One holds one");
 }
 
 #[test]
@@ -334,6 +370,7 @@ fn several_items_all_reach_the_content_stream() {
     let shaped = shaper.shape(&Story::new("Hi"), &NoStyles::default(), 400.0);
 
     let doc = ResolvedDocument {
+        bookmarks: Vec::new(),
         pages: vec![resolved_page()],
         items: vec![
             ResolvedItem {
@@ -429,10 +466,12 @@ fn a_bleed_grows_the_media_box_without_moving_the_content() {
     let bounds = rect(10.0, 10.0, 50.0, 50.0);
 
     let plain = ResolvedDocument {
+        bookmarks: Vec::new(),
         items: black_rect(bounds).items,
         pages: vec![resolved_page()],
     };
     let bled = ResolvedDocument {
+        bookmarks: Vec::new(),
         items: black_rect(bounds).items,
         pages: vec![bled_page(9.0)],
     };
@@ -1037,6 +1076,7 @@ fn one_file_placed_twice_is_embedded_once() {
         kind: placed(Some(source)),
     };
     let doc = ResolvedDocument {
+        bookmarks: Vec::new(),
         pages: vec![resolved_page()],
         items: vec![
             item(rect(0.0, 0.0, 50.0, 50.0), path.clone()),
@@ -1245,6 +1285,7 @@ fn one_ink_used_twice_is_one_plate() {
         },
     };
     let doc = ResolvedDocument {
+        bookmarks: Vec::new(),
         pages: vec![resolved_page()],
         items: vec![
             item(rect(0.0, 0.0, 40.0, 40.0), 1.0),

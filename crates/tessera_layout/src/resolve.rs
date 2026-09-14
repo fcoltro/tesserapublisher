@@ -158,6 +158,20 @@ pub struct ResolvedDocument {
     /// about where the trim is. While each computed its own, one of them was
     /// eventually going to be wrong.
     pub pages: Vec<ResolvedPage>,
+    /// The headings the contents recipe names, with the page each begins
+    /// on, in reading order — what a PDF reader shows in its outline pane.
+    /// Empty when the document has no contents recipe.
+    pub bookmarks: Vec<Bookmark>,
+}
+
+/// A heading and where it is, for a reader's outline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bookmark {
+    pub title: String,
+    /// The page's index in the reading order.
+    pub page: usize,
+    /// How deep: the heading's level in the contents recipe, 0 first.
+    pub level: usize,
 }
 
 /// One page, with the rectangles that describe it.
@@ -366,7 +380,29 @@ fn resolve_pages<'a>(
     let anchored = resolve_anchored(doc, shaper, composed, &items, &running);
     items.extend(anchored);
 
-    ResolvedDocument { items, pages }
+    let mut resolved = ResolvedDocument {
+        items,
+        pages,
+        bookmarks: Vec::new(),
+    };
+    // The outline: the contents recipe's headings, read off the layout just
+    // made. Only for the document — a parent has no reading order.
+    if shown.len() == doc.page_ids().count() && !doc.contents.levels.is_empty() {
+        let styles: Vec<tessera_text::story::ParagraphStyleId> =
+            doc.contents.levels.iter().map(|l| l.style).collect();
+        let pages: Vec<PageId> = doc.page_ids().collect();
+        resolved.bookmarks = crate::contents::headings(doc, &resolved, &styles)
+            .into_iter()
+            .filter_map(|h| {
+                Some(Bookmark {
+                    title: h.text,
+                    page: pages.iter().position(|p| *p == h.page)?,
+                    level: styles.iter().position(|s| *s == h.style)?,
+                })
+            })
+            .collect();
+    }
+    resolved
 }
 
 /// Resolve the frames anchored in text that has already been laid out.

@@ -52,6 +52,7 @@ fn resolved_page() -> tessera_layout::ResolvedPage {
 
 fn empty_doc() -> ResolvedDocument {
     ResolvedDocument {
+        bookmarks: Vec::new(),
         items: Vec::new(),
         pages: vec![resolved_page()],
     }
@@ -59,6 +60,7 @@ fn empty_doc() -> ResolvedDocument {
 
 fn rect_doc(bounds: DocRect, fill: Color) -> ResolvedDocument {
     ResolvedDocument {
+        bookmarks: Vec::new(),
         items: vec![ResolvedItem {
             frame: FrameId::default(),
             on: None,
@@ -157,6 +159,7 @@ fn printing_clips_keep_all_pages_and_hide_artwork_between_spreads() {
 
         // Paper must extend to the revealed bleed/slug even without artwork.
         let blank = ResolvedDocument {
+            bookmarks: Vec::new(),
             items: vec![],
             pages: doc.pages.clone(),
         };
@@ -346,6 +349,7 @@ fn text_puts_dark_pixels_on_the_page() {
     let mut renderer = HeadlessRenderer::new(W, H).expect("adapter");
     let scene = build_scene(
         &ResolvedDocument {
+            bookmarks: Vec::new(),
             pages: vec![resolved_page()],
             items: vec![ResolvedItem {
                 frame: FrameId::default(),

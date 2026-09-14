@@ -1462,6 +1462,7 @@ mod tests {
     /// A document holding one page and the given items.
     fn one_page(items: Vec<ResolvedItem>) -> ResolvedDocument {
         ResolvedDocument {
+            bookmarks: Vec::new(),
             items,
             pages: vec![resolved_page()],
         }
@@ -1469,6 +1470,7 @@ mod tests {
 
     fn one_item(kind: ResolvedKind, bounds: DocRect) -> ResolvedDocument {
         ResolvedDocument {
+            bookmarks: Vec::new(),
             pages: vec![resolved_page()],
             items: vec![ResolvedItem {
                 frame: FrameId::default(),

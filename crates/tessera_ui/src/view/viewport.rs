@@ -146,6 +146,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
         // document behind it is a placeholder nobody asked for, and drawing it
         // is showing a page whose size somebody is in the middle of choosing.
         let nothing = tessera_layout::resolve::ResolvedDocument {
+            bookmarks: Vec::new(),
             pages: Vec::new(),
             items: Vec::new(),
         };

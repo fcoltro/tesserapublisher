@@ -13,6 +13,6 @@ pub mod table;
 
 pub use cache::ResolveCache;
 pub use resolve::{
-    LinkTarget, ResolvedDocument, ResolvedItem, ResolvedKind, ResolvedLink, ResolvedPage, StoryMap,
-    resolve,
+    Bookmark, LinkTarget, ResolvedDocument, ResolvedItem, ResolvedKind, ResolvedLink, ResolvedPage,
+    StoryMap, resolve,
 };

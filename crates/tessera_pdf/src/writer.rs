@@ -164,6 +164,68 @@ fn collect_links(
     out
 }
 
+/// The outline pane: the bookmarks as a tree, nested by level.
+///
+/// PDF wants the tree as doubly linked lists — first, last, next, prev,
+/// parent — with each node counting its open descendants. The parent of a
+/// bookmark is the nearest earlier bookmark of a shallower level; one that
+/// has no such ancestor hangs off the root.
+fn write_outline(
+    pdf: &mut Pdf,
+    root: Ref,
+    bookmarks: &[tessera_layout::Bookmark],
+    ids: &[Ref],
+    page_ids: &[Ref],
+) {
+    let n = bookmarks.len();
+    // The parent of each: index into `bookmarks`, or none for the root.
+    let parent: Vec<Option<usize>> = (0..n)
+        .map(|i| {
+            (0..i)
+                .rev()
+                .find(|j| bookmarks[*j].level < bookmarks[i].level)
+        })
+        .collect();
+    let children =
+        |p: Option<usize>| -> Vec<usize> { (0..n).filter(|i| parent[*i] == p).collect() };
+    let descendants = |p: usize| -> i32 {
+        (p + 1..n)
+            .take_while(|i| bookmarks[*i].level > bookmarks[p].level)
+            .count() as i32
+    };
+
+    let top = children(None);
+    let mut outline = pdf.outline(root);
+    if let (Some(first), Some(last)) = (top.first(), top.last()) {
+        outline.first(ids[*first]).last(ids[*last]);
+    }
+    outline.count(n as i32);
+    outline.finish();
+
+    for i in 0..n {
+        let siblings = children(parent[i]);
+        let at = siblings.iter().position(|s| *s == i).unwrap_or(0);
+        let mine = children(Some(i));
+        let mut item = pdf.outline_item(ids[i]);
+        item.title(TextStr(&bookmarks[i].title));
+        item.parent(parent[i].map_or(root, |p| ids[p]));
+        if at > 0 {
+            item.prev(ids[siblings[at - 1]]);
+        }
+        if at + 1 < siblings.len() {
+            item.next(ids[siblings[at + 1]]);
+        }
+        if let (Some(first), Some(last)) = (mine.first(), mine.last()) {
+            item.first(ids[*first]).last(ids[*last]);
+            item.count(descendants(i));
+        }
+        if let Some(page) = page_ids.get(bookmarks[i].page) {
+            item.dest().page(*page).fit();
+        }
+        item.finish();
+    }
+}
+
 /// One `/Link` annotation: a URI action, or a GoTo that fits the page.
 /// No border, as every layout tool exports them: the link is the words.
 fn write_link(pdf: &mut Pdf, link: &PlacedLink) {
@@ -377,8 +439,16 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
         .filter(|_| options.standard != Standard::Plain)
         .map(|_| alloc());
 
+    // The outline, when there are headings to list: one item per bookmark,
+    // nested by level, each going to its page.
+    let outline_id = (!resolved.bookmarks.is_empty()).then(&mut alloc);
+    let bookmark_ids: Vec<Ref> = resolved.bookmarks.iter().map(|_| alloc()).collect();
+
     let mut catalog = pdf.catalog(catalog_id);
     catalog.pages(page_tree_id);
+    if let Some(outline) = outline_id {
+        catalog.outlines(outline);
+    }
     if let (Some(profile), Some(intent)) = (profile_id, options.intent.as_ref()) {
         // **The output intent is what makes a PDF/X a PDF/X.** Without it the
         // file says which numbers to print and not what they mean, which is the
@@ -547,6 +617,15 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
 
     for font in &fonts {
         write_font(&mut pdf, font);
+    }
+    if let Some(outline) = outline_id {
+        write_outline(
+            &mut pdf,
+            outline,
+            &resolved.bookmarks,
+            &bookmark_ids,
+            &page_ids,
+        );
     }
     for state in &states {
         write_state(&mut pdf, state);

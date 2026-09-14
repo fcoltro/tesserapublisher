@@ -2430,8 +2430,12 @@ which cost one afternoon's confusion and a namespace check.
   one paragraph *run*, and the contents and running-header walks were
   walking runs — two headings in a row listed as one. `Story::paragraph_ranges`
   and `paragraph_run_at` are what to walk when paragraphs are the question.
-  Not built: bookmarks, cross-references, anchored-text destinations,
-  hyperlink appearance on screen, and IDML hyperlinks.
+  **Bookmarks were added 2026-09-14**: the contents recipe's headings, read
+  off the layout, become `ResolvedDocument.bookmarks`, and the PDF writes
+  them as its outline, nested by level, each going to its page — the pane a
+  reader opens first. **The index joins runs of pages** the same day: "3–5",
+  never across a section. Not built: cross-references, anchored-text
+  destinations, hyperlink appearance on screen, and IDML hyperlinks.
 - [x] **Anchored objects and tables import** (added 2026-09-14). An object
   set into a story's text is a `U+FFFC` marker and a frame anchored to it;
   an IDML table is a table frame anchored the same way, with its column
