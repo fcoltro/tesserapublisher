@@ -240,9 +240,10 @@ pub(crate) fn insert_index_entry(state: &mut TesseraApp, topic: &str) -> bool {
         return false;
     };
     // undo-bracketed: the editing session recorded its entry when it began.
-    if let Some(s) = state.active_mut().document_mut().story_mut(story) {
-        *s = updated;
-    }
+    state
+        .active_mut()
+        .document_mut()
+        .replace_story_from_edit(story, updated);
     // undo-bracketed: same gesture.
     state.active_mut().document_mut().touch();
     state.active_mut().dirty = true;

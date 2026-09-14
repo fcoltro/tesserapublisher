@@ -2432,9 +2432,19 @@ which cost one afternoon's confusion and a namespace check.
   and `paragraph_run_at` are what to walk when paragraphs are the question.
   Not built: bookmarks, cross-references, anchored-text destinations,
   hyperlink appearance on screen, and IDML hyperlinks.
-- Dropped out loud: tables (their text is kept, tabbed), anchored objects,
-  images' crops, parents with more pages than the setup allows, and the
-  index. Not read: object styles, gradients, effects, text wrap, corner
+- [x] **Anchored objects and tables import** (added 2026-09-14). An object
+  set into a story's text is a `U+FFFC` marker and a frame anchored to it;
+  an IDML table is a table frame anchored the same way, with its column
+  widths, row heights, cell text and spans. A group in text keeps its first
+  member. **Also found on the way:** nothing in the application anchored an
+  object, and nothing kept the anchors sound when a marker was typed over —
+  `Document::replace_story_from_edit` now finds the edit between the story
+  before and after a keystroke and takes the deleted markers' frames with
+  them, renumbering the rest; and Type ▸ Paste as anchored puts the copied
+  object into the text at the caret.
+- Dropped out loud: images' crops, parents with more pages than the setup
+  allows, a group anchored in text beyond its first member, an object
+  inside a table cell, and the index. Not read: object styles, gradients, effects, text wrap, corner
   options, hyperlinks, XML structure, cross-references, conditional text,
   and `.doc`/`.rtf`.
 

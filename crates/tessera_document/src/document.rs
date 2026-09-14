@@ -2175,6 +2175,91 @@ impl Document {
         self.stories.get_mut(id)
     }
 
+    /// Replace a story with what an editing session made of it, keeping the
+    /// anchored frames in step with their markers.
+    ///
+    /// **This is where a marker's frame learns the marker has gone.** The
+    /// buffer writes the whole story back on every keystroke, so the
+    /// document sees a before and an after and nothing in between; the edit
+    /// is found as the stretch the two disagree on — common prefix, common
+    /// suffix — and the markers in the stretch taken out are the frames to
+    /// delete, with every later frame's index moved down by that many.
+    /// Markers in the stretch put in (a pasted `U+FFFC`) have no frame; the
+    /// later frames move up past them so they keep their own markers, and
+    /// the new markers stand empty rather than stealing someone's picture.
+    pub fn replace_story_from_edit(&mut self, id: StoryId, edited: Story) {
+        let Some(before) = self.stories.get(id).map(|s| s.text.clone()) else {
+            return;
+        };
+        let after = &edited.text;
+        let old_marks = crate::anchored::marker_offsets(&before);
+        let new_marks = crate::anchored::marker_offsets(after);
+        if old_marks != new_marks {
+            // The stretch that changed.
+            let prefix = before
+                .bytes()
+                .zip(after.bytes())
+                .take_while(|(a, b)| a == b)
+                .count();
+            let prefix = (0..=prefix)
+                .rev()
+                .find(|p| before.is_char_boundary(*p) && after.is_char_boundary(*p))
+                .unwrap_or(0);
+            let max_suffix = (before.len() - prefix).min(after.len() - prefix);
+            let suffix = before
+                .bytes()
+                .rev()
+                .zip(after.bytes().rev())
+                .take(max_suffix)
+                .take_while(|(a, b)| a == b)
+                .count();
+            let suffix = (0..=suffix)
+                .rev()
+                .find(|s| {
+                    before.is_char_boundary(before.len() - s)
+                        && after.is_char_boundary(after.len() - s)
+                })
+                .unwrap_or(0);
+            let removed_range = prefix..before.len() - suffix;
+            let inserted_range = prefix..after.len() - suffix;
+
+            let first = old_marks
+                .iter()
+                .filter(|at| **at < removed_range.start)
+                .count();
+            let removed = old_marks
+                .iter()
+                .filter(|at| removed_range.contains(at))
+                .count();
+            let inserted = new_marks
+                .iter()
+                .filter(|at| inserted_range.contains(at))
+                .count();
+
+            let anchored: Vec<(FrameId, usize)> = self
+                .frames
+                .iter()
+                .filter_map(|(f, frame)| {
+                    frame.anchor.filter(|a| a.story == id).map(|a| (f, a.index))
+                })
+                .collect();
+            for (frame, index) in anchored {
+                if index >= first && index < first + removed {
+                    self.remove_frame(frame);
+                } else if index >= first + removed
+                    && let Some(f) = self.frames.get_mut(frame)
+                    && let Some(anchor) = f.anchor.as_mut()
+                {
+                    anchor.index = index - removed + inserted;
+                }
+            }
+        }
+        if let Some(s) = self.stories.get_mut(id) {
+            *s = edited;
+        }
+        self.revision += 1;
+    }
+
     pub fn frame(&self, id: FrameId) -> Option<&Frame> {
         self.frames.get(id)
     }
@@ -2918,6 +3003,73 @@ mod tests {
             position,
             locked: false,
         }
+    }
+
+    #[test]
+    fn deleting_a_marker_in_an_edit_takes_its_frame_and_renumbers_the_rest() {
+        use crate::anchored::{Anchored, MARKER};
+        let mut doc = Document::new();
+        let layer = doc.default_layer().unwrap();
+        let story = doc.add_story(Story::new(format!("a{MARKER}b{MARKER}c{MARKER}d")));
+        let picture = |doc: &mut Document, index: usize| {
+            doc.add_frame(
+                layer,
+                Frame {
+                    bounds: DocRect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 10.0,
+                        height: 10.0,
+                    },
+                    kind: FrameKind::Rectangle,
+                    transform: Transform::IDENTITY,
+                    fill: Paint::Solid(Color::BLACK),
+                    stroke: None,
+                    wrap: crate::nodes::TextWrap::None,
+                    blend: crate::blending::Blending::PLAIN,
+                    corners: crate::corners::Corners::SQUARE,
+                    shadow: None,
+                    anchor: Some(Anchored::new(story, index)),
+                    style: None,
+                },
+            )
+        };
+        let (p0, p1, p2) = (
+            picture(&mut doc, 0),
+            picture(&mut doc, 1),
+            picture(&mut doc, 2),
+        );
+        assert!(doc.anchors_in(story).are_sound(3));
+
+        // An edit that deletes the second marker, as Backspace would.
+        let mut edited = doc.story(story).unwrap().clone();
+        let second = crate::anchored::marker_offsets(&edited.text)[1];
+        edited.delete_range(second..second + MARKER.len_utf8());
+        doc.replace_story_from_edit(story, edited);
+
+        assert!(doc.frame(p1).is_none(), "the deleted marker's picture went");
+        assert_eq!(doc.frame(p0).unwrap().anchor.unwrap().index, 0);
+        assert_eq!(
+            doc.frame(p2).unwrap().anchor.unwrap().index,
+            1,
+            "the third picture is now the second"
+        );
+        assert!(doc.anchors_in(story).are_sound(2));
+
+        // An edit that pastes a marker in front: the pictures move up past
+        // it and the new marker stands empty.
+        let mut edited = doc.story(story).unwrap().clone();
+        edited.insert_text(0, &MARKER.to_string());
+        doc.replace_story_from_edit(story, edited);
+        assert_eq!(doc.frame(p0).unwrap().anchor.unwrap().index, 1);
+        assert_eq!(doc.frame(p2).unwrap().anchor.unwrap().index, 2);
+        assert!(doc.anchors_in(story).frame_at(0).is_none());
+
+        // An edit touching no marker changes nothing about them.
+        let mut edited = doc.story(story).unwrap().clone();
+        edited.insert_text(edited.text.len(), "!");
+        doc.replace_story_from_edit(story, edited);
+        assert_eq!(doc.frame(p0).unwrap().anchor.unwrap().index, 1);
     }
 
     #[test]

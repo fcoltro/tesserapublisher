@@ -228,7 +228,7 @@ person reaches for once they start setting copy, and none of it had a row:
 | Spell check | ✅ Hunspell dictionaries from a folder; no bundled list, no suggestions, no squiggles | — | done |
 | Story editor | ✗ | view | — |
 | Print dialog | ✗ — PDF export only | — | — |
-| IDML import | ✅ pages, parents, threads, styles, swatches, sections, footnotes; tables and anchored objects dropped out loud | — | done, M12 |
+| IDML import | ✅ pages, parents, threads, styles, swatches, sections, footnotes, anchored objects, tables | — | done, M12 |
 | Word import | ✅ File ▸ Place a `.docx`; styles merged by name | — | done, M12 |
 
 ---

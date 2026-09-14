@@ -116,20 +116,34 @@ fn import_package(mut package: Package) -> Result<Imported, ImportError> {
         _ => Styles::default(),
     };
 
-    // Stories, by their Self.
-    let mut stories: HashMap<String, StoryId> = HashMap::new();
+    // Stories, by their Self. The files stay parsed until the end, because
+    // an object set into a story's text is a node in the story's file, and
+    // its frame is made only once every story and layer exists.
+    let mut story_texts = Vec::new();
     for src in story_srcs {
         if !package.has(&src) {
             continue;
         }
         let text = package.text(&src)?;
-        let xml = parse(&src, &text)?;
+        story_texts.push((src, text));
+    }
+    let mut story_xml = Vec::new();
+    for (src, text) in &story_texts {
+        story_xml.push(parse(src, text)?);
+    }
+    let mut stories: HashMap<String, StoryId> = HashMap::new();
+    let mut inline: Vec<(StoryId, usize, Node)> = Vec::new();
+    for xml in &story_xml {
         for node in xml.descendants().filter(|n| is_plain(*n, "Story")) {
             let Some(name) = attr(node, "Self") else {
                 continue;
             };
-            let story = story::read(node, &styles, &colours, &mut dropped);
-            stories.insert(name.to_owned(), doc.add_story(story));
+            let read = story::read(node, &styles, &colours);
+            let id = doc.add_story(read.story);
+            stories.insert(name.to_owned(), id);
+            for (index, item) in read.inline {
+                inline.push((id, index, item));
+            }
         }
     }
 
@@ -249,6 +263,19 @@ fn import_package(mut package: Package) -> Result<Imported, ImportError> {
             }
         }
         items.place_all(*spread, &placed, &mut doc, &mut dropped);
+    }
+
+    // The objects set into the stories' text, anchored to their markers.
+    for (story, index, node) in inline {
+        items.place_inline(
+            node,
+            story,
+            index,
+            &mut doc,
+            &mut dropped,
+            &styles,
+            &colours,
+        );
     }
 
     // Margins: the first page's, since Tessera's are document-wide.
@@ -431,7 +458,145 @@ impl Items<'_> {
         dropped: &mut Dropped,
     ) {
         for node in spread.children().filter(|n| n.is_element()) {
-            self.place(node, pages, doc, dropped, Transform::IDENTITY);
+            self.place(node, pages, doc, dropped, Transform::IDENTITY, None);
+        }
+    }
+
+    /// An object set into a story's text: a frame anchored to the story's
+    /// `index`th marker. A table becomes a table frame; a group its first
+    /// member, since one marker anchors one frame.
+    #[allow(clippy::too_many_arguments)]
+    fn place_inline(
+        &mut self,
+        node: Node,
+        story: StoryId,
+        index: usize,
+        doc: &mut Document,
+        dropped: &mut Dropped,
+        styles: &Styles,
+        colours: &Colours,
+    ) {
+        let name = node.tag_name().name();
+        let node = if name == "Group" {
+            dropped.note("a group anchored in text (only its first member was kept)");
+            let Some(first) = node.children().find(|n| n.is_element()) else {
+                return;
+            };
+            first
+        } else {
+            node
+        };
+        if node.tag_name().name() == "Table" {
+            self.place_table(node, story, index, doc, dropped, styles, colours);
+            return;
+        }
+        self.place(
+            node,
+            &[],
+            doc,
+            dropped,
+            Transform::IDENTITY,
+            Some((story, index)),
+        );
+    }
+
+    /// An IDML table into the table model, anchored in its story.
+    #[allow(clippy::too_many_arguments)]
+    fn place_table(
+        &mut self,
+        node: Node,
+        story: StoryId,
+        index: usize,
+        doc: &mut Document,
+        dropped: &mut Dropped,
+        styles: &Styles,
+        colours: &Colours,
+    ) {
+        use tessera_document::table::{Slot, Span};
+        let widths: Vec<f64> = children(node, "Column")
+            .map(|c| attr_f64(c, "SingleColumnWidth").unwrap_or(72.0))
+            .collect();
+        let heights: Vec<f64> = children(node, "Row")
+            .map(|r| attr_f64(r, "SingleRowHeight").unwrap_or(12.0))
+            .collect();
+        let columns = widths.len().max(1);
+        let rows = heights.len().max(1);
+        let width: f64 = widths.iter().sum::<f64>().max(1.0);
+        let mut table = tessera_document::table::new(rows, columns, width, || {
+            doc.add_story(tessera_text::Story::default())
+        });
+        table.columns = widths;
+        table.rows = heights;
+        // Cells by "column:row", with their spans; the covered slots follow.
+        for cell in children(node, "Cell") {
+            let Some((c, r)) = attr(cell, "Name")
+                .and_then(|n| n.split_once(':'))
+                .and_then(|(c, r)| Some((c.parse::<usize>().ok()?, r.parse::<usize>().ok()?)))
+            else {
+                continue;
+            };
+            let span = Span {
+                columns: attr_f64(cell, "ColumnSpan").map_or(1, |n| n as u16).max(1),
+                rows: attr_f64(cell, "RowSpan").map_or(1, |n| n as u16).max(1),
+            };
+            let read = story::read(cell, styles, colours);
+            if !read.inline.is_empty() {
+                dropped.note("an object anchored inside a table cell");
+            }
+            let Some(slot) = table.at_mut(r, c) else {
+                continue;
+            };
+            let Slot::Cell(existing) = slot else { continue };
+            if let Some(s) = doc.story_mut(existing.story) {
+                *s = read.story;
+            }
+            existing.span = span;
+            // What the span covers is not a cell of its own.
+            for rr in r..r + usize::from(span.rows) {
+                for cc in c..c + usize::from(span.columns) {
+                    if (rr, cc) != (r, c)
+                        && let Some(covered) = table.at_mut(rr, cc)
+                    {
+                        *covered = Slot::Covered;
+                    }
+                }
+            }
+        }
+        let height: f64 = table.rows.iter().sum();
+        let stroke = self
+            .colours
+            .get(attr(node, "StrokeColor").or(Some("Color/Black")))
+            .map(|c| Stroke::new(c, attr_f64(node, "StrokeWeight").unwrap_or(0.5)));
+        table.stroke = stroke;
+        let layer = self.fallback_layer;
+        let id = doc.add_frame(
+            layer,
+            Frame {
+                bounds: DocRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width,
+                    height: height.max(1.0),
+                },
+                kind: FrameKind::Table(table),
+                transform: Transform::IDENTITY,
+                fill: Paint::Solid(Color::Rgb {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.0,
+                }),
+                stroke: None,
+                wrap: tessera_document::nodes::TextWrap::None,
+                blend: tessera_document::blending::Blending::PLAIN,
+                corners: tessera_document::corners::Corners::SQUARE,
+                shadow: None,
+                anchor: Some(tessera_document::anchored::Anchored::new(story, index)),
+                style: None,
+            },
+        );
+        if let Some(name) = attr(node, "Self") {
+            self.frames.insert(name.to_owned(), id);
         }
     }
 
@@ -442,6 +607,7 @@ impl Items<'_> {
         doc: &mut Document,
         dropped: &mut Dropped,
         parent: Transform,
+        anchored: Option<(StoryId, usize)>,
     ) {
         let name = node.tag_name().name();
         let kind_name = match name {
@@ -453,13 +619,13 @@ impl Items<'_> {
                 let own = item_transform(node);
                 let combined = own.then(parent);
                 for member in node.children().filter(|n| n.is_element()) {
-                    self.place(member, pages, doc, dropped, combined);
+                    self.place(member, pages, doc, dropped, combined, None);
                 }
                 return;
             }
             _ => return,
         };
-        if pages.is_empty() {
+        if pages.is_empty() && anchored.is_none() {
             return;
         }
 
@@ -482,26 +648,31 @@ impl Items<'_> {
             corners.iter().map(|c| c.0).sum::<f64>() / 4.0,
             corners.iter().map(|c| c.1).sum::<f64>() / 4.0,
         );
-        let (page, page_id) = pages
-            .iter()
-            .find(|(p, _)| {
-                centre.0 >= p.rect.x
-                    && centre.0 <= p.rect.x + p.rect.width
-                    && centre.1 >= p.rect.y
-                    && centre.1 <= p.rect.y + p.rect.height
-            })
-            .unwrap_or(&pages[0]);
-        let Some(tessera_page) = doc.pages.get(*page_id).map(|p| p.bounds) else {
-            return;
-        };
-
         // The item's origin, in Tessera's space: the spread offset re-based
-        // on the page it is on.
-        let origin = apply(transform, 0.0, 0.0);
-        let (ox, oy) = (
-            tessera_page.x + (origin.0 - page.rect.x),
-            tessera_page.y + (origin.1 - page.rect.y),
-        );
+        // on the page it is on. An anchored object has no page of its own —
+        // the text puts it where its marker lands — so its origin is nought
+        // and only its size and turn are kept.
+        let (ox, oy) = if anchored.is_some() {
+            (0.0, 0.0)
+        } else {
+            let (page, page_id) = pages
+                .iter()
+                .find(|(p, _)| {
+                    centre.0 >= p.rect.x
+                        && centre.0 <= p.rect.x + p.rect.width
+                        && centre.1 >= p.rect.y
+                        && centre.1 <= p.rect.y + p.rect.height
+                })
+                .unwrap_or(&pages[0]);
+            let Some(tessera_page) = doc.pages.get(*page_id).map(|p| p.bounds) else {
+                return;
+            };
+            let origin = apply(transform, 0.0, 0.0);
+            (
+                tessera_page.x + (origin.0 - page.rect.x),
+                tessera_page.y + (origin.1 - page.rect.y),
+            )
+        };
         let [a, b, c, d, _, _] = transform.coefficients;
         let is_upright =
             (a - 1.0).abs() < 1e-9 && b.abs() < 1e-9 && c.abs() < 1e-9 && (d - 1.0).abs() < 1e-9;
@@ -620,7 +791,8 @@ impl Items<'_> {
                 blend: tessera_document::blending::Blending::PLAIN,
                 corners: tessera_document::corners::Corners::SQUARE,
                 shadow: None,
-                anchor: None,
+                anchor: anchored
+                    .map(|(story, index)| tessera_document::anchored::Anchored::new(story, index)),
                 style: None,
             },
         );

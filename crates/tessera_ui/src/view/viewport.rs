@@ -934,10 +934,12 @@ fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
         // whole editing session became one undo step when it began, in
         // `begin_editing`.
         let cell = state.active().editing_cell;
-        if let Some(target) = editing_story(state, id, cell)
-            && let Some(s) = state.active_mut().document_mut().story_mut(target)
-        {
-            *s = story;
+        if let Some(target) = editing_story(state, id, cell) {
+            // undo-bracketed: same session.
+            state
+                .active_mut()
+                .document_mut()
+                .replace_story_from_edit(target, story);
         }
         state.active_mut().dirty = true;
     }
@@ -1063,10 +1065,11 @@ pub(crate) fn type_text(state: &mut TesseraApp, text: &str) -> bool {
     let story = buffer.story().clone();
     let cell = state.active().editing_cell;
     // undo-bracketed: the editing session recorded its entry when it began.
-    if let Some(target) = editing_story(state, id, cell)
-        && let Some(s) = state.active_mut().document_mut().story_mut(target)
-    {
-        *s = story;
+    if let Some(target) = editing_story(state, id, cell) {
+        state
+            .active_mut()
+            .document_mut()
+            .replace_story_from_edit(target, story);
     }
     state.active_mut().dirty = true;
     true

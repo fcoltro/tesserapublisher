@@ -130,10 +130,28 @@ fn a_book() -> Vec<u8> {
     <CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]"><Content>It was a </Content></CharacterStyleRange>
     <CharacterStyleRange AppliedCharacterStyle="CharacterStyle/Emphasis"><Content>bright</Content></CharacterStyleRange>
     <CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]"><Content> cold day.</Content>
-      <Footnote><ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Body"><CharacterStyleRange><Content><?ACE 4?>	Orwell.</Content></CharacterStyleRange></ParagraphStyleRange></Footnote>
+      <Footnote><ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Body"><CharacterStyleRange><Content><?ACE 4?>	Orwell.</Content></CharacterStyleRange></ParagraphStyleRange></Footnote><Br/>
     </CharacterStyleRange>
   </ParagraphStyleRange>
-</Story></idPkg:Story>"#
+  <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Body">
+    <CharacterStyleRange>
+      <Content>A picture </Content>
+      <Rectangle Self="ur9" FillColor="Color/Black" ItemTransform="1 0 0 1 0 0">{}</Rectangle>
+      <Content> and a table </Content>
+      <Table Self="ut1" HeaderRowCount="0" BodyRowCount="2" ColumnCount="2">
+        <Row Self="ut1r0" Name="0" SingleRowHeight="14"/>
+        <Row Self="ut1r1" Name="1" SingleRowHeight="14"/>
+        <Column Self="ut1c0" Name="0" SingleColumnWidth="60"/>
+        <Column Self="ut1c1" Name="1" SingleColumnWidth="90"/>
+        <Cell Self="ut1i0" Name="0:0" RowSpan="1" ColumnSpan="2"><ParagraphStyleRange><CharacterStyleRange><Content>Wide head</Content></CharacterStyleRange></ParagraphStyleRange></Cell>
+        <Cell Self="ut1i1" Name="0:1" RowSpan="1" ColumnSpan="1"><ParagraphStyleRange><CharacterStyleRange><Content>a</Content></CharacterStyleRange></ParagraphStyleRange></Cell>
+        <Cell Self="ut1i2" Name="1:1" RowSpan="1" ColumnSpan="1"><ParagraphStyleRange><CharacterStyleRange><Content>b</Content></CharacterStyleRange></ParagraphStyleRange></Cell>
+      </Table>
+      <Content> follow.</Content>
+    </CharacterStyleRange>
+  </ParagraphStyleRange>
+</Story></idPkg:Story>"#,
+        rect_path(0.0, 0.0, 30.0, 20.0)
     );
     let folio = format!(
         r#"<idPkg:Story {IDPKG}>
@@ -262,13 +280,37 @@ fn a_book_comes_back_as_pages_parents_frames_threads_styles_and_sections() {
     assert_eq!(layout.columns, 2);
     assert_eq!(layout.gutter, 12.0);
     let text = doc.story(*story).unwrap();
+    let m = tessera_document::anchored::MARKER;
     assert_eq!(
         text.text,
         format!(
-            "Chapter One\nIt was a bright cold day.{}",
+            "Chapter One\nIt was a bright cold day.{}\nA picture {m} and a table {m} follow.",
             Marker::FootnoteReference.character()
         )
     );
+
+    // The picture and the table are frames anchored to the two markers.
+    let anchors = doc.anchors_in(*story);
+    assert!(anchors.are_sound(2), "one frame per marker");
+    let picture = doc.frame(anchors.frame_at(0).unwrap()).unwrap();
+    assert!(matches!(picture.kind, FrameKind::Rectangle));
+    assert_eq!((picture.bounds.width, picture.bounds.height), (30.0, 20.0));
+    let table = doc.frame(anchors.frame_at(1).unwrap()).unwrap();
+    let FrameKind::Table(table) = &table.kind else {
+        panic!("a table frame")
+    };
+    assert_eq!((table.rows(), table.columns()), (2, 2));
+    assert_eq!(table.columns, vec![60.0, 90.0]);
+    assert!(table.spans_are_sound());
+    let head = table.at(0, 0).unwrap().cell().expect("a cell");
+    assert_eq!(head.span.columns, 2);
+    assert_eq!(doc.story(head.story).unwrap().text, "Wide head");
+    assert!(
+        table.at(0, 1).unwrap().cell().is_none(),
+        "covered by the span"
+    );
+    let b = table.at(1, 1).unwrap().cell().expect("a cell");
+    assert_eq!(doc.story(b.story).unwrap().text, "b");
     assert!(text.notes_are_sound());
     assert!(text.footnotes[0].text.ends_with("Orwell."));
     assert_eq!(text.paragraphs[0].style, Some(heading.0));

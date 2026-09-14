@@ -301,6 +301,8 @@ pub enum Run {
     FootnoteOptions,
     /// Walk the unknown words, one at a time.
     CheckSpelling,
+    /// Paste the copied object into the text at the caret, anchored.
+    PasteAnchored,
     /// Add a row or column beside the cell being edited.
     TableRow {
         above: bool,
@@ -372,6 +374,8 @@ pub fn guard(run: Run) -> Guard {
         Run::Hyperlink => Guard::Always,
         Run::FootnoteOptions => Guard::Always,
         Run::CheckSpelling => Guard::NotWhileTyping,
+        // Only means anything while typing, like the special characters.
+        Run::PasteAnchored => Guard::Always,
         // Only useful while typing, like the special characters.
         Run::InsertFootnote | Run::EditFootnote | Run::InsertIndexEntry => Guard::Always,
         // Opening a search box is not an edit and needs no selection. It is
@@ -1038,6 +1042,9 @@ pub fn all() -> &'static [Action] {
             Group::Type,
             ToggleStyles,
         ),
+        // Under Type, where the caret is: it is a typing action, and Edit
+        // is at its dozen lines.
+        a("Paste as anchored", None, Group::Type, Run::PasteAnchored),
         a(
             "Text variables\u{2026}",
             None,
@@ -1345,6 +1352,7 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         Run::TableOfContents => state.contents.open = true,
         Run::InsertGlyph => state.glyph.open = true,
         Run::FootnoteOptions => state.footnote_options.open = true,
+        Run::PasteAnchored => crate::apply(state, crate::Command::PasteAnchored),
         Run::CheckSpelling => {
             state.dictionaries.load_user_words();
             let mut window = std::mem::take(&mut state.spelling);

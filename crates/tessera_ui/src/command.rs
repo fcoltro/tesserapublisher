@@ -548,6 +548,10 @@ pub enum Command {
     },
     /// Replace the document's footnote options.
     SetFootnoteOptions(tessera_document::footnotes::FootnoteOptions),
+    /// Paste the clipboard's first object into the text at the caret, so it
+    /// travels with the copy: a marker in the story and the object anchored
+    /// to it.
+    PasteAnchored,
     /// Text read from another application's file, into `id` — replacing what
     /// it held — or into a new frame filling the current page's margins.
     PlaceText {
@@ -1825,6 +1829,67 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 .active_mut()
                 .document_mut()
                 .set_footnote_options(options);
+        }
+
+        Command::PasteAnchored => {
+            use tessera_document::anchored::{Anchored, MARKER};
+            let Some(first) = state.clipboard.first() else {
+                return;
+            };
+            let Some((frame, buffer)) = state.active().editing.as_ref() else {
+                return;
+            };
+            let (frame, at) = (*frame, buffer.cursor().position);
+            let Some(story) =
+                crate::view::viewport::editing_story(state, frame, state.active().editing_cell)
+            else {
+                return;
+            };
+            let source = first.source.clone();
+            let root = first.root;
+            let layer = state.default_layer();
+            let pasted = state.active_mut().document_mut().import_frames(
+                &source,
+                &[root],
+                layer,
+                0.0,
+                0.0,
+                false,
+            );
+            let Some(id) = pasted.first().copied() else {
+                return;
+            };
+            // Which marker this will be: the ones before the caret come first.
+            let index = state
+                .active()
+                .document()
+                .story(story)
+                .map(|s| {
+                    tessera_document::anchored::marker_offsets(&s.text)
+                        .iter()
+                        .filter(|m| **m < at)
+                        .count()
+                })
+                .unwrap_or(0);
+            // The marker goes into the buffer and is written back the way a
+            // keystroke is, which renumbers the anchors after it; then this
+            // frame takes the index the new marker has.
+            if let Some(buffer) = editing_buffer_for(state, story) {
+                buffer.set_cursor(at);
+                buffer.insert(&MARKER.to_string());
+                let edited = buffer.story().clone();
+                state
+                    .active_mut()
+                    .document_mut()
+                    .replace_story_from_edit(story, edited);
+            } else if let Some(s) = state.active_mut().document_mut().story_mut(story) {
+                s.insert_text(at, &MARKER.to_string());
+            }
+            if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
+                f.anchor = Some(Anchored::new(story, index));
+            }
+            state.active_mut().document_mut().touch();
+            state.active_mut().selection.set(id);
         }
 
         Command::PlaceText { id, text } => {

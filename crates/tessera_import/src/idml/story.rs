@@ -16,24 +16,39 @@ use tessera_text::story::{CharacterFormat, IndexEntry, ParagraphFormat, Paragrap
 use tessera_text::variables::Marker;
 
 use super::styles::{Colours, Styles, character_format, paragraph_format};
-use crate::Dropped;
 use crate::xml::attr;
 
+/// A story, and the objects set into its text.
+///
+/// Each inline object — a picture, a shape, a table — is a `U+FFFC` marker
+/// in the text and a node here, by the marker's index, for the caller to
+/// make a frame of and anchor. The node is kept rather than the frame
+/// because a frame needs the document, and the story does not.
+pub(crate) struct Read<'a, 'i> {
+    pub story: Story,
+    pub inline: Vec<(usize, Node<'a, 'i>)>,
+}
+
 /// The story a `<Story>` element describes.
-pub(crate) fn read(
-    story: Node,
+pub(crate) fn read<'a, 'i>(
+    story: Node<'a, 'i>,
     styles: &Styles,
     colours: &Colours,
-    dropped: &mut Dropped,
-) -> Story {
+) -> Read<'a, 'i> {
     let mut b = Builder::default();
-    read_ranges(story, styles, colours, &mut b, dropped);
-    b.finish()
+    read_ranges(story, styles, colours, &mut b);
+    let inline = std::mem::take(&mut b.inline);
+    Read {
+        story: b.finish(),
+        inline,
+    }
 }
 
 #[derive(Default)]
-struct Builder {
+struct Builder<'a, 'i> {
     text: String,
+    /// The objects set into the text, by marker index.
+    inline: Vec<(usize, Node<'a, 'i>)>,
     /// `(start, end, style, local)` for every character range met.
     runs: Vec<(
         usize,
@@ -52,7 +67,18 @@ struct Builder {
     footnotes: Vec<Story>,
 }
 
-impl Builder {
+impl<'a, 'i> Builder<'a, 'i> {
+    /// Put a marker for an inline object here, and remember the node.
+    fn push_inline(&mut self, node: Node<'a, 'i>) {
+        let index = self
+            .text
+            .chars()
+            .filter(|c| *c == tessera_document::anchored::MARKER)
+            .count();
+        self.text.push(tessera_document::anchored::MARKER);
+        self.inline.push((index, node));
+    }
+
     fn finish(self) -> Story {
         let text = self.text;
         if text.is_empty() {
@@ -137,12 +163,11 @@ impl Builder {
     }
 }
 
-fn read_ranges(
-    node: Node,
+fn read_ranges<'a, 'i>(
+    node: Node<'a, 'i>,
     styles: &Styles,
     colours: &Colours,
-    b: &mut Builder,
-    dropped: &mut Dropped,
+    b: &mut Builder<'a, 'i>,
 ) {
     for child in node.children() {
         if child.is_pi() {
@@ -159,7 +184,7 @@ fn read_ranges(
                     .and_then(|s| styles.paragraph.get(s))
                     .copied();
                 let local = paragraph_format(child, colours);
-                read_ranges(child, styles, colours, b, dropped);
+                read_ranges(child, styles, colours, b);
                 b.paragraphs.push((start, b.text.len(), style, local));
             }
             "CharacterStyleRange" => {
@@ -168,7 +193,7 @@ fn read_ranges(
                     .and_then(|s| styles.character.get(s))
                     .copied();
                 let local = character_format(child, colours, None);
-                read_ranges(child, styles, colours, b, dropped);
+                read_ranges(child, styles, colours, b);
                 b.runs.push((start, b.text.len(), style, local));
             }
             "Content" => {
@@ -186,8 +211,8 @@ fn read_ranges(
             "Br" => b.text.push('\n'),
             "Footnote" => {
                 b.text.push(Marker::FootnoteReference.character());
-                let mut note = Builder::default();
-                read_ranges(child, styles, colours, &mut note, dropped);
+                let mut note: Builder<'a, 'i> = Builder::default();
+                read_ranges(child, styles, colours, &mut note);
                 let mut note = note.finish();
                 // A note that did not carry its own number gets one.
                 if !note.text.starts_with(Marker::FootnoteNumber.character()) {
@@ -195,29 +220,14 @@ fn read_ranges(
                 }
                 b.footnotes.push(note);
             }
-            "Table" => {
-                dropped.note("a table (tables are not imported yet); its text was kept");
-                // The cells' text, at least, so nothing is lost silently.
-                for cell in child
-                    .descendants()
-                    .filter(|n| n.tag_name().name() == "Cell")
-                {
-                    let mut inner = Builder::default();
-                    read_ranges(cell, styles, colours, &mut inner, dropped);
-                    let text = inner.finish().text;
-                    if !text.trim().is_empty() {
-                        b.text.push_str(text.trim_end_matches('\n'));
-                        b.text.push('\t');
-                    }
-                }
-                b.text.push('\n');
-            }
-            "Rectangle" | "Oval" | "Polygon" | "TextFrame" | "Group" | "GraphicLine" => {
-                dropped.note("an object anchored in text (anchored objects are not imported yet)");
+            // An object set into the text — a picture, a shape, a table —
+            // is a marker here and a frame anchored to it later.
+            "Table" | "Rectangle" | "Oval" | "Polygon" | "TextFrame" | "Group" | "GraphicLine" => {
+                b.push_inline(child);
             }
             "HyperlinkTextSource" | "HyperlinkTextDestination" | "XMLElement" | "Change" => {
                 // Wrappers around ordinary ranges: read through them.
-                read_ranges(child, styles, colours, b, dropped);
+                read_ranges(child, styles, colours, b);
             }
             _ => {}
         }
@@ -251,19 +261,18 @@ mod tests {
     use super::*;
     use tessera_document::document::Document;
 
-    fn story_from(xml: &str) -> (Story, Dropped) {
+    fn story_from(xml: &str) -> (Story, usize) {
         let doc = roxmltree::Document::parse(xml).expect("xml");
-        let mut dropped = Dropped::default();
         let colours = Colours::default();
         let mut tessera = Document::default();
         let styles = Styles::read(doc.root(), &mut tessera, &colours);
-        let story = read(doc.root_element(), &styles, &colours, &mut dropped);
-        (story, dropped)
+        let read = read(doc.root_element(), &styles, &colours);
+        (read.story, read.inline.len())
     }
 
     #[test]
     fn ranges_become_text_runs_and_paragraphs() {
-        let (story, dropped) = story_from(
+        let (story, _) = story_from(
             r#"<Story Self="u1">
   <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Heading" Justification="CenterAlign">
     <CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]" PointSize="24">
@@ -280,7 +289,6 @@ mod tests {
   </ParagraphStyleRange>
 </Story>"#,
         );
-        assert!(dropped.is_empty());
         assert_eq!(story.text, "Alpha\nPlain and slanted");
         assert!(story.runs_are_sound());
         assert_eq!(story.paragraphs.len(), 2);
@@ -325,8 +333,8 @@ mod tests {
     }
 
     #[test]
-    fn a_table_is_dropped_out_loud_and_its_words_kept() {
-        let (story, dropped) = story_from(
+    fn a_table_becomes_a_marker_with_its_node_kept_for_later() {
+        let (story, inline) = story_from(
             r#"<Story Self="u1"><ParagraphStyleRange><CharacterStyleRange>
   <Content>Before</Content><Br/>
   <Table><Row/><Cell><ParagraphStyleRange><CharacterStyleRange><Content>a1</Content></CharacterStyleRange></ParagraphStyleRange></Cell>
@@ -334,9 +342,11 @@ mod tests {
   <Content>After</Content>
 </CharacterStyleRange></ParagraphStyleRange></Story>"#,
         );
-        assert_eq!(dropped.0.len(), 1);
-        assert!(dropped.0[0].contains("table"));
-        assert_eq!(story.text, "Before\na1\tb1\t\nAfter");
+        assert_eq!(
+            story.text,
+            format!("Before\n{}After", tessera_document::anchored::MARKER)
+        );
+        assert_eq!(inline, 1, "one object to anchor");
         assert!(story.runs_are_sound());
     }
 }
