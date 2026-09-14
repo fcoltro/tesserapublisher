@@ -762,7 +762,7 @@ fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
 }
 
 #[test]
-fn the_format_version_is_twenty_three() {
+fn the_format_version_is_twenty_four() {
     // A tripwire, not a fact worth asserting on its own: changing it means
     // stopping to ask whether a migration step is owed. Sometimes the answer is
     // no — version 19 added `corners`, whose default is exactly what older
@@ -771,8 +771,43 @@ fn the_format_version_is_twenty_three() {
     // frame written before anchoring meant; 22 added `sections` and
     // `variables`, whose empty defaults are what every earlier document meant
     // — and the point is that somebody had to answer; 23 added footnotes,
-    // index entries, and the contents and index recipes, all empty before.
-    assert_eq!(format::FORMAT_VERSION, 23);
+    // index entries, and the contents and index recipes, all empty before;
+    // 24 let a page be its own size, which an older build's reflow would
+    // silently undo.
+    assert_eq!(format::FORMAT_VERSION, 24);
+}
+
+#[test]
+fn a_page_of_its_own_size_keeps_it_through_a_round_trip_and_a_reflow() {
+    let mut doc = Document::default();
+    let first = doc.page_ids().next().expect("a page");
+    let second = doc.add_page();
+    let third = doc.add_page();
+    assert!(doc.set_page_size_of(second, 1000.0, 300.0), "a gatefold");
+
+    let path =
+        std::env::temp_dir().join(format!("tessera-gatefold-{}.tessera", std::process::id()));
+    format::save(&doc, &path).expect("save");
+    let mut back = format::load(&path).expect("load");
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(back.pages[second].bounds.width, 1000.0);
+    assert_eq!(back.pages[second].bounds.height, 300.0);
+    assert_eq!(
+        back.pages[first].bounds.width,
+        doc.pages[first].bounds.width
+    );
+
+    // A structural edit reflows; the gatefold survives it and the page
+    // beside it is not moved into it.
+    back.add_page();
+    assert_eq!(back.pages[second].bounds.width, 1000.0);
+    let (second_b, third_b) = (back.pages[second].bounds, back.pages[third].bounds);
+    if second_b.y == third_b.y {
+        assert!(
+            third_b.x >= second_b.x + second_b.width,
+            "side by side, not overlapping"
+        );
+    }
 }
 
 #[test]

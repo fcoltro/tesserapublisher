@@ -611,11 +611,18 @@ impl Document {
             .max(clearance);
         let down = self.vertical_clearance() + clearance;
 
+        // As tall as the tallest page: a gatefold beside an ordinary page
+        // must not be clipped to the ordinary one's sheet.
+        let tallest = pages
+            .iter()
+            .filter_map(|p| self.pages.get(*p))
+            .map(|p| p.bounds.height)
+            .fold(first.height, f64::max);
         Some(DocRect {
             x: first.x - outward,
             y: first.y - down,
             width: (last.x + last.width) - first.x + outward * 2.0,
-            height: first.height + down * 2.0,
+            height: tallest + down * 2.0,
         })
     }
 
@@ -754,6 +761,34 @@ impl Document {
         self.reflow_spreads();
     }
 
+    /// Resize one page — a gatefold, a cover wider than the book, a card in
+    /// a booklet. The rest keep their sizes; the spreads are laid out again
+    /// around it.
+    ///
+    /// **What is on the page stays where it is relative to the page's top
+    /// left.** A page that grows keeps its objects in place; one that shrinks
+    /// leaves them hanging off the edge, visibly, rather than moving them
+    /// somewhere they were not put.
+    pub fn set_page_size_of(&mut self, page: PageId, width: f64, height: f64) -> bool {
+        let Some(p) = self.pages.get_mut(page) else {
+            return false;
+        };
+        if width <= 0.0 || height <= 0.0 {
+            return false;
+        }
+        p.bounds.width = width;
+        p.bounds.height = height;
+        self.reflow_spreads();
+        true
+    }
+
+    /// The document's page size: the first page's, which is what the setup
+    /// shows and what a new page takes.
+    pub fn page_size(&self) -> (f64, f64) {
+        let first = self.first_page_bounds();
+        (first.width, first.height)
+    }
+
     /// Put every spread where it belongs on the pasteboard.
     ///
     /// `Page.bounds` is in document space and everything downstream reads it —
@@ -766,9 +801,10 @@ impl Document {
     /// runs spreads across instead, but a wheel scrolls down and the
     /// pasteboard is the thing being navigated.
     pub fn reflow_spreads(&mut self) {
-        // Every page is the size of the first, which is what `set_page_size`
-        // already assumes: per-page sizes are a later milestone.
-        let (width, height) = self
+        // The document's size, which is what a lone recto is offset by: it
+        // sits where the right-hand page of a full spread would, and the
+        // verso it is standing in for is the document's width.
+        let (width, _) = self
             .page_ids()
             .next()
             .and_then(|id| self.pages.get(id))
@@ -804,20 +840,22 @@ impl Document {
                 0
             };
 
-            for (column, page) in pages.iter().enumerate() {
+            // Pages of a spread stand side by side at their own widths,
+            // tops aligned; the row is as tall as its tallest page.
+            let mut x = offset as f64 * width;
+            let mut tallest: f64 = 0.0;
+            for page in pages.iter() {
                 if let Some(page) = self.pages.get_mut(*page) {
-                    page.bounds = DocRect {
-                        x: (column + offset) as f64 * width,
-                        y,
-                        width,
-                        height,
-                    };
+                    page.bounds.x = x;
+                    page.bounds.y = y;
+                    x += page.bounds.width;
+                    tallest = tallest.max(page.bounds.height);
                 }
             }
             // Past this spread's bleed and slug, and past the next one's, so
             // neither overlaps the other. Both are measured from the trim, so
             // the larger of the two is what stands out.
-            y += height + SPREAD_GAP + self.vertical_clearance() * 2.0;
+            y += tallest + SPREAD_GAP + self.vertical_clearance() * 2.0;
         }
 
         // A page that moved takes what stands on it. Without this, removing a
@@ -2841,6 +2879,70 @@ mod tests {
             position,
             locked: false,
         }
+    }
+
+    #[test]
+    fn a_wider_verso_pushes_its_recto_across_and_the_spread_grows_to_the_tallest() {
+        let mut doc = Document::new();
+        doc.setup.facing_pages = true;
+        doc.reflow_spreads();
+        let verso = doc.add_page(); // page 2
+        let recto = doc.add_page(); // page 3, beside it
+        let (w, h) = doc.page_size();
+        assert!(doc.set_page_size_of(verso, w * 2.0, h + 100.0));
+
+        let v = doc.pages[verso].bounds;
+        let r = doc.pages[recto].bounds;
+        assert_eq!(v.y, r.y, "tops aligned");
+        assert_eq!(
+            r.x,
+            v.x + v.width,
+            "the recto starts where the wide verso ends"
+        );
+        assert_eq!(r.width, w, "the recto kept its own size");
+        let spread = doc.spread_of(verso).expect("spread");
+        let area = doc.spread_area(spread).expect("area");
+        assert!(
+            area.height >= h + 100.0,
+            "the sheet is as tall as its tallest page"
+        );
+        // And the document's size is still the first page's.
+        assert_eq!(doc.page_size(), (w, h));
+    }
+
+    #[test]
+    fn a_page_that_grows_keeps_its_objects_where_they_were() {
+        let mut doc = Document::new();
+        let page = doc.page_ids().next().unwrap();
+        let layer = doc.default_layer().unwrap();
+        let bounds = doc.pages[page].bounds;
+        let id = doc.add_frame(
+            layer,
+            Frame {
+                bounds: DocRect {
+                    x: bounds.x + 10.0,
+                    y: bounds.y + 10.0,
+                    width: 50.0,
+                    height: 50.0,
+                },
+                kind: FrameKind::Rectangle,
+                transform: Transform::IDENTITY,
+                fill: Paint::Solid(Color::BLACK),
+                stroke: None,
+                wrap: crate::nodes::TextWrap::None,
+                blend: crate::blending::Blending::PLAIN,
+                corners: crate::corners::Corners::SQUARE,
+                shadow: None,
+                anchor: None,
+                style: None,
+            },
+        );
+        doc.set_page_size_of(page, bounds.width * 2.0, bounds.height);
+        // The page may have moved on the pasteboard; the object is measured
+        // from the page's corner, which is what "where it was" means.
+        let page_now = doc.pages[page].bounds;
+        let after = doc.frame(id).unwrap().bounds;
+        assert_eq!((after.x - page_now.x, after.y - page_now.y), (10.0, 10.0));
     }
 
     #[test]

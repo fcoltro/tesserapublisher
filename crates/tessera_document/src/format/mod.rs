@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 23;
+pub const FORMAT_VERSION: u32 = 24;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -105,6 +105,12 @@ pub fn load(path: &Path) -> Result<Document, FormatError> {
 /// ago follows exactly the path a document written two versions ago does, and
 /// each step only has to know about its own change.
 fn migrate(value: &mut serde_json::Value, from: u32) {
+    // 23 -> 24: a page may be a different size from the document's. **No
+    // step, on purpose** — `Page.bounds` was always stored per page — but
+    // the version moves because an older build's `reflow_spreads` squares
+    // every page to the first on the next structural edit, which would
+    // silently un-size a gatefold. Refusing is better than that.
+
     // 22 -> 23: stories gained `footnotes` and `index_entries`, the document
     // `contents` and `index`. **No step, on purpose.** All four default to
     // empty, and a story written before footnotes existed carries no

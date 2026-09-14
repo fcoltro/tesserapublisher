@@ -43,7 +43,7 @@ outright, so the target is not twenty-six.
 |---|---|---|---|
 | Selection | ✅ `Tool::Select` | — | done |
 | Direct Selection (anchor editing) | ✅ `Tool::DirectSelect` | — | done, M1 |
-| Page tool (per-page size) | ✗ — every page takes the document's size | model | — |
+| Page tool (per-page size) | ✅ the control bar's W/H resize the current page; Properties resizes them all | — | done |
 | Gap tool | ✗ | — | — |
 | Content Collector / Placer | ✗ | — | — |
 | Type | ✅ `Tool::Text` | — | done |
@@ -141,7 +141,7 @@ geometry, from the interface work) and the canvas toolbar (spatial verbs).
 | Per-page parent badge | ✅ the section marks the master the current page takes | — | done, M3 |
 | Parent item override | ✅ | — | done, M3 |
 | "N Pages in M Spreads" count | ✅ as "3 of 12" in the status bar | — | done, M1.5 C10 |
-| Edit page size | document-wide, in setup; not per page | model | — |
+| Edit page size | ✅ per page from the control bar, document-wide from Properties | — | done |
 
 ## ⑥ Properties panel, "No Selection" state
 

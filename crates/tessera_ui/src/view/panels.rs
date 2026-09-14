@@ -662,20 +662,39 @@ pub fn type_row(ui: &mut Ui, state: &mut TesseraApp) {
 /// the bar is a row, and a row that scrolls is a column that lies about it.
 pub fn page_row(ui: &mut Ui, state: &mut TesseraApp) {
     let setup = state.active().document().setup;
-    let bounds = state.active().document().first_page_bounds();
+    // The page being worked on, not the first: the bar's fields resize
+    // **this page**, which is how a gatefold or a wider cover is made. The
+    // document's size for every page is in Properties.
+    let page = state.current_page();
+    let bounds = page
+        .and_then(|p| state.active().document().pages.get(p))
+        .map_or_else(
+            || state.active().document().first_page_bounds(),
+            |p| p.bounds,
+        );
     let unit = state.prefs.unit;
 
     let mut size = (bounds.width, bounds.height);
     let mut changed = measure_inline(ui, "W", &mut size.0, unit);
     changed |= measure_inline(ui, "H", &mut size.1, unit);
     if changed {
-        apply(
-            state,
-            Command::SetPageSize {
-                width: size.0,
-                height: size.1,
-            },
-        );
+        match page {
+            Some(page) => apply(
+                state,
+                Command::SetPageSizeOf {
+                    page,
+                    width: size.0,
+                    height: size.1,
+                },
+            ),
+            None => apply(
+                state,
+                Command::SetPageSize {
+                    width: size.0,
+                    height: size.1,
+                },
+            ),
+        }
     }
 
     crate::view::control::separator(ui);

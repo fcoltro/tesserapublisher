@@ -2363,6 +2363,15 @@ which cost one afternoon's confusion and a namespace check.
 - [x] File ▸ Open offers `.idml`; a package opens as a new *untitled*
   document, so saving never overwrites the file it came from. `.idml` on
   the command line opens the same way.
+- [x] **A page can be its own size** (added 2026-09-13, after milestone 12).
+  `set_page_size_of` resizes one page; `reflow_spreads` stands a spread's
+  pages side by side at their own widths, tops aligned, the row as tall as
+  its tallest, and `spread_area` follows. What is on a page stays where it
+  was from the page's corner. The control bar's W and H resize the current
+  page; Properties still resizes them all. Format **24**, no step — the
+  bounds were always per page — but an older build's reflow would square
+  them to the first, so it refuses. Not built: dragging a page's edge with
+  a tool, and "objects move with page edge" options.
 - Dropped out loud: tables (their text is kept, tabbed), anchored objects,
   images' crops, parents with more pages than the setup allows, and the
   index. Not read: object styles, gradients, effects, text wrap, corner

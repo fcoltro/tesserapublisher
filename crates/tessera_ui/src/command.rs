@@ -552,6 +552,12 @@ pub enum Command {
         width: f64,
         height: f64,
     },
+    /// Resize one page, leaving the rest: a gatefold, a wider cover.
+    SetPageSizeOf {
+        page: PageId,
+        width: f64,
+        height: f64,
+    },
 
     /// Give a frame a stroke, or take it away.
     ///
@@ -1858,6 +1864,17 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 .active_mut()
                 .document_mut()
                 .set_page_size(width, height);
+        }
+
+        Command::SetPageSizeOf {
+            page,
+            width,
+            height,
+        } => {
+            state
+                .active_mut()
+                .document_mut()
+                .set_page_size_of(page, width, height);
         }
 
         Command::SetStroke { id, stroke } => {
