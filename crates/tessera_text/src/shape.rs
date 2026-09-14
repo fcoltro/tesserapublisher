@@ -999,6 +999,13 @@ struct Composition<'a> {
 /// One line a plan has chosen: units taken, ink width, spaces, hyphenated.
 type Chosen = (usize, f64, usize, bool);
 
+/// The badness of a line that cannot be set as asked: one that overflows,
+/// or one with nothing to stretch. Far above any stretched line's, so it is
+/// only ever taken when there is no other way on.
+const OVERFULL: f64 = 1_000_000.0;
+/// What each unit of stretch past the maximum costs, on top of the cube.
+const PAST_LIMIT: f64 = 10_000.0;
+
 /// Knuth and Plass, over the units: every way of breaking the paragraph is
 /// scored by how far each line's spaces have to stretch or squeeze, and the
 /// breaks whose lines are together the evenest win.
@@ -1083,10 +1090,15 @@ fn plan_total_fit(
                     // as Knuth has it; a ragged line's slack against the
                     // measure instead. The last line is free unless it had
                     // to squeeze.
+                    // The scale matters more than the shape. A line whose
+                    // spaces would have to stretch past their maximum is
+                    // nearly infeasible, as Knuth has it: priced merely
+                    // high, four one-word lines came out cheaper than one
+                    // loose line, and a paragraph set as a ladder.
                     let badness = if last && slack >= 0.0 {
                         0.0
                     } else if !fits {
-                        10_000.0
+                        OVERFULL
                     } else if composition.justify {
                         let capacity = if slack >= 0.0 {
                             spaces as f64 * space_width * stretch
@@ -1094,10 +1106,19 @@ fn plan_total_fit(
                             spaces as f64 * space_width * squeeze
                         };
                         if capacity <= 0.0 {
-                            if slack.abs() < 1e-6 { 0.0 } else { 1_000.0 }
+                            // No spaces to give or take: only a line that
+                            // needs neither is set without letterspacing.
+                            if slack.abs() < 1e-6 { 0.0 } else { OVERFULL }
                         } else {
                             let r = slack.abs() / capacity;
-                            100.0 * r * r * r + if r > 1.0 { 1_000.0 } else { 0.0 }
+                            if r <= 1.0 {
+                                100.0 * r * r * r
+                            } else {
+                                // Past the limit: allowed, as InDesign
+                                // allows it, but at a price that climbs
+                                // steeply and never meets the ladder's.
+                                100.0 + PAST_LIMIT * (r - 1.0)
+                            }
                         }
                     } else {
                         let r = slack.max(0.0) / room;
@@ -4005,22 +4026,18 @@ mod tests {
 
     #[test]
     fn a_run_in_german_breaks_as_german() {
-        use crate::story::{CharacterFormat, ParagraphFormat};
-        let text = "Schifffahrtsgesellschaft Schifffahrtsgesellschaft";
-        let mut story = hyphenated(text);
-        story.apply_character_format(
-            0..text.len(),
-            &CharacterFormat {
-                language: Some("de".to_string()),
-                ..CharacterFormat::default()
-            },
-        );
-        let _ = ParagraphFormat::default();
-        let mut shaper = Shaper::new();
-        let german = shaper.shape(&story, &NoStyles::default(), 90.0);
-        let english = shaper.shape(&hyphenated(text), &NoStyles::default(), 90.0);
-        let ends = |t: &ShapedText| t.lines.iter().map(|l| l.range.end).collect::<Vec<_>>();
-        assert_ne!(ends(&german), ends(&english), "the lines break differently");
+        // The patterns, not the layout: where the lines fall depends on the
+        // face the machine has, and on the machine that runs CI the English
+        // and German breaks of this word happened to land on the same ones.
+        let rules = crate::story::Hyphenation::default();
+        let german = syllable_breaks("Schifffahrtsgesellschaft", &rules, Some("de"));
+        let english = syllable_breaks("Schifffahrtsgesellschaft", &rules, None);
+        assert!(!german.is_empty(), "German patterns break the compound");
+        assert_ne!(german, english, "and not where English would");
+        // A language nobody has patterns for breaks as English rather than
+        // not at all.
+        let unknown = syllable_breaks("Schifffahrtsgesellschaft", &rules, Some("xx"));
+        assert_eq!(unknown, english);
     }
 
     #[test]
@@ -4659,16 +4676,32 @@ mod tests {
 
     #[test]
     fn a_paragraph_set_by_the_composer_still_fits_its_measure() {
+        // In several faces, and at several measures, because the ladder this
+        // guards against — one word to a line — showed in Verdana and not
+        // in the default face, and a test that ran in one face passed.
+        for (family, measure) in [
+            (None, 180.0),
+            (Some("Verdana"), 180.0),
+            (Some("Arial"), 150.0),
+            (Some("Georgia"), 220.0),
+            (Some("Courier New"), 200.0),
+        ] {
+            composer_holds_the_measure(family, measure);
+        }
+    }
+
+    fn composer_holds_the_measure(family: Option<&str>, measure: f64) {
         let mut story = Story::new(
-            "The quick brown fox jumps over the lazy dog and keeps on running through \
-             the long afternoon until the light goes and the words run out at last.",
+            "The quick brown fox jumps over the lazy dog and keeps on running through the \
+             long afternoon until the light goes and the words run out at last.",
         );
+        story.runs[0].local.family = family.map(str::to_owned);
         story.paragraphs[0].local.composer = Some(crate::story::Composer::Paragraph);
         story.paragraphs[0].local.alignment = Some(crate::story::Alignment::Justify);
         let mut shaper = Shaper::new();
-        let composed = shaper.shape(&story, &NoStyles::default(), 180.0);
+        let composed = shaper.shape(&story, &NoStyles::default(), measure);
         story.paragraphs[0].local.composer = None;
-        let greedy = shaper.shape(&story, &NoStyles::default(), 180.0);
+        let greedy = shaper.shape(&story, &NoStyles::default(), measure);
         assert!(!composed.lines.is_empty());
         // Measured the same way for both: a justified line's last glyph
         // ends where the greedy breaker's does, give or take a hanging
@@ -4689,10 +4722,15 @@ mod tests {
         // it does not lose text.
         assert!(
             (composed.lines.len() as i64 - greedy.lines.len() as i64).abs() <= 1,
-            "{} vs {}",
+            "{family:?} at {measure}: {} vs {}",
             composed.lines.len(),
             greedy.lines.len()
         );
+        // No line of one word but the last: that is the ladder.
+        for line in &composed.lines[..composed.lines.len() - 1] {
+            let words = story.text[line.range.clone()].split_whitespace().count();
+            assert!(words > 1, "{family:?} at {measure}: a one-word line");
+        }
         let last = |t: &ShapedText| t.lines.last().map(|l| l.range.end);
         assert_eq!(last(&composed), last(&greedy), "both reach the end");
     }

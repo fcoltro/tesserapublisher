@@ -2132,8 +2132,13 @@ and not a list of controls.
     cheapest set of lines wins; the last line is free. The plan is then
     fed through the same spacing and `break_next_with_length` as the
     greedy path, so the two cannot disagree about what a line does with
-    its slack. A Composer toggle in the paragraph inspector. **By test;
-    the eye is the real judge and has not seen it.**
+    its slack. A Composer toggle in the paragraph inspector. **CI found
+    the first bug on the first run**: a line whose spaces would stretch past
+    their maximum was priced merely high, so in Verdana four one-word lines
+    came out cheaper than one loose line and the paragraph set as a ladder.
+    Over-stretch now costs `100 + 10 000·(r − 1)` and an unsettable line a
+    million, and the test runs in five faces. **The eye is still the real
+    judge and has not seen it.**
   - **Not built:** glyph scaling, single-word justification, and optical
     kerning.
   - **A kern is on the brush, not in the letter spacing, and that is the
