@@ -1411,7 +1411,11 @@ fn placed_artwork_round_trips_as_a_link_rather_than_as_pixels() {
             style: None,
         },
     );
-    let link = doc.add_link(Link::new("C:/art/photo.png", (640.0, 480.0)));
+    // Absolute on whichever platform runs this: a link's path is kept as
+    // given only when it is absolute, and "C:/art" is a relative path on
+    // Linux and macOS — which is how this test failed on both.
+    let artwork = std::env::temp_dir().join("art").join("photo.png");
+    let link = doc.add_link(Link::new(artwork.clone(), (640.0, 480.0)));
     assert!(doc.place(id, link, Fit::Proportionally));
 
     format::save(&doc, &path).expect("save");
@@ -1419,7 +1423,7 @@ fn placed_artwork_round_trips_as_a_link_rather_than_as_pixels() {
 
     assert_eq!(loaded.links.len(), 1);
     let (_, saved) = loaded.links.iter().next().expect("a link");
-    assert_eq!(saved.path, std::path::PathBuf::from("C:/art/photo.png"));
+    assert_eq!(saved.path, artwork);
     assert_eq!(saved.natural, (640.0, 480.0));
 
     let FrameKind::Graphic { placed: Some(p) } = loaded.frame(id).expect("frame").kind.clone()
