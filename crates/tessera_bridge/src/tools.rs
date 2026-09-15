@@ -90,7 +90,7 @@ const BOX: [(&str, &str, &str, bool); 4] = [
     ("height", "number", "Height in points.", true),
 ];
 
-static ALL: [Tool; 19] = [
+static ALL: [Tool; 23] = [
     Tool {
         name: "describe_document",
         description: "Everything on the page: each page's index and size, every frame with its \
@@ -296,6 +296,54 @@ static ALL: [Tool; 19] = [
             MoveSelectionInZ, Align…). An empty list clears it. Returns the selection.",
         arguments: &[("frames", "array", "Frame numbers.", true)],
         run: select,
+    },
+    Tool {
+        name: "list_actions",
+        description: "Every menu action — File, Edit, Object, Type, Layout, Table, View, Window, \
+            Help and the tools — by name, with its shortcut, its menu and submenu, and whether \
+            it can run now (some need a selection, some cannot run while text is being edited). \
+            An action that opens a dialog opens it on screen; the dialog's own settings are \
+            reachable as tools of their own.",
+        arguments: &[(
+            "filter",
+            "string",
+            "A word the name or menu must contain.",
+            false,
+        )],
+        run: list_actions,
+    },
+    Tool {
+        name: "run_action",
+        description: "Run a menu action by its name from list_actions, exactly as choosing it \
+            from the menu would. Refused, with the reason, when it cannot run now.",
+        arguments: &[(
+            "name",
+            "string",
+            "The action's name, as the menu shows it.",
+            true,
+        )],
+        run: run_action,
+    },
+    Tool {
+        name: "get_preferences",
+        description: "Every preference — units, theme, density, snapping, typographer's quotes, \
+            dynamic spelling, recovery copy, export presets, update checking, shortcuts, \
+            workspaces — as the JSON they are saved in.",
+        arguments: &[],
+        run: get_preferences,
+    },
+    Tool {
+        name: "set_preferences",
+        description: "Change preferences: an object of the fields to change, in the shape \
+            get_preferences shows; the rest keep their values. Saved to disk when the \
+            application is one that saves. Returns the preferences after the change.",
+        arguments: &[(
+            "changes",
+            "object",
+            "Fields to change, nested as get_preferences shows them.",
+            true,
+        )],
+        run: set_preferences,
     },
     Tool {
         name: "add_page",
@@ -732,6 +780,113 @@ fn select(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
     }
     state.active_mut().selection.replace_all(ids);
     Ok(json!({ "selection": selection_keys(state) }))
+}
+
+fn action_json(state: &TesseraApp, action: &tessera_ui::actions::Action) -> Value {
+    json!({
+        "name": action.name,
+        "shortcut": action.shortcut,
+        "menu": action.group.menu(),
+        "submenu": action.group.submenu(),
+        "enabled": tessera_ui::actions::enabled(state, action.run),
+    })
+}
+
+fn list_actions(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
+    let filter = arguments
+        .get("filter")
+        .and_then(Value::as_str)
+        .map(str::to_lowercase);
+    let actions: Vec<Value> = tessera_ui::actions::all()
+        .iter()
+        .filter(|a| match &filter {
+            None => true,
+            Some(word) => {
+                a.name.to_lowercase().contains(word)
+                    || a.group
+                        .menu()
+                        .is_some_and(|m| m.to_lowercase().contains(word))
+                    || a.group
+                        .submenu()
+                        .is_some_and(|m| m.to_lowercase().contains(word))
+            }
+        })
+        .map(|a| action_json(state, a))
+        .collect();
+    Ok(json!({ "count": actions.len(), "actions": actions }))
+}
+
+fn run_action(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
+    let name = text(arguments, "name")?;
+    let wanted = name.trim().trim_end_matches('\u{2026}').to_lowercase();
+    let action = tessera_ui::actions::all()
+        .iter()
+        .find(|a| a.name.trim_end_matches('\u{2026}').to_lowercase() == wanted)
+        .ok_or_else(|| {
+            let near: Vec<&str> = tessera_ui::actions::all()
+                .iter()
+                .map(|a| a.name)
+                .filter(|n| n.to_lowercase().contains(&wanted))
+                .take(8)
+                .collect();
+            format!("no action named {name:?}; near it: {near:?}. list_actions has them all.")
+        })?;
+    if !tessera_ui::actions::enabled(state, action.run) {
+        let why = match tessera_ui::actions::guard(action.run) {
+            tessera_ui::actions::Guard::NeedsSelection => "it needs a selection (see select)",
+            tessera_ui::actions::Guard::NotWhileTyping => {
+                "it cannot run while text is being edited"
+            }
+            tessera_ui::actions::Guard::Always => "nothing for it to act on now",
+        };
+        return Err(format!("{} cannot run now: {why}.", action.name));
+    }
+    let before = state.status.take();
+    tessera_ui::actions::run(state, action.run);
+    let status = state.status.as_ref().map(|s| s.message.clone());
+    if state.status.is_none() {
+        state.status = before;
+    }
+    Ok(json!({
+        "ran": action.name,
+        "revision": state.active().document().revision(),
+        "status": status,
+        "selection": selection_keys(state),
+    }))
+}
+
+fn get_preferences(state: &mut TesseraApp, _: &Value) -> Result<Value, String> {
+    serde_json::to_value(&state.prefs).map_err(|e| e.to_string())
+}
+
+fn set_preferences(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
+    let changes = arguments
+        .get("changes")
+        .and_then(Value::as_object)
+        .ok_or("changes must be an object of preference fields")?;
+    let mut current = serde_json::to_value(&state.prefs).map_err(|e| e.to_string())?;
+    merge(&mut current, changes);
+    let prefs: tessera_ui::prefs::Preferences = serde_json::from_value(current)
+        .map_err(|e| format!("the changes did not read as preferences: {e}"))?;
+    state.prefs = prefs;
+    tessera_ui::prefs::remember(state);
+    serde_json::to_value(&state.prefs).map_err(|e| e.to_string())
+}
+
+/// Lay `changes` over `into`, object by object, so a nested field can be
+/// changed without restating its neighbours.
+fn merge(into: &mut Value, changes: &serde_json::Map<String, Value>) {
+    let Value::Object(target) = into else {
+        return;
+    };
+    for (key, value) in changes {
+        match (target.get_mut(key), value) {
+            (Some(existing @ Value::Object(_)), Value::Object(inner)) => merge(existing, inner),
+            _ => {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+    }
 }
 
 fn path(arguments: &Value) -> Result<std::path::PathBuf, String> {

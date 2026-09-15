@@ -466,6 +466,83 @@ mod tests {
     }
 
     #[test]
+    fn menu_actions_are_listed_and_run_with_their_guards() {
+        let mut bridge = Bridge::new();
+        let listed = tool(&mut bridge, "list_actions", json!({ "filter": "page" }));
+        assert!(listed["count"].as_u64().unwrap() >= 1, "{listed}");
+        let all = tool(&mut bridge, "list_actions", json!({}));
+        assert!(all["count"].as_u64().unwrap() > 80, "{}", all["count"]);
+
+        // One that needs a selection is refused with the reason...
+        let reply = call(
+            &mut bridge,
+            1,
+            "tools/call",
+            json!({ "name": "run_action", "arguments": { "name": "Duplicate" } }),
+        );
+        assert_eq!(reply["result"]["isError"], true, "{reply}");
+        assert!(
+            reply["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("selection")
+        );
+
+        // ...and runs once there is one.
+        let made = tool(
+            &mut bridge,
+            "add_rectangle",
+            json!({ "x": 0, "y": 0, "width": 10, "height": 10 }),
+        );
+        tool(
+            &mut bridge,
+            "select",
+            json!({ "frames": [made["frame"].as_u64().unwrap()] }),
+        );
+        let ran = tool(&mut bridge, "run_action", json!({ "name": "Duplicate" }));
+        assert_eq!(ran["ran"], "Duplicate");
+        let doc = tool(&mut bridge, "describe_document", json!({}));
+        assert_eq!(doc["frames"].as_array().unwrap().len(), 2);
+
+        // The ellipsis a menu shows is not part of the name a model types.
+        let ran = tool(
+            &mut bridge,
+            "run_action",
+            json!({ "name": "Check spelling" }),
+        );
+        assert!(ran["ran"].as_str().unwrap().starts_with("Check spelling"));
+    }
+
+    #[test]
+    fn preferences_are_read_and_changed_field_by_field() {
+        let mut bridge = Bridge::new();
+        let prefs = tool(&mut bridge, "get_preferences", json!({}));
+        assert_eq!(prefs["snapping"], true);
+        assert_eq!(prefs["dynamic_spelling"], true);
+        let after = tool(
+            &mut bridge,
+            "set_preferences",
+            json!({ "changes": { "snapping": false, "updates": { "enabled": false } } }),
+        );
+        assert_eq!(after["snapping"], false);
+        assert_eq!(after["updates"]["enabled"], false);
+        assert_eq!(
+            after["dynamic_spelling"], true,
+            "untouched fields keep their values"
+        );
+        assert!(!bridge.state.prefs.snapping);
+        // A field that is not a preference is refused, and nothing changes.
+        let reply = call(
+            &mut bridge,
+            2,
+            "tools/call",
+            json!({ "name": "set_preferences", "arguments": { "changes": { "snapping": "sometimes" } } }),
+        );
+        assert_eq!(reply["result"]["isError"], true);
+        assert!(!bridge.state.prefs.snapping);
+    }
+
+    #[test]
     fn a_document_is_saved_and_opened_again() {
         let dir = std::env::temp_dir().join(format!("tessera-bridge-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
