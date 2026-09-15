@@ -24,6 +24,7 @@ use tessera_document::ids::FrameId;
 use tessera_ui::TesseraApp;
 use tessera_ui::command::{Command, apply};
 
+pub mod live;
 pub mod tools;
 
 /// The protocol revision this speaks. A client offering another is answered
@@ -52,6 +53,15 @@ impl Bridge {
     /// Answer one JSON-RPC message. `None` for a notification, which has no
     /// answer, and for nothing but whitespace.
     pub fn handle(&mut self, line: &str) -> Option<String> {
+        handle(&mut self.state, line)
+    }
+}
+
+/// Answer one JSON-RPC message against `state`: the same exchange whether
+/// the application is this process's own headless one or the window on
+/// screen, which is what lets [`live`] serve the latter.
+pub fn handle(state: &mut TesseraApp, line: &str) -> Option<String> {
+    {
         let line = line.trim();
         if line.is_empty() {
             return None;
@@ -85,7 +95,7 @@ impl Bridge {
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
                 let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
-                match tools::call(&mut self.state, name, &arguments) {
+                match tools::call(state, name, &arguments) {
                     Ok(value) => result(
                         id,
                         json!({ "content": [{ "type": "text", "text": value.to_string() }] }),
@@ -138,12 +148,21 @@ pub fn frame_from_key(state: &TesseraApp, key: u64) -> Option<FrameId> {
 
 /// Run one command and say what came of it: the status line the canvas
 /// would show, and the document's revision.
+///
+/// The status is read by clearing it first and seeing what the command
+/// left — and put back afterwards when the command said nothing, so a
+/// model acting on the window on screen does not wipe what the person
+/// there was being told.
 pub fn run(state: &mut TesseraApp, command: Command) -> Value {
-    state.status = None;
+    let before = state.status.take();
     apply(state, command);
+    let status = state.status.as_ref().map(|s| s.message.clone());
+    if state.status.is_none() {
+        state.status = before;
+    }
     json!({
         "revision": state.active().document().revision(),
-        "status": state.status.as_ref().map(|s| s.message.clone()),
+        "status": status,
     })
 }
 

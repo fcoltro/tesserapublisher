@@ -1,9 +1,16 @@
 # The bridge
 
-`tessera_app --mcp` is Tessera with no window: an MCP server on stdin and
-stdout, so a model can open, make and edit a document the way a person does
-at the canvas. Every change goes through the same command layer the menus
-use, so each is one undo entry.
+`tessera_app --mcp` is an MCP server on stdin and stdout, so a model can
+open, make and edit a document the way a person does at the canvas. Every
+change goes through the same command layer the menus use, so each is one
+undo entry.
+
+**If a Tessera window is open, the model works on it.** The window listens
+on a loopback port and records it in `bridge.port` beside the preferences;
+`--mcp` relays to it when it answers, and each change lands on the canvas
+as it is made, undoable from the Edit menu like any other. With no window
+open, `--mcp` is a headless Tessera of its own. The client is configured
+the same way in both cases.
 
 ## Connecting
 
@@ -38,10 +45,15 @@ are answered; notifications are not.
 Measurements are points from the document's top-left. A frame's number is
 stable for the life of the document in this process; it is not saved.
 
+## Trust
+
+The port is loopback only and carries no secret: any process on the same
+machine can reach a running window's document — the trust a local script
+has always had over an application's files. Nothing listens on other
+interfaces.
+
 ## Not yet
 
-A socket to the running window (today the model's process is its own,
-headless Tessera); images; character styles and local formatting; tables;
-threading. The crate is `crates/tessera_bridge`; a tool is a name, a
+Images; character styles and local formatting; tables; threading. The crate is `crates/tessera_bridge`; a tool is a name, a
 sentence, a schema and a function, and adding one is adding one entry to
 `tools::ALL`.

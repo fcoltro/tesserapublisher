@@ -15,8 +15,14 @@ fn main() -> eframe::Result<()> {
     // `tessera_app --mcp`: no window, and stdin and stdout are a model's.
     // A model's client launches the process itself, which is why this is a
     // flag on the one binary rather than a second one to find and ship.
+    // When a window is already up it is relayed to, so the model works on
+    // the document somebody is looking at; otherwise this process is a
+    // headless Tessera of its own.
     if std::env::args().skip(1).any(|a| a == "--mcp") {
-        tessera_bridge::serve_stdio();
+        match bridge_port_file() {
+            Some(file) => tessera_bridge::live::serve_or_relay_stdio(&file),
+            None => tessera_bridge::serve_stdio(),
+        }
         return Ok(());
     }
 
@@ -89,8 +95,18 @@ fn main() -> eframe::Result<()> {
             // tour of something nobody can look at.
             app.offer_tour_on_first_run();
 
+            // Listen for a model. A failure to bind is not a failure to
+            // start: the window is for a person first.
+            let bridge = bridge_port_file().and_then(|file| {
+                let ctx = cc.egui_ctx.clone();
+                tessera_bridge::live::Listener::start(file, move || ctx.request_repaint())
+                    .inspect_err(|e| eprintln!("the bridge could not listen: {e}"))
+                    .ok()
+            });
+
             Ok(Box::new(NativeApp {
                 app,
+                bridge,
                 maximize_pending: true,
                 fit_after_maximize: true,
             }) as Box<dyn eframe::App>)
@@ -98,9 +114,16 @@ fn main() -> eframe::Result<()> {
     )
 }
 
+/// Where a running window records the port a model may reach it on.
+fn bridge_port_file() -> Option<std::path::PathBuf> {
+    tessera_ui::prefs::Preferences::directory().map(|d| d.join(tessera_bridge::live::PORT_FILE))
+}
+
 /// Native startup policy lives in the binary rather than the headless UI state.
 struct NativeApp {
     app: TesseraApp,
+    /// The socket a model reaches this window on, when one could be opened.
+    bridge: Option<tessera_bridge::live::Listener>,
     maximize_pending: bool,
     fit_after_maximize: bool,
 }
@@ -116,6 +139,10 @@ impl eframe::App for NativeApp {
             // Refit once after the OS has delivered the maximized dimensions.
             self.app.active_mut().fitted = false;
             self.fit_after_maximize = false;
+        }
+        // A model's requests, answered on the thread that owns the document.
+        if let Some(bridge) = &self.bridge {
+            bridge.pump(&mut self.app);
         }
         self.app.logic(ctx, frame);
     }

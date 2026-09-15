@@ -2532,10 +2532,15 @@ the way ExtendScript sits outside InDesign.
   overset), set bounds, delete, define and apply paragraph styles, add
   page, undo, redo, open, save, export PDF. A frame is named by its slotmap
   key as a number. `docs/BRIDGE.md` says how to connect.
-- [~] Transport: **stdio is built** — `tessera_app --mcp` — and a client
-  launches the binary itself. The local socket to the running window is
-  not: the model today drives its own headless Tessera, not the one on
-  screen.
+- [x] Transport: stdio, and **the window on screen** (later the same day).
+  The window listens on a loopback port and records it in `bridge.port`
+  beside the preferences; `--mcp` relays stdin and stdout to it when it
+  answers and serves headless otherwise, so a client configures one
+  command and gets whichever is there. Inside the window each request
+  crosses to the UI thread on a channel with a reply channel of its own,
+  the frame loop answers it (`Listener::pump`), and the request wakes
+  the window — a still canvas is not a silent one. Loopback only, no
+  secret: the trust a local script has always had.
 - [x] Headless: the bridge is `TesseraApp::headless()` and its tests are
   strings in, strings out — no screen, no socket.
 - [x] Writes are loud: every changing tool answers with the revision it
@@ -2543,7 +2548,8 @@ the way ExtendScript sits outside InDesign.
   sentence for the model ("no paragraph style named …; the document has:
   …"), and an unknown tool is a protocol error rather than a result.
 - [ ] Not yet: images, character styles and local formatting, tables,
-  threading, and the socket above.
+  threading. **Nobody has connected a real client yet**; the relay is
+  tested with a listener and a cursor in one process.
 
 ---
 
