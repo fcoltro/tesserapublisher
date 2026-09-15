@@ -2547,9 +2547,22 @@ the way ExtendScript sits outside InDesign.
   left and the status line the canvas would have shown; a refusal is a
   sentence for the model ("no paragraph style named …; the document has:
   …"), and an unknown tool is a protocol error rather than a result.
+- [x] **Checked against the real window, 2026-09-15.** With the app
+  open, two separate `--mcp` processes relayed into it: the first defined
+  a 36pt centred bold style and placed a headline, the second saw both at
+  the same revision — the window's document, not a fresh one — and a
+  screenshot showed the headline set on the canvas. Claude Code's own MCP
+  client registered the server (`claude mcp add tessera -- tessera_app.exe
+  --mcp`) and reported it connected; a tool call *through* that client is
+  still owed, because the CLI's login had lapsed. A stale `bridge.port`
+  after a force-kill fell back to headless, as designed. **Two things
+  seen:** the bridge answers while the startup "New document" dialog is
+  up, so a model can fill a document the person is about to replace —
+  Cancel keeps it, Create does not; and the model's first frame landed on
+  the pasteboard, because the page's `x` is 595 on a facing recto and the
+  smoke test did not read it. The instructions say to; a model will.
 - [ ] Not yet: images, character styles and local formatting, tables,
-  threading. **Nobody has connected a real client yet**; the relay is
-  tested with a listener and a cursor in one process.
+  threading; a tool call through a real client.
 
 ---
 
