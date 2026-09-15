@@ -3876,8 +3876,10 @@ dependencies = [
 name = "tessera_bridge"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
  "slotmap",
+ "tessera_color",
  "tessera_document",
  "tessera_geometry",
  "tessera_layout",

@@ -8,7 +8,7 @@ use tessera_document::nodes::Axis;
 use tessera_geometry::DocRect;
 
 /// Which edge, or middle, is being lined up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Edge {
     Left,
     HCentre,
@@ -29,7 +29,7 @@ impl Edge {
 ///
 /// The distinction matters: aligning to the selection depends on where the
 /// objects happen to be, and aligning to the page does not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum AlignTo {
     /// The selection's own bounding box.
     #[default]

@@ -25,7 +25,7 @@ use tessera_text::story::{
 pub type StoryMap = slotmap::SlotMap<StoryId, Story>;
 
 /// Where a frame should move within its layer's paint order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ZMove {
     Forward,
     Backward,

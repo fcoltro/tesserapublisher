@@ -28,7 +28,7 @@ use crate::app::{Clipboard, TesseraApp};
 /// the document already defines wins over the file's, because a person who
 /// has set up their heading wants theirs. Names rather than ids, because the
 /// file's ids mean nothing here.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PlacedText {
     pub story: Story,
     pub paragraph_styles: Vec<tessera_text::story::ParagraphStyle>,
@@ -39,7 +39,7 @@ pub struct PlacedText {
     pub run_style_names: Vec<Option<String>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Command {
     AddRectangle(DocRect),
     AddEllipse(DocRect),

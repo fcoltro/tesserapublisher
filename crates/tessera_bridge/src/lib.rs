@@ -24,7 +24,9 @@ use tessera_document::ids::FrameId;
 use tessera_ui::TesseraApp;
 use tessera_ui::command::{Command, apply};
 
+pub mod catalogue;
 pub mod live;
+pub mod shapes;
 pub mod tools;
 
 /// The protocol revision this speaks. A client offering another is answered
@@ -389,6 +391,78 @@ mod tests {
             json!({ "name": "get_text", "arguments": { "frame": id } }),
         );
         assert_eq!(reply["result"]["isError"], true);
+    }
+
+    #[test]
+    fn any_command_is_reachable_by_name_with_its_arguments() {
+        let mut bridge = Bridge::new();
+        let listed = tool(&mut bridge, "list_commands", json!({ "filter": "ellipse" }));
+        assert!(listed["count"].as_u64().unwrap() >= 1, "{listed}");
+        assert!(
+            listed["commands"][0]["name"]
+                .as_str()
+                .unwrap()
+                .contains("Ellipse")
+        );
+
+        // A newtype: AddEllipse(DocRect).
+        let made = tool(
+            &mut bridge,
+            "command",
+            json!({ "name": "AddEllipse", "arguments": { "x": 10, "y": 10, "width": 80, "height": 40 } }),
+        );
+        assert_eq!(made["command"], "AddEllipse");
+        let id = made["selection"][0]
+            .as_u64()
+            .expect("the new frame is selected");
+
+        // A struct with an id and a shape from describe_shapes.
+        let shapes = tool(&mut bridge, "describe_shapes", json!({ "type": "Paint" }));
+        let red = shapes["Paint"]["examples"][1].clone();
+        tool(
+            &mut bridge,
+            "command",
+            json!({ "name": "SetFill", "arguments": { "id": id, "paint": red } }),
+        );
+        // A unit.
+        tool(&mut bridge, "command", json!({ "name": "Undo" }));
+        // The selection, then a selection command.
+        tool(&mut bridge, "select", json!({ "frames": [id] }));
+        tool(
+            &mut bridge,
+            "command",
+            json!({ "name": "TranslateSelection", "arguments": { "dx": 5, "dy": 0 } }),
+        );
+        let doc = tool(&mut bridge, "describe_document", json!({}));
+        assert_eq!(doc["frames"][0]["kind"], "ellipse");
+        assert_eq!(doc["frames"][0]["x"], 15.0);
+
+        // Wrong name, wrong fields: told, not crashed.
+        let reply = call(
+            &mut bridge,
+            5,
+            "tools/call",
+            json!({ "name": "command", "arguments": { "name": "AddElipse" } }),
+        );
+        assert_eq!(reply["result"]["isError"], true);
+        assert!(
+            reply["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("AddEllipse")
+        );
+        let reply = call(
+            &mut bridge,
+            6,
+            "tools/call",
+            json!({ "name": "command", "arguments": { "name": "SetText", "arguments": { "id": id } } }),
+        );
+        assert!(
+            reply["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("text")
+        );
     }
 
     #[test]

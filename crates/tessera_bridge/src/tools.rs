@@ -20,7 +20,12 @@ pub const INSTRUCTIONS: &str = "Tessera is a page-layout application. Measuremen
     points (72 to the inch) from the top-left of the document; a page's frames are placed \
     inside its bounds, which describe_document reports. Text is set in text frames; a frame \
     whose text does not fit reports overset_lines, and the fix is a bigger frame or shorter \
-    copy. Every change is one undo entry.";
+    copy. Every change is one undo entry. The named tools cover the common work; everything \
+    the application can do is reachable through `command`: `list_commands` names every \
+    command with its documentation and fields, `describe_shapes` shows the JSON of the \
+    objects those fields take, and `select` chooses the frames the selection commands act \
+    on. Menu actions and dialogs are `list_actions` and `run_action`; preferences are \
+    `get_preferences` and `set_preferences`.";
 
 /// The tools, in the order a model reads them.
 pub fn list() -> Vec<Value> {
@@ -85,7 +90,7 @@ const BOX: [(&str, &str, &str, bool); 4] = [
     ("height", "number", "Height in points.", true),
 ];
 
-static ALL: [Tool; 15] = [
+static ALL: [Tool; 19] = [
     Tool {
         name: "describe_document",
         description: "Everything on the page: each page's index and size, every frame with its \
@@ -235,6 +240,64 @@ static ALL: [Tool; 15] = [
         run: define_paragraph_style,
     },
     Tool {
+        name: "list_commands",
+        description: "Every command the application has — the whole of what it can do — each \
+            with its documentation, how it takes its arguments (none, one value, an array, or \
+            an object of named fields) and the fields' types. Give `filter` to keep only names \
+            containing a word.",
+        arguments: &[(
+            "filter",
+            "string",
+            "A word the command's name or doc must contain.",
+            false,
+        )],
+        run: list_commands,
+    },
+    Tool {
+        name: "command",
+        description: "Run any command from list_commands by name, with its arguments as that \
+            listing describes: nothing for a command that takes none, the value itself for one \
+            that takes one value, an array for several, an object of the named fields \
+            otherwise. Ids are the numbers describe_document reports. One undo entry, like \
+            every change.",
+        arguments: &[
+            (
+                "name",
+                "string",
+                "The command's name, as list_commands gives it.",
+                true,
+            ),
+            (
+                "arguments",
+                "object",
+                "The arguments; shape per list_commands. Omit for a command that takes none.",
+                false,
+            ),
+        ],
+        run: command,
+    },
+    Tool {
+        name: "describe_shapes",
+        description: "The JSON of the objects a command's fields take — TextLayout, Paint, \
+            ParagraphFormat and the rest — as examples that read back exactly, and every value \
+            of each enum. Give `type` for one of them; omit it for all.",
+        arguments: &[(
+            "type",
+            "string",
+            "One type name, as list_commands spells it.",
+            false,
+        )],
+        run: describe_shapes,
+    },
+    Tool {
+        name: "select",
+        description: "Set the selection to these frames — what the *Selection commands act on \
+            (DeleteSelection, DuplicateSelection, GroupSelection, TranslateSelection, \
+            MoveSelectionInZ, Align…). An empty list clears it. Returns the selection.",
+        arguments: &[("frames", "array", "Frame numbers.", true)],
+        run: select,
+    },
+    Tool {
         name: "add_page",
         description: "Add a page at the end of the document.",
         arguments: &[],
@@ -356,14 +419,20 @@ fn describe_document(state: &mut TesseraApp, _: &Value) -> Result<Value, String>
                 FrameKind::Graphic { .. } => ("graphic", None),
                 _ => ("other", None),
             };
+            // Where it is seen, transform included: a frame moved by a
+            // translation keeps its bounds and gains a transform, and a
+            // model asked to move something wants to see it moved.
+            let seen = doc.visual_bounds(id).unwrap_or(frame.bounds);
             json!({
                 "frame": frame_key(id),
+                "key": serde_json::to_value(slotmap::Key::data(&id)).unwrap_or(Value::Null),
                 "kind": kind,
                 "page": page_index(doc.page_of_frame(id)),
-                "x": frame.bounds.x,
-                "y": frame.bounds.y,
-                "width": frame.bounds.width,
-                "height": frame.bounds.height,
+                "x": seen.x,
+                "y": seen.y,
+                "width": seen.width,
+                "height": seen.height,
+                "rotation_degrees": frame.transform.rotation_degrees(),
                 "text": story.and_then(|s| doc.story(s)).map(|s| s.text.clone()),
                 "overset_lines": overset.iter().find(|(f, _)| *f == id).map(|(_, n)| *n),
             })
@@ -565,6 +634,104 @@ fn define_paragraph_style(state: &mut TesseraApp, arguments: &Value) -> Result<V
         }),
     };
     Ok(run(state, command))
+}
+
+fn list_commands(_: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
+    let filter = arguments
+        .get("filter")
+        .and_then(Value::as_str)
+        .map(str::to_lowercase);
+    let all = crate::catalogue::listing();
+    let kept: Vec<Value> = match filter {
+        None => all,
+        Some(word) => all
+            .into_iter()
+            .filter(|v| {
+                v["name"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains(&word)
+                    || v["doc"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_lowercase()
+                        .contains(&word)
+            })
+            .collect(),
+    };
+    Ok(json!({ "count": kept.len(), "commands": kept }))
+}
+
+fn command(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
+    let name = text(arguments, "name")?;
+    let variant = crate::catalogue::variant(&name).ok_or_else(|| {
+        // Names near a misspelt one: sharing a word, or the first letters.
+        let asked = name.to_lowercase();
+        let near: Vec<&str> = crate::catalogue::variants()
+            .iter()
+            .map(|v| v.name.as_str())
+            .filter(|n| {
+                let n = n.to_lowercase();
+                n.contains(&asked)
+                    || asked.contains(&n)
+                    || n.chars()
+                        .zip(asked.chars())
+                        .take_while(|(a, b)| a == b)
+                        .count()
+                        >= 4
+            })
+            .take(8)
+            .collect();
+        format!("no command named {name:?}; near it: {near:?}. list_commands has them all.")
+    })?;
+    let given = arguments.get("arguments").cloned().unwrap_or(Value::Null);
+    let value = crate::catalogue::command_json(variant, given)?;
+    let command: Command = serde_json::from_value(value)
+        .map_err(|e| format!("{name}: the arguments did not read as the command: {e}. describe_shapes shows what each object looks like."))?;
+    let mut outcome = run(state, command);
+    outcome["command"] = json!(name);
+    outcome["selection"] = json!(selection_keys(state));
+    Ok(outcome)
+}
+
+fn describe_shapes(_: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
+    let all = crate::shapes::all();
+    match arguments.get("type").and_then(Value::as_str) {
+        None => Ok(all),
+        Some(name) => all
+            .get(name)
+            .cloned()
+            .map(|shape| json!({ name: shape }))
+            .ok_or_else(|| {
+                format!(
+                    "no shape named {name:?}; there are: {}",
+                    all.as_object()
+                        .map(|o| o.keys().cloned().collect::<Vec<_>>().join(", "))
+                        .unwrap_or_default()
+                )
+            }),
+    }
+}
+
+fn selection_keys(state: &TesseraApp) -> Vec<u64> {
+    state.active().selection.iter().map(frame_key).collect()
+}
+
+fn select(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
+    let wanted = arguments
+        .get("frames")
+        .and_then(Value::as_array)
+        .ok_or("frames must be an array of frame numbers")?;
+    let mut ids = Vec::new();
+    for v in wanted {
+        let key = v
+            .as_u64()
+            .ok_or_else(|| format!("{v} is not a frame number"))?;
+        ids.push(frame_from_key(state, key).ok_or_else(|| format!("no frame numbered {key}"))?);
+    }
+    state.active_mut().selection.replace_all(ids);
+    Ok(json!({ "selection": selection_keys(state) }))
 }
 
 fn path(arguments: &Value) -> Result<std::path::PathBuf, String> {
