@@ -3867,8 +3867,22 @@ dependencies = [
  "egui",
  "image",
  "serde_json",
+ "tessera_bridge",
  "tessera_ui",
  "ureq",
+]
+
+[[package]]
+name = "tessera_bridge"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "slotmap",
+ "tessera_document",
+ "tessera_geometry",
+ "tessera_layout",
+ "tessera_text",
+ "tessera_ui",
 ]
 
 [[package]]

@@ -2523,20 +2523,27 @@ the way ExtendScript sits outside InDesign.
 
 ### The work
 
-- [ ] `tessera_bridge`, a crate with no UI in it: an MCP server exposing
-  `Command` as tools with their arguments described (the palette's action
-  list already describes every action, and the `Command` enum is serde),
-  and resources for the document, its styles, and each frame's resolved
-  text with its overset count.
-- [ ] Transport: stdio for a model launched beside the app, and a local
-  socket for one that connects to the running window. Every change goes
-  through `apply`, so it is one undo entry and the canvas shows it.
-- [ ] A headless mode — the bridge against a document with no window —
-  because a test of the bridge must not need a screen, and because a
-  batch job does not either.
-- [ ] Reads are cheap and writes are loud: a tool that changes the
-  document says what it changed in its result, in the words the status
-  line would use.
+- [x] `tessera_bridge` (2026-09-15), a crate with no UI in it: an MCP
+  server, **hand-rolled over `serde_json`** — the five methods a client
+  needs are less code than an async runtime — and **curated rather than
+  generated**: `Command` is not serde and has over a hundred variants, and
+  a tool per variant would be a menu nobody reads to the end of. Fifteen
+  tools: describe, add text frame and rectangle, set and get text (with
+  overset), set bounds, delete, define and apply paragraph styles, add
+  page, undo, redo, open, save, export PDF. A frame is named by its slotmap
+  key as a number. `docs/BRIDGE.md` says how to connect.
+- [~] Transport: **stdio is built** — `tessera_app --mcp` — and a client
+  launches the binary itself. The local socket to the running window is
+  not: the model today drives its own headless Tessera, not the one on
+  screen.
+- [x] Headless: the bridge is `TesseraApp::headless()` and its tests are
+  strings in, strings out — no screen, no socket.
+- [x] Writes are loud: every changing tool answers with the revision it
+  left and the status line the canvas would have shown; a refusal is a
+  sentence for the model ("no paragraph style named …; the document has:
+  …"), and an unknown tool is a protocol error rather than a result.
+- [ ] Not yet: images, character styles and local formatting, tables,
+  threading, and the socket above.
 
 ---
 

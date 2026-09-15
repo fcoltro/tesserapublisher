@@ -12,6 +12,14 @@ mod releases;
 use tessera_ui::TesseraApp;
 
 fn main() -> eframe::Result<()> {
+    // `tessera_app --mcp`: no window, and stdin and stdout are a model's.
+    // A model's client launches the process itself, which is why this is a
+    // flag on the one binary rather than a second one to find and ship.
+    if std::env::args().skip(1).any(|a| a == "--mcp") {
+        tessera_bridge::serve_stdio();
+        return Ok(());
+    }
+
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1280.0, 840.0])
         .with_min_inner_size([720.0, 480.0])
@@ -42,6 +50,7 @@ fn main() -> eframe::Result<()> {
 
     let startup_paths: Vec<_> = std::env::args_os()
         .skip(1)
+        .filter(|a| a != "--mcp")
         .map(std::path::PathBuf::from)
         .collect();
     eframe::run_native(
