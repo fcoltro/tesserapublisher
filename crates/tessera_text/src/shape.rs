@@ -1463,9 +1463,17 @@ fn break_lines_with_room(
 /// down by a leading for each row skipped. With every line on its own row in
 /// order — every paragraph without an object beside it — every shift is
 /// zero, and the paragraph is exactly as parley laid it.
+///
+/// **The height is parley's own, moved by the last line's shift** — not
+/// the last line's `block_max_coord`. parley sums the lines' `line_height`s
+/// for its height but clamps a negative leading to zero for the block
+/// coordinates, so with a face whose ascent and descent outrun the leading
+/// the two disagree, and a paragraph measured by its block would stand
+/// taller than parley set it, pushing every paragraph after it down. That
+/// was invisible with the fonts on one machine and broke a thread a line
+/// early on another.
 fn row_shifts(layout: &parley::Layout<Brush>, rows: &[usize], leading: f64) -> (Vec<f64>, f64) {
     let mut shifts = Vec::with_capacity(rows.len());
-    let mut height = 0.0f64;
     let mut delta = 0.0f64;
     let mut previous: Option<(usize, f64)> = None;
     // The row so far: how many lines share it, and the lowest they reach
@@ -1505,9 +1513,9 @@ fn row_shifts(layout: &parley::Layout<Brush>, rows: &[usize], leading: f64) -> (
             row_bottom.max(bottom)
         };
         shifts.push(delta);
-        height = height.max(bottom);
         previous = Some((row, top));
     }
+    let height = f64::from(layout.height()) + shifts.last().copied().unwrap_or(0.0);
     (shifts, height)
 }
 
@@ -7027,6 +7035,42 @@ mod tests {
         let around = shaper.shape_around(&story, &NoStyles::default(), 200.0, 0, &[]);
         assert_eq!(around.glyph_count(), plain.glyph_count());
         assert_eq!(around.lines.len(), plain.lines.len());
+    }
+
+    #[test]
+    fn a_paragraph_with_no_object_beside_it_is_exactly_as_tall_as_parley_says() {
+        // Whatever the font's metrics: parley sums line heights, and the
+        // block coordinates clamp a negative leading to zero, so at a tight
+        // leading a paragraph measured by its block stands taller than it
+        // was set. That pushed every paragraph after it down on a machine
+        // whose default face has a deep ascent, and broke a thread a line
+        // early there. Measured against parley's own answer, at a leading
+        // tight enough to make the two disagree.
+        let mut story = Story::new(
+            "the quick brown fox jumps over the lazy dog and keeps on running\n\
+             a second paragraph, so the first one's height moves this one",
+        );
+        story.apply_character_format(
+            0..story.text.len(),
+            &crate::story::CharacterFormat {
+                line_height: Some(0.8),
+                ..Default::default()
+            },
+        );
+        let mut shaper = Shaper::new();
+        let placed = shaper.layout_paragraphs(&story, &NoStyles::default(), 150.0);
+        assert!(placed.len() >= 2);
+        for p in &placed {
+            assert!(
+                (p.height - f64::from(p.layout.height())).abs() < 1e-6,
+                "{} against parley's {}",
+                p.height,
+                p.layout.height()
+            );
+            assert!(p.row_shift.iter().all(|s| *s == 0.0));
+        }
+        // And the second paragraph starts exactly where parley's first ends.
+        assert!((placed[1].y - (placed[0].y + placed[0].height)).abs() < 1e-6);
     }
 
     #[test]
