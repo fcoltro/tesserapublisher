@@ -207,8 +207,10 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     state.ime.follow(ui.ctx(), where_the_caret_is);
 
     let overset = overset_frames(state);
+    let squiggles = squiggle_rects(state);
     if state.screen_mode.shows_chrome() {
         draw_overlays(ui, rect, state, caret.as_ref(), &overset);
+        draw_squiggles(ui, rect, state, &squiggles);
     }
 
     // The spatial verbs, beside what they act on. After the overlays so it
@@ -1167,6 +1169,143 @@ fn overset_frames(state: &mut TesseraApp) -> Vec<FrameId> {
                 Some(FrameKind::Text { layout, .. }) if layout.next.is_some()
             )
         })
+        .collect()
+}
+
+/// One frame's unknown words, as the rectangles their glyphs cover, in the
+/// frame's own local points — with the placement the layout gave the frame,
+/// so a parent's frame is marked on every page that shows it.
+pub struct Squiggle {
+    pub bounds: DocRect,
+    pub transform: Transform,
+    pub rects: Vec<tessera_text::TextRect>,
+}
+
+/// Where the red waves go: under every word no dictionary knows, in every
+/// text frame the layout resolved, when dynamic spelling is on.
+///
+/// **Not the word being typed.** A word is misspelt until it is finished,
+/// and a wave that appears under every half-typed word and vanishes when
+/// the last letter lands is noise; the word holding the caret is left
+/// alone until the caret leaves it. Nothing in a frame whose composition is
+/// live, either: the text on the canvas is not the text in the story then.
+fn squiggle_rects(state: &mut TesseraApp) -> Vec<Squiggle> {
+    use tessera_document::nodes::FrameKind;
+    use tessera_layout::resolve::ResolvedKind;
+
+    if !state.prefs.dynamic_spelling {
+        return Vec::new();
+    }
+    // What is being typed, and where the caret is in it.
+    let typing = state
+        .active()
+        .editing
+        .as_ref()
+        .map(|(id, buffer)| (*id, buffer.cursor().position, buffer.composing().is_some()));
+
+    // The shaped text of every text frame, taken before the dictionaries are
+    // borrowed: the layout and they live on the same state.
+    let key = state.active;
+    let items: Vec<(FrameId, DocRect, Transform, tessera_text::shape::ShapedText)> = state
+        .resolve_active()
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ResolvedKind::Text { shaped, .. } => {
+                Some((item.frame, item.bounds, item.transform, shaped.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let doc = state.documents[key].document().clone();
+
+    let mut out = Vec::new();
+    for (frame, bounds, transform, shaped) in items {
+        let Some(FrameKind::Text { story, .. }) = doc.frame(frame).map(|f| &f.kind) else {
+            continue;
+        };
+        if matches!(typing, Some((id, _, true)) if id == frame) {
+            continue;
+        }
+        let caret = match typing {
+            Some((id, at, _)) if id == frame => Some(at),
+            _ => None,
+        };
+        let ranges = state
+            .squiggles
+            .ranges(*story, &doc, &mut state.dictionaries);
+        let rects: Vec<tessera_text::TextRect> = ranges
+            .iter()
+            .filter(|r| !caret.is_some_and(|at| r.start <= at && at <= r.end))
+            .flat_map(|r| {
+                shaped
+                    .caret_geometry(
+                        tessera_text::edit::TextCursor {
+                            position: r.end,
+                            anchor: r.start,
+                        },
+                        CARET_PX,
+                    )
+                    .selection
+            })
+            .filter(|r| r.width() > 0.0)
+            .collect();
+        if !rects.is_empty() {
+            out.push(Squiggle {
+                bounds,
+                transform,
+                rects,
+            });
+        }
+    }
+    out
+}
+
+/// The red wave under each unknown word.
+///
+/// Interface, not document, like the caret: drawn by egui over the page so
+/// it can never reach a PDF. A fixed screen-pixel wave rather than one in
+/// document points, so it reads the same at every zoom.
+fn draw_squiggles(ui: &Ui, rect: Rect, state: &TesseraApp, squiggles: &[Squiggle]) {
+    let painter = ui.painter_at(rect);
+    let to_screen = |p: DocPoint| {
+        let s = state.active().view.doc_to_screen(p);
+        egui::pos2(rect.min.x + s.x, rect.min.y + s.y)
+    };
+    let stroke = Stroke::new(1.0, Theme::error());
+    for squiggle in squiggles {
+        let local = |x: f64, y: f64| {
+            to_screen(squiggle.transform.apply(DocPoint {
+                x: squiggle.bounds.x + x,
+                y: squiggle.bounds.y + y,
+            }))
+        };
+        for r in &squiggle.rects {
+            let (a, b) = (local(r.x0, r.y1), local(r.x1, r.y1));
+            painter.add(egui::Shape::line(wave(a, b), stroke));
+        }
+    }
+}
+
+/// A zigzag from `a` to `b`, two pixels tall, in the direction the segment
+/// runs — so it follows a turned frame's baseline.
+fn wave(a: egui::Pos2, b: egui::Pos2) -> Vec<egui::Pos2> {
+    const STEP: f32 = 3.0;
+    const HEIGHT: f32 = 1.5;
+    let along = b - a;
+    let length = along.length();
+    if length < STEP {
+        return vec![a, b];
+    }
+    let unit = along / length;
+    let across = egui::vec2(-unit.y, unit.x) * HEIGHT;
+    let steps = (length / STEP).floor() as usize;
+    (0..=steps)
+        .map(|i| {
+            let at = a + unit * (i as f32 * STEP);
+            if i % 2 == 0 { at } else { at + across }
+        })
+        .chain(std::iter::once(b))
         .collect()
 }
 
@@ -3631,6 +3770,66 @@ mod tests {
         assert!(state.active().editing.is_some());
         assert_eq!(state.active().editing_cell, None);
         assert!(editing_story(&state, id, None).is_some());
+    }
+
+    // --- dynamic spelling -----------------------------------------------------
+
+    /// A frame saying `text`, with a small English dictionary loaded.
+    fn a_checked_frame(text: &str) -> (TesseraApp, FrameId) {
+        let (mut state, id) = a_text_frame(200.0, text);
+        state.dictionaries.insert(
+            "en",
+            tessera_text::spell::Dictionary::parse("", "3\nthe\ncat\nsat\n"),
+        );
+        (state, id)
+    }
+
+    #[test]
+    fn unknown_words_get_a_wave_and_the_one_being_typed_does_not() {
+        let (mut state, id) = a_checked_frame("The cta sat.");
+        let marked = squiggle_rects(&mut state);
+        assert_eq!(marked.len(), 1, "one frame has an unknown word");
+        assert_eq!(marked[0].rects.len(), 1, "one word, on one line");
+        let wave = marked[0].rects[0];
+        assert!(
+            wave.x0 > 0.0 && wave.x1 > wave.x0,
+            "under the word: {wave:?}"
+        );
+
+        // Typing in it, with the caret inside the word: left alone.
+        start_editing(&mut state, id);
+        if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+            buffer.set_cursor(6);
+        }
+        assert!(squiggle_rects(&mut state).is_empty(), "the caret is in it");
+        // The caret past the word: marked again.
+        if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+            buffer.set_cursor(10);
+        }
+        assert_eq!(squiggle_rects(&mut state).len(), 1);
+    }
+
+    #[test]
+    fn dynamic_spelling_off_marks_nothing() {
+        let (mut state, _) = a_checked_frame("The cta sat.");
+        state.prefs.dynamic_spelling = false;
+        assert!(squiggle_rects(&mut state).is_empty());
+        crate::actions::run(&mut state, crate::actions::Run::ToggleDynamicSpelling);
+        assert_eq!(squiggle_rects(&mut state).len(), 1);
+    }
+
+    #[test]
+    fn a_wave_follows_its_segment() {
+        let points = wave(egui::pos2(0.0, 0.0), egui::pos2(30.0, 0.0));
+        assert!(points.len() > 5, "{points:?}");
+        assert_eq!(points.first().copied(), Some(egui::pos2(0.0, 0.0)));
+        assert_eq!(points.last().copied(), Some(egui::pos2(30.0, 0.0)));
+        assert!(
+            points.iter().any(|p| p.y.abs() > 1.0),
+            "it goes up and down"
+        );
+        // Too short to wave: a plain segment.
+        assert_eq!(wave(egui::pos2(0.0, 0.0), egui::pos2(1.0, 0.0)).len(), 2);
     }
 
     // --- space is a character, not only a gesture ---------------------------

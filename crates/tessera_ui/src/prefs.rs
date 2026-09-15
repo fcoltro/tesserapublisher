@@ -184,6 +184,15 @@ pub struct Preferences {
     #[serde(default = "yes")]
     pub typographers_quotes: bool,
 
+    /// Whether unknown words are marked on the canvas as they are typed.
+    ///
+    /// InDesign's "dynamic spelling". On by default: with no dictionary in
+    /// the folder it costs nothing and draws nothing, and with one it is
+    /// what every editor now does. Off for the person setting a language
+    /// the dictionaries do not cover, or names, or code.
+    #[serde(default = "yes")]
+    pub dynamic_spelling: bool,
+
     /// Whether Tessera keeps a recovery copy of unsaved work.
     ///
     /// **Not "save my file automatically".** It writes a separate copy that is
@@ -292,6 +301,7 @@ impl Default for Preferences {
             panel_opacity: default_panel_opacity(),
             snapping: yes(),
             typographers_quotes: yes(),
+            dynamic_spelling: yes(),
             recovery_copy: yes(),
             recovery_seconds: default_recovery_seconds(),
             export_presets: crate::view::export_dialog::Preset::usual(),
@@ -344,6 +354,12 @@ impl Preferences {
 /// Failing to save is worth saying: somebody who sets a preference and finds it
 /// gone tomorrow should have been told why today.
 pub fn remember(state: &mut crate::app::TesseraApp) {
+    // A headless application — every test — remembers nothing to disk. One
+    // did, and every `cargo test` wrote its defaults over the preferences
+    // of whoever ran it.
+    if !state.persists {
+        return;
+    }
     let Some(path) = Preferences::path() else {
         // The platform will not say where preferences live, which is a real
         // condition on a stripped-down container rather than an error. They last
@@ -501,6 +517,7 @@ mod tests {
             panel_opacity: 0.5,
             snapping: false,
             typographers_quotes: false,
+            dynamic_spelling: false,
             recovery_copy: false,
             recovery_seconds: 42,
             export_presets: crate::view::export_dialog::Preset::usual(),

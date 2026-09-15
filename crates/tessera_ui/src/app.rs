@@ -356,6 +356,8 @@ pub struct TesseraApp {
     pub story_editor: crate::view::story_editor::StoryEditorWindow,
     /// The Hunspell dictionaries loaded this session, by language.
     pub dictionaries: crate::view::spelling::Dictionaries,
+    /// The unknown words of each story, for the wave drawn under them.
+    pub squiggles: crate::view::spelling::Squiggles,
     /// Find and Change. Modeless, so it is not in `modal_open`.
     pub find: crate::view::find::FindWindow,
 
@@ -462,6 +464,12 @@ pub struct TesseraApp {
     /// machine's config directory happens to hold. The real application calls
     /// [`TesseraApp::load_preferences`] once at startup.
     pub prefs: crate::prefs::Preferences,
+
+    /// Whether this application writes to the person's configuration —
+    /// preferences, the dictionary of added words. False until
+    /// [`TesseraApp::load_preferences`] has run, which the real application
+    /// does at startup and no test ever does.
+    pub persists: bool,
 }
 
 impl TesseraApp {
@@ -508,6 +516,8 @@ impl TesseraApp {
             spelling: crate::view::spelling::SpellingWindow::default(),
             story_editor: crate::view::story_editor::StoryEditorWindow::default(),
             dictionaries: crate::view::spelling::Dictionaries::default(),
+            squiggles: crate::view::spelling::Squiggles::default(),
+            persists: false,
             editing_master: None,
             rail_open: true,
             sections: Sections::default(),
@@ -601,6 +611,9 @@ impl TesseraApp {
         };
         let (prefs, complaint) = crate::prefs::Preferences::load_from(&path);
         self.prefs = prefs;
+        self.persists = true;
+        self.dictionaries
+            .locate(crate::view::spelling::Dictionaries::folder());
         if let Some(message) = complaint {
             self.status = Some(Status::error(message));
         }

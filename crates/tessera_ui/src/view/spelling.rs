@@ -17,6 +17,13 @@
 //!
 //! Words added go to `user.dic` in the same folder, one per line, and are
 //! read back for every language.
+//!
+//! ## Dynamic spelling
+//!
+//! The same check, drawn: a red wave under every unknown word on the canvas,
+//! when the preference is on. [`Squiggles`] keeps the unknown words of each
+//! story and re-reads a story only when the document or the dictionaries
+//! change, so the canvas asks every frame and pays only for what moved.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -30,11 +37,22 @@ use crate::command::{Command, apply};
 use crate::theme::Theme;
 
 /// The dictionaries loaded this session, by language code.
+///
+/// **Reads and writes nothing until told where.** A headless application
+/// has no folder, so a test that adds a word adds it for the run and never
+/// to the person's own `user.dic` — which one did, once, and was found in
+/// the file a week later.
 #[derive(Default)]
 pub struct Dictionaries {
+    /// Where the `.dic` and `.aff` files and `user.dic` live, once known.
+    folder: Option<PathBuf>,
     loaded: HashMap<String, Option<Dictionary>>,
     /// The person's own words, kept across languages.
     added: Vec<String>,
+    /// Bumped whenever what the dictionaries know changes — a word added, a
+    /// dictionary loaded — so anything caching their answers can tell.
+    generation: u64,
+    user_words_read: bool,
 }
 
 impl std::fmt::Debug for Dictionaries {
@@ -46,13 +64,19 @@ impl std::fmt::Debug for Dictionaries {
 }
 
 impl Dictionaries {
-    /// Where the `.dic` and `.aff` files live.
+    /// Where the `.dic` and `.aff` files live on this machine.
     pub fn folder() -> Option<PathBuf> {
         crate::prefs::Preferences::directory().map(|d| d.join("dictionaries"))
     }
 
-    fn user_list() -> Option<PathBuf> {
-        Self::folder().map(|d| d.join("user.dic"))
+    /// Read from and write to `folder` from now on. The application calls
+    /// this once at startup with [`Dictionaries::folder`]; tests never do.
+    pub fn locate(&mut self, folder: Option<PathBuf>) {
+        self.folder = folder;
+    }
+
+    fn user_list(&self) -> Option<PathBuf> {
+        self.folder.as_ref().map(|d| d.join("user.dic"))
     }
 
     /// The dictionary for `language`, loading it the first time it is asked
@@ -60,19 +84,26 @@ impl Dictionaries {
     pub fn get(&mut self, language: &str) -> Option<&Dictionary> {
         let language = language.to_ascii_lowercase();
         if !self.loaded.contains_key(&language) {
-            let loaded = Self::load(&language).map(|mut d| {
+            let loaded = self.load(&language).map(|mut d| {
                 for word in &self.added {
                     d.add(word);
                 }
                 d
             });
             self.loaded.insert(language.clone(), loaded);
+            self.generation += 1;
         }
         self.loaded.get(&language).and_then(|d| d.as_ref())
     }
 
-    fn load(language: &str) -> Option<Dictionary> {
-        let folder = Self::folder()?;
+    /// Whether `load_user_words` has run. The squiggles read the list on
+    /// first use, so a word added last week is vouched for today.
+    pub fn user_words_read(&self) -> bool {
+        self.user_words_read
+    }
+
+    fn load(&self, language: &str) -> Option<Dictionary> {
+        let folder = self.folder.clone()?;
         // "en" may be shipped as en.dic or en_US.dic; take the exact name
         // first, then anything starting with it.
         let candidates: Vec<PathBuf> = std::fs::read_dir(&folder)
@@ -106,11 +137,18 @@ impl Dictionaries {
     pub fn insert(&mut self, language: &str, dictionary: Dictionary) {
         self.loaded
             .insert(language.to_ascii_lowercase(), Some(dictionary));
+        self.generation += 1;
+    }
+
+    /// What the dictionaries know, as a number that changes when it does.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Read the person's own words once.
     pub fn load_user_words(&mut self) {
-        if let Some(path) = Self::user_list()
+        self.user_words_read = true;
+        if let Some(path) = self.user_list()
             && let Ok(text) = std::fs::read_to_string(path)
         {
             self.added = text
@@ -119,6 +157,15 @@ impl Dictionaries {
                 .filter(|l| !l.is_empty())
                 .map(str::to_owned)
                 .collect();
+            // Into the dictionaries already open as well as the ones still
+            // to load: read after a dictionary was, the list vouched for
+            // nothing in it.
+            for d in self.loaded.values_mut().flatten() {
+                for word in &self.added {
+                    d.add(word);
+                }
+            }
+            self.generation += 1;
         }
     }
 
@@ -132,13 +179,78 @@ impl Dictionaries {
         for d in self.loaded.values_mut().flatten() {
             d.add(&word);
         }
-        if let Some(path) = Self::user_list() {
+        self.generation += 1;
+        if let Some(path) = self.user_list() {
             if let Some(dir) = path.parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
             let _ = std::fs::write(&path, self.added.join("\n") + "\n");
         }
     }
+}
+
+/// The unknown words of each story, for the wave under them.
+///
+/// Keyed by the document's revision and the dictionaries' generation: a
+/// story is re-read when either moves and answered from here otherwise,
+/// which is every frame the canvas draws between keystrokes.
+#[derive(Debug, Default)]
+pub struct Squiggles {
+    by_story: HashMap<StoryId, (u64, u64, Vec<Range<usize>>)>,
+}
+
+impl Squiggles {
+    /// The words of `story` no dictionary knows, in stored offsets. A word
+    /// whose language has no dictionary is not marked: it was not checked.
+    pub fn ranges(
+        &mut self,
+        id: StoryId,
+        document: &tessera_document::Document,
+        dictionaries: &mut Dictionaries,
+    ) -> &[Range<usize>] {
+        if !dictionaries.user_words_read() {
+            dictionaries.load_user_words();
+        }
+        let revision = document.revision();
+        let generation = dictionaries.generation();
+        let stale = !matches!(
+            self.by_story.get(&id),
+            Some((r, g, _)) if *r == revision && *g == generation
+        );
+        if stale {
+            let ranges = match document.story(id) {
+                Some(story) => unknown_words(story, document, dictionaries),
+                None => Vec::new(),
+            };
+            self.by_story
+                .insert(id, (revision, dictionaries.generation(), ranges));
+        }
+        self.by_story
+            .get(&id)
+            .map_or(&[], |(_, _, ranges)| ranges.as_slice())
+    }
+}
+
+/// Every word in `story` that its language's dictionary does not know.
+fn unknown_words(
+    story: &tessera_text::story::Story,
+    document: &tessera_document::Document,
+    dictionaries: &mut Dictionaries,
+) -> Vec<Range<usize>> {
+    words(&story.text)
+        .into_iter()
+        .filter(|(_, word)| {
+            tessera_text::variables::Marker::of(word.chars().next().unwrap_or(' ')).is_none()
+        })
+        .filter_map(|(range, word)| {
+            let language = story
+                .common_format(range.clone(), document)
+                .language
+                .unwrap_or_else(|| "en".to_owned());
+            let known = dictionaries.get(&language).is_none_or(|d| d.check(word));
+            (!known).then_some(range)
+        })
+        .collect()
 }
 
 /// One unknown word, where it is.
@@ -502,6 +614,77 @@ mod tests {
         let mut window = SpellingWindow::default();
         window.open(&state);
         assert_eq!(window.next(&mut state), None, "added to the dictionary");
+    }
+
+    #[test]
+    fn squiggles_mark_the_unknown_words_and_follow_an_edit() {
+        let (mut state, story) = a_document_saying("The cta sat.");
+        let mut squiggles = Squiggles::default();
+        let doc = state.active().document().clone();
+        assert_eq!(
+            squiggles.ranges(story, &doc, &mut state.dictionaries),
+            std::slice::from_ref(&(4..7))
+        );
+        // Answered from the cache while nothing has changed.
+        assert_eq!(squiggles.by_story.len(), 1);
+
+        let id = state.active().selection.single().expect("selected");
+        apply(
+            &mut state,
+            Command::SetText {
+                id,
+                text: "The cat sat.".into(),
+            },
+        );
+        let doc = state.active().document().clone();
+        assert!(
+            squiggles
+                .ranges(story, &doc, &mut state.dictionaries)
+                .is_empty(),
+            "corrected, so no longer marked"
+        );
+    }
+
+    #[test]
+    fn a_word_added_to_the_dictionary_loses_its_squiggle() {
+        let (mut state, story) = a_document_saying("Tessera sets type.");
+        let mut squiggles = Squiggles::default();
+        let doc = state.active().document().clone();
+        assert_eq!(
+            squiggles.ranges(story, &doc, &mut state.dictionaries),
+            std::slice::from_ref(&(0..7)),
+            "Tessera; sets is set/S"
+        );
+        state.dictionaries.add("Tessera");
+        assert!(
+            squiggles
+                .ranges(story, &doc, &mut state.dictionaries)
+                .is_empty(),
+            "the document did not change, the dictionaries did"
+        );
+    }
+
+    #[test]
+    fn a_language_with_no_dictionary_gets_no_squiggles() {
+        let (mut state, story) = a_document_saying("Guten Tag");
+        apply(
+            &mut state,
+            Command::SetCharacterFormat {
+                story,
+                range: 0..9,
+                format: tessera_text::story::CharacterFormat {
+                    language: Some("de".into()),
+                    ..Default::default()
+                },
+            },
+        );
+        let mut squiggles = Squiggles::default();
+        let doc = state.active().document().clone();
+        assert!(
+            squiggles
+                .ranges(story, &doc, &mut state.dictionaries)
+                .is_empty()
+        );
     }
 
     #[test]

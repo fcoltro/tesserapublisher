@@ -2436,9 +2436,24 @@ which cost one afternoon's confusion and a namespace check.
   <lang>.dic` by the text's language, says which languages have none, and
   keeps the person's own words in `user.dic` beside them. Edit ▸ Check
   spelling… (Ctrl+I) walks the story being edited or every story: Change,
-  Ignore, Ignore all, Add to dictionary. Not built: suggestions (the
-  replacement is what the person types), squiggles on the canvas as you
-  type, compounding and the other `.aff` tables.
+  Ignore, Ignore all, Add to dictionary. **Dynamic spelling was added
+  2026-09-15**: a red wave under every word no dictionary knows, drawn by
+  egui over the page like the caret so it can never reach a PDF, found
+  through the same selection geometry the composition underline uses.
+  `Squiggles` keeps each story's unknown words keyed on the document's
+  revision and the dictionaries' generation, so the canvas asks every
+  frame and pays only when something changed. The word holding the caret
+  is left alone until the caret leaves it. Edit ▸ Spelling ▸ Dynamic
+  spelling, a preference, on by default. **Found on the way, and worse
+  than the feature:** two tests wrote to the person's real configuration —
+  `ToggleSnapping` saved headless defaults over the preferences file on
+  every `cargo test`, and Add to dictionary put "Tessera" in the real
+  `user.dic`. A headless application now persists nothing (`persists`,
+  and `Dictionaries` has no folder until `load_preferences` gives it
+  one); and `load_user_words` now vouches for the list in dictionaries
+  already open, which it did not. Not built: suggestions (the replacement
+  is what the person types), a right-click on the wave, compounding and
+  the other `.aff` tables.
 - [x] **Hyperlinks** (added 2026-09-13, after milestone 12). A link rides on
   the character format — `CharacterFormat.link`, a URL or a named
   destination — so it cascades and travels with the words. Destinations are

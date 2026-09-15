@@ -209,6 +209,7 @@ fn restore(state: &mut TesseraApp) {
             state.prefs.unit = fresh.unit;
             state.prefs.snapping = fresh.snapping;
             state.prefs.typographers_quotes = fresh.typographers_quotes;
+            state.prefs.dynamic_spelling = fresh.dynamic_spelling;
             state.prefs.updates.enabled = fresh.updates.enabled;
         }
         Page::Appearance => {
@@ -294,6 +295,13 @@ fn general(ui: &mut Ui, state: &mut TesseraApp) {
         ui,
         "A straight quote typed on the canvas becomes \u{201C} \u{201D} \u{2018} \u{2019} by \
          what is before it. Turn off for code, or feet and inches.",
+    );
+    ui.checkbox(&mut state.prefs.dynamic_spelling, "Dynamic spelling");
+    note(
+        ui,
+        "A red wave under any word the language\u{2019}s dictionary does not know, \
+         as you type. Needs a dictionary in the dictionaries folder; without one \
+         nothing is marked.",
     );
 }
 
@@ -796,6 +804,7 @@ mod tests {
             panel_opacity: 0.4,
             snapping: false,
             typographers_quotes: false,
+            dynamic_spelling: false,
             recovery_copy: false,
             recovery_seconds: 11,
             export_presets: crate::view::export_dialog::Preset::usual(),

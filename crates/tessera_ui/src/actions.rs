@@ -20,6 +20,9 @@ use tessera_text::variables::Marker;
 pub enum Group {
     File,
     Edit,
+    /// Checking and marking words, a submenu of Edit — where InDesign keeps
+    /// it, and what kept Edit within its dozen lines.
+    Spelling,
     Object,
     Arrange,
     Transform,
@@ -41,9 +44,10 @@ pub enum Group {
 }
 
 impl Group {
-    pub const ALL: [Group; 16] = [
+    pub const ALL: [Group; 17] = [
         Group::File,
         Group::Edit,
+        Group::Spelling,
         Group::Object,
         Group::Arrange,
         Group::Transform,
@@ -78,6 +82,7 @@ impl Group {
             // submenu is what InDesign does, and for the same reason.
             Group::Insert => Some("Insert special character"),
             Group::Markers => Some("Insert marker"),
+            Group::Spelling => Some("Spelling"),
             _ => None,
         }
     }
@@ -101,7 +106,7 @@ impl Group {
     pub fn menu(self) -> Option<&'static str> {
         match self {
             Group::File => Some("File"),
-            Group::Edit => Some("Edit"),
+            Group::Edit | Group::Spelling => Some("Edit"),
             Group::Object | Group::Arrange | Group::Transform | Group::Align => Some("Object"),
             Group::View => Some("View"),
             Group::Type | Group::Insert | Group::Markers => Some("Type"),
@@ -265,6 +270,7 @@ pub enum Run {
     TogglePages,
     ToggleLayers,
     ToggleSnapping,
+    ToggleDynamicSpelling,
     NewDocument,
     Open,
     Save,
@@ -363,6 +369,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::TogglePages
         | Run::ToggleLayers
         | Run::ToggleSnapping
+        | Run::ToggleDynamicSpelling
         | Run::ScreenMode(_)
         | Run::ZoomToFit
         | Run::Command(Undo | Redo) => Guard::Always,
@@ -576,8 +583,14 @@ pub fn all() -> &'static [Action] {
         a(
             "Check spelling\u{2026}",
             Some("Ctrl+I"),
-            Group::Edit,
+            Group::Spelling,
             Run::CheckSpelling,
+        ),
+        a(
+            "Dynamic spelling",
+            None,
+            Group::Spelling,
+            Run::ToggleDynamicSpelling,
         ),
         // A menu of its own, as every layout tool gives it: the operations are
         // about the grid rather than about the object, and filing them under
@@ -1316,6 +1329,10 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             // somebody who turns snapping off is not turning it off for a
             // minute and would not expect to find it back tomorrow.
             state.prefs.snapping = !state.prefs.snapping;
+            crate::prefs::remember(state);
+        }
+        Run::ToggleDynamicSpelling => {
+            state.prefs.dynamic_spelling = !state.prefs.dynamic_spelling;
             crate::prefs::remember(state);
         }
         Run::PickTool(tool) => {
