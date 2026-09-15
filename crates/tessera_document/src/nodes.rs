@@ -378,6 +378,13 @@ impl Swatch {
     }
 }
 
+/// Which side of a wrapped object text may run on: InDesign's "wrap to".
+///
+/// The text crate's own type, so the layout hands it straight to the
+/// breaker. `Largest` is the default and what every wrap did before there
+/// was a choice, so an older file reads as it was set.
+pub use tessera_text::wrap::WrapTo;
+
 /// How text runs around an object.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum TextWrap {
@@ -387,11 +394,19 @@ pub enum TextWrap {
     None,
     /// Text keeps clear of the object's box, plus a standoff on each side.
     /// InDesign's "wrap around bounding box", and what most wraps are.
-    Bounds { standoff: Insets },
+    Bounds {
+        standoff: Insets,
+        #[serde(default)]
+        sides: WrapTo,
+    },
     /// Text keeps clear of the object's outline — an ellipse's curve, a
     /// pen-drawn shape, a turned rectangle's corners — plus one standoff all
     /// round. "Wrap around object shape".
-    Contour { standoff: f64 },
+    Contour {
+        standoff: f64,
+        #[serde(default)]
+        sides: WrapTo,
+    },
     /// Text stops above the object and resumes below it, however narrow the
     /// object is. "Jump object".
     Jump,
@@ -402,14 +417,23 @@ impl TextWrap {
     pub fn standoff(&self) -> Option<Insets> {
         match self {
             TextWrap::None => None,
-            TextWrap::Bounds { standoff } => Some(*standoff),
-            TextWrap::Contour { standoff } => Some(Insets {
+            TextWrap::Bounds { standoff, .. } => Some(*standoff),
+            TextWrap::Contour { standoff, .. } => Some(Insets {
                 top: *standoff,
                 bottom: *standoff,
                 left: *standoff,
                 right: *standoff,
             }),
             TextWrap::Jump => Some(Insets::default()),
+        }
+    }
+
+    /// Which side the text may run on. A jump has no sides and no wrap has
+    /// no text to place, so both answer the default.
+    pub fn sides(&self) -> WrapTo {
+        match self {
+            TextWrap::Bounds { sides, .. } | TextWrap::Contour { sides, .. } => *sides,
+            TextWrap::None | TextWrap::Jump => WrapTo::Largest,
         }
     }
 }

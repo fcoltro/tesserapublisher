@@ -175,6 +175,13 @@ pub(crate) struct Placed {
     pub tabs: Vec<TabRun>,
     /// What each line does with its slack, by line index.
     pub spacing: Vec<LineSpacing>,
+    /// How far each line sits from where parley stacked it, by line index:
+    /// zero everywhere unless an object put two lines on one row or left a
+    /// row empty. See [`row_shifts`]. Empty means zero for every line.
+    pub row_shift: Vec<f64>,
+    /// How tall the paragraph is with its lines on their rows — parley's own
+    /// height when every line has a row of its own.
+    pub height: f64,
     /// The paragraph's rules, resolved: `(above, below)`, `None` for a rule
     /// that is absent or switched off. Placed on the first and last line by
     /// `assemble`, which is the first place a line's baseline is known.
@@ -1193,13 +1200,21 @@ fn plan_total_fit(
 /// A soft hyphen is a break opportunity that costs the width of a hyphen,
 /// exactly, in the font the word is in — which retires the fixed reserve
 /// every hyphenated line used to pay whether or not it broke there.
+///
+/// **Rows, not lines.** parley sets one `x` and one advance per line, and
+/// text on both sides of an object is two of those on one baseline. So the
+/// breaker walks *rows* — bands one leading tall — and gives each of a row's
+/// runs its own parley line. The second answer is which row each line is
+/// on; [`row_shifts`] turns that into where each line's glyphs go. A row
+/// with nowhere for text — an object jumped, or a gap too narrow for a
+/// word — gets no line at all, and the text resumes on the next row.
 fn break_lines_with_room(
     layout: &mut parley::Layout<Brush>,
     shaped_text: &str,
     measure: f64,
     room: Room<'_>,
     composition: &Composition<'_>,
-) -> Vec<LineSpacing> {
+) -> (Vec<LineSpacing>, Vec<usize>) {
     let Room {
         first,
         cap,
@@ -1231,34 +1246,75 @@ fn break_lines_with_room(
     if units.is_empty() {
         breaker.state_mut().set_line_x(first.max(0.0) as f32);
         breaker.break_remaining(measure.max(1.0) as f32);
-        return vec![LineSpacing::default()];
+        return (vec![LineSpacing::default()], vec![0]);
     }
 
-    // Where line `n` may run: the same arithmetic the loop below does, so
-    // the paragraph composer plans against the rooms the lines will have.
-    let room_of_line = |n: usize| -> (f64, f64) {
-        let indent = if n == 0 { first } else { 0.0 } + if n < cap_lines { cap } else { 0.0 };
-        let top = n as f64 * height;
-        let (offset, available) = if obstacles.is_empty() {
-            (0.0, measure)
-        } else {
-            crate::wrap::available_run(measure, from_y + top, from_y + top + height, obstacles)
-        };
-        let x = indent.max(offset);
-        (x, ((offset + available) - x).max(1.0))
+    // The runs of row `r`, left to right, as `(x, room)`: where the text may
+    // go once the indents and the objects have had their say. Empty when the
+    // row has nowhere for text.
+    let runs_of_row = |r: usize| -> Vec<(f64, f64)> {
+        let indent = if r == 0 { first } else { 0.0 } + if r < cap_lines { cap } else { 0.0 };
+        let top = r as f64 * height;
+        let (band_top, band_bottom) = (from_y + top, from_y + top + height);
+        let crossed = !obstacles.is_empty()
+            && obstacles
+                .iter()
+                .any(|o| o.y < band_bottom && o.y + o.height > band_top && o.width > 0.0);
+        if !crossed {
+            // Nothing in the way: the measure, less the indent, and at least
+            // a point of it — a word too long for the measure overhangs, as
+            // it always has, rather than vanishing.
+            let x = indent.max(0.0);
+            return vec![(x, (measure - x).max(1.0))];
+        }
+        crate::wrap::available_runs(measure, band_top, band_bottom, obstacles)
+            .into_iter()
+            .filter_map(|(offset, available)| {
+                let x = indent.max(offset);
+                let room = (offset + available) - x;
+                // A gap narrower than the leading holds no word worth
+                // setting; a forced word there would overhang the object.
+                (room >= height).then_some((x, room))
+            })
+            .collect()
     };
-    let plan: Option<Vec<Chosen>> = composition.total_fit.then(|| {
-        plan_total_fit(
-            &units,
-            &|n| room_of_line(n).1,
-            composition,
-            desired,
-            squeeze,
-        )
-    });
 
+    // The lines, in order, as `(row, x, room)` — read off the rows lazily,
+    // because how many lines a paragraph takes is what the loop below finds
+    // out, and the paragraph composer plans against the rooms the lines
+    // will have before that is known.
+    let lines: std::cell::RefCell<Vec<(usize, f64, f64)>> = std::cell::RefCell::new(Vec::new());
+    let next_row = std::cell::Cell::new(0usize);
+    let line_of = |n: usize| -> (usize, f64, f64) {
+        let mut lines = lines.borrow_mut();
+        let mut empty_rows = 0usize;
+        while lines.len() <= n {
+            let r = next_row.get();
+            next_row.set(r + 1);
+            let runs = runs_of_row(r);
+            if runs.is_empty() {
+                // Past a thousand empty rows something is blocking the
+                // measure for good, and the text is set through it rather
+                // than never: the old answer, and an honest one.
+                empty_rows += 1;
+                if empty_rows > 1000 {
+                    lines.push((r, 0.0, measure.max(1.0)));
+                }
+                continue;
+            }
+            empty_rows = 0;
+            lines.extend(runs.into_iter().map(|(x, room)| (r, x, room)));
+        }
+        lines[n]
+    };
+    let plan: Option<Vec<Chosen>> = composition
+        .total_fit
+        .then(|| plan_total_fit(&units, &|n| line_of(n).2, composition, desired, squeeze));
+
+    let mut rows = Vec::new();
     while i < units.len() {
-        let (x, room) = room_of_line(line);
+        let (row, x, room) = line_of(line);
+        rows.push(row);
         // The line's own edges, which alignment measures against: the
         // breaker by count would otherwise leave the right edge at infinity
         // and a centred line with nowhere to be centred in.
@@ -1387,8 +1443,8 @@ fn break_lines_with_room(
         if breaker.break_next_with_length(take as u32).is_none() {
             break;
         }
-        // The next line's room is measured `height` further down (see
-        // `room_of_line`): parley knows a line's real height only once the
+        // The next row is measured `height` further down (see
+        // `runs_of_row`): parley knows a line's real height only once the
         // line exists, which is after the breaker is done, so the
         // paragraph's leading is used throughout — nearly always right, and
         // what the first line had anyway.
@@ -1396,7 +1452,63 @@ fn break_lines_with_room(
         line += 1;
     }
     breaker.finish();
-    spacings
+    (spacings, rows)
+}
+
+/// How far each of a layout's lines moves from where parley put it to where
+/// its row is, and how tall the paragraph is once they have.
+///
+/// parley stacks its lines one under another. Two lines on one row are
+/// pulled up onto the first of them; a line after an empty row is pushed
+/// down by a leading for each row skipped. With every line on its own row in
+/// order — every paragraph without an object beside it — every shift is
+/// zero, and the paragraph is exactly as parley laid it.
+fn row_shifts(layout: &parley::Layout<Brush>, rows: &[usize], leading: f64) -> (Vec<f64>, f64) {
+    let mut shifts = Vec::with_capacity(rows.len());
+    let mut height = 0.0f64;
+    let mut delta = 0.0f64;
+    let mut previous: Option<(usize, f64)> = None;
+    // The row so far: how many lines share it, and the lowest they reach
+    // once shifted. A row of two is as tall as its taller line, and the next
+    // row starts under that — parley stacked it under the second alone.
+    let mut row_lines = 0usize;
+    let mut row_bottom = 0.0f64;
+    for (k, line) in layout.lines().enumerate() {
+        let m = line.metrics();
+        let row = rows.get(k).copied().unwrap_or(k);
+        let top = f64::from(m.block_min_coord);
+        match previous {
+            None => {
+                delta = row as f64 * leading;
+                row_lines = 1;
+            }
+            Some((last_row, last_top)) if row == last_row => {
+                delta -= top - last_top;
+                row_lines += 1;
+            }
+            Some((last_row, _)) => {
+                let skipped = row.saturating_sub(last_row + 1) as f64 * leading;
+                // After a row of one, parley's own stacking stands; after a
+                // row of several, the next row goes under the tallest.
+                delta = if row_lines == 1 {
+                    delta + skipped
+                } else {
+                    row_bottom - top + skipped
+                };
+                row_lines = 1;
+            }
+        }
+        let bottom = f64::from(m.block_max_coord) + delta;
+        row_bottom = if row_lines == 1 {
+            bottom
+        } else {
+            row_bottom.max(bottom)
+        };
+        shifts.push(delta);
+        height = height.max(bottom);
+        previous = Some((row, top));
+    }
+    (shifts, height)
 }
 
 /// How many points a drop cap of `lines` lines should be set at.
@@ -1708,6 +1820,13 @@ fn extent(line: &ShapedLine) -> (f64, f64) {
     (line.ascent, line.descent)
 }
 
+/// Whether two baselines are one row's: text either side of an object is
+/// two lines that share a baseline, and every pass that spaces lines out
+/// has to keep them together.
+fn same_row(a: f64, b: f64) -> bool {
+    (a - b).abs() < 1e-6
+}
+
 /// Move every glyph on a line, and its baseline, by an offset.
 fn shift(line: &mut ShapedLine, dx: f64, dy: f64) {
     line.baseline += dy;
@@ -1888,7 +2007,10 @@ pub fn flow_with_notes(
     // The last baseline placed in the current box, for the grid. Two lines
     // may not take the same slot: leading tighter than the grid step would
     // otherwise round both onto one line and draw them over each other.
+    // Unless they are one row — text either side of an object — which is
+    // told by their baselines agreeing before anything moved them.
     let mut lowest = None::<f64>;
+    let mut last_unmoved = None::<f64>;
     // Which box each placed line went into, so the slack can be shared out
     // afterwards.
     let mut boxes: Vec<usize> = Vec::with_capacity(lines.len());
@@ -1920,11 +2042,17 @@ pub fn flow_with_notes(
         // Locked lines take the next slot at or below where they fell.
         // Down rather than to the nearest, so text never rides up into
         // the line above it.
+        let same_row = last_unmoved.is_some_and(|b| same_row(b, line.baseline));
         let baseline = match grid {
             Some(grid) => {
                 // At least one slot past the line above, and never above
-                // the top of the box.
-                let floor = lowest.map_or(box_.y + above, |b| b + grid.step.max(f64::EPSILON));
+                // the top of the box — or the line above's own slot, when
+                // this is the rest of its row.
+                let floor = match lowest {
+                    Some(b) if same_row => b,
+                    Some(b) => b + grid.step.max(f64::EPSILON),
+                    None => box_.y + above,
+                };
                 grid.at_or_below(baseline.max(floor))
             }
             None => baseline,
@@ -1953,6 +2081,7 @@ pub fn flow_with_notes(
             let mut line = line.clone();
             shift(&mut line, box_.x, shift_by);
             lowest = Some(baseline);
+            last_unmoved = Some(lines[i].baseline);
             out.lines.push(line);
             boxes.push(column);
             i += 1;
@@ -1976,6 +2105,7 @@ pub fn flow_with_notes(
         column += 1;
         offset = None;
         lowest = None;
+        last_unmoved = None;
         column_first = break_at;
         i = break_at;
     }
@@ -2123,14 +2253,25 @@ fn justify(
                 }
             }
             Vertical::Justify => {
-                // One line has no gap to open, so it stays at the top rather
+                // The gaps to open are between *rows*: two lines either side
+                // of an object share a baseline and must go on sharing it.
+                let mut row_of = Vec::with_capacity(mine.len());
+                let mut rows = 0usize;
+                for (n, i) in mine.iter().enumerate() {
+                    if n > 0 && !same_row(text.lines[mine[n - 1]].baseline, text.lines[*i].baseline)
+                    {
+                        rows += 1;
+                    }
+                    row_of.push(rows);
+                }
+                // One row has no gap to open, so it stays at the top rather
                 // than dropping to the middle of the box.
-                if mine.len() < 2 {
+                if rows == 0 {
                     continue;
                 }
-                let each = slack / (mine.len() - 1) as f64;
-                for (n, i) in mine.iter().enumerate() {
-                    shift(&mut text.lines[*i], 0.0, each * n as f64);
+                let each = slack / rows as f64;
+                for (i, row) in mine.iter().zip(row_of) {
+                    shift(&mut text.lines[*i], 0.0, each * row as f64);
                 }
             }
         }
@@ -2729,7 +2870,7 @@ impl Shaper {
                 }
 
                 let mut layout: parley::Layout<Brush> = builder.build(&shaped_text);
-                let spacings = break_lines_with_room(
+                let (spacings, rows) = break_lines_with_room(
                     &mut layout,
                     &shaped_text,
                     measure,
@@ -2754,14 +2895,15 @@ impl Shaper {
                         total_fit: format.composer == Some(crate::story::Composer::Paragraph),
                     },
                 );
-                (layout, spacings)
+                (layout, spacings, rows)
             };
 
             // Laid out once, and again for every tab that has not yet reached
             // its stop. See `TabRun` for why this is a loop.
             let stops = format.tab_stops.clone().unwrap_or_default();
             let mut tabs = tabs_in(&shaped_text);
-            let (mut layout, mut spacings) = build(&tabs, &mut self.layout_ctx, &mut self.font_ctx);
+            let (mut layout, mut spacings, mut rows) =
+                build(&tabs, &mut self.layout_ctx, &mut self.font_ctx);
             for _ in 0..4 {
                 if tabs.is_empty() {
                     break;
@@ -2774,7 +2916,7 @@ impl Shaper {
                 if settled {
                     break;
                 }
-                (layout, spacings) = build(&tabs, &mut self.layout_ctx, &mut self.font_ctx);
+                (layout, spacings, rows) = build(&tabs, &mut self.layout_ctx, &mut self.font_ctx);
             }
 
             // Alignment is per layout, which is now per paragraph — so two
@@ -2797,7 +2939,9 @@ impl Shaper {
                 parley::AlignmentOptions::default(),
             );
 
-            let height = f64::from(layout.height());
+            // Where each line's row is, now the lines exist and have heights.
+            let leading = f64::from(floor.size.unwrap_or(12.0) * floor.line_height.unwrap_or(1.2));
+            let (row_shift, height) = row_shifts(&layout, &rows, leading);
             // Now the body exists, the cap can be put where it belongs: its
             // own baseline sitting on the baseline of the last line it covers.
             // Anything else leaves it hanging below the lines it is supposed to
@@ -2806,6 +2950,7 @@ impl Shaper {
             if let Some(cap) = cap {
                 let (cap_layout, cap_text, cap_map, cap_baseline) =
                     (cap.layout, cap.text, cap.map, cap.baseline);
+                let cap_layout_height = cap_layout.height();
                 let target = layout
                     .lines()
                     .nth(cap_lines.saturating_sub(1))
@@ -2829,6 +2974,8 @@ impl Shaper {
                     shaped_text: cap_text,
                     tabs: Vec::new(),
                     spacing: Vec::new(),
+                    row_shift: Vec::new(),
+                    height: f64::from(cap_layout_height),
                     rules: (None, None),
                     begins_here: false,
                     paragraph: paragraph_index,
@@ -2846,6 +2993,8 @@ impl Shaper {
                 shaped_text,
                 tabs,
                 spacing: spacings,
+                row_shift,
+                height,
                 rules: (
                     format.rule_above.clone().filter(|r| r.on),
                     format.rule_below.clone().filter(|r| r.on),
@@ -2991,7 +3140,10 @@ impl Shaper {
                 // here, so everything downstream — the renderer, the PDF
                 // writer, the caret's callers — keeps working in frame-local
                 // points and never has to know paragraphs exist.
-                let baseline = f64::from(line.metrics().baseline) + paragraph.y;
+                // And each line's row, when an object put it somewhere other
+                // than under the line before it.
+                let dy = paragraph.y + paragraph.row_shift.get(index).copied().unwrap_or(0.0);
+                let baseline = f64::from(line.metrics().baseline) + dy;
 
                 // Which glyphs are tabs, by position in the line's visual
                 // glyph order — the order `positioned_glyphs` walks below.
@@ -3023,7 +3175,7 @@ impl Shaper {
                             objects.push(PlacedObject {
                                 at: box_.id as usize,
                                 x: f64::from(box_.x) + paragraph.x,
-                                y: f64::from(box_.y) + paragraph.y,
+                                y: f64::from(box_.y) + dy,
                                 width: f64::from(box_.width),
                                 height: f64::from(box_.height),
                             });
@@ -3061,7 +3213,7 @@ impl Shaper {
                             .unwrap_or(0.0);
                         glyph_index += 1;
                         let x = f64::from(g.x) + paragraph.x + kerned;
-                        let y = f64::from(g.y) + paragraph.y - f64::from(shift);
+                        let y = f64::from(g.y) + dy - f64::from(shift);
                         if let Some(tab) = tab {
                             // A tab draws nothing of its own. Its leader, if
                             // it has one, fills the gap from the right, so the
@@ -3212,12 +3364,12 @@ impl Shaper {
                         paragraph: shared.clone(),
                         index,
                         x: paragraph.x,
-                        y: paragraph.y,
+                        y: dy,
                     }),
                 });
             }
 
-            height = height.max(paragraph.y + f64::from(paragraph.layout.height()));
+            height = height.max(paragraph.y + paragraph.height);
         }
 
         ShapedText {
@@ -6693,6 +6845,51 @@ mod tests {
         Grid { first, step }
     }
 
+    /// Three rows, the middle one split either side of an object: four
+    /// lines, the second and third on one baseline.
+    fn with_a_split_row() -> ShapedText {
+        let mut text = ruled(4);
+        text.lines[2].baseline = text.lines[1].baseline;
+        text.lines[3].baseline = 10.0 + 12.0 * 2.0;
+        text
+    }
+
+    #[test]
+    fn a_grid_gives_both_halves_of_a_row_the_same_slot() {
+        // Two lines may not take one slot — unless they are one row. A grid
+        // that pushed the right-hand piece down a slot would tear the row.
+        let flowed = flow_on_grid(
+            with_a_split_row(),
+            &[column(0.0, 0.0, 100.0, 500.0)],
+            Vertical::Top,
+            Some(grid(0.0, 16.0)),
+        );
+        let at = baselines(&flowed.text);
+        assert_eq!(at[1], at[2], "one row, one slot: {at:?}");
+        assert!(at[3] > at[2], "and the next row is below it");
+    }
+
+    #[test]
+    fn vertical_justification_spreads_rows_not_lines() {
+        let flowed = flow_justified(
+            with_a_split_row(),
+            &[column(0.0, 0.0, 100.0, 100.0)],
+            Vertical::Justify,
+        );
+        let at = baselines(&flowed.text);
+        assert_eq!(at[1], at[2], "the row stays together: {at:?}");
+        let last = flowed.text.lines.last().expect("a line");
+        assert_eq!(
+            last.baseline + last.descent,
+            100.0,
+            "the last row sits on the foot"
+        );
+        assert!(
+            ((at[1] - at[0]) - (at[3] - at[1])).abs() < 1e-9,
+            "and the rows are evenly spread: {at:?}"
+        );
+    }
+
     #[test]
     fn a_locked_line_takes_the_slot_at_or_below_where_it_fell() {
         // Down rather than to the nearest: text must never ride up into the
@@ -6842,6 +7039,7 @@ mod tests {
             width: 80.0,
             height: 1000.0,
             shape: crate::wrap::Blocking::Bounds,
+            sides: crate::wrap::WrapTo::Largest,
         };
         let around = shaper.shape_around(&story, &NoStyles::default(), 300.0, 0, &[obstacle]);
 
@@ -6870,6 +7068,7 @@ mod tests {
                 width: 180.0,
                 height: 1000.0,
                 shape: crate::wrap::Blocking::Bounds,
+                sides: crate::wrap::WrapTo::Largest,
             }],
         );
 
@@ -6902,6 +7101,7 @@ mod tests {
                 width: 120.0,
                 height: 20.0,
                 shape: crate::wrap::Blocking::Bounds,
+                sides: crate::wrap::WrapTo::Largest,
             }],
         );
 
@@ -6919,5 +7119,161 @@ mod tests {
             first > last,
             "the top line is pushed across and the last is not"
         );
+    }
+
+    // --- both sides -----------------------------------------------------------
+
+    /// A tall object in the middle of a 300pt measure, 120 to 180.
+    fn pillar(sides: crate::wrap::WrapTo) -> Obstacle {
+        Obstacle {
+            x: 120.0,
+            y: 0.0,
+            width: 60.0,
+            height: 1000.0,
+            shape: crate::wrap::Blocking::Bounds,
+            sides,
+        }
+    }
+
+    const LONG: &str = "the quick brown fox jumps over the lazy dog and then keeps on running \
+                        far past where anyone expected it to stop, and on, and on again";
+
+    #[test]
+    fn text_runs_on_both_sides_of_an_object_on_one_baseline() {
+        let story = Story::new(LONG);
+        let mut shaper = Shaper::new();
+        let both = shaper.shape_around(
+            &story,
+            &NoStyles::default(),
+            300.0,
+            0,
+            &[pillar(crate::wrap::WrapTo::Both)],
+        );
+
+        // Lines come in pairs: one left of the pillar, one right of it, on
+        // the same baseline.
+        let pairs = both
+            .lines
+            .windows(2)
+            .filter(|w| (w[0].baseline - w[1].baseline).abs() < 1e-3)
+            .count();
+        assert!(
+            pairs >= 2,
+            "{} lines, {pairs} sharing a baseline",
+            both.lines.len()
+        );
+        for w in both.lines.windows(2) {
+            if (w[0].baseline - w[1].baseline).abs() < 1e-3 {
+                let left_max = w[0].glyphs().map(|g| g.x).fold(f64::MIN, f64::max);
+                let right_min = w[1].glyphs().map(|g| g.x).fold(f64::MAX, f64::min);
+                assert!(
+                    left_max < 120.0,
+                    "the left piece stays left of the pillar: {left_max}"
+                );
+                assert!(
+                    right_min >= 180.0,
+                    "the right piece starts past it: {right_min}"
+                );
+            }
+        }
+        // And the story reads on across the pillar: the right piece
+        // continues where the left one stopped.
+        for w in both.lines.windows(2) {
+            assert_eq!(w[0].range.end, w[1].range.start, "the text stays in order");
+        }
+    }
+
+    #[test]
+    fn both_sides_takes_less_height_than_the_largest_area() {
+        // The same words in the same measure: using the narrow side too
+        // means fewer rows.
+        let story = Story::new(LONG);
+        let mut shaper = Shaper::new();
+        let largest = shaper.shape_around(
+            &story,
+            &NoStyles::default(),
+            300.0,
+            0,
+            &[pillar(crate::wrap::WrapTo::Largest)],
+        );
+        let both = shaper.shape_around(
+            &story,
+            &NoStyles::default(),
+            300.0,
+            0,
+            &[pillar(crate::wrap::WrapTo::Both)],
+        );
+        assert!(
+            both.height < largest.height - 10.0,
+            "{} against {}",
+            both.height,
+            largest.height
+        );
+        assert_eq!(both.glyph_count(), largest.glyph_count(), "nothing lost");
+    }
+
+    #[test]
+    fn a_jumped_row_is_left_empty_rather_than_given_a_word() {
+        // An object across the whole measure, over the first row: the text
+        // begins under it. Before rows, the breaker forced one word onto the
+        // blocked row, drawn over the object.
+        let story = Story::new(LONG);
+        let mut shaper = Shaper::new();
+        let plain = shaper.shape_around(&story, &NoStyles::default(), 300.0, 0, &[]);
+        let jumped = shaper.shape_around(
+            &story,
+            &NoStyles::default(),
+            300.0,
+            0,
+            &[Obstacle {
+                x: 100.0,
+                y: 0.0,
+                width: 20.0,
+                height: 10.0,
+                shape: crate::wrap::Blocking::Jump,
+                sides: crate::wrap::WrapTo::Largest,
+            }],
+        );
+        let first = &jumped.lines[0];
+        assert!(
+            first.baseline - first.ascent >= 10.0 - 1e-6,
+            "the first line clears the object: top at {}",
+            first.baseline - first.ascent
+        );
+        assert!(
+            first.baseline > plain.lines[0].baseline + 5.0,
+            "and sits a row lower than it would have"
+        );
+        assert_eq!(jumped.glyph_count(), plain.glyph_count());
+        // The caret agrees with the glyphs about where the line is.
+        let hit = first.hit.as_ref().expect("a hit layout");
+        let line = hit.paragraph.layout.get(hit.index).expect("its line");
+        assert!(
+            (f64::from(line.metrics().baseline) + hit.y - first.baseline).abs() < 1e-3,
+            "the hit layout's baseline is the line's"
+        );
+    }
+
+    #[test]
+    fn the_caret_layout_of_a_right_hand_piece_sits_on_its_row() {
+        let story = Story::new(LONG);
+        let mut shaper = Shaper::new();
+        let both = shaper.shape_around(
+            &story,
+            &NoStyles::default(),
+            300.0,
+            0,
+            &[pillar(crate::wrap::WrapTo::Both)],
+        );
+        for line in &both.lines {
+            let hit = line.hit.as_ref().expect("a hit layout");
+            let parley_line = hit.paragraph.layout.get(hit.index).expect("its line");
+            let baseline = f64::from(parley_line.metrics().baseline) + hit.y;
+            assert!(
+                (baseline - line.baseline).abs() < 1e-3,
+                "hit baseline {baseline} against line {}",
+                line.baseline
+            );
+        }
     }
 }

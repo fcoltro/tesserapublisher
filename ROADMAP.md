@@ -1116,9 +1116,21 @@ full argument, with sources, is in `docs/superpowers/specs/`.
     further than one through its shoulder. Jump blocks the whole measure.
     The inspector offers None / Around the box / Around the shape / Jump
     over; IDML's `TextWrapPreference` imports to the same three.
-    **Not built: text on both sides of an object.** A line is one parley
-    line, and a line in two pieces either side of an object is two; that
-    is a change to the breaker, not to the wrap.
+    **Text on both sides was added 2026-09-15**, and it was a change to
+    the breaker, not to the wrap. `TextWrap::{Bounds, Contour}` carry a
+    `sides: WrapTo` — largest area (the default, and what every wrap did),
+    both sides, left, right — and `wrap::available_runs` answers every gap
+    a line may use. The breaker now walks **rows** rather than lines: a
+    band one leading tall, each of whose runs gets its own parley line;
+    `row_shifts` pulls the second line of a row up onto the first and the
+    caret's `LineLayout` moves with it, so a click on the right-hand piece
+    lands where it looks. The flow and vertical justification keep a row's
+    lines together and a baseline grid gives them one slot. **Found on the
+    way:** a row with nowhere for text — a jumped object, a gap narrower
+    than the leading — was given one forced word drawn over the object;
+    it is now left empty and the text resumes below. Inspector: "Wrap to";
+    IDML's `TextWrapSide` imports, with the spine-relative sides dropped out
+    loud. Format **27**. Not built: sides named against the spine.
 
 ---
 

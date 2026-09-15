@@ -6197,6 +6197,7 @@ mod tests {
                 left: 6.0,
                 right: 6.0,
             },
+            sides: Default::default(),
         };
         apply(&mut state, Command::SetTextWrap { id, wrap });
         assert_eq!(

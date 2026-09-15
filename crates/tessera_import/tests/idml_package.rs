@@ -105,7 +105,7 @@ fn a_book() -> Vec<u8> {
 <Spread Self="ub7" PageCount="1">
   <Page Self="ub8" Name="1" AppliedMaster="ub6" GeometricBounds="0 0 792 612" ItemTransform="1 0 0 1 0 -396"><MarginPreference Top="36" Left="54" Bottom="48" Right="36" ColumnCount="1"/></Page>
   <TextFrame Self="uf2" ParentStory="u12" PreviousTextFrame="n" NextTextFrame="uf3" ItemLayer="ub3" ItemTransform="1 0 0 1 54 -360"><TextFramePreference TextColumnCount="2" TextColumnGutter="12" VerticalJustification="TopAlign"/>{}</TextFrame>
-  <Rectangle Self="ur1" FillColor="Color/Brand red" StrokeColor="Color/Black" StrokeWeight="2" ItemLayer="ub3" ItemTransform="1 0 0 1 100 200">{}</Rectangle>
+  <Rectangle Self="ur1" FillColor="Color/Brand red" StrokeColor="Color/Black" StrokeWeight="2" ItemLayer="ub3" ItemTransform="1 0 0 1 100 200"><TextWrapPreference TextWrapMode="BoundingBoxTextWrap" TextWrapSide="BothSides"><Properties><TextWrapOffset Top="4" Left="4" Bottom="4" Right="4"/></Properties></TextWrapPreference>{}</Rectangle>
 </Spread></idPkg:Spread>"#,
         rect_path(0.0, 0.0, 300.0, 400.0),
         rect_path(0.0, 0.0, 100.0, 50.0)
@@ -351,6 +351,18 @@ fn a_book_comes_back_as_pages_parents_frames_threads_styles_and_sections() {
     );
     assert_eq!(rect.stroke.as_ref().map(|s| s.width), Some(2.0));
     assert_eq!((rect.bounds.width, rect.bounds.height), (100.0, 50.0));
+    // Its wrap, with the side the text may run on.
+    assert!(
+        matches!(
+            rect.wrap,
+            tessera_document::nodes::TextWrap::Bounds {
+                sides: tessera_document::nodes::WrapTo::Both,
+                ..
+            }
+        ),
+        "{:?}",
+        rect.wrap
+    );
 
     // The folio, on the parent, carrying both markers.
     let on_master = doc.pages_of_master(master)[0];

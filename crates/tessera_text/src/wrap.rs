@@ -5,11 +5,12 @@
 //! a frame, a page or a document is — the caller converts obstacles into the
 //! text's own space and hands over rectangles.
 //!
-//! **One run per line, not several.** A line broken into two pieces either
-//! side of an object is a different line-breaking problem, not a narrower
-//! measure: parley sets one `x` and one advance per line. Taking the widest
-//! gap is what InDesign's "largest area" wrap does, and it is the setting a
-//! designer wants nine times in ten.
+//! **A line may be several runs.** parley sets one `x` and one advance per
+//! line, so text on both sides of an object is two of parley's lines sharing
+//! one baseline — the breaker's business, not this module's. What is decided
+//! here is which gaps a line may use: every one, for "both sides"; the one
+//! on a chosen side; or the widest, which is InDesign's "largest area", the
+//! default, and the setting a designer wants nine times in ten.
 
 /// A rectangle in the text's own space that text must avoid.
 #[derive(Debug, Clone, PartialEq)]
@@ -20,6 +21,26 @@ pub struct Obstacle {
     pub height: f64,
     /// How the text keeps clear of it. The box, by default.
     pub shape: Blocking,
+    /// Which side of it the text may run on.
+    pub sides: WrapTo,
+}
+
+/// Which of the gaps an object leaves on a line the text may use.
+///
+/// InDesign's "wrap to". A statement about the *line*, which is why one
+/// `Largest` object on a line makes the whole line one run: the objects
+/// beside it cannot be given both sides without giving this one both too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum WrapTo {
+    /// The widest gap, and only that one.
+    #[default]
+    Largest,
+    /// Every gap, so text runs on both sides of the object.
+    Both,
+    /// Only the gaps to the object's left.
+    Left,
+    /// Only the gaps to the object's right.
+    Right,
 }
 
 /// What of an obstacle a line has to keep clear of.
@@ -50,6 +71,7 @@ impl Obstacle {
             width,
             height,
             shape: Blocking::Bounds,
+            sides: WrapTo::Largest,
         }
     }
 
@@ -118,13 +140,52 @@ impl Obstacle {
 }
 
 /// Where a line spanning `top..bottom` may run, given `measure` and what is in
-/// the way.
+/// the way — the widest stretch, whatever the obstacles say about sides.
 ///
 /// Returns the left edge and the width of the widest clear stretch. A band
 /// completely blocked returns a width of zero, which the caller reads as "no
 /// room on this line" — that is a real answer, not a failure: it is what an
 /// object spanning the full measure means, and the line moves down.
 pub fn available_run(measure: f64, top: f64, bottom: f64, obstacles: &[Obstacle]) -> (f64, f64) {
+    widest(&gaps(measure, top, bottom, obstacles)).unwrap_or((0.0, 0.0))
+}
+
+/// Every stretch a line spanning `top..bottom` may run in, left to right,
+/// as `(left edge, width)` pairs — honouring each obstacle's [`WrapTo`].
+///
+/// Empty when the line has nowhere to go, which is a real answer: the line
+/// moves down. With no obstacle crossing the band it is the whole measure.
+pub fn available_runs(
+    measure: f64,
+    top: f64,
+    bottom: f64,
+    obstacles: &[Obstacle],
+) -> Vec<(f64, f64)> {
+    let gaps = gaps(measure, top, bottom, obstacles);
+    let crossing: Vec<&Obstacle> = obstacles
+        .iter()
+        .filter(|o| o.crosses(top, bottom))
+        .collect();
+    // Largest area is a statement about the line: one object asking for it
+    // leaves the line one run. Also the answer when nothing crosses, where
+    // the one gap is the measure.
+    if crossing.is_empty() || crossing.iter().any(|o| o.sides == WrapTo::Largest) {
+        return widest(&gaps).into_iter().collect();
+    }
+    gaps.into_iter()
+        .filter(|&(from, width)| {
+            crossing.iter().all(|o| match o.sides {
+                WrapTo::Both => true,
+                WrapTo::Left => from + width <= o.x + 1e-6,
+                WrapTo::Right => from >= o.x + o.width - 1e-6,
+                WrapTo::Largest => unreachable!("handled above"),
+            })
+        })
+        .collect()
+}
+
+/// The clear stretches of a band, left to right, ignoring sides.
+fn gaps(measure: f64, top: f64, bottom: f64, obstacles: &[Obstacle]) -> Vec<(f64, f64)> {
     // The blocked stretches, clipped to the measure and sorted.
     let mut blocked: Vec<(f64, f64)> = obstacles
         .iter()
@@ -133,23 +194,36 @@ pub fn available_run(measure: f64, top: f64, bottom: f64, obstacles: &[Obstacle]
         .filter(|(from, to)| to > from)
         .collect();
     if blocked.is_empty() {
-        return (0.0, measure.max(0.0));
+        return vec![(0.0, measure.max(0.0))];
     }
     blocked.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
-    // The gaps between them, and the ones at either end.
-    let mut best = (0.0, 0.0);
+    // The gaps between them, and the ones at either end. Overlapping
+    // obstacles are one obstruction: counted twice they would look like a
+    // gap that is not there.
+    let mut gaps = Vec::new();
     let mut at = 0.0f64;
     for (from, to) in blocked {
-        if from > at && from - at > best.1 {
-            best = (at, from - at);
+        if from > at {
+            gaps.push((at, from - at));
         }
         at = at.max(to);
     }
-    if measure > at && measure - at > best.1 {
-        best = (at, measure - at);
+    if measure > at {
+        gaps.push((at, measure - at));
     }
-    best
+    gaps
+}
+
+/// The widest gap; the first of equals, so a tie goes left.
+fn widest(gaps: &[(f64, f64)]) -> Option<(f64, f64)> {
+    gaps.iter().copied().filter(|g| g.1 > 0.0).fold(
+        None,
+        |best: Option<(f64, f64)>, g| match best {
+            Some(b) if b.1 >= g.1 => Some(b),
+            _ => Some(g),
+        },
+    )
 }
 
 #[cfg(test)]
@@ -172,6 +246,7 @@ mod tests {
                 outline: vec![(100.0, 0.0), (150.0, 50.0), (100.0, 100.0), (50.0, 50.0)],
                 standoff: 0.0,
             },
+            sides: WrapTo::Largest,
         }
     }
 
@@ -270,6 +345,7 @@ mod tests {
             width: 100.0,
             height: 40.0,
             shape: crate::wrap::Blocking::Bounds,
+            sides: crate::wrap::WrapTo::Largest,
         };
         let below = Obstacle {
             x: 0.0,
@@ -277,6 +353,7 @@ mod tests {
             width: 100.0,
             height: 40.0,
             shape: crate::wrap::Blocking::Bounds,
+            sides: crate::wrap::WrapTo::Largest,
         };
         assert_eq!(
             available_run(200.0, 0.0, 12.0, &[above, below]),
@@ -294,6 +371,7 @@ mod tests {
             width: 100.0,
             height: 40.0,
             shape: crate::wrap::Blocking::Bounds,
+            sides: crate::wrap::WrapTo::Largest,
         };
         assert_eq!(available_run(200.0, 0.0, 12.0, &[resting]), (0.0, 200.0));
     }
@@ -302,6 +380,70 @@ mod tests {
     fn an_object_reaching_past_the_measure_is_clipped_to_it() {
         let run = available_run(200.0, 0.0, 12.0, &[at(150.0, 500.0)]);
         assert_eq!(run, (0.0, 150.0));
+    }
+
+    // --- which side ---------------------------------------------------------
+
+    fn on(mut o: Obstacle, sides: WrapTo) -> Obstacle {
+        o.sides = sides;
+        o
+    }
+
+    #[test]
+    fn largest_area_is_one_run_and_the_widest() {
+        // The default, and exactly what `available_run` always gave.
+        let runs = available_runs(200.0, 0.0, 12.0, &[at(60.0, 40.0)]);
+        assert_eq!(runs, vec![(100.0, 100.0)]);
+    }
+
+    #[test]
+    fn both_sides_gives_every_gap_in_order() {
+        let runs = available_runs(200.0, 0.0, 12.0, &[on(at(60.0, 40.0), WrapTo::Both)]);
+        assert_eq!(runs, vec![(0.0, 60.0), (100.0, 100.0)]);
+    }
+
+    #[test]
+    fn left_or_right_keeps_only_that_side_of_the_object() {
+        let left = available_runs(200.0, 0.0, 12.0, &[on(at(60.0, 40.0), WrapTo::Left)]);
+        assert_eq!(
+            left,
+            vec![(0.0, 60.0)],
+            "the narrower side, because it was asked for"
+        );
+        let right = available_runs(200.0, 0.0, 12.0, &[on(at(60.0, 40.0), WrapTo::Right)]);
+        assert_eq!(right, vec![(100.0, 100.0)]);
+    }
+
+    #[test]
+    fn a_side_with_nothing_on_it_is_no_room_at_all() {
+        // An object against the left edge asked to keep text on its left
+        // leaves the line nowhere to go, and the line moves down.
+        let runs = available_runs(200.0, 0.0, 12.0, &[on(at(0.0, 40.0), WrapTo::Left)]);
+        assert!(runs.is_empty(), "{runs:?}");
+    }
+
+    #[test]
+    fn one_largest_area_object_on_a_line_makes_the_whole_line_one_run() {
+        // Two objects, one of each mind. "Largest area" is a statement about
+        // the line, so it wins: three gaps become the widest one.
+        let runs = available_runs(
+            300.0,
+            0.0,
+            12.0,
+            &[on(at(40.0, 20.0), WrapTo::Both), at(200.0, 20.0)],
+        );
+        assert_eq!(runs, vec![(60.0, 140.0)]);
+    }
+
+    #[test]
+    fn an_object_above_the_line_has_no_say_in_its_sides() {
+        let above = Obstacle {
+            y: -50.0,
+            height: 40.0,
+            ..at(60.0, 40.0)
+        };
+        let runs = available_runs(200.0, 0.0, 12.0, &[above, on(at(60.0, 40.0), WrapTo::Both)]);
+        assert_eq!(runs.len(), 2);
     }
 
     #[test]

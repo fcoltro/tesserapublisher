@@ -774,8 +774,9 @@ fn the_format_version_is_twenty_six() {
     // index entries, and the contents and index recipes, all empty before;
     // 24 let a page be its own size, which an older build's reflow would
     // silently undo; 25 added hyperlinks and their destinations; 26 the
-    // footnote options, whose defaults are what the notes were set with.
-    assert_eq!(format::FORMAT_VERSION, 26);
+    // footnote options, whose defaults are what the notes were set with; 27
+    // the side of an object text may run on, the largest area before.
+    assert_eq!(format::FORMAT_VERSION, 27);
 }
 
 #[test]

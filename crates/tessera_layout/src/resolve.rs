@@ -543,7 +543,7 @@ fn obstacles_for(
             // space, flattened to a polyline and moved into the text's space
             // the same way the box was.
             let shape = match wrap {
-                tessera_document::nodes::TextWrap::Contour { standoff } => doc
+                tessera_document::nodes::TextWrap::Contour { standoff, .. } => doc
                     .outline(other)
                     .map(|path| {
                         let mut outline: Vec<(f64, f64)> = Vec::new();
@@ -565,6 +565,7 @@ fn obstacles_for(
                 width,
                 height,
                 shape,
+                sides: wrap.sides(),
             });
         }
     }
@@ -1936,7 +1937,10 @@ Some body copy.",
         });
         let mut oval = rect(bounds.x + 20.0, bounds.y + 20.0, 120.0, 120.0);
         oval.kind = FrameKind::Ellipse;
-        oval.wrap = TextWrap::Contour { standoff: 0.0 };
+        oval.wrap = TextWrap::Contour {
+            standoff: 0.0,
+            sides: Default::default(),
+        };
         let oval = doc.add_frame(layer, oval);
 
         let mut shaper = Shaper::new();
@@ -1975,6 +1979,7 @@ Some body copy.",
         // The box wrap, for contrast, pushes every crossing line the same.
         doc.frames[oval].wrap = TextWrap::Bounds {
             standoff: Default::default(),
+            sides: Default::default(),
         };
         doc.touch();
         let resolved = resolve(&doc, &mut shaper);
@@ -1989,6 +1994,74 @@ Some body copy.",
             .filter_map(|l| l.glyphs().next().map(|g| g.x))
             .collect();
         assert!((boxed[0] - boxed[1]).abs() < 1e-6, "the box: {boxed:?}");
+    }
+
+    #[test]
+    fn a_picture_wrapped_to_both_sides_has_text_either_side_of_it() {
+        use tessera_document::nodes::{TextWrap, WrapTo};
+        // A wide frame and a picture standing in the middle of its first
+        // lines. Wrapped to the largest area the text runs down one side;
+        // wrapped to both sides it runs down both, on the same baselines.
+        let mut doc = Document::default();
+        let page = doc.page_ids().next().expect("a page");
+        let layer = doc.default_layer().expect("a layer");
+        let bounds = doc.pages[page].bounds;
+        let words = "word ".repeat(300);
+        let story = doc.add_story(Story::new(words));
+        let host = doc.add_frame(layer, {
+            let mut f = rect(bounds.x + 20.0, bounds.y + 20.0, 400.0, 400.0);
+            f.kind = FrameKind::text(story);
+            f
+        });
+        let mut picture = rect(bounds.x + 20.0 + 150.0, bounds.y + 20.0, 100.0, 100.0);
+        picture.wrap = TextWrap::Bounds {
+            standoff: Default::default(),
+            sides: WrapTo::Both,
+        };
+        let picture = doc.add_frame(layer, picture);
+
+        let mut shaper = Shaper::new();
+        let lines_of = |doc: &Document, shaper: &mut Shaper| {
+            let resolved = resolve(doc, shaper);
+            let item = item_for(&resolved, host).expect("resolved");
+            let ResolvedKind::Text { shaped, .. } = &item.kind else {
+                panic!("text");
+            };
+            shaped.lines.clone()
+        };
+        let both = lines_of(&doc, &mut shaper);
+        // Rows the picture crosses hold two lines each, one either side.
+        let crossing: Vec<_> = both.iter().filter(|l| l.baseline < 100.0).collect();
+        let paired = crossing
+            .windows(2)
+            .filter(|w| (w[0].baseline - w[1].baseline).abs() < 1e-6)
+            .count();
+        assert!(paired >= 3, "{paired} pairs among {} lines", crossing.len());
+        for w in crossing.windows(2) {
+            if (w[0].baseline - w[1].baseline).abs() < 1e-6 {
+                let left = w[0].glyphs().map(|g| g.x).fold(f64::MIN, f64::max);
+                let right = w[1].glyphs().map(|g| g.x).fold(f64::MAX, f64::min);
+                assert!(left < 150.0 && right >= 250.0, "{left} | {right}");
+            }
+        }
+
+        // The largest area, for contrast: no two lines share a baseline.
+        doc.frames[picture].wrap = TextWrap::Bounds {
+            standoff: Default::default(),
+            sides: WrapTo::Largest,
+        };
+        doc.touch();
+        let largest = lines_of(&doc, &mut shaper);
+        assert!(
+            largest
+                .windows(2)
+                .all(|w| (w[0].baseline - w[1].baseline).abs() > 1e-6),
+            "one line per row"
+        );
+        assert!(
+            both.len() > largest.len(),
+            "both sides takes more, shorter lines"
+        );
     }
 
     #[test]

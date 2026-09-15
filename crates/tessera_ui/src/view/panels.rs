@@ -2334,7 +2334,7 @@ fn wrap_controls(
     id: tessera_document::ids::FrameId,
     frame: &tessera_document::nodes::Frame,
 ) {
-    use tessera_document::nodes::TextWrap;
+    use tessera_document::nodes::{TextWrap, WrapTo};
 
     #[derive(PartialEq, Clone, Copy)]
     enum How {
@@ -2350,6 +2350,7 @@ fn wrap_controls(
         TextWrap::Jump => How::Jump,
     };
     let mut standoff = frame.wrap.standoff().unwrap_or_default();
+    let mut sides = frame.wrap.sides();
     let mut changed = false;
 
     field(ui, "Text wrap", |ui| {
@@ -2406,13 +2407,37 @@ fn wrap_controls(
         }
         How::Off | How::Jump => {}
     }
+    // Which side the text runs on. Not for a jump, which has no sides.
+    if matches!(how, How::Bounds | How::Contour) {
+        let name = |s: WrapTo| match s {
+            WrapTo::Largest => "Largest area",
+            WrapTo::Both => "Both sides",
+            WrapTo::Left => "Left side",
+            WrapTo::Right => "Right side",
+        };
+        field(ui, "Wrap to", |ui| {
+            egui::ComboBox::from_id_salt(("wrap-to", id))
+                .selected_text(name(sides))
+                .show_ui(ui, |ui| {
+                    for choice in [WrapTo::Largest, WrapTo::Both, WrapTo::Left, WrapTo::Right] {
+                        if ui
+                            .selectable_value(&mut sides, choice, name(choice))
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    }
+                });
+        });
+    }
 
     if changed {
         let wrap = match how {
             How::Off => TextWrap::None,
-            How::Bounds => TextWrap::Bounds { standoff },
+            How::Bounds => TextWrap::Bounds { standoff, sides },
             How::Contour => TextWrap::Contour {
                 standoff: standoff.top,
+                sides,
             },
             How::Jump => TextWrap::Jump,
         };

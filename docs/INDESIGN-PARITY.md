@@ -100,7 +100,7 @@ geometry, from the interface work) and the canvas toolbar (spatial verbs).
 | Object style dropdown | ✅ | — | done, M5 |
 | Text-frame columns + gutter | ✅ | — | done, M4 |
 | Text-frame inset, vertical justification | ✅ | — | done, M4 |
-| Text wrap | ✅ | — | done, M4 |
+| Text wrap | ✅ box, shape, jump; wrap to largest area, both sides, left, right | — | done, M4; sides 2026-09-15 |
 | Frame fitting options | ✅ fit and fill modes, inner transform | — | done, M5 |
 | Select container / content / prev / next | content by direct-select; no prev / next command | view | — |
 | Quick Apply | ✗ | — | **superseded** by the command palette (D3) |

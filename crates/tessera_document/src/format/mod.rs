@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 26;
+pub const FORMAT_VERSION: u32 = 27;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -105,6 +105,12 @@ pub fn load(path: &Path) -> Result<Document, FormatError> {
 /// ago follows exactly the path a document written two versions ago does, and
 /// each step only has to know about its own change.
 fn migrate(value: &mut serde_json::Value, from: u32) {
+    // 26 -> 27: a wrap may say which side the text runs on (`sides`). **No
+    // step, on purpose**: absent, it reads as the largest area, which is
+    // what every wrap did. The version moves so an older build refuses a
+    // document whose text runs both sides of a picture rather than setting
+    // it one side and saving that.
+
     // 25 -> 26: the document gained `footnotes`, its footnote options. **No
     // step, on purpose**: the defaults are what every note was set with
     // before there were options. The version moves so an older build

@@ -774,7 +774,7 @@ impl Items<'_> {
             )),
         };
 
-        let wrap = text_wrap(node);
+        let wrap = text_wrap(node, dropped);
         let layer = attr(node, "ItemLayer")
             .and_then(|l| self.layers.get(l))
             .copied()
@@ -924,11 +924,26 @@ fn bez_path(points: &[PathPoint], local: DocRect, open: bool) -> kurbo::BezPath 
     path
 }
 
-/// `<TextWrapPreference TextWrapMode="…">` with its offsets.
-fn text_wrap(node: Node) -> tessera_document::nodes::TextWrap {
-    use tessera_document::nodes::TextWrap;
+/// `<TextWrapPreference TextWrapMode="…" TextWrapSide="…">` with its
+/// offsets.
+///
+/// A side named against the spine is dropped out loud and read as the
+/// largest area: which side the spine is on is a fact about the page the
+/// object lands on, and the wrap is a fact about the object.
+fn text_wrap(node: Node, dropped: &mut Dropped) -> tessera_document::nodes::TextWrap {
+    use tessera_document::nodes::{TextWrap, WrapTo};
     let Some(pref) = child(node, "TextWrapPreference") else {
         return TextWrap::None;
+    };
+    let sides = match attr(pref, "TextWrapSide") {
+        Some("BothSides") => WrapTo::Both,
+        Some("LeftSide") => WrapTo::Left,
+        Some("RightSide") => WrapTo::Right,
+        Some("SideTowardsSpine") | Some("SideAwayFromSpine") => {
+            dropped.note("a text wrap side named against the spine (read as the largest area)");
+            WrapTo::Largest
+        }
+        _ => WrapTo::Largest,
     };
     let offset = child(pref, "Properties")
         .and_then(|p| child(p, "TextWrapOffset"))
@@ -940,9 +955,13 @@ fn text_wrap(node: Node) -> tessera_document::nodes::TextWrap {
         })
         .unwrap_or_default();
     match attr(pref, "TextWrapMode") {
-        Some("BoundingBoxTextWrap") => TextWrap::Bounds { standoff: offset },
+        Some("BoundingBoxTextWrap") => TextWrap::Bounds {
+            standoff: offset,
+            sides,
+        },
         Some("Contour") => TextWrap::Contour {
             standoff: offset.top,
+            sides,
         },
         Some("JumpObjectTextWrap") | Some("NextFrameTextWrap") => TextWrap::Jump,
         _ => TextWrap::None,
