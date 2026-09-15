@@ -262,6 +262,61 @@ pub struct Finding {
     /// The sentence around it, for the box.
     pub context: String,
     pub language: String,
+    /// What it was probably meant to be, likeliest first.
+    pub suggestions: Vec<String>,
+}
+
+/// The menu a right-click on a marked word opens: the word, where it is,
+/// and what to offer in its place.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpellMenu {
+    pub story: StoryId,
+    pub range: Range<usize>,
+    pub word: String,
+    pub suggestions: Vec<String>,
+}
+
+impl SpellMenu {
+    /// The menu for the word at `offset` in `story`, if the word is marked.
+    /// `None` over a word the dictionaries know, or over no word at all.
+    pub fn at(state: &mut TesseraApp, story: StoryId, offset: usize) -> Option<Self> {
+        let doc = state.active().document().clone();
+        let text = doc.story(story)?;
+        let range = state
+            .squiggles
+            .ranges(story, &doc, &mut state.dictionaries)
+            .iter()
+            .find(|r| r.start <= offset && offset < r.end)
+            .cloned()?;
+        let word = text.text.get(range.clone())?.to_owned();
+        let language = text
+            .common_format(range.clone(), &doc)
+            .language
+            .unwrap_or_else(|| "en".to_owned());
+        let suggestions = state
+            .dictionaries
+            .get(&language)
+            .map(|d| d.suggest(&word))
+            .unwrap_or_default();
+        Some(Self {
+            story,
+            range,
+            word,
+            suggestions,
+        })
+    }
+}
+
+/// Put `to` where the menu's word was. Closes any editing session, as Find
+/// and Change does: the buffer holds its own copy of the story.
+pub fn replace_word(state: &mut TesseraApp, menu: &SpellMenu, to: &str) {
+    state.active_mut().editing = None;
+    apply(
+        state,
+        Command::ReplaceMatches {
+            edits: vec![(menu.story, menu.range.clone(), to.to_owned())],
+        },
+    );
 }
 
 #[derive(Debug, Default)]
@@ -344,12 +399,18 @@ impl SpellingWindow {
                 self.checked += 1;
                 if !known {
                     self.at = Some((si, range.end));
+                    let suggestions = state
+                        .dictionaries
+                        .get(&language)
+                        .map(|d| d.suggest(word))
+                        .unwrap_or_default();
                     return Some(Finding {
                         story: id,
                         range: range.clone(),
                         word: word.to_owned(),
                         context: context_of(&story.text, &range),
                         language,
+                        suggestions,
                     });
                 }
             }
@@ -436,6 +497,22 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                     ui.label(egui::RichText::new(&finding.word).strong().size(18.0));
                     ui.colored_label(Theme::text_muted(), &finding.context);
                     ui.add_space(Theme::space_1());
+                    // The likeliest words, each a click away from the field.
+                    // A click fills the field rather than changing outright,
+                    // so the sentence can be read once more before it goes.
+                    if !finding.suggestions.is_empty() {
+                        ui.horizontal_wrapped(|ui| {
+                            for suggestion in &finding.suggestions {
+                                if ui
+                                    .selectable_label(replacement == *suggestion, suggestion)
+                                    .clicked()
+                                {
+                                    replacement = suggestion.clone();
+                                }
+                            }
+                        });
+                        ui.add_space(Theme::space_1());
+                    }
                     crate::view::panels::field(ui, "Change to", |ui| {
                         ui.add(
                             egui::TextEdit::singleline(&mut replacement)
@@ -684,6 +761,35 @@ mod tests {
             squiggles
                 .ranges(story, &doc, &mut state.dictionaries)
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_finding_comes_with_its_suggestions() {
+        let (mut state, _) = a_document_saying("The cta sat.");
+        let mut window = SpellingWindow::default();
+        window.open(&state);
+        let finding = window.next(&mut state).expect("one unknown word");
+        assert_eq!(finding.suggestions, vec!["cat"]);
+    }
+
+    #[test]
+    fn the_menu_opens_on_a_marked_word_and_replaces_it() {
+        let (mut state, story) = a_document_saying("The cta sat.");
+        assert_eq!(SpellMenu::at(&mut state, story, 0), None, "The is known");
+        let menu = SpellMenu::at(&mut state, story, 5).expect("cta is marked");
+        assert_eq!((menu.word.as_str(), menu.range.clone()), ("cta", 4..7));
+        assert_eq!(menu.suggestions, vec!["cat"]);
+
+        replace_word(&mut state, &menu, "cat");
+        assert_eq!(
+            state.active().document().story(story).unwrap().text,
+            "The cat sat."
+        );
+        assert_eq!(
+            SpellMenu::at(&mut state, story, 5),
+            None,
+            "and it is right now"
         );
     }
 

@@ -8,11 +8,18 @@
 //!
 //! This reads the part of the format that decides whether a word is spelled
 //! right: `PFX` and `SFX` rules with their strip, add and condition, the
-//! three flag encodings, cross-product, and the word list. It does not read
-//! compounding, replacement tables, phonetic tables, or anything else that
-//! only matters for *suggesting* — suggestions here are the person's own
-//! typing. What it does read is enough for the dictionaries LibreOffice and
-//! Firefox ship, which are the ones a person has.
+//! three flag encodings, cross-product, and the word list — and, for
+//! suggesting, `TRY` (the letters worth trying, commonest first) and `REP`
+//! (the language's own list of usual slips). It does not read compounding
+//! or phonetic tables. What it does read is enough for the dictionaries
+//! LibreOffice and Firefox ship, which are the ones a person has.
+//!
+//! [`Dictionary::suggest`] is the classic edit-distance-one candidate walk:
+//! every replacement from `REP`, then every swap of neighbours, dropped
+//! letter, wrong letter and extra letter, then the word split in two —
+//! each kept only if the dictionary passes it. Hunspell does more (a
+//! phonetic pass, two-edit forms for long words); this catches the slips a
+//! person actually makes at a keyboard, in the order they make them.
 //!
 //! No dictionary is bundled: the word lists are large and licensed each
 //! their own way. Tessera looks in its dictionaries folder for the text's
@@ -65,12 +72,20 @@ pub struct Dictionary {
     /// Words the person added, checked before anything else.
     added: HashSet<String>,
     ignore_case: bool,
+    /// The letters to try when suggesting, commonest first: the `.aff`'s
+    /// `TRY` line, or a–z when it has none.
+    try_chars: Vec<char>,
+    /// `REP from to`: the slips this language's makers have seen most.
+    replacements: Vec<(String, String)>,
 }
 
 impl Dictionary {
     /// Read the `.aff` and `.dic` texts.
     pub fn parse(aff: &str, dic: &str) -> Self {
-        let mut d = Dictionary::default();
+        let mut d = Dictionary {
+            try_chars: ('a'..='z').collect(),
+            ..Dictionary::default()
+        };
         d.read_aff(aff);
         d.read_dic(dic);
         d
@@ -123,6 +138,108 @@ impl Dictionary {
             }
         }
         false
+    }
+
+    /// What `word` was probably meant to be, likeliest first, at most eight.
+    /// Empty for a word that is right, and for one nothing near is.
+    ///
+    /// Worked on the word lowercased when it began with a capital, and the
+    /// answers given back in the word's own case — "Cta" is offered "Cat",
+    /// "CTA" is offered "CAT" — except that a suggestion which is a proper
+    /// name in the list keeps its own capital.
+    pub fn suggest(&self, word: &str) -> Vec<String> {
+        let word = word.trim();
+        if word.is_empty() || self.check(word) {
+            return Vec::new();
+        }
+        let chars: Vec<char> = word.chars().collect();
+        let shouted = chars.len() > 1 && chars.iter().all(|c| !c.is_lowercase());
+        let capitalised = chars[0].is_uppercase();
+        let base: String = if capitalised {
+            word.to_lowercase()
+        } else {
+            word.to_owned()
+        };
+
+        let mut out: Vec<String> = Vec::new();
+        let offer = |candidate: String, out: &mut Vec<String>| {
+            if out.len() >= 8 || candidate == base || out.contains(&candidate) {
+                return;
+            }
+            // A capitalised word may have meant a name: "pariss" is tried
+            // as "Paris" as well as "paris".
+            let ok = candidate.split(' ').all(|part| {
+                !part.is_empty() && (self.check(part) || (capitalised && self.check(&title(part))))
+            });
+            if ok {
+                out.push(candidate);
+            }
+        };
+
+        // The language's own list first.
+        for (from, to) in &self.replacements {
+            let mut at = 0;
+            while let Some(found) = base[at..].find(from.as_str()) {
+                let i = at + found;
+                let candidate = format!("{}{}{}", &base[..i], to, &base[i + from.len()..]);
+                offer(candidate, &mut out);
+                at = i + from.len().max(1);
+            }
+        }
+
+        let letters: Vec<char> = base.chars().collect();
+        let n = letters.len();
+        let with = |letters: &[char]| letters.iter().collect::<String>();
+
+        // Neighbours swapped: "cta".
+        for i in 0..n.saturating_sub(1) {
+            let mut l = letters.clone();
+            l.swap(i, i + 1);
+            offer(with(&l), &mut out);
+        }
+        // A letter dropped: "catt".
+        for i in 0..n {
+            let mut l = letters.clone();
+            l.remove(i);
+            offer(with(&l), &mut out);
+        }
+        // A letter wrong: "cet".
+        for i in 0..n {
+            for &c in &self.try_chars {
+                if c == letters[i] {
+                    continue;
+                }
+                let mut l = letters.clone();
+                l[i] = c;
+                offer(with(&l), &mut out);
+            }
+        }
+        // A letter missing: "hapy".
+        for i in 0..=n {
+            for &c in &self.try_chars {
+                let mut l = letters.clone();
+                l.insert(i, c);
+                offer(with(&l), &mut out);
+            }
+        }
+        // Two words run together: "thecat".
+        for i in 1..n {
+            let (a, b) = (with(&letters[..i]), with(&letters[i..]));
+            offer(format!("{a} {b}"), &mut out);
+        }
+
+        // Back into the word's own case.
+        out.into_iter()
+            .map(|s| {
+                if shouted {
+                    s.to_uppercase()
+                } else if capitalised {
+                    title(&s)
+                } else {
+                    s
+                }
+            })
+            .collect()
     }
 
     fn check_exact(&self, word: &str) -> bool {
@@ -194,6 +311,19 @@ impl Dictionary {
                         Some("num") => FlagKind::Num,
                         _ => FlagKind::Short,
                     };
+                }
+                "TRY" => {
+                    if let Some(letters) = parts.next() {
+                        self.try_chars = letters.chars().collect();
+                    }
+                }
+                "REP" => {
+                    // The first line is the count; the rest are pairs. A
+                    // pair's `_` stands for a space, as the format has it.
+                    if let (Some(from), Some(to)) = (parts.next(), parts.next()) {
+                        self.replacements
+                            .push((from.replace('_', " "), to.replace('_', " ")));
+                    }
                 }
                 "PFX" | "SFX" => {
                     let prefix = key == "PFX";
@@ -378,6 +508,15 @@ pub fn words(text: &str) -> Vec<(std::ops::Range<usize>, &str)> {
     out
 }
 
+/// `word` with its first letter capitalised.
+fn title(word: &str) -> String {
+    let mut c = word.chars();
+    c.next()
+        .map(|f| f.to_uppercase().collect::<String>())
+        .unwrap_or_default()
+        + c.as_str()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -473,5 +612,67 @@ Paris
         let d = Dictionary::parse("FLAG num\nSFX 12 Y 1\nSFX 12 0 s .\n", "1\ndog/12\n");
         assert!(d.check("dogs"));
         assert!(!d.check("dogss"));
+    }
+
+    // --- suggesting ---------------------------------------------------------
+
+    #[test]
+    fn a_transposition_a_dropped_letter_and_a_wrong_one_are_suggested() {
+        let d = dictionary();
+        assert_eq!(d.suggest("cta"), vec!["cat"], "swapped");
+        assert_eq!(d.suggest("hapy"), vec!["happy"], "dropped");
+        assert_eq!(d.suggest("cet"), vec!["cat"], "wrong letter");
+        assert!(
+            d.suggest("catt").contains(&"cat".to_string()),
+            "extra letter"
+        );
+    }
+
+    #[test]
+    fn suggestions_keep_the_word_s_capitals() {
+        let d = dictionary();
+        assert_eq!(d.suggest("Cta"), vec!["Cat"]);
+        assert_eq!(d.suggest("CTA"), vec!["CAT"]);
+        // A name keeps its own capital rather than being shouted.
+        assert_eq!(d.suggest("Pariss"), vec!["Paris"]);
+    }
+
+    #[test]
+    fn an_affixed_form_is_suggested_too() {
+        // "unhappines" -> "unhappiness": a suggestion may be a stem plus
+        // affixes, because that is what a word is.
+        let d = dictionary();
+        assert!(
+            d.suggest("unhappines").contains(&"unhappiness".to_string()),
+            "{:?}",
+            d.suggest("unhappines")
+        );
+    }
+
+    #[test]
+    fn two_words_run_together_are_split() {
+        let d = dictionary();
+        assert!(d.suggest("thecat").contains(&"the cat".to_string()));
+    }
+
+    #[test]
+    fn a_replacement_table_entry_comes_first() {
+        // REP says "ei" is often "ie" — the language's own knowledge of its
+        // common mistakes, ahead of the mechanical edits.
+        let d = Dictionary::parse(
+            "TRY abcdefghijklmnopqrstuvwxyz\nREP 1\nREP ei ie\n",
+            "2\nfriend\nfriends\n",
+        );
+        assert_eq!(
+            d.suggest("freind").first().map(String::as_str),
+            Some("friend")
+        );
+    }
+
+    #[test]
+    fn a_right_word_and_a_hopeless_one_get_no_suggestions() {
+        let d = dictionary();
+        assert!(d.suggest("cat").is_empty());
+        assert!(d.suggest("xqzvw").is_empty());
     }
 }

@@ -2451,9 +2451,15 @@ which cost one afternoon's confusion and a namespace check.
   `user.dic`. A headless application now persists nothing (`persists`,
   and `Dictionaries` has no folder until `load_preferences` gives it
   one); and `load_user_words` now vouches for the list in dictionaries
-  already open, which it did not. Not built: suggestions (the replacement
-  is what the person types), a right-click on the wave, compounding and
-  the other `.aff` tables.
+  already open, which it did not. **Suggestions were added 2026-09-15**:
+  `Dictionary::suggest` is the edit-distance-one walk — the `.aff`'s `REP`
+  table first, then neighbours swapped, a letter dropped, wrong, or missing
+  (in `TRY` order), then the word split in two — each kept only if the
+  dictionary passes it, at most eight, in the word's own case. The box
+  offers them as a row of choices that fill the field; a right-click on a
+  wave opens a menu of them with Add to dictionary, and a choice replaces
+  the word through the same `ReplaceMatches` the box uses. Not built: a
+  phonetic pass, two-edit forms, compounding and the other `.aff` tables.
 - [x] **Hyperlinks** (added 2026-09-13, after milestone 12). A link rides on
   the character format — `CharacterFormat.link`, a URL or a named
   destination — so it cascades and travels with the words. Destinations are
@@ -2490,6 +2496,47 @@ which cost one afternoon's confusion and a namespace check.
   inside a table cell, and the index. Not read: object styles, gradients, effects, text wrap, corner
   options, hyperlinks, XML structure, cross-references, conditional text,
   and `.doc`/`.rtf`.
+
+---
+
+# Milestone 13 — The Bridge
+
+**Named 2026-09-15, by the user's ask:** a way for an AI model to sit at
+Tessera the way a person does — open a document, place frames, set and
+edit text, apply styles, read what is overset — from outside the process.
+
+**The decision: an MCP server over the command layer, in Rust, in-process.**
+Not Python, and not a second runtime. The A6 invariant is the whole reason
+this is cheap: every mutation already goes through `Command`, so the
+bridge is `Command` in, and a read side out — the document as JSON, the
+resolved layout, overset and preflight — over the protocol the models
+actually speak. `rmcp` is the Rust SDK for it. Python's place, if any, is
+the other end: a scripting or agent harness that talks *to* the server,
+the way ExtendScript sits outside InDesign.
+
+### Acceptance
+
+> From a terminal, a model connects to a running Tessera, makes a page
+> with a headline and two columns of body copy in the document's own
+> styles, is told the body is overset, and fixes it — and the person
+> watching sees each change land on the canvas, and can undo it.
+
+### The work
+
+- [ ] `tessera_bridge`, a crate with no UI in it: an MCP server exposing
+  `Command` as tools with their arguments described (the palette's action
+  list already describes every action, and the `Command` enum is serde),
+  and resources for the document, its styles, and each frame's resolved
+  text with its overset count.
+- [ ] Transport: stdio for a model launched beside the app, and a local
+  socket for one that connects to the running window. Every change goes
+  through `apply`, so it is one undo entry and the canvas shows it.
+- [ ] A headless mode — the bridge against a document with no window —
+  because a test of the bridge must not need a screen, and because a
+  batch job does not either.
+- [ ] Reads are cheap and writes are loud: a tool that changes the
+  document says what it changed in its result, in the words the status
+  line would use.
 
 ---
 

@@ -225,7 +225,7 @@ person reaches for once they start setting copy, and none of it had a row:
 | Hyperlinks, bookmarks | ✅ URL and page links on text, PDF annotations, contents entries link; the contents headings are the PDF outline | — | done |
 | Language on text; special-character insertion | ✅ | — | done, M9 |
 | Typographer's quotes; glyph by code point | ✅ a preference, and a box; no panel drawing the font | — | done |
-| Spell check | ✅ Hunspell dictionaries from a folder, dynamic spelling on the canvas; no bundled list, no suggestions | — | done; squiggles 2026-09-15 |
+| Spell check | ✅ Hunspell dictionaries from a folder, dynamic spelling, suggestions in the box and on right-click; no bundled list | — | done; squiggles + suggestions 2026-09-15 |
 | Story editor | ✅ a plain box over the story, applied as a minimal edit | — | done |
 | Print dialog | ✗ — PDF export only | — | — |
 | IDML import | ✅ pages, parents, threads, styles, swatches, sections, footnotes, anchored objects, tables | — | done, M12 |

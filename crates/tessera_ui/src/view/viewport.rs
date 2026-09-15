@@ -755,6 +755,7 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
     // rather than falling through.
     if state.active().editing.is_some() {
         editing_input(ui, response, rect, state);
+        spell_menu(response, state);
         return;
     }
 
@@ -878,6 +879,20 @@ fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
             }
             return;
         }
+    }
+
+    // A right-click on a marked word asks what it should have been. On
+    // anything else it asks nothing, and the menu that was up comes down.
+    if response.secondary_clicked() {
+        state.spell_menu = response
+            .interact_pointer_pos()
+            .filter(|pos| over_editing_frame(state, rect, *pos))
+            .and_then(|pos| text_offset_at(state, rect, pos))
+            .and_then(|offset| {
+                let (id, _) = state.active().editing.as_ref()?;
+                let story = editing_story(state, *id, state.active().editing_cell)?;
+                crate::view::spelling::SpellMenu::at(state, story, offset)
+            });
     }
 
     // A double-click takes the word under it, as it does everywhere else.
@@ -1170,6 +1185,45 @@ fn overset_frames(state: &mut TesseraApp) -> Vec<FrameId> {
             )
         })
         .collect()
+}
+
+/// The menu over a marked word: its suggestions, and Add to dictionary.
+///
+/// egui keeps the menu up across frames on its own; what is remembered
+/// here is only which word it is about, set by the right-click that opened
+/// it and cleared when the menu goes.
+fn spell_menu(response: &egui::Response, state: &mut TesseraApp) {
+    let Some(menu) = state.spell_menu.clone() else {
+        return;
+    };
+    let mut chosen: Option<String> = None;
+    let mut add = false;
+    let shown = response.context_menu(|ui| {
+        ui.set_min_width(160.0);
+        if menu.suggestions.is_empty() {
+            ui.add_enabled(false, egui::Button::new("No suggestions"));
+        }
+        for suggestion in &menu.suggestions {
+            if ui.button(suggestion).clicked() {
+                chosen = Some(suggestion.clone());
+                ui.close();
+            }
+        }
+        ui.separator();
+        if ui.button("Add to dictionary").clicked() {
+            add = true;
+            ui.close();
+        }
+    });
+    if let Some(to) = chosen {
+        crate::view::spelling::replace_word(state, &menu, &to);
+        state.spell_menu = None;
+    } else if add {
+        state.dictionaries.add(&menu.word);
+        state.spell_menu = None;
+    } else if shown.is_none() {
+        state.spell_menu = None;
+    }
 }
 
 /// One frame's unknown words, as the rectangles their glyphs cover, in the

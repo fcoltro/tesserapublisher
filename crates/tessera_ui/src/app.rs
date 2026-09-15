@@ -358,6 +358,8 @@ pub struct TesseraApp {
     pub dictionaries: crate::view::spelling::Dictionaries,
     /// The unknown words of each story, for the wave drawn under them.
     pub squiggles: crate::view::spelling::Squiggles,
+    /// The word a right-click on a wave asked about, while its menu is up.
+    pub spell_menu: Option<crate::view::spelling::SpellMenu>,
     /// Find and Change. Modeless, so it is not in `modal_open`.
     pub find: crate::view::find::FindWindow,
 
@@ -517,6 +519,7 @@ impl TesseraApp {
             story_editor: crate::view::story_editor::StoryEditorWindow::default(),
             dictionaries: crate::view::spelling::Dictionaries::default(),
             squiggles: crate::view::spelling::Squiggles::default(),
+            spell_menu: None,
             persists: false,
             editing_master: None,
             rail_open: true,
