@@ -47,6 +47,15 @@ pub enum Marker {
     /// An index entry: reads as nothing, and marks where a topic is. The
     /// `n`th of these in a story is [`crate::story::Story::index_entries`]`[n]`.
     IndexEntry,
+    /// A named place in the text a cross-reference can point at: reads as
+    /// nothing. The `n`th of these in a story is
+    /// [`crate::story::Story::anchors`]`[n]`.
+    TextAnchor,
+    /// A cross-reference: reads as what its target says — the page it is on,
+    /// the paragraph it is in, or both — which the layout works out and hands
+    /// in as [`Variables::cross_references`]. The `n`th of these in a story is
+    /// [`crate::story::Story::cross_references`]`[n]`.
+    CrossReference,
     /// The document's `n`th text variable.
     Variable(u8),
 }
@@ -68,6 +77,8 @@ impl Marker {
             Marker::FootnoteReference => BUILT_IN + 4,
             Marker::FootnoteNumber => BUILT_IN + 5,
             Marker::IndexEntry => BUILT_IN + 6,
+            Marker::TextAnchor => BUILT_IN + 7,
+            Marker::CrossReference => BUILT_IN + 8,
             Marker::Variable(index) => VARIABLE + u32::from(index),
         };
         char::from_u32(code).expect("a Private Use code point is a character")
@@ -84,6 +95,8 @@ impl Marker {
             c if c == BUILT_IN + 4 => Some(Marker::FootnoteReference),
             c if c == BUILT_IN + 5 => Some(Marker::FootnoteNumber),
             c if c == BUILT_IN + 6 => Some(Marker::IndexEntry),
+            c if c == BUILT_IN + 7 => Some(Marker::TextAnchor),
+            c if c == BUILT_IN + 8 => Some(Marker::CrossReference),
             c if (VARIABLE..VARIABLE + 256).contains(&c) => {
                 Some(Marker::Variable((c - VARIABLE) as u8))
             }
@@ -104,10 +117,16 @@ impl Marker {
             | Marker::NextPageNumber
             | Marker::PreviousPageNumber
             | Marker::FootnoteNumber => "#",
-            Marker::SectionMarker | Marker::Variable(_) | Marker::IndexEntry => "",
+            Marker::SectionMarker
+            | Marker::Variable(_)
+            | Marker::IndexEntry
+            | Marker::TextAnchor => "",
             // Numbered from the story itself, so it never needs a page; the
             // shaper answers it before asking here. See `shaping_text`.
             Marker::FootnoteReference => "",
+            // Answered per story by the shaper, from `cross_references`; a
+            // question mark where nothing has answered, as InDesign shows.
+            Marker::CrossReference => "?",
         }
     }
 }
@@ -135,6 +154,10 @@ pub struct Variables {
     /// index. Set by whoever knows the numbering and where it restarts;
     /// absent, a reference reads as its ordinal in arabic.
     pub footnote_labels: Vec<String>,
+    /// What each cross-reference in the story being shaped reads as, by the
+    /// story's own count of them; empty where the layout has not looked.
+    #[allow(clippy::struct_field_names)]
+    pub cross_references: Vec<String>,
 }
 
 impl Variables {
@@ -145,7 +168,8 @@ impl Variables {
             Marker::NextPageNumber => &self.next_page_number,
             Marker::PreviousPageNumber => &self.previous_page_number,
             Marker::SectionMarker => &self.section_marker,
-            Marker::FootnoteReference | Marker::IndexEntry => "",
+            Marker::FootnoteReference | Marker::IndexEntry | Marker::TextAnchor => "",
+            Marker::CrossReference => "?",
             Marker::FootnoteNumber => self.footnote_text.as_deref().unwrap_or("#"),
             Marker::Variable(index) => self
                 .variables

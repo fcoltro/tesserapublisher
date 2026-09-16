@@ -1058,7 +1058,7 @@ fn guide_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
     true
 }
 
-fn finish_editing(state: &mut TesseraApp) {
+pub fn finish_editing(state: &mut TesseraApp) {
     state.active_mut().editing = None;
     state.active_mut().editing_cell = None;
 }
@@ -2702,7 +2702,7 @@ fn enter_text_edit(state: &mut TesseraApp, rect: Rect, pos: egui::Pos2, id: Fram
     }
 }
 
-pub(crate) fn start_editing(state: &mut TesseraApp, id: FrameId) {
+pub fn start_editing(state: &mut TesseraApp, id: FrameId) {
     start_editing_cell(state, id, None);
 }
 

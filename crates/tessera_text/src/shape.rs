@@ -775,6 +775,15 @@ fn shaping_text(
                     raised.baseline_shift =
                         Some(format.baseline_shift.unwrap_or(0.0) + size * SUPERIOR_RAISE);
                     (label, raised)
+                } else if marker == Marker::CrossReference {
+                    // Answered per story too: this is the story's nth
+                    // reference, and the layout has said what each reads as.
+                    let index = story.cross_reference_at(at);
+                    let text = styles
+                        .variables()
+                        .and_then(|v| v.cross_references.get(index).cloned())
+                        .unwrap_or_else(|| marker.placeholder().to_owned());
+                    (text, format.clone())
                 } else {
                     (
                         styles
@@ -4752,6 +4761,31 @@ mod tests {
         assert_eq!(p.to_stored("p. 14".len()), marker_at);
         assert_eq!(p.to_stored("p. 142".len()), marker_at + 3);
         assert_eq!(p.to_shaped(marker_at + 3), "p. 142".len());
+    }
+
+    #[test]
+    fn a_cross_reference_reads_as_the_layout_says_by_its_ordinal() {
+        use crate::variables::Marker;
+        let x = Marker::CrossReference.character();
+        let a = Marker::TextAnchor.character();
+        let story = Story::new(format!("{a}See {x} and {x}."));
+        let answered = OnPage(crate::variables::Variables {
+            cross_references: vec!["page 12".into(), "Chapter Two on page 3".into()],
+            ..Default::default()
+        });
+        let placed = Shaper::new().layout_paragraphs(&story, &answered, 400.0);
+        assert_eq!(
+            placed[0].shaped_text,
+            "See page 12 and Chapter Two on page 3."
+        );
+        // The anchor reads as nothing and the whole expansion maps back to
+        // its one character, like a page number.
+        let marker_at = story.cross_reference_offsets()[0];
+        assert_eq!(placed[0].to_stored("See pa".len()), marker_at);
+        // Unanswered, a reference is a question mark rather than nothing:
+        // a reader can see there is something to fix.
+        let placed = Shaper::new().layout_paragraphs(&story, &NoStyles::default(), 400.0);
+        assert_eq!(placed[0].shaped_text, "See ? and ?.");
     }
 
     #[test]

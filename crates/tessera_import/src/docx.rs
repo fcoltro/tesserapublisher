@@ -240,6 +240,8 @@ impl Builder {
             paragraphs,
             footnotes,
             index_entries: Vec::<IndexEntry>::new(),
+            anchors: Vec::new(),
+            cross_references: Vec::new(),
         };
         if story.runs_are_sound() && story.notes_are_sound() {
             (story, run_names, paragraph_names)

@@ -61,11 +61,16 @@ impl Styles for OnPage<'_> {
     }
 }
 
-/// The first and last paragraph in each style, on each page.
+/// What the pages say: the first and last paragraph in each style on each
+/// page, and where every text anchor landed.
 #[derive(Debug, Default)]
 pub struct Running {
     /// Keyed by page and style; the value is `(first, last)`.
     headers: HashMap<(PageId, ParagraphStyleId), (String, String)>,
+    /// Keyed by the anchor's name: the page its marker was laid out on and
+    /// the paragraph it stands in, markers dropped. The first anchor of a
+    /// name wins; a document with two says the first.
+    anchors: HashMap<String, (PageId, String)>,
 }
 
 impl Running {
@@ -86,9 +91,10 @@ impl Running {
                 VariableKind::Custom(_) => None,
             })
             .collect();
+        let anchors = Self::read_anchors(doc, items);
         let mut headers: HashMap<(PageId, ParagraphStyleId), (String, String)> = HashMap::new();
         if wanted.is_empty() {
-            return Self { headers };
+            return Self { headers, anchors };
         }
 
         for item in items {
@@ -130,11 +136,83 @@ impl Running {
                 }
             }
         }
-        Self { headers }
+        Self { headers, anchors }
     }
 
     /// What the running header in `style` says on `page`, if anything there is
     /// in that style.
+    /// Where every anchor's marker was laid out, and the paragraph around
+    /// it. Only when some story references something, so a document with no
+    /// cross-references pays nothing here.
+    fn read_anchors(doc: &Document, items: &[ResolvedItem]) -> HashMap<String, (PageId, String)> {
+        let mut anchors = HashMap::new();
+        if !doc.stories.values().any(|s| !s.cross_references.is_empty()) {
+            return anchors;
+        }
+        for item in items {
+            let (Some(on), ResolvedKind::Text { shaped, .. }) = (item.on, &item.kind) else {
+                continue;
+            };
+            let Some(FrameKind::Text { story, .. }) = doc.frame(item.frame).map(|f| &f.kind) else {
+                continue;
+            };
+            let Some(story) = doc.story(*story) else {
+                continue;
+            };
+            if story.anchors.is_empty() {
+                continue;
+            }
+            let paragraphs = story.paragraph_ranges();
+            for (index, at) in story.anchor_offsets().into_iter().enumerate() {
+                let Some(anchor) = story.anchors.get(index) else {
+                    continue;
+                };
+                if anchor.name.is_empty() || anchors.contains_key(&anchor.name) {
+                    continue;
+                }
+                // An anchor reads as nothing, so a line beginning with one
+                // begins, by its stored range, at the character *after* it:
+                // the offset map gives a shaped position shared by an empty
+                // marker and its neighbour to the neighbour. So the marker is
+                // on the line that holds the position just past it — which
+                // is also right for a marker at the very end of a story.
+                let past = at
+                    + tessera_text::variables::Marker::TextAnchor
+                        .character()
+                        .len_utf8();
+                let here = shaped
+                    .lines
+                    .iter()
+                    .any(|l| l.range.start <= past && past <= l.range.end);
+                if !here {
+                    continue;
+                }
+                let paragraph = paragraphs
+                    .iter()
+                    .find(|p| p.start <= at && at < p.end.max(p.start + 1))
+                    .map(|p| {
+                        tessera_text::variables::expand(&story.text[p.clone()], None)
+                            .trim_end_matches('\n')
+                            .trim()
+                            .to_owned()
+                    })
+                    .unwrap_or_default();
+                anchors.insert(anchor.name.clone(), (on, paragraph));
+            }
+        }
+        anchors
+    }
+
+    /// Where the anchor called `name` landed: its page and its paragraph.
+    pub fn anchor(&self, name: &str) -> Option<&(PageId, String)> {
+        self.anchors.get(name)
+    }
+
+    /// Whether any anchor has been found — false before the first pass.
+    pub fn has_anchors(&self) -> bool {
+        !self.anchors.is_empty()
+    }
+
     pub fn header(&self, page: PageId, style: ParagraphStyleId, which: Which) -> Option<String> {
         self.headers
             .get(&(page, style))

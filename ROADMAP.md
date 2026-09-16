@@ -2349,11 +2349,42 @@ line of copy. The renderer and the PDF writer draw them without knowing.
   restarting per page counts from the first frame of the thread on the
   page, which costs one more composition of the frames before it. Type ▸
   Footnote options…. Format **26**.
+- [x] **Cross-references** (2026-09-16). "See Chapter Two on page 12",
+  kept true as the pages move. Two markers, kept in step with their side
+  tables the way footnotes and index entries are: `Marker::TextAnchor` —
+  a named place in the text, reads as nothing — and `Marker::CrossReference`,
+  which reads as its target's page number, paragraph text, or both
+  (`CrossReferenceFormat`), or as a page destination's page. **The
+  finding: the body refers to itself, so the pages are laid out twice.**
+  `Running` — what the pages say — now also reads where every anchor's
+  marker landed and the paragraph around it, off the first pass; when any
+  story carries a reference the pages are resolved again with the answers.
+  A reference whose text grew may move its own anchor a page, and the next
+  relayout says the right thing, as InDesign's stale references do until
+  updated. Type › Insert marker › Text anchor… (the selection is the
+  name) and Cross-reference… (target, format, with the reading shown);
+  `SetTextAnchor` and `SetCrossReference` commands. Format **28**.
+  **Checked by hand in the window**, driven through the bridge: two
+  references on page one to an anchor on page two read "Chapter Two: The
+  Method" and "page 2"; a page moved in front of the chapter made it
+  "page 3" with no other change. **Three things found by looking:** an
+  anchor at the head of a line was never found, because a zero-width
+  marker at a line's start is outside the line's stored range — and the
+  same test in the **index** dropped every entry marked at the head of a
+  paragraph, which is where entries go (fixed, with a test); **Add page
+  in an A4 document added a Letter page**, and a new document asked for
+  two pages came out one of each — `add_page` used the built-in default
+  rather than the document's size (fixed); and `describe_document` gave
+  pages no id while the page commands took one (fixed, and
+  `start_editing`/`stop_editing` tools put the caret where the caret-bound
+  menu actions act). Not built: cross-references as hyperlinks in the
+  PDF, IDML's `CrossReferenceSource`, editing a reference in place (the
+  caret after one is known — `reference_at_caret` — and nothing offers
+  it yet).
 - Not built: footnote text edited on the canvas (the box does it), notes
-  that split across columns, endnotes, index sub-topics and
-  cross-references, page ranges ("12–15"), and a contents that includes
-  paragraphs from other documents (a book). Contents entries *are*
-  hyperlinks now — see below.
+  that split across columns, endnotes, index sub-topics, page ranges
+  ("12–15"), and a contents that includes paragraphs from other documents
+  (a book). Contents entries *are* hyperlinks now — see below.
 
 ---
 

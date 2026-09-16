@@ -977,6 +977,44 @@ pub struct Story {
     /// `n`th [`crate::variables::Marker::IndexEntry`] is the `n`th of these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub index_entries: Vec<IndexEntry>,
+
+    /// The text anchors, in text order, under the same arrangement: the
+    /// `n`th [`crate::variables::Marker::TextAnchor`] is the `n`th of these.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anchors: Vec<TextAnchor>,
+
+    /// The cross-references, in text order: the `n`th
+    /// [`crate::variables::Marker::CrossReference`] is the `n`th of these.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cross_references: Vec<CrossReference>,
+}
+
+/// A named place in the text: what a cross-reference points at.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextAnchor {
+    pub name: String,
+}
+
+/// A reference to an anchor — or to a named page destination — that reads
+/// as where the target is.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CrossReference {
+    /// The anchor's name, or a page destination's.
+    pub target: String,
+    #[serde(default)]
+    pub format: CrossReferenceFormat,
+}
+
+/// What a cross-reference reads as.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CrossReferenceFormat {
+    /// "12": the page the target is on, in the section's own numbering.
+    #[default]
+    PageNumber,
+    /// "Chapter Two": the paragraph the anchor stands in, markers dropped.
+    ParagraphText,
+    /// "Chapter Two on page 12".
+    ParagraphAndPage,
 }
 
 /// Where a topic is mentioned, for the index to collect.
@@ -1009,11 +1047,22 @@ impl Story {
             paragraphs,
             footnotes: Vec::new(),
             index_entries: Vec::new(),
+            anchors: Vec::new(),
+            cross_references: Vec::new(),
         };
         // A story made from text carrying markers owes a note per marker, or
         // the invariant is broken before the first edit.
         let notes = story.count_markers(0..story.text.len(), Marker::FootnoteReference);
         story.footnotes = (0..notes).map(|_| Story::new_footnote()).collect();
+        story.anchors = vec![
+            TextAnchor::default();
+            story.count_markers(0..story.text.len(), Marker::TextAnchor)
+        ];
+        story.cross_references =
+            vec![
+                CrossReference::default();
+                story.count_markers(0..story.text.len(), Marker::CrossReference)
+            ];
         let entries = story.count_markers(0..story.text.len(), Marker::IndexEntry);
         story.index_entries = vec![IndexEntry::default(); entries];
         story
@@ -1053,6 +1102,34 @@ impl Story {
     /// Which index entry the marker at `at` is.
     pub fn index_entry_at(&self, at: usize) -> usize {
         self.count_markers(0..at, Marker::IndexEntry)
+    }
+
+    /// Which text anchor the marker at `at` is.
+    pub fn anchor_at(&self, at: usize) -> usize {
+        self.count_markers(0..at, Marker::TextAnchor)
+    }
+
+    /// Which cross-reference the marker at `at` is.
+    pub fn cross_reference_at(&self, at: usize) -> usize {
+        self.count_markers(0..at, Marker::CrossReference)
+    }
+
+    /// Stored offset of every text anchor marker, in order.
+    pub fn anchor_offsets(&self) -> Vec<usize> {
+        self.text
+            .char_indices()
+            .filter(|(_, c)| Marker::of(*c) == Some(Marker::TextAnchor))
+            .map(|(at, _)| at)
+            .collect()
+    }
+
+    /// Stored offset of every cross-reference marker, in order.
+    pub fn cross_reference_offsets(&self) -> Vec<usize> {
+        self.text
+            .char_indices()
+            .filter(|(_, c)| Marker::of(*c) == Some(Marker::CrossReference))
+            .map(|(at, _)| at)
+            .collect()
     }
 
     /// Stored offset of every footnote marker, in order.
@@ -1104,6 +1181,9 @@ impl Story {
         self.footnotes.len() == self.count_markers(0..self.text.len(), Marker::FootnoteReference)
             && self.index_entries.len()
                 == self.count_markers(0..self.text.len(), Marker::IndexEntry)
+            && self.anchors.len() == self.count_markers(0..self.text.len(), Marker::TextAnchor)
+            && self.cross_references.len()
+                == self.count_markers(0..self.text.len(), Marker::CrossReference)
     }
 
     /// Whether the run lists still describe this text.
@@ -1234,6 +1314,23 @@ impl Story {
             self.index_entries
                 .insert(entries_before, IndexEntry::default());
         }
+        let anchors_before = self.anchor_at(at);
+        let anchors_in = text
+            .chars()
+            .filter(|c| Marker::of(*c) == Some(Marker::TextAnchor))
+            .count();
+        for _ in 0..anchors_in {
+            self.anchors.insert(anchors_before, TextAnchor::default());
+        }
+        let refs_before = self.cross_reference_at(at);
+        let refs_in = text
+            .chars()
+            .filter(|c| Marker::of(*c) == Some(Marker::CrossReference))
+            .count();
+        for _ in 0..refs_in {
+            self.cross_references
+                .insert(refs_before, CrossReference::default());
+        }
 
         self.text.insert_str(at, text);
 
@@ -1277,6 +1374,16 @@ impl Story {
         let gone = self.count_markers(start..end, Marker::IndexEntry);
         if gone > 0 && first + gone <= self.index_entries.len() {
             self.index_entries.drain(first..first + gone);
+        }
+        let first = self.anchor_at(start);
+        let gone = self.count_markers(start..end, Marker::TextAnchor);
+        if gone > 0 && first + gone <= self.anchors.len() {
+            self.anchors.drain(first..first + gone);
+        }
+        let first = self.cross_reference_at(start);
+        let gone = self.count_markers(start..end, Marker::CrossReference);
+        if gone > 0 && first + gone <= self.cross_references.len() {
+            self.cross_references.drain(first..first + gone);
         }
 
         self.text.replace_range(start..end, "");
@@ -2011,6 +2118,37 @@ mod provisional_tests {
         ));
         assert_eq!(story.footnotes.len(), 1);
         assert_eq!(story.index_entries.len(), 1);
+        assert!(story.notes_are_sound());
+    }
+
+    #[test]
+    fn anchors_and_cross_references_follow_their_markers() {
+        let anchor = Marker::TextAnchor.character().to_string();
+        let xref = Marker::CrossReference.character().to_string();
+        let mut story = Story::new("See ");
+        story.insert_text(4, &xref);
+        story.insert_text(5 + xref.len() - 1, " for the chapter.");
+        assert_eq!(story.cross_references.len(), 1);
+        story.cross_references[0] = CrossReference {
+            target: "ch2".into(),
+            format: CrossReferenceFormat::ParagraphAndPage,
+        };
+        // An anchor typed before it, then a second reference after it: the
+        // first reference's target stays with its marker.
+        story.insert_text(0, &anchor);
+        story.anchors[0].name = "start".into();
+        story.insert_text(story.text.len(), &xref);
+        assert_eq!(story.cross_references.len(), 2);
+        assert_eq!(story.cross_references[0].target, "ch2");
+        assert_eq!(story.cross_references[1].target, "");
+        assert!(story.notes_are_sound());
+        // Deleting the first reference's marker takes its entry, not the
+        // second's.
+        let at = story.cross_reference_offsets()[0];
+        story.delete_range(at..at + xref.len());
+        assert_eq!(story.cross_references.len(), 1);
+        assert_eq!(story.cross_references[0].target, "");
+        assert_eq!(story.anchors[0].name, "start");
         assert!(story.notes_are_sound());
     }
 

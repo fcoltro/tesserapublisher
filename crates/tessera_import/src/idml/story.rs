@@ -150,6 +150,8 @@ impl<'a, 'i> Builder<'a, 'i> {
             paragraphs,
             footnotes,
             index_entries: vec![IndexEntry::default(); entries],
+            anchors: Vec::new(),
+            cross_references: Vec::new(),
         };
         if story.runs_are_sound() && story.notes_are_sound() {
             story

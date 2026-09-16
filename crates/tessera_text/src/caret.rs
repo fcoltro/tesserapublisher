@@ -67,6 +67,14 @@ pub struct LineLayout {
     pub(crate) y: f64,
 }
 
+impl LineLayout {
+    /// The paragraph's text as it was shaped — markers expanded, case
+    /// transforms applied — which is what a reader of the page reads.
+    pub fn shaped_text(&self) -> &str {
+        &self.paragraph.shaped_text
+    }
+}
+
 impl crate::shape::ShapedText {
     /// Measure editing geometry against the actual, flowed text.
     pub fn caret_geometry(&self, cursor: TextCursor, width: f32) -> CaretGeometry {

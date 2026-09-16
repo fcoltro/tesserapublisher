@@ -296,6 +296,8 @@ pub enum Run {
     EditFootnote,
     /// An index marker at the caret, filed under a topic the box asks for.
     InsertIndexEntry,
+    InsertTextAnchor,
+    InsertCrossReference,
     /// The contents recipe, and placing or updating the contents.
     TableOfContents,
     /// The index recipe, and placing or updating the index.
@@ -389,7 +391,11 @@ pub fn guard(run: Run) -> Guard {
         Run::PasteAnchored => Guard::Always,
         Run::StoryEditor => Guard::NotWhileTyping,
         // Only useful while typing, like the special characters.
-        Run::InsertFootnote | Run::EditFootnote | Run::InsertIndexEntry => Guard::Always,
+        Run::InsertFootnote
+        | Run::EditFootnote
+        | Run::InsertIndexEntry
+        | Run::InsertTextAnchor
+        | Run::InsertCrossReference => Guard::Always,
         // Opening a search box is not an edit and needs no selection. It is
         // guarded against typing all the same: Ctrl+F inside the search box
         // itself must not reopen the window under the caret.
@@ -1109,6 +1115,20 @@ pub fn all() -> &'static [Action] {
             Group::Type,
             Run::InsertIndexEntry,
         ),
+        // Under Insert marker with the page numbers: an anchor and a
+        // cross-reference are markers the layout reads, as those are.
+        a(
+            "Text anchor\u{2026}",
+            None,
+            Group::Markers,
+            Run::InsertTextAnchor,
+        ),
+        a(
+            "Cross-reference\u{2026}",
+            None,
+            Group::Markers,
+            Run::InsertCrossReference,
+        ),
         a(
             "Table of contents\u{2026}",
             None,
@@ -1383,6 +1403,18 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             if let Some((_, buffer)) = state.active().editing.as_ref() {
                 state.index_entry.topic = buffer.selected_text().unwrap_or("").trim().to_owned();
                 state.index_entry.open = true;
+            }
+        }
+        Run::InsertTextAnchor => {
+            if let Some((_, buffer)) = state.active().editing.as_ref() {
+                // The selected words make a good name: "Chapter Two".
+                state.text_anchor.name = buffer.selected_text().unwrap_or("").trim().to_owned();
+                state.text_anchor.open = true;
+            }
+        }
+        Run::InsertCrossReference => {
+            if state.active().editing.is_some() {
+                state.cross_reference.open = true;
             }
         }
         Run::TableOfContents => state.contents.open = true,

@@ -953,7 +953,11 @@ impl Document {
     /// its own cover.
     pub fn add_page(&mut self) -> PageId {
         // Placed by the reflow below; a page is never left where this put it.
-        let page = self.pages.insert(Page::at(DEFAULT_PAGE));
+        // Sized like the document's first page — its size, as `reflow_spreads`
+        // defines it — not the built-in default: an A4 document was gaining
+        // a Letter page from every Add page, and every extra page a new
+        // document was asked for came out that size too.
+        let page = self.pages.insert(Page::at(self.document_page_rect()));
 
         // Appended to the sequence, then the sequence decides the spreads.
         // Doing it the other way round — reasoning about whether the last
@@ -964,6 +968,20 @@ impl Document {
 
         self.reflow_spreads();
         page
+    }
+
+    /// The document's page size, as a rectangle at the origin: the first
+    /// page's, or the built-in default when there is none yet.
+    fn document_page_rect(&self) -> DocRect {
+        self.page_ids()
+            .next()
+            .and_then(|id| self.pages.get(id))
+            .map_or(DEFAULT_PAGE, |p| DocRect {
+                x: DEFAULT_PAGE.x,
+                y: DEFAULT_PAGE.y,
+                width: p.bounds.width,
+                height: p.bounds.height,
+            })
     }
 
     /// Remove a page and everything standing on it.
@@ -4740,6 +4758,22 @@ mod tests {
             doc.layers[doc.default_layer().expect("a layer")].name,
             "Layer 1"
         );
+    }
+
+    #[test]
+    fn an_added_page_is_the_document_s_size_not_the_built_in_one() {
+        // Found by hand: an A4 document gained a Letter page from Add page,
+        // and a new document asked for two pages came out one A4, one Letter.
+        let mut doc = Document::new();
+        doc.set_page_size(595.0, 842.0);
+        let added = doc.add_page();
+        let bounds = doc.pages[added].bounds;
+        assert_eq!((bounds.width, bounds.height), (595.0, 842.0));
+        // A gatefold last page does not become the default: the first page is
+        // the document's size.
+        doc.set_page_size_of(added, 1190.0, 842.0);
+        let third = doc.add_page();
+        assert_eq!(doc.pages[third].bounds.width, 595.0);
     }
 
     #[test]

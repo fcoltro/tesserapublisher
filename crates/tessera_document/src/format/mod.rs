@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 27;
+pub const FORMAT_VERSION: u32 = 28;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -105,6 +105,12 @@ pub fn load(path: &Path) -> Result<Document, FormatError> {
 /// ago follows exactly the path a document written two versions ago does, and
 /// each step only has to know about its own change.
 fn migrate(value: &mut serde_json::Value, from: u32) {
+    // 27 -> 28: stories gained `anchors` and `cross_references`, beside the
+    // footnotes and index entries. **No step, on purpose**: both default to
+    // empty, which is what every earlier story meant. The version moves so
+    // an older build refuses a document whose text says "see page 12"
+    // through a marker it would draw as nothing.
+
     // 26 -> 27: a wrap may say which side the text runs on (`sides`). **No
     // step, on purpose**: absent, it reads as the largest area, which is
     // what every wrap did. The version moves so an older build refuses a

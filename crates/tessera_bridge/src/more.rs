@@ -10,7 +10,7 @@ use tessera_ui::command::Command;
 use crate::tools::{Tool, frame_arg, text};
 use crate::{frame_key, run};
 
-pub(crate) static ALL: [Tool; 8] = [
+pub(crate) static ALL: [Tool; 10] = [
     Tool {
         name: "list_documents",
         description: "Every open document — its number, its file path if it has one, whether it \
@@ -102,6 +102,38 @@ pub(crate) static ALL: [Tool; 8] = [
             ),
         ],
         run: render_page,
+    },
+    Tool {
+        name: "start_editing",
+        description: "Put the caret in a text frame, as a double-click does — at a byte offset, \
+            or selecting a range when `end` is given. The Type menu's caret-bound actions \
+            (Insert footnote, Text anchor, Cross-reference, Insert index entry) then act \
+            there. Ends any editing under way.",
+        arguments: &[
+            ("frame", "integer", "The text frame's number.", true),
+            (
+                "at",
+                "integer",
+                "Byte offset for the caret; the end of the text if absent.",
+                false,
+            ),
+            (
+                "end",
+                "integer",
+                "Byte offset the selection ends at, when selecting.",
+                false,
+            ),
+        ],
+        run: start_editing,
+    },
+    Tool {
+        name: "stop_editing",
+        description: "Take the caret out of the text, as clicking the page does.",
+        arguments: &[],
+        run: |state, _| {
+            tessera_ui::view::viewport::finish_editing(state);
+            Ok(json!({ "editing": false }))
+        },
     },
     Tool {
         name: "place_image",
@@ -288,6 +320,40 @@ fn set_cell_text(state: &mut TesseraApp, arguments: &Value) -> Result<Value, Str
             edits: vec![(story, 0..length, text)],
         },
     ))
+}
+
+fn start_editing(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
+    let (id, story) = crate::tools::text_frame_arg(state, arguments)?;
+    let length = state
+        .active()
+        .document()
+        .story(story)
+        .map_or(0, |s| s.text.len());
+    let offset = |key: &str, fallback: usize| -> Result<usize, String> {
+        let Some(v) = arguments.get(key) else {
+            return Ok(fallback);
+        };
+        let n = v
+            .as_u64()
+            .ok_or_else(|| format!("{key} must be a byte offset"))? as usize;
+        if n > length {
+            return Err(format!(
+                "{key} {n} is past the end of the text ({length} bytes)"
+            ));
+        }
+        Ok(n)
+    };
+    let at = offset("at", length)?;
+    let end = offset("end", at)?;
+    tessera_ui::view::viewport::finish_editing(state);
+    tessera_ui::view::viewport::start_editing(state, id);
+    if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+        buffer.set_cursor(at);
+        if end != at {
+            buffer.select(at.min(end)..at.max(end));
+        }
+    }
+    Ok(json!({ "editing": frame_key(id), "at": at, "end": end }))
 }
 
 fn render_page(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {

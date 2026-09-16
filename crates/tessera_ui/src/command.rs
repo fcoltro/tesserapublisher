@@ -534,6 +534,19 @@ pub enum Command {
         index: usize,
         text: String,
     },
+    /// Name the story's `index`th text anchor — what cross-references point
+    /// at. The marker itself is a character in the text.
+    SetTextAnchor {
+        story: StoryId,
+        index: usize,
+        name: String,
+    },
+    /// Re-point or re-format the story's `index`th cross-reference.
+    SetCrossReference {
+        story: StoryId,
+        index: usize,
+        reference: tessera_text::story::CrossReference,
+    },
     /// The recipe for the table of contents.
     SetContents(tessera_document::contents::Contents),
     /// Rebuild the contents from the document as it is laid out now, into
@@ -1776,6 +1789,42 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             state.active_mut().document_mut().set_variables(variables);
         }
 
+        Command::SetTextAnchor { story, index, name } => {
+            if let Some(anchor) = state
+                .active_mut()
+                .document_mut()
+                .story_mut(story)
+                .and_then(|s| s.anchors.get_mut(index))
+            {
+                anchor.name = name.trim().to_owned();
+            }
+            state.active_mut().document_mut().touch();
+            if let Some(buffer) = editing_buffer_for(state, story)
+                && let Some(anchor) = buffer.story_mut().anchors.get_mut(index)
+            {
+                anchor.name = name.trim().to_owned();
+            }
+        }
+        Command::SetCrossReference {
+            story,
+            index,
+            reference,
+        } => {
+            if let Some(slot) = state
+                .active_mut()
+                .document_mut()
+                .story_mut(story)
+                .and_then(|s| s.cross_references.get_mut(index))
+            {
+                *slot = reference.clone();
+            }
+            state.active_mut().document_mut().touch();
+            if let Some(buffer) = editing_buffer_for(state, story)
+                && let Some(slot) = buffer.story_mut().cross_references.get_mut(index)
+            {
+                *slot = reference;
+            }
+        }
         Command::SetFootnoteText { story, index, text } => {
             if let Some(note) = state
                 .active_mut()

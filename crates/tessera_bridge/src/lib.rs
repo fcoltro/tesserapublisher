@@ -282,6 +282,21 @@ mod tests {
         let doc = tool(&mut bridge, "describe_document", json!({}));
         let frames = doc["frames"].as_array().expect("frames");
         assert_eq!(frames.len(), 1);
+        // A page carries the id the page commands take, beside its index.
+        let page_id = doc["pages"][0]["page"].as_u64().expect("a page id");
+        tool(
+            &mut bridge,
+            "command",
+            json!({ "name": "DuplicatePage", "arguments": { "id": page_id } }),
+        );
+        assert_eq!(
+            tool(&mut bridge, "describe_document", json!({}))["pages"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        tool(&mut bridge, "undo", json!({}));
         assert_eq!(frames[0]["frame"], id);
         assert_eq!(frames[0]["kind"], "text");
         assert_eq!(frames[0]["text"], "Hello, page");

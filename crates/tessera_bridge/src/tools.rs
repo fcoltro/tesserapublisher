@@ -497,6 +497,9 @@ fn describe_document(state: &mut TesseraApp, _: &Value) -> Result<Value, String>
         "revision": doc.revision(),
         "pages": pages.iter().enumerate().map(|(index, page)| json!({
             "index": index,
+            // The id the page commands take — MovePage, RemovePage,
+            // ApplyMaster — beside the index the named tools take.
+            "page": slotmap::Key::data(page).as_ffi(),
             "x": doc.pages[*page].bounds.x,
             "y": doc.pages[*page].bounds.y,
             "width": doc.pages[*page].bounds.width,

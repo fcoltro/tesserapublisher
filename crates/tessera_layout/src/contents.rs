@@ -17,7 +17,7 @@ use tessera_document::nodes::FrameKind;
 use tessera_text::story::{
     Hyperlink, ParagraphRun, ParagraphStyleId, Run, Story, TabAlignment, TabStop,
 };
-use tessera_text::variables::expand;
+use tessera_text::variables::{Marker, expand};
 
 use crate::resolve::{ResolvedDocument, ResolvedItem, ResolvedKind};
 
@@ -124,14 +124,22 @@ pub fn mentions(doc: &Document, resolved: &ResolvedDocument) -> Vec<Mention> {
             continue;
         };
         let offsets = story.index_offsets();
+        // A marker reads as nothing, so a line beginning with one begins,
+        // by its stored range, at the character after it. The marker is on
+        // the line holding the position just past it — see the same test in
+        // `running::Running::read_anchors`.
+        let width = Marker::IndexEntry.character().len_utf8();
+        let mut seen: Vec<usize> = Vec::new();
         for line in &shaped.lines {
             if line.range.is_empty() {
                 continue;
             }
             for (n, at) in offsets.iter().enumerate() {
-                if !line.range.contains(at) {
+                let past = at + width;
+                if !(line.range.start <= past && past <= line.range.end) || seen.contains(&n) {
                     continue;
                 }
+                seen.push(n);
                 let Some(entry) = story.index_entries.get(n) else {
                     continue;
                 };
@@ -451,6 +459,37 @@ mod tests {
         let resolved = crate::resolve(&doc, &mut shaper);
         let story = index(&doc, &resolved, "");
         assert_eq!(story.text, "Ink\t1\nType\t1\u{2013}2", "neighbours join");
+    }
+
+    #[test]
+    fn an_index_marker_at_the_start_of_a_line_is_still_on_the_page() {
+        // A marker reads as nothing, so a line that begins with one begins,
+        // by its stored range, at the character after it — and a test for
+        // "is the marker's offset inside the line" said no. Marking a topic
+        // at the head of a paragraph is the ordinary case, not the edge.
+        use tessera_text::variables::Marker;
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        let first = doc.page_ids().next().unwrap();
+        let e = Marker::IndexEntry.character();
+        let mut one = Story::new(format!(
+            "{e}Type at the head.
+{e}Ink at the head of the next."
+        ));
+        one.index_entries[0].topic = "Type".into();
+        one.index_entries[1].topic = "Ink".into();
+        let one = doc.add_story(one);
+        text_frame(&mut doc, first, one, 40.0);
+
+        let mut shaper = Shaper::new();
+        let resolved = crate::resolve(&doc, &mut shaper);
+        let story = index(&doc, &resolved, "");
+        assert_eq!(
+            story.text,
+            "Ink	1
+Type	1"
+        );
     }
 
     #[test]

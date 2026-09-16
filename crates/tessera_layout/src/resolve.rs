@@ -330,8 +330,37 @@ fn resolve_pages<'a>(
         }
     }
 
-    // What each page's headings say, read off the layout just made.
-    let running = Running::read(doc, &own);
+    // What each page's headings say, read off the layout just made — and
+    // where each text anchor landed.
+    let mut running = Running::read(doc, &own);
+
+    // **A second pass, when the body refers to itself.** A cross-reference
+    // in a body frame reads as the page its anchor is on, and that is not
+    // known until the pages are laid out — so they are laid out again with
+    // the answers. A reference whose text grew may move its own anchor a
+    // page; the next relayout says the right thing, as InDesign's stale
+    // references do until updated, and a third pass here would not end
+    // that in every case either.
+    if doc.stories.values().any(|s| !s.cross_references.is_empty()) {
+        let mut again = Vec::new();
+        for id in doc.paint_order() {
+            let Some(on) = doc.page_of_frame(id) else {
+                continue;
+            };
+            if !shown.contains(&on) {
+                continue;
+            }
+            let Some(frame) = doc.frame(id) else { continue };
+            if frame.anchor.is_some() {
+                continue;
+            }
+            if let Some(item) = resolve_one(doc, shaper, id, frame, composed, on, &running) {
+                again.push(item);
+            }
+        }
+        own = again;
+        running = Running::read(doc, &own);
+    }
 
     let mut items = Vec::new();
 
@@ -907,7 +936,54 @@ fn variables_for(doc: &Document, frame: FrameId, on: PageId, running: &Running) 
         footnote_number: None,
         footnote_text: None,
         footnote_labels: Vec::new(),
+        cross_references: cross_references_for(doc, frame, running, &label_of),
     }
+}
+
+/// What each cross-reference in `frame`'s story reads as: the page its
+/// target is on, the paragraph its anchor stands in, or both. An anchor
+/// nobody has laid out yet, or a name nothing has, reads as a question
+/// mark — the shaper's placeholder — so a reader can see there is something
+/// to fix rather than nothing at all.
+fn cross_references_for(
+    doc: &Document,
+    frame: FrameId,
+    running: &Running,
+    label_of: &dyn Fn(PageId) -> String,
+) -> Vec<String> {
+    use tessera_text::story::CrossReferenceFormat;
+    let Some(FrameKind::Text { story, .. }) = doc.frame(frame).map(|f| &f.kind) else {
+        return Vec::new();
+    };
+    let Some(story) = doc.story(*story) else {
+        return Vec::new();
+    };
+    story
+        .cross_references
+        .iter()
+        .map(|reference| {
+            let (page, paragraph) = match running.anchor(&reference.target) {
+                Some((page, paragraph)) => (Some(*page), Some(paragraph.as_str())),
+                // A named page destination — the contents' targets — has a
+                // page and no paragraph.
+                None => (doc.destination_page(&reference.target), None),
+            };
+            let page = page.map(label_of);
+            match (reference.format, page, paragraph) {
+                (CrossReferenceFormat::PageNumber, Some(page), _) => page,
+                (CrossReferenceFormat::ParagraphText, _, Some(text)) if !text.is_empty() => {
+                    text.to_owned()
+                }
+                (CrossReferenceFormat::ParagraphAndPage, Some(page), Some(text))
+                    if !text.is_empty() =>
+                {
+                    format!("{text} on page {page}")
+                }
+                (CrossReferenceFormat::ParagraphAndPage, Some(page), _) => format!("page {page}"),
+                _ => "?".to_owned(),
+            }
+        })
+        .collect()
 }
 
 /// One frame, resolved.
@@ -1994,6 +2070,104 @@ Some body copy.",
             .filter_map(|l| l.glyphs().next().map(|g| g.x))
             .collect();
         assert!((boxed[0] - boxed[1]).abs() < 1e-6, "the box: {boxed:?}");
+    }
+
+    /// The text a resolved text frame shows, joined line by line from the
+    /// shaped text's glyph runs' stored ranges — what a reader would read.
+    fn shown_text(resolved: &ResolvedDocument, _doc: &Document, frame: FrameId) -> String {
+        let item = item_for(resolved, frame).expect("resolved");
+        let ResolvedKind::Text { shaped, .. } = &item.kind else {
+            panic!("text");
+        };
+        // The shaped text lives in the caret's line layouts; read it back
+        // from the first line's paragraph, which holds the whole paragraph.
+        shaped
+            .lines
+            .iter()
+            .filter_map(|l| l.hit.as_ref())
+            .map(|hit| hit.shaped_text().to_owned())
+            .fold(Vec::<String>::new(), |mut acc, t| {
+                if acc.last() != Some(&t) {
+                    acc.push(t);
+                }
+                acc
+            })
+            .join(
+                "
+",
+            )
+    }
+
+    #[test]
+    fn a_cross_reference_reads_as_the_page_and_paragraph_its_anchor_is_on() {
+        use tessera_text::story::{CrossReference, CrossReferenceFormat, TextAnchor};
+        use tessera_text::variables::Marker;
+        let mut doc = Document::default();
+        let second = doc.add_page();
+        let first = doc.page_ids().next().unwrap();
+        let layer = doc.default_layer().expect("a layer");
+
+        // Page one: "See ⟨ref⟩." Page two: "⟨anchor⟩Chapter Two / Body."
+        let mut referring = Story::new(format!("See {}.", Marker::CrossReference.character()));
+        referring.cross_references[0] = CrossReference {
+            target: "ch2".into(),
+            format: CrossReferenceFormat::ParagraphAndPage,
+        };
+        let referring = doc.add_story(referring);
+        let mut target = Story::new(format!(
+            "{}Chapter Two
+The body of the chapter.",
+            Marker::TextAnchor.character()
+        ));
+        target.anchors[0] = TextAnchor { name: "ch2".into() };
+        let target = doc.add_story(target);
+
+        let a = doc.add_frame(layer, {
+            let b = doc.pages[first].bounds;
+            let mut f = rect(b.x + 20.0, b.y + 20.0, 300.0, 60.0);
+            f.kind = FrameKind::text(referring);
+            f
+        });
+        doc.add_frame(layer, {
+            let b = doc.pages[second].bounds;
+            let mut f = rect(b.x + 20.0, b.y + 20.0, 300.0, 200.0);
+            f.kind = FrameKind::text(target);
+            f
+        });
+
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+        let shown = shown_text(&resolved, &doc, a);
+        assert_eq!(shown, "See Chapter Two on page 2.", "{shown}");
+
+        // Just the page, just the paragraph.
+        doc.stories[referring].cross_references[0].format = CrossReferenceFormat::PageNumber;
+        doc.touch();
+        assert_eq!(shown_text(&resolve(&doc, &mut shaper), &doc, a), "See 2.");
+        doc.stories[referring].cross_references[0].format = CrossReferenceFormat::ParagraphText;
+        doc.touch();
+        assert_eq!(
+            shown_text(&resolve(&doc, &mut shaper), &doc, a),
+            "See Chapter Two."
+        );
+
+        // A target nothing has: a question mark, not nothing.
+        doc.stories[referring].cross_references[0].target = "nowhere".into();
+        doc.touch();
+        assert_eq!(shown_text(&resolve(&doc, &mut shaper), &doc, a), "See ?.");
+
+        // A named page destination is a target too, for the page.
+        doc.destinations
+            .push(tessera_document::contents::Destination {
+                name: "end".into(),
+                page: second,
+            });
+        doc.stories[referring].cross_references[0] = CrossReference {
+            target: "end".into(),
+            format: CrossReferenceFormat::PageNumber,
+        };
+        doc.touch();
+        assert_eq!(shown_text(&resolve(&doc, &mut shaper), &doc, a), "See 2.");
     }
 
     #[test]
