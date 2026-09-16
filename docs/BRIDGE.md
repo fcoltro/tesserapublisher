@@ -82,10 +82,12 @@ machine can reach a running window's document — the trust a local script
 has always had over an application's files. Nothing listens on other
 interfaces.
 
+`render_page` draws one page to a PNG — trim only, at a chosen ppi — so a
+model can look at what it set. It needs a GPU, and says so when there is
+none.
+
 ## Not yet
 
-A rendering of a page as an image, for a model to look at — the PDF is the
-artifact to inspect. Tool calls through a real client, once one is logged
-in. The crate is `crates/tessera_bridge`; a tool is a name, a
+Tool calls through a real client, once one is logged in. The crate is `crates/tessera_bridge`; a tool is a name, a
 sentence, a schema and a function, and adding one is adding one entry to
 `tools::ALL`.

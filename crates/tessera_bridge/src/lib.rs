@@ -805,6 +805,49 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "needs a GPU adapter; run alone with -- --ignored"]
+    fn a_page_renders_to_a_png_a_model_can_look_at() {
+        let dir = std::env::temp_dir().join(format!("tessera-bridge-png-{}", std::process::id()));
+        let mut bridge = Bridge::new();
+        // On the page — which, facing pages, does not start at x 0 — and
+        // filled black, so there is something to see.
+        let page = tool(&mut bridge, "describe_document", json!({}))["pages"][0].clone();
+        let (px, py) = (page["x"].as_f64().unwrap(), page["y"].as_f64().unwrap());
+        let made = tool(
+            &mut bridge,
+            "add_rectangle",
+            json!({ "x": px + 20.0, "y": py + 20.0, "width": 100, "height": 100 }),
+        );
+        tool(
+            &mut bridge,
+            "command",
+            json!({ "name": "SetFill", "arguments": { "id": made["frame"], "paint": { "Solid": { "Rgb": { "r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0 } } } } }),
+        );
+        let png = dir.join("page.png");
+        let out = tool(
+            &mut bridge,
+            "render_page",
+            json!({ "page": 0, "path": png, "ppi": 36 }),
+        );
+        assert_eq!(out["ppi"], 36.0);
+        let image = image::open(&png).expect("a PNG").to_rgba8();
+        assert_eq!(
+            (image.width(), image.height()),
+            (
+                out["width"].as_u64().unwrap() as u32,
+                out["height"].as_u64().unwrap() as u32
+            )
+        );
+        // The page is white where nothing is, and dark inside the rectangle
+        // (the default fill), at half scale.
+        let white = image.get_pixel(image.width() - 5, image.height() - 5);
+        assert_eq!(&white.0[..3], &[255, 255, 255], "{white:?}");
+        let inside = image.get_pixel(35, 35);
+        assert_ne!(&inside.0[..3], &[255, 255, 255], "{inside:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_document_is_saved_and_opened_again() {
         let dir = std::env::temp_dir().join(format!("tessera-bridge-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

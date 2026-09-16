@@ -2577,10 +2577,19 @@ the way ExtendScript sits outside InDesign.
   by cell, pictures in one step, the open documents and the page in view.
   41 tools. `describe_document` reports where a frame is *seen*, transform
   included, because a model asked to move a thing wants to see it moved.
-- [ ] Not yet: a page rendered to an image for a model to look at (the PDF
-  is the artifact); a tool call through a real client, once one is logged
-  in. And the breaker: `describe_shapes` shows ids inside objects in the
-  document's own `{idx, version}` form, not as numbers.
+- [x] **A page rendered for a model to look at** (later the same night):
+  `render_page {page, path, ppi}` draws one page, trim only, through the
+  same `HeadlessRenderer` and `build_scene` the tests and the window use,
+  and writes a PNG. Checked by eye against the real binary: a 40pt centred
+  headline, body copy and a black rectangle, exactly as set. The test is
+  `#[ignore]`d and run alone, as every GPU test is. **Found on the way,
+  twice now:** the default document is facing pages and its first page
+  starts at x 595, so a frame placed at x 20 is on the pasteboard and a
+  clipped render shows nothing — the `initialize` instructions say to read
+  the page's bounds first, and a model will; the tests now do.
+- [ ] Not yet: a tool call through a real client, once one is logged in;
+  ids inside `describe_shapes` objects are in the document's own
+  `{idx, version}` form rather than numbers.
 
 ---
 

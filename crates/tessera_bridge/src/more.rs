@@ -10,7 +10,7 @@ use tessera_ui::command::Command;
 use crate::tools::{Tool, frame_arg, text};
 use crate::{frame_key, run};
 
-pub(crate) static ALL: [Tool; 7] = [
+pub(crate) static ALL: [Tool; 8] = [
     Tool {
         name: "list_documents",
         description: "Every open document — its number, its file path if it has one, whether it \
@@ -80,6 +80,28 @@ pub(crate) static ALL: [Tool; 7] = [
             ("text", "string", "The cell's new text.", true),
         ],
         run: set_cell_text,
+    },
+    Tool {
+        name: "render_page",
+        description: "Draw one page to a PNG file, as it prints — trim only, no guides — so a \
+            model can look at it. Needs a GPU; says so when there is none. Default 72 pixels \
+            per inch, one pixel a point; 144 doubles it.",
+        arguments: &[
+            (
+                "page",
+                "integer",
+                "The page's index from describe_document.",
+                true,
+            ),
+            ("path", "string", "Where to write the PNG.", true),
+            (
+                "ppi",
+                "number",
+                "Pixels per inch; default 72, at most 600.",
+                false,
+            ),
+        ],
+        run: render_page,
     },
     Tool {
         name: "place_image",
@@ -266,6 +288,70 @@ fn set_cell_text(state: &mut TesseraApp, arguments: &Value) -> Result<Value, Str
             edits: vec![(story, 0..length, text)],
         },
     ))
+}
+
+fn render_page(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
+    use tessera_geometry::{DocPoint, ViewTransform};
+    use tessera_render::scene::{SceneOptions, build_scene_with_images};
+
+    let index = arguments
+        .get("page")
+        .and_then(Value::as_u64)
+        .ok_or("page must be an index from describe_document")? as usize;
+    let path = std::path::PathBuf::from(text(arguments, "path")?);
+    let ppi = arguments
+        .get("ppi")
+        .and_then(Value::as_f64)
+        .unwrap_or(72.0)
+        .clamp(8.0, 600.0);
+
+    let doc = state.active().document();
+    let page = doc
+        .page_ids()
+        .nth(index)
+        .ok_or_else(|| format!("no page {index}; there are {}", doc.page_ids().count()))?;
+    let bounds = doc.pages[page].bounds;
+    let zoom = ppi / 72.0;
+    let width = (bounds.width * zoom).round().max(1.0) as u32;
+    let height = (bounds.height * zoom).round().max(1.0) as u32;
+    // The page's corner at the image's corner, a point per 1/72 inch.
+    let view = ViewTransform {
+        pan: DocPoint {
+            x: bounds.x,
+            y: bounds.y,
+        },
+        zoom,
+    };
+
+    let resolved = state.resolve_uncached();
+    let scene = build_scene_with_images(
+        &resolved,
+        view,
+        SceneOptions {
+            rules: false,
+            clip: Some(vec![bounds]),
+        },
+        &mut state.images,
+    );
+    let mut renderer = tessera_render::HeadlessRenderer::new(width, height)
+        .map_err(|e| format!("cannot render without a GPU: {e}"))?;
+    let pixels = renderer.render(&scene).map_err(|e| e.to_string())?;
+    let image = image::RgbaImage::from_raw(width, height, pixels)
+        .ok_or("the renderer returned the wrong number of pixels")?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    image
+        .save_with_format(&path, image::ImageFormat::Png)
+        .map_err(|e| format!("could not write {}: {e}", path.display()))?;
+    Ok(json!({
+        "rendered": path,
+        "page": index,
+        "width": width,
+        "height": height,
+        "ppi": ppi,
+        "adapter": renderer.adapter_name(),
+    }))
 }
 
 fn place_image(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
