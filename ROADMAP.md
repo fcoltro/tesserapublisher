@@ -2561,8 +2561,26 @@ the way ExtendScript sits outside InDesign.
   Cancel keeps it, Create does not; and the model's first frame landed on
   the pasteboard, because the page's `x` is 595 on a facing recto and the
   smoke test did not read it. The instructions say to; a model will.
-- [ ] Not yet: images, character styles and local formatting, tables,
-  threading; a tool call through a real client.
+- [x] **Everything reachable** (2026-09-15, evening, by the user's ask:
+  "all options, all popup window options, all tools, all settings").
+  Three layers. *Every command*: `Command` derives serde and the bridge
+  embeds `command.rs` at compile time and parses the enum — name, doc
+  comment, fields and types — so `list_commands` names all 114 with the
+  documentation written on them, `command` runs any, `describe_shapes`
+  shows every field object as an example that reads back exactly, and a
+  command added to the enum is reachable the moment it is written. *Every
+  menu action*: `list_actions` / `run_action`, 134, with the guards
+  explained. *Every dialog, as its choices*: new document, export with
+  standard and marks or a preset, find and change, step and repeat,
+  spelling, package, preferences field by field. Plus the read side —
+  `document_json`, `frame_layout`, `preflight`, `list_fonts` — tables cell
+  by cell, pictures in one step, the open documents and the page in view.
+  41 tools. `describe_document` reports where a frame is *seen*, transform
+  included, because a model asked to move a thing wants to see it moved.
+- [ ] Not yet: a page rendered to an image for a model to look at (the PDF
+  is the artifact); a tool call through a real client, once one is logged
+  in. And the breaker: `describe_shapes` shows ids inside objects in the
+  document's own `{idx, version}` form, not as numbers.
 
 ---
 

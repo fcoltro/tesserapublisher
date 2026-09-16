@@ -37,7 +37,9 @@ pub fn list() -> Vec<Value> {
 /// Every tool: the canvas work here, the dialogs and the read side in
 /// [`crate::dialogs`].
 fn every() -> impl Iterator<Item = &'static Tool> {
-    ALL.iter().chain(crate::dialogs::ALL.iter())
+    ALL.iter()
+        .chain(crate::dialogs::ALL.iter())
+        .chain(crate::more::ALL.iter())
 }
 
 /// Run the tool called `name` with `arguments`.
@@ -399,7 +401,7 @@ pub(crate) fn text(arguments: &Value, name: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{name} must be a string"))
 }
 
-fn rect(arguments: &Value) -> Result<DocRect, String> {
+pub(crate) fn rect_arg(arguments: &Value) -> Result<DocRect, String> {
     Ok(DocRect {
         x: number(arguments, "x")?,
         y: number(arguments, "y")?,
@@ -506,7 +508,7 @@ fn describe_document(state: &mut TesseraApp, _: &Value) -> Result<Value, String>
 type PageId = tessera_document::ids::PageId;
 
 fn add_text_frame(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
-    let bounds = rect(arguments)?;
+    let bounds = rect_arg(arguments)?;
     let mut outcome = run(state, Command::AddTextFrame(bounds));
     let id = state
         .active()
@@ -529,7 +531,7 @@ fn add_text_frame(state: &mut TesseraApp, arguments: &Value) -> Result<Value, St
 }
 
 fn add_rectangle(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
-    let bounds = rect(arguments)?;
+    let bounds = rect_arg(arguments)?;
     let mut outcome = run(state, Command::AddRectangle(bounds));
     let id = state
         .active()
@@ -570,7 +572,7 @@ fn get_text(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> 
 
 fn set_bounds(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
     let id = frame_arg(state, arguments)?;
-    let bounds = rect(arguments)?;
+    let bounds = rect_arg(arguments)?;
     Ok(run(state, Command::SetBounds { id, bounds }))
 }
 

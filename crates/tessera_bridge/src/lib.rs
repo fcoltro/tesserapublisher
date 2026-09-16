@@ -27,6 +27,7 @@ use tessera_ui::command::{Command, apply};
 pub mod catalogue;
 pub mod dialogs;
 pub mod live;
+pub mod more;
 pub mod shapes;
 pub mod tools;
 
@@ -676,6 +677,130 @@ mod tests {
             json!({ "name": "export_pdf", "arguments": { "path": pdf, "standard": "x9" } }),
         );
         assert_eq!(reply["result"]["isError"], true);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn documents_tables_pages_and_pictures_are_reachable() {
+        let mut bridge = Bridge::new();
+        // Two documents, switched and closed. The first gets a frame first:
+        // a new document replaces an untouched blank one rather than
+        // leaving a stray "Untitled" tab, which is the application's rule.
+        let one = tool(&mut bridge, "list_documents", json!({}));
+        assert_eq!(one["count"], 1);
+        tool(
+            &mut bridge,
+            "add_rectangle",
+            json!({ "x": 0, "y": 0, "width": 5, "height": 5 }),
+        );
+        tool(&mut bridge, "new_document", json!({ "pages": 3 }));
+        let two = tool(&mut bridge, "list_documents", json!({}));
+        assert_eq!(two["count"], 2);
+        let first = two["documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["active"] == false)
+            .unwrap()["document"]
+            .as_u64()
+            .unwrap();
+        tool(&mut bridge, "switch_document", json!({ "document": first }));
+        assert_eq!(
+            tool(&mut bridge, "describe_document", json!({}))["pages"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let second = two["documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["active"] == true)
+            .unwrap()["document"]
+            .as_u64()
+            .unwrap();
+        tool(
+            &mut bridge,
+            "close_document",
+            json!({ "document": second, "discard": true }),
+        );
+        assert_eq!(tool(&mut bridge, "list_documents", json!({}))["count"], 1);
+        let reply = call(
+            &mut bridge,
+            1,
+            "tools/call",
+            json!({ "name": "close_document", "arguments": { "document": first } }),
+        );
+        assert_eq!(reply["result"]["isError"], true, "the last one stays");
+
+        // A page shown.
+        tool(&mut bridge, "add_page", json!({}));
+        let shown = tool(&mut bridge, "show_page", json!({ "page": 1 }));
+        assert_eq!(shown["page"], 1);
+        assert!(!bridge.state.active().fitted);
+
+        // A table, cell by cell.
+        let made = tool(
+            &mut bridge,
+            "command",
+            json!({ "name": "AddTable", "arguments": { "bounds": { "x": 0, "y": 0, "width": 200, "height": 100 }, "rows": 2, "columns": 3 } }),
+        );
+        let table = made["selection"][0]
+            .as_u64()
+            .expect("the table is selected");
+        let described = tool(&mut bridge, "describe_table", json!({ "frame": table }));
+        assert_eq!(
+            (described["rows"].as_u64(), described["columns"].as_u64()),
+            (Some(2), Some(3))
+        );
+        tool(
+            &mut bridge,
+            "set_cell_text",
+            json!({ "frame": table, "row": 1, "column": 2, "text": "Total" }),
+        );
+        let described = tool(&mut bridge, "describe_table", json!({ "frame": table }));
+        assert_eq!(described["cells"][1][2]["text"], "Total");
+        assert_eq!(described["cells"][0][0]["text"], "");
+
+        // A picture: a missing file is refused; a real one lands in a new frame.
+        let reply = call(
+            &mut bridge,
+            2,
+            "tools/call",
+            json!({ "name": "place_image", "arguments": { "path": "C:/nowhere/none.png", "x": 0, "y": 0, "width": 50, "height": 50 } }),
+        );
+        assert_eq!(reply["result"]["isError"], true);
+        let dir = std::env::temp_dir().join(format!("tessera-bridge-img-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = dir.join("dot.png");
+        // The smallest valid PNG: one white pixel.
+        std::fs::write(
+            &png,
+            [
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+                0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+                0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08,
+                0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F, 0x00, 0x05, 0xFE, 0x02, 0xFE, 0xA7, 0x35, 0x81,
+                0x84, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+            ],
+        )
+        .unwrap();
+        let placed = tool(
+            &mut bridge,
+            "place_image",
+            json!({ "path": png, "x": 10, "y": 10, "width": 100, "height": 100 }),
+        );
+        let frame = placed["frame"].as_u64().unwrap();
+        let doc = tool(&mut bridge, "describe_document", json!({}));
+        let kind = doc["frames"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["frame"] == frame)
+            .unwrap()["kind"]
+            .clone();
+        assert_eq!(kind, "graphic");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
