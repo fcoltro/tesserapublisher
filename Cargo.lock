@@ -3883,6 +3883,8 @@ dependencies = [
  "tessera_document",
  "tessera_geometry",
  "tessera_layout",
+ "tessera_pdf",
+ "tessera_preflight",
  "tessera_text",
  "tessera_ui",
 ]

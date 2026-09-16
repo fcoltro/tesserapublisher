@@ -18,3 +18,5 @@ slotmap.workspace = true
 tessera_geometry.workspace = true
 tessera_text.workspace = true
 tessera_color.workspace = true
+tessera_pdf.workspace = true
+tessera_preflight.workspace = true

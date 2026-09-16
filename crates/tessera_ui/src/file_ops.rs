@@ -203,7 +203,17 @@ pub fn package(state: &mut TesseraApp) {
     let Some(folder) = rfd::FileDialog::new().pick_folder() else {
         return;
     };
+    let outcome = package_into(state, &folder);
+    state.status = Some(match outcome {
+        Ok(message) => Status::info(message),
+        Err(message) => Status::error(message),
+    });
+}
 
+/// Collect the job into a folder of its own inside `folder`, and say what
+/// happened — the sentence the status line shows, or the reason it could
+/// not. The dialog above and the bridge both come through here.
+pub fn package_into(state: &mut TesseraApp, folder: &Path) -> Result<String, String> {
     let name = state
         .active()
         .current_path
@@ -222,7 +232,7 @@ pub fn package(state: &mut TesseraApp) {
     match crate::package::collect(&doc, &name, &into, &report) {
         Ok(packaged) => {
             let missing = packaged.missing.len();
-            state.status = Some(Status::info(if missing == 0 {
+            Ok(if missing == 0 {
                 format!(
                     "Packaged {} links into {}",
                     packaged.links.len(),
@@ -234,11 +244,9 @@ pub fn package(state: &mut TesseraApp) {
                     into.display(),
                     if missing == 1 { "" } else { "s" }
                 )
-            }));
+            })
         }
-        Err(error) => {
-            state.status = Some(Status::error(format!("Could not package: {error}")));
-        }
+        Err(error) => Err(format!("Could not package: {error}")),
     }
 }
 

@@ -29,26 +29,31 @@ pub const INSTRUCTIONS: &str = "Tessera is a page-layout application. Measuremen
 
 /// The tools, in the order a model reads them.
 pub fn list() -> Vec<Value> {
-    ALL.iter()
+    every()
         .map(|t| json!({ "name": t.name, "description": t.description, "inputSchema": t.schema() }))
         .collect()
 }
 
+/// Every tool: the canvas work here, the dialogs and the read side in
+/// [`crate::dialogs`].
+fn every() -> impl Iterator<Item = &'static Tool> {
+    ALL.iter().chain(crate::dialogs::ALL.iter())
+}
+
 /// Run the tool called `name` with `arguments`.
 pub fn call(state: &mut TesseraApp, name: &str, arguments: &Value) -> Result<Value, Failure> {
-    let tool = ALL
-        .iter()
+    let tool = every()
         .find(|t| t.name == name)
         .ok_or(Failure::NoSuchTool)?;
     (tool.run)(state, arguments).map_err(Failure::Refused)
 }
 
-struct Tool {
-    name: &'static str,
-    description: &'static str,
+pub(crate) struct Tool {
+    pub name: &'static str,
+    pub description: &'static str,
     /// `(name, type, description, required)`.
-    arguments: &'static [(&'static str, &'static str, &'static str, bool)],
-    run: fn(&mut TesseraApp, &Value) -> Result<Value, String>,
+    pub arguments: &'static [(&'static str, &'static str, &'static str, bool)],
+    pub run: fn(&mut TesseraApp, &Value) -> Result<Value, String>,
 }
 
 impl Tool {
@@ -90,7 +95,7 @@ const BOX: [(&str, &str, &str, bool); 4] = [
     ("height", "number", "Height in points.", true),
 ];
 
-static ALL: [Tool; 23] = [
+static ALL: [Tool; 22] = [
     Tool {
         name: "describe_document",
         description: "Everything on the page: each page's index and size, every frame with its \
@@ -375,24 +380,18 @@ static ALL: [Tool; 23] = [
         arguments: &[("path", "string", "The file's path.", true)],
         run: save,
     },
-    Tool {
-        name: "export_pdf",
-        description: "Export the document as a PDF to a path.",
-        arguments: &[("path", "string", "The file's path.", true)],
-        run: export_pdf,
-    },
 ];
 
 // --- reading the arguments ---------------------------------------------------
 
-fn number(arguments: &Value, name: &str) -> Result<f64, String> {
+pub(crate) fn number(arguments: &Value, name: &str) -> Result<f64, String> {
     arguments
         .get(name)
         .and_then(Value::as_f64)
         .ok_or_else(|| format!("{name} must be a number"))
 }
 
-fn text(arguments: &Value, name: &str) -> Result<String, String> {
+pub(crate) fn text(arguments: &Value, name: &str) -> Result<String, String> {
     arguments
         .get(name)
         .and_then(Value::as_str)
@@ -409,7 +408,10 @@ fn rect(arguments: &Value) -> Result<DocRect, String> {
     })
 }
 
-fn frame(state: &TesseraApp, arguments: &Value) -> Result<tessera_document::ids::FrameId, String> {
+pub(crate) fn frame_arg(
+    state: &TesseraApp,
+    arguments: &Value,
+) -> Result<tessera_document::ids::FrameId, String> {
     let key = arguments
         .get("frame")
         .and_then(Value::as_u64)
@@ -417,7 +419,7 @@ fn frame(state: &TesseraApp, arguments: &Value) -> Result<tessera_document::ids:
     frame_from_key(state, key).ok_or_else(|| format!("no frame numbered {key}"))
 }
 
-fn text_frame(
+pub(crate) fn text_frame_arg(
     state: &TesseraApp,
     arguments: &Value,
 ) -> Result<
@@ -427,7 +429,7 @@ fn text_frame(
     ),
     String,
 > {
-    let id = frame(state, arguments)?;
+    let id = frame_arg(state, arguments)?;
     match state.active().document().frame(id).map(|f| &f.kind) {
         Some(FrameKind::Text { story, .. }) => Ok((id, *story)),
         _ => Err(format!("frame {} is not a text frame", frame_key(id))),
@@ -539,14 +541,14 @@ fn add_rectangle(state: &mut TesseraApp, arguments: &Value) -> Result<Value, Str
 }
 
 fn set_text(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
-    let (id, _) = text_frame(state, arguments)?;
+    let (id, _) = text_frame_arg(state, arguments)?;
     let text = text(arguments, "text")?;
     Ok(run(state, Command::SetText { id, text }))
 }
 
 fn get_text(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
     use tessera_layout::resolve::ResolvedKind;
-    let (id, story) = text_frame(state, arguments)?;
+    let (id, story) = text_frame_arg(state, arguments)?;
     let overset = state
         .resolve_active()
         .items
@@ -567,19 +569,19 @@ fn get_text(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> 
 }
 
 fn set_bounds(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
-    let id = frame(state, arguments)?;
+    let id = frame_arg(state, arguments)?;
     let bounds = rect(arguments)?;
     Ok(run(state, Command::SetBounds { id, bounds }))
 }
 
 fn delete_frame(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
-    let id = frame(state, arguments)?;
+    let id = frame_arg(state, arguments)?;
     state.active_mut().selection.set(id);
     Ok(run(state, Command::DeleteSelection))
 }
 
 fn apply_paragraph_style(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
-    let (_, story) = text_frame(state, arguments)?;
+    let (_, story) = text_frame_arg(state, arguments)?;
     let name = text(arguments, "style")?;
     let doc = state.active().document();
     let style = doc
@@ -903,10 +905,4 @@ fn save(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
     let path = path(arguments)?;
     tessera_ui::file_ops::save_to_path(state, &path).map_err(|e| e.to_string())?;
     Ok(json!({ "saved": path }))
-}
-
-fn export_pdf(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
-    let path = path(arguments)?;
-    tessera_ui::file_ops::export_pdf_to_path(state, &path).map_err(|e| e.to_string())?;
-    Ok(json!({ "exported": path }))
 }

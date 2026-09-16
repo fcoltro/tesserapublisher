@@ -415,7 +415,9 @@ pub fn sync_preview(state: &mut TesseraApp) {
 }
 
 /// Build the document the dialog describes, and open it.
-fn create(state: &mut TesseraApp) {
+/// Make the document `state.new_document` describes and open it. Public so
+/// the bridge can make one from a model's choices without the dialog.
+pub fn create(state: &mut TesseraApp) {
     let settings = state.new_document.clone();
     let (width, height) = settings.page();
 

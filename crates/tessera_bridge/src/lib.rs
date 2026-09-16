@@ -25,6 +25,7 @@ use tessera_ui::TesseraApp;
 use tessera_ui::command::{Command, apply};
 
 pub mod catalogue;
+pub mod dialogs;
 pub mod live;
 pub mod shapes;
 pub mod tools;
@@ -540,6 +541,142 @@ mod tests {
         );
         assert_eq!(reply["result"]["isError"], true);
         assert!(!bridge.state.prefs.snapping);
+    }
+
+    #[test]
+    fn the_dialogs_are_tools_new_document_find_step_spelling_preflight() {
+        let mut bridge = Bridge::new();
+        let made = tool(
+            &mut bridge,
+            "new_document",
+            json!({ "width": 500, "height": 700, "facing_pages": false, "pages": 2, "margin": 36, "intent": "screen" }),
+        );
+        assert_eq!(made["pages"], 2);
+        assert_eq!(made["page"]["width"], 500.0);
+        let page_x = made["page"]["x"].as_f64().unwrap();
+
+        let frame = tool(
+            &mut bridge,
+            "add_text_frame",
+            json!({ "x": page_x + 36.0, "y": 36, "width": 300, "height": 200,
+                    "text": "The cat sat on the mat. The cat purred." }),
+        );
+        let id = frame["frame"].as_u64().unwrap();
+
+        // Find, then change.
+        let found = tool(&mut bridge, "find_text", json!({ "query": "cat" }));
+        assert_eq!(found["count"], 2);
+        assert_eq!(found["matches"][0]["frame"], id);
+        let changed = tool(
+            &mut bridge,
+            "find_text",
+            json!({ "query": "cat", "replace": "dog" }),
+        );
+        assert_eq!(changed["replaced"], 2);
+        assert!(
+            tool(&mut bridge, "get_text", json!({ "frame": id }))["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("The dog sat")
+        );
+
+        // Edit a range: insert at the start.
+        tool(
+            &mut bridge,
+            "edit_text",
+            json!({ "frame": id, "start": 0, "end": 0, "text": "Once, " }),
+        );
+        assert!(
+            tool(&mut bridge, "get_text", json!({ "frame": id }))["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("Once, The dog")
+        );
+
+        // The layout, line by line.
+        let layout = tool(&mut bridge, "frame_layout", json!({ "frame": id }));
+        let lines = layout["lines"].as_array().unwrap();
+        assert!(!lines.is_empty());
+        assert_eq!(lines[0]["start"], 0);
+        assert!(lines[0]["text"].as_str().unwrap().starts_with("Once"));
+
+        // Step and repeat needs a selection, then makes copies.
+        tool(&mut bridge, "select", json!({ "frames": [] }));
+        let reply = call(
+            &mut bridge,
+            1,
+            "tools/call",
+            json!({ "name": "step_and_repeat", "arguments": { "copies": 2, "dx": 0, "dy": 220 } }),
+        );
+        assert_eq!(reply["result"]["isError"], true);
+        tool(&mut bridge, "select", json!({ "frames": [id] }));
+        tool(
+            &mut bridge,
+            "step_and_repeat",
+            json!({ "copies": 2, "dx": 0, "dy": 220 }),
+        );
+        let doc = tool(&mut bridge, "describe_document", json!({}));
+        assert_eq!(doc["frames"].as_array().unwrap().len(), 3);
+
+        // Spelling, with a small dictionary; then a word vouched for.
+        bridge.state.dictionaries.insert(
+            "en",
+            tessera_text::spell::Dictionary::parse("", "6\nonce\nthe\nsat\non\nmat\npurred\n"),
+        );
+        let spelt = tool(&mut bridge, "check_spelling", json!({ "frame": id }));
+        assert!(spelt["count"].as_u64().unwrap() >= 1, "{spelt}");
+        assert_eq!(spelt["findings"][0]["word"], "dog");
+        tool(&mut bridge, "add_to_dictionary", json!({ "word": "dog" }));
+        let spelt = tool(&mut bridge, "check_spelling", json!({ "frame": id }));
+        assert!(
+            spelt["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|f| f["word"] != "dog")
+        );
+
+        // Preflight reads.
+        let report = tool(&mut bridge, "preflight", json!({}));
+        assert!(report["problems"].is_array());
+
+        // Fonts and the whole document.
+        assert!(tool(&mut bridge, "list_fonts", json!({}))["families"].is_array());
+        let whole = tool(&mut bridge, "document_json", json!({}));
+        assert!(
+            whole["frames"].is_object() || whole["frames"].is_array(),
+            "{}",
+            whole.to_string().len()
+        );
+    }
+
+    #[test]
+    fn export_takes_the_dialog_s_choices() {
+        let dir = std::env::temp_dir().join(format!("tessera-bridge-x-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut bridge = Bridge::new();
+        tool(
+            &mut bridge,
+            "add_rectangle",
+            json!({ "x": 10, "y": 10, "width": 50, "height": 50 }),
+        );
+        let pdf = dir.join("marks.pdf");
+        let out = tool(
+            &mut bridge,
+            "export_pdf",
+            json!({ "path": pdf, "standard": "plain", "crop": true, "registration": true, "offset": 12 }),
+        );
+        assert_eq!(out["marks"]["crop"], true);
+        assert_eq!(out["marks"]["offset"], 12.0);
+        assert!(std::fs::read(&pdf).unwrap().starts_with(b"%PDF"));
+        let reply = call(
+            &mut bridge,
+            1,
+            "tools/call",
+            json!({ "name": "export_pdf", "arguments": { "path": pdf, "standard": "x9" } }),
+        );
+        assert_eq!(reply["result"]["isError"], true);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

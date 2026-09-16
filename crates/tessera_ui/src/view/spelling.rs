@@ -254,7 +254,7 @@ fn unknown_words(
 }
 
 /// One unknown word, where it is.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Finding {
     pub story: StoryId,
     pub range: Range<usize>,
@@ -420,6 +420,30 @@ impl SpellingWindow {
         self.at = None;
         None
     }
+}
+
+/// The unknown words of one story, or of every story, up to `limit` — the
+/// walk the box makes, taken all at once, for a caller with no box.
+pub fn findings(state: &mut TesseraApp, story: Option<StoryId>, limit: usize) -> Vec<Finding> {
+    if !state.dictionaries.user_words_read() {
+        state.dictionaries.load_user_words();
+    }
+    let mut walk = SpellingWindow {
+        stories: match story {
+            Some(id) => vec![id],
+            None => state.active().document().stories.keys().collect(),
+        },
+        at: Some((0, 0)),
+        ..SpellingWindow::default()
+    };
+    let mut out = Vec::new();
+    while out.len() < limit {
+        match walk.next(state) {
+            Some(finding) => out.push(finding),
+            None => break,
+        }
+    }
+    out
 }
 
 /// The sentence-ish stretch around a word: up to forty characters either
