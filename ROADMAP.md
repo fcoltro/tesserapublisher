@@ -2587,9 +2587,26 @@ the way ExtendScript sits outside InDesign.
   starts at x 595, so a frame placed at x 20 is on the pasteboard and a
   clipped render shows nothing — the `initialize` instructions say to read
   the page's bounds first, and a model will; the tests now do.
-- [ ] Not yet: a tool call through a real client, once one is logged in;
-  ids inside `describe_shapes` objects are in the document's own
-  `{idx, version}` form rather than numbers.
+- [x] **A tool call through a real client** (2026-09-15, late). Claude
+  Code's own session, with the `tessera` server registered for this
+  project, performed the acceptance sentence itself: read the page's
+  bounds, defined a 36pt centred bold style, placed "Spring" on page one,
+  applied the style, rendered the page and looked at it, and undid the
+  style — each a tool call from a real MCP client, not a piped line.
+- [x] **Deep review, twelve findings, fixed** (`8df76ba`,
+  `docs/reviews/2026-09-15-deep-bug-review.md`): `get_preferences` had
+  returned the assistant's API key into the conversation — a model would
+  have carried the credential in its messages — and it now returns
+  `api_key_configured` and refuses to set the key by tool; a console turn
+  bound to no document could edit whichever was active when its reply
+  arrived; Stop still ran the tools an outstanding reply came back with; a
+  byte offset inside a UTF-8 character panicked the window through the
+  bridge; `ReplaceMatches` left a live editing buffer stale; and more.
+  Every one has a regression test. The first was the bridge author's, and
+  it is the kind a review finds and an author does not: the tool did what
+  it said, and what it said was wrong.
+- [ ] Not yet: ids inside `describe_shapes` objects are in the document's
+  own `{idx, version}` form rather than numbers.
 
 ---
 
