@@ -37,10 +37,11 @@ pub enum Dock {
     Styles,
     Swatches,
     Preflight,
+    Console,
 }
 
 impl Dock {
-    pub const ALL: [Dock; 6] = [
+    pub const ALL: [Dock; 7] = [
         Dock::Properties,
         Dock::Pages,
         Dock::Layers,
@@ -49,6 +50,7 @@ impl Dock {
         // Last, because it is the one you go to when you have finished rather
         // than while you are working.
         Dock::Preflight,
+        Dock::Console,
     ];
 
     pub fn title(self) -> &'static str {
@@ -59,6 +61,7 @@ impl Dock {
             Dock::Styles => "Styles",
             Dock::Swatches => "Swatches",
             Dock::Preflight => "Preflight",
+            Dock::Console => "AI Console",
         }
     }
 
@@ -70,6 +73,7 @@ impl Dock {
             Dock::Styles => Icon::Styles,
             Dock::Swatches => Icon::Swatches,
             Dock::Preflight => Icon::Preflight,
+            Dock::Console => Icon::SquareTerminal,
         }
     }
 
@@ -86,6 +90,7 @@ impl Dock {
             Dock::Styles => state.styles_window.open,
             Dock::Swatches => state.swatches_window.open,
             Dock::Preflight => state.preflight.open,
+            Dock::Console => state.console.open,
         }
     }
 
@@ -97,6 +102,7 @@ impl Dock {
             Dock::Styles => state.styles_window.open = open,
             Dock::Swatches => state.swatches_window.open = open,
             Dock::Preflight => state.preflight.open = open,
+            Dock::Console => state.console.open = open,
         }
     }
 }
@@ -174,6 +180,7 @@ pub(crate) fn body(ui: &mut Ui, state: &mut TesseraApp, dock: Dock) {
         Dock::Styles => crate::view::styles::docked(ui, state),
         Dock::Swatches => crate::view::swatches::docked(ui, state),
         Dock::Preflight => crate::view::preflight_panel::docked(ui, state),
+        Dock::Console => crate::view::console::docked(ui, state),
     }
 }
 
@@ -194,6 +201,7 @@ mod tests {
             Dock::Styles,
             Dock::Swatches,
             Dock::Preflight,
+            Dock::Console,
         ] {
             assert!(!dock.is_open(&state), "{} starts shut", dock.title());
         }

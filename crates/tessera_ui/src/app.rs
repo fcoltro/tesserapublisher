@@ -360,6 +360,8 @@ pub struct TesseraApp {
     pub squiggles: crate::view::spelling::Squiggles,
     /// The word a right-click on a wave asked about, while its menu is up.
     pub spell_menu: Option<crate::view::spelling::SpellMenu>,
+    /// The console: the transcript with a model, and the prompts waiting.
+    pub console: crate::view::console::Console,
     /// Find and Change. Modeless, so it is not in `modal_open`.
     pub find: crate::view::find::FindWindow,
 
@@ -520,6 +522,7 @@ impl TesseraApp {
             dictionaries: crate::view::spelling::Dictionaries::default(),
             squiggles: crate::view::spelling::Squiggles::default(),
             spell_menu: None,
+            console: crate::view::console::Console::default(),
             persists: false,
             editing_master: None,
             rail_open: true,

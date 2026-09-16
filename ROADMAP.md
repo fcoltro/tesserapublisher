@@ -2593,6 +2593,58 @@ the way ExtendScript sits outside InDesign.
 
 ---
 
+# Milestone 14 — The AI Console
+
+**Named 2026-09-15, by the user's ask:** "a CLI window to let the user talk
+and ask things to the model." The bridge lets a model in through any MCP
+client; this lets a person who has never heard of MCP talk to a model of
+their own from inside the window.
+
+**The decision: a docked panel, the person's own provider and key, and
+the same tools.** Window › AI Console (F9): a transcript above, one line to
+type in below, Stop while a turn runs, Clear to start over. Preferences ›
+General › Assistant: *Anthropic*, or *OpenAI-compatible* with a base URL —
+which is also Ollama, Groq, Mistral, OpenRouter, DeepSeek, LM Studio and
+Gemini's compatible endpoint, so two adapters cover nearly every model a
+person can get a key for. The key lives in the preferences file, in the
+clear, in the person's own configuration folder; said so in the window.
+
+**The loop** (`tessera_bridge::assistant`): send the conversation and the
+42 tools; the model answers with words or tool calls; each call runs and
+its result goes back; again, until only words are left. Forty calls a turn
+at most — a model that calls tools forever is a bill. The HTTP is a
+`Transport` handed in by the binary, as the update check is handed its
+fetch, so the loop is tested against canned replies in both providers'
+wire shapes and `tessera_ui` still has no HTTP client.
+
+**The threading** (`tessera_bridge::console::Driver`): the round trips run
+on a thread; a tool call crosses to the UI thread on a channel with a reply
+channel of its own and the frame loop answers it — the arrangement the live
+socket earned. Each tool the model runs is one line in the transcript
+("add_text_frame → frame 3") and one undo entry. Every prompt is prefixed
+with a context line — pages, frames, page in view, selection — because the
+system prompt is set once and the selection is not.
+
+### Acceptance
+
+> With a key in Preferences, a person opens the AI Console, types "put a
+> centred headline reading Spring on page one and show me", and watches the
+> frame appear on the canvas, the turn's tool calls scroll past, and the
+> model's one-line reply — then presses Ctrl+Z and the headline goes.
+
+- [x] The panel, the preferences, the loop, the driver, the transport, the
+  `square-terminal` icon (2026-09-15). 1930 tests. Looked at: the panel in
+  the rail, dense and quiet, with a model set and without.
+- [ ] **The acceptance sentence has not been performed**: no key and no
+  local model on this machine. The loop is proved against canned replies
+  in both wire shapes; the first real turn is owed, and every session of
+  real use has found something.
+- [ ] Not built: streaming (a reply appears whole), the key in the OS
+  keychain, a picture of the page sent to a vision model rather than a
+  path it must read, a transcript that survives a restart.
+
+---
+
 ## Working agreement
 
 - Milestones are ordered by dependency. **Milestone 0 is the spine** — the

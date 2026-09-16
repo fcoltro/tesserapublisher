@@ -122,6 +122,8 @@ pub struct Session {
     pub system: String,
     pub tools: Vec<Value>,
     pub messages: Vec<Message>,
+    /// Set by whoever can see a Stop button; read before each round trip.
+    pub cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     transport: Box<dyn Transport>,
 }
 
@@ -141,8 +143,15 @@ impl Session {
             system,
             tools,
             messages: Vec::new(),
+            cancel: None,
             transport,
         }
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(|c| c.load(std::sync::atomic::Ordering::SeqCst))
     }
 
     /// What the person said.
@@ -205,6 +214,9 @@ impl Session {
     ) -> Result<String, String> {
         self.ask(text);
         for _ in 0..MAX_STEPS {
+            if self.cancelled() {
+                return Err("stopped".into());
+            }
             match self.step()? {
                 Step::Reply(reply) => {
                     heard(&Event::Said(reply.clone()));
@@ -473,10 +485,13 @@ mod tests {
     use std::cell::RefCell;
     use std::sync::{Arc, Mutex};
 
+    /// What one request was: url, headers, body.
+    type Asked = (String, Vec<(String, String)>, Value);
+
     /// Canned replies, in order, remembering what was asked.
     struct Canned {
         replies: Mutex<Vec<String>>,
-        asked: Arc<Mutex<Vec<(String, Vec<(String, String)>, Value)>>>,
+        asked: Arc<Mutex<Vec<Asked>>>,
     }
 
     impl Transport for Canned {
@@ -499,12 +514,7 @@ mod tests {
         }
     }
 
-    fn canned(
-        replies: &[Value],
-    ) -> (
-        Box<Canned>,
-        Arc<Mutex<Vec<(String, Vec<(String, String)>, Value)>>>,
-    ) {
+    fn canned(replies: &[Value]) -> (Box<Canned>, Arc<Mutex<Vec<Asked>>>) {
         let asked = Arc::new(Mutex::new(Vec::new()));
         (
             Box::new(Canned {

@@ -6,6 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod icon;
+mod model_http;
 mod platform;
 mod releases;
 
@@ -104,9 +105,20 @@ fn main() -> eframe::Result<()> {
                     .ok()
             });
 
+            // The console's model, when the person has set one. The HTTP
+            // is this binary's; the turns are the bridge's.
+            let console = {
+                let ctx = cc.egui_ctx.clone();
+                tessera_bridge::console::Driver::new(
+                    std::sync::Arc::new(|| Box::new(model_http::Http) as Box<_>),
+                    std::sync::Arc::new(move || ctx.request_repaint()),
+                )
+            };
+
             Ok(Box::new(NativeApp {
                 app,
                 bridge,
+                console,
                 maximize_pending: true,
                 fit_after_maximize: true,
             }) as Box<dyn eframe::App>)
@@ -124,6 +136,8 @@ struct NativeApp {
     app: TesseraApp,
     /// The socket a model reaches this window on, when one could be opened.
     bridge: Option<tessera_bridge::live::Listener>,
+    /// The console's turns with the person's own model.
+    console: tessera_bridge::console::Driver,
     maximize_pending: bool,
     fit_after_maximize: bool,
 }
@@ -144,6 +158,7 @@ impl eframe::App for NativeApp {
         if let Some(bridge) = &self.bridge {
             bridge.pump(&mut self.app);
         }
+        self.console.pump(&mut self.app);
         self.app.logic(ctx, frame);
     }
 

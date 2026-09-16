@@ -75,6 +75,17 @@ Inside the objects `describe_shapes` shows, an id appears as the document
 keeps it, `{"idx", "version"}`, which `describe_document` gives beside each
 number as `key`.
 
+## The AI Console
+
+For a person who would rather not install a client: **Window › AI Console**
+(F9) is a panel inside Tessera that talks to a model of their own. In
+Preferences › General › Assistant, choose *Anthropic* or *OpenAI-compatible*
+(OpenAI, or a base URL for Ollama, Groq, Mistral, OpenRouter, DeepSeek, LM
+Studio, Gemini's compatible endpoint), name the model, paste the key. Then
+type. The model has the same 42 tools; each one it runs is a line in the
+transcript and an undo entry. The key is kept in the preferences file, in
+the clear, in your own configuration folder.
+
 ## Trust
 
 The port is loopback only and carries no secret: any process on the same

@@ -263,6 +263,7 @@ pub enum Run {
     ShowTour,
     Package,
     TogglePreflight,
+    ToggleConsole,
     ToggleStyles,
     ChooseOutputIntent,
     ToggleSoftProof,
@@ -363,6 +364,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::ShowTour
         | Run::ChooseOutputIntent
         | Run::TogglePreflight
+        | Run::ToggleConsole
         | Run::ToggleStyles
         | Run::ToggleSoftProof
         | Run::ToggleSwatches
@@ -1153,6 +1155,7 @@ pub fn all() -> &'static [Action] {
         // say it was one.
         a("Swatches", Some("F6"), Group::Window, ToggleSwatches),
         a("Preflight", Some("F8"), Group::Window, TogglePreflight),
+        a("AI Console", Some("F9"), Group::Window, ToggleConsole),
         // Under Edit, where every application that is not macOS puts it, and
         // last in that menu because it is the one entry there that is not an
         // edit to the document.
@@ -1290,6 +1293,13 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             // can see.
             if state.preflight.open {
                 state.rail_open = true;
+            }
+        }
+        Run::ToggleConsole => {
+            state.console.open = !state.console.open;
+            if state.console.open {
+                state.rail_open = true;
+                state.prefs.docking.reveal("AI Console");
             }
         }
         Run::ChooseOutputIntent => crate::file_ops::choose_output_intent(state),
@@ -1778,6 +1788,7 @@ mod tests {
                 | "Layers"
                 | "Swatches"
                 | "Preflight"
+                | "AI Console"
                 | "Paragraph and character styles"
                 | "Preview view"
                 | "Current page number"

@@ -37,6 +37,8 @@ pub enum Icon {
     Swatches,
     Styles,
     Close,
+    /// The AI console.
+    SquareTerminal,
     Rectangle,
     Ellipse,
     Line,
@@ -167,6 +169,13 @@ impl Icon {
                 "M8 18 H16",
             ],
             Self::Close => &["M5 5 L19 19", "M19 5 L5 19"],
+            // lucide: square-terminal. The rect is written as a path, since
+            // the cache parses path data and nothing else.
+            Self::SquareTerminal => &[
+                "m7 11 2-2-2-2",
+                "M11 13h4",
+                "M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z",
+            ],
             // lucide: list-checks
             Self::Preflight => &[
                 "m3 17 2 2 4-4",
@@ -593,6 +602,7 @@ impl Icon {
             | Self::Properties
             | Self::Pages
             | Self::Preflight
+            | Self::SquareTerminal
             | Self::Swatches
             | Self::Styles
             | Self::Close
@@ -885,7 +895,7 @@ pub fn paint_rotated(
 /// icon rather than returning nothing, so the cost of forgetting is a slower
 /// first draw instead of an invisible button; this list is the fast path, not
 /// the only one.
-pub const ALL: [Icon; 70] = [
+pub const ALL: [Icon; 71] = [
     Icon::Sun,
     Icon::Moon,
     Icon::DirectSelect,
@@ -898,6 +908,7 @@ pub const ALL: [Icon; 70] = [
     Icon::Swatches,
     Icon::Styles,
     Icon::Close,
+    Icon::SquareTerminal,
     Icon::PlaceImage,
     Icon::TextAlignLeft,
     Icon::TextAlignCentre,
@@ -1135,7 +1146,7 @@ mod tests {
         // fails this rather than shipping an invisible button.
         assert_eq!(
             ALL.len(),
-            70,
+            71,
             "an icon was added to the enum without being added to ALL"
         );
     }

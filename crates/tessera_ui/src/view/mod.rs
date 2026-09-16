@@ -8,6 +8,7 @@
 pub mod ambient;
 pub mod anchors;
 pub mod canvas_toolbar;
+pub mod console;
 pub mod control;
 pub mod docks;
 pub mod document_tabs;

@@ -130,6 +130,30 @@ fn default_panel_opacity() -> f32 {
     0.82
 }
 
+/// Where the console's model is and how to be let in.
+///
+/// **The key is kept in the preferences file, in the clear.** Said here
+/// and in the settings window rather than hidden: the file is the person's
+/// own, in their own configuration folder, which is where every other
+/// desktop tool that takes an API key keeps one — and a key they can see is
+/// one they can revoke.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Assistant {
+    /// `anthropic`, `openai` (which is also Ollama, Groq, Mistral,
+    /// OpenRouter, DeepSeek, LM Studio and Gemini's compatible endpoint), or
+    /// empty for none.
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub api_key: String,
+    /// The model's name, as the provider spells it.
+    #[serde(default)]
+    pub model: String,
+    /// Empty for the provider's own; a local server or proxy otherwise.
+    #[serde(default)]
+    pub base_url: String,
+}
+
 /// What the application remembers between runs.
 ///
 /// Deliberately not document data: a preference travels with the person, not
@@ -192,6 +216,10 @@ pub struct Preferences {
     /// the dictionaries do not cover, or names, or code.
     #[serde(default = "yes")]
     pub dynamic_spelling: bool,
+
+    /// The model the console talks to, and how to reach it.
+    #[serde(default)]
+    pub assistant: Assistant,
 
     /// Whether Tessera keeps a recovery copy of unsaved work.
     ///
@@ -302,6 +330,7 @@ impl Default for Preferences {
             snapping: yes(),
             typographers_quotes: yes(),
             dynamic_spelling: yes(),
+            assistant: Assistant::default(),
             recovery_copy: yes(),
             recovery_seconds: default_recovery_seconds(),
             export_presets: crate::view::export_dialog::Preset::usual(),
@@ -518,6 +547,7 @@ mod tests {
             snapping: false,
             typographers_quotes: false,
             dynamic_spelling: false,
+            assistant: Assistant::default(),
             recovery_copy: false,
             recovery_seconds: 42,
             export_presets: crate::view::export_dialog::Preset::usual(),

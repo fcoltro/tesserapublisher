@@ -210,6 +210,7 @@ fn restore(state: &mut TesseraApp) {
             state.prefs.snapping = fresh.snapping;
             state.prefs.typographers_quotes = fresh.typographers_quotes;
             state.prefs.dynamic_spelling = fresh.dynamic_spelling;
+            state.prefs.assistant = fresh.assistant.clone();
             state.prefs.updates.enabled = fresh.updates.enabled;
         }
         Page::Appearance => {
@@ -302,6 +303,58 @@ fn general(ui: &mut Ui, state: &mut TesseraApp) {
         "A red wave under any word the language\u{2019}s dictionary does not know, \
          as you type. Needs a dictionary in the dictionaries folder; without one \
          nothing is marked.",
+    );
+
+    heading(ui, "Assistant");
+    let assistant = &mut state.prefs.assistant;
+    ui.horizontal(|ui| {
+        for (kind, label) in [("anthropic", "Anthropic"), ("openai", "OpenAI-compatible")] {
+            if ui
+                .selectable_label(assistant.provider == kind, label)
+                .clicked()
+            {
+                assistant.provider = kind.to_owned();
+                if assistant.model.is_empty() {
+                    assistant.model = match kind {
+                        "anthropic" => "claude-sonnet-4-5".to_owned(),
+                        _ => "gpt-4o".to_owned(),
+                    };
+                }
+            }
+        }
+        if !assistant.provider.is_empty() && ui.small_button("None").clicked() {
+            assistant.provider.clear();
+        }
+    });
+    if !assistant.provider.is_empty() {
+        crate::view::panels::field(ui, "Model", |ui| {
+            ui.add(egui::TextEdit::singleline(&mut assistant.model).desired_width(f32::INFINITY));
+        });
+        crate::view::panels::field(ui, "API key", |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut assistant.api_key)
+                    .password(true)
+                    .desired_width(f32::INFINITY),
+            );
+        });
+        crate::view::panels::field(ui, "Base URL", |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut assistant.base_url)
+                    .hint_text(if assistant.provider == "anthropic" {
+                        "https://api.anthropic.com"
+                    } else {
+                        "https://api.openai.com/v1 — or http://localhost:11434/v1 for Ollama"
+                    })
+                    .desired_width(f32::INFINITY),
+            );
+        });
+    }
+    note(
+        ui,
+        "The model the Console talks to (Window › AI Console). OpenAI-compatible is \
+         also Ollama, Groq, Mistral, OpenRouter, DeepSeek, LM Studio and Gemini\u{2019}s \
+         compatible endpoint: give its base URL. The key is kept in the preferences \
+         file, in the clear, in your own configuration folder.",
     );
 }
 
@@ -805,6 +858,7 @@ mod tests {
             snapping: false,
             typographers_quotes: false,
             dynamic_spelling: false,
+            assistant: Default::default(),
             recovery_copy: false,
             recovery_seconds: 11,
             export_presets: crate::view::export_dialog::Preset::usual(),
