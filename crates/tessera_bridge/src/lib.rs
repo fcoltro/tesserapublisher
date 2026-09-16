@@ -24,6 +24,7 @@ use tessera_document::ids::FrameId;
 use tessera_ui::TesseraApp;
 use tessera_ui::command::{Command, apply};
 
+pub mod assistant;
 pub mod catalogue;
 pub mod dialogs;
 pub mod live;
