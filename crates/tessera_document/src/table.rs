@@ -426,8 +426,30 @@ impl Table {
     pub fn merge(&mut self, row: usize, column: usize, span: Span) -> Vec<StoryId> {
         let down = usize::from(span.rows.max(1));
         let across = usize::from(span.columns.max(1));
-        if row + down > self.rows() || column + across > self.columns() {
+        if row.saturating_add(down) > self.rows()
+            || column.saturating_add(across) > self.columns()
+            || self.at(row, column).and_then(Slot::cell).is_none()
+        {
             return Vec::new();
+        }
+
+        // A merge may absorb whole spans, never only their origins or tails.
+        // Validate before changing slots so a refusal preserves every story.
+        for r in 0..self.rows() {
+            for c in 0..self.columns() {
+                let Some(cell) = self.at(r, c).and_then(Slot::cell) else {
+                    continue;
+                };
+                let bottom = r + usize::from(cell.span.rows.max(1));
+                let right = c + usize::from(cell.span.columns.max(1));
+                let overlaps =
+                    r < row + down && bottom > row && c < column + across && right > column;
+                if overlaps
+                    && (r < row || c < column || bottom > row + down || right > column + across)
+                {
+                    return Vec::new();
+                }
+            }
         }
 
         let mut absorbed = Vec::new();
@@ -445,7 +467,10 @@ impl Table {
             }
         }
         if let Some(Slot::Cell(cell)) = self.at_mut(row, column) {
-            cell.span = span;
+            cell.span = Span {
+                rows: span.rows.max(1),
+                columns: span.columns.max(1),
+            };
         }
         absorbed
     }

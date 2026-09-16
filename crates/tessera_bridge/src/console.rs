@@ -52,6 +52,7 @@ enum Happened {
 
 /// A turn under way.
 struct Running {
+    document: tessera_ui::app::DocumentKey,
     happened: Receiver<Happened>,
     pending: Receiver<Pending>,
     cancel: Arc<AtomicBool>,
@@ -92,19 +93,32 @@ impl Driver {
             // Cleared: the model forgets too.
             self.session = None;
         }
-        if let Some(running) = &self.running {
+        if let Some(running) = &mut self.running {
+            if state.active != running.document && !running.cancel.load(Ordering::SeqCst) {
+                running.cancel.store(true, Ordering::SeqCst);
+                state.console.heard(Line::Note(
+                    "Stopped because the active document changed. Send a new prompt to continue."
+                        .into(),
+                ));
+            }
             if std::mem::take(&mut state.console.stop_requested) {
                 running.cancel.store(true, Ordering::SeqCst);
             }
             while let Ok(pending) = running.pending.try_recv() {
-                let outcome =
+                let outcome = if running.cancel.load(Ordering::SeqCst) {
+                    ("stopped before execution".into(), true)
+                } else {
                     match crate::tools::call(state, &pending.call.name, &pending.call.arguments) {
                         Ok(value) => (value.to_string(), false),
                         Err(crate::Failure::Refused(message)) => (message, true),
                         Err(crate::Failure::NoSuchTool) => {
                             (format!("no tool named {:?}", pending.call.name), true)
                         }
-                    };
+                    }
+                };
+                // A tool can deliberately open, close or switch documents.
+                // Only that explicit action updates the turn's document identity.
+                running.document = state.active;
                 let _ = pending.reply.send(outcome);
             }
             let mut finished = None;
@@ -201,6 +215,7 @@ impl Driver {
             })
             .ok();
         self.running = Some(Running {
+            document: state.active,
             happened,
             pending,
             cancel,

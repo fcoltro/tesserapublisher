@@ -81,7 +81,7 @@ pub fn prepare(path: &Path) -> Result<Prepared, Error> {
         // Dimensions from the file's own header rather than by decoding it:
         // reading a marker chain is a few hundred bytes of work where decoding
         // a 40-megapixel photograph is a second and a hundred megabytes.
-        if let Some((width, height)) = jpeg_size(&bytes) {
+        if let Some((width, height, 8, 3)) = jpeg_header(&bytes) {
             return Ok(Prepared {
                 width,
                 height,
@@ -92,8 +92,8 @@ pub fn prepare(path: &Path) -> Result<Prepared, Error> {
                 alpha: None,
             });
         }
-        // A JPEG whose header cannot be walked is one this must not pass
-        // through unread — falling through decodes it properly or fails.
+        // Grayscale, CMYK and non-8-bit JPEGs cannot wear an RGB/8-bit label.
+        // Decode them to actual RGB samples, as well as unrecognized headers.
     }
 
     let decoded = image::load_from_memory(&bytes)
@@ -261,12 +261,12 @@ fn is_jpeg(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0xFF, 0xD8])
 }
 
-/// Walk a JPEG's marker chain for the frame header that states its size.
+/// Read width, height, sample precision and component count from a JPEG header.
 ///
 /// Returns `None` for anything unexpected rather than guessing. A wrong size
 /// here is a picture drawn at the wrong aspect ratio in a printed job, and a
 /// slow correct answer is available by decoding.
-fn jpeg_size(bytes: &[u8]) -> Option<(u32, u32)> {
+fn jpeg_header(bytes: &[u8]) -> Option<(u32, u32, u8, u8)> {
     let mut at = 2;
     while at + 3 < bytes.len() {
         if bytes[at] != 0xFF {
@@ -294,7 +294,14 @@ fn jpeg_size(bytes: &[u8]) -> Option<(u32, u32)> {
             // make here and the reason this is one function with one test.
             let height = u16::from_be_bytes([*bytes.get(at + 5)?, *bytes.get(at + 6)?]);
             let width = u16::from_be_bytes([*bytes.get(at + 7)?, *bytes.get(at + 8)?]);
-            return (width > 0 && height > 0).then_some((u32::from(width), u32::from(height)));
+            let precision = *bytes.get(at + 4)?;
+            let components = *bytes.get(at + 9)?;
+            return (width > 0 && height > 0).then_some((
+                u32::from(width),
+                u32::from(height),
+                precision,
+                components,
+            ));
         }
         at += 2 + length;
     }
@@ -449,7 +456,7 @@ mod tests {
         // mistake to make here — and making it draws every picture at the wrong
         // aspect ratio in a printed job.
         let bytes = tiny_jpeg();
-        assert_eq!(jpeg_size(&bytes), Some((3, 7)));
+        assert_eq!(jpeg_header(&bytes), Some((3, 7, 8, 3)));
     }
 
     #[test]

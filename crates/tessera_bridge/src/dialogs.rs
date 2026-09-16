@@ -454,6 +454,7 @@ fn edit_text(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String>
     if end < start {
         return Err("end is before start".into());
     }
+    crate::tools::validate_text_range(state, story, &(start..end))?;
     let replacement = text(arguments, "text")?;
     state.active_mut().editing = None;
     Ok(run(

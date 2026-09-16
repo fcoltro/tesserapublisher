@@ -836,6 +836,15 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         }
 
         Command::PlaceArtwork { id, path, fit } => {
+            let path = match std::path::absolute(&path) {
+                Ok(path) => path,
+                Err(error) => {
+                    state.status = Some(crate::app::Status::error(format!(
+                        "Could not resolve artwork path: {error}"
+                    )));
+                    return;
+                }
+            };
             // The file is measured **now**, once, and the size is kept. A
             // document must open and lay out without touching the disk: a
             // missing image cannot be allowed to stop a page from drawing.
@@ -955,7 +964,10 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             };
             let absorbed = table.merge(row, column, span);
             if absorbed.is_empty() && !span.is_single() {
-                return; // refused: off the edge
+                state.status = Some(crate::app::Status::error(
+                    "Cannot merge: choose whole cells within the table",
+                ));
+                return;
             }
             // The stories the merge swallowed go with it. A story nothing
             // refers to is a leak the file then carries forever.
@@ -1029,12 +1041,21 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         Command::SetText { id, text } => {
             if let Some(FrameKind::Text { story, .. }) =
                 state.active().document().frame(id).map(|f| f.kind.clone())
-                && let Some(s) = state.active_mut().document_mut().story_mut(story)
+                && let Some(mut s) = state.active().document().story(story).cloned()
             {
                 // Not `s.text = text`. Assigning the string leaves `runs`
                 // describing a length the text no longer has, which is
                 // corruption rather than a glitch and shows up far from here.
                 s.set_text(text);
+                // End the matching session before it can write its old copy back.
+                if editing_buffer_for(state, story).is_some() {
+                    state.active_mut().editing = None;
+                    state.active_mut().editing_cell = None;
+                }
+                state
+                    .active_mut()
+                    .document_mut()
+                    .replace_story_from_edit(story, s);
             }
         }
 
@@ -1457,7 +1478,10 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 .active_mut()
                 .document_mut()
                 .import_frames(&source, &roots, layer, OFFSET, OFFSET, false);
-            state.active_mut().selection.replace_all(pasted);
+            match pasted {
+                Ok(pasted) => state.active_mut().selection.replace_all(pasted),
+                Err(message) => state.status = Some(crate::app::Status::error(message)),
+            }
         }
 
         Command::MoveSelectionInZ(how) => {
@@ -1862,6 +1886,13 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 0.0,
                 false,
             );
+            let pasted = match pasted {
+                Ok(pasted) => pasted,
+                Err(message) => {
+                    state.status = Some(crate::app::Status::error(message));
+                    return;
+                }
+            };
             let Some(id) = pasted.first().copied() else {
                 return;
             };

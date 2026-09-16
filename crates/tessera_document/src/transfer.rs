@@ -26,9 +26,11 @@ impl Document {
     ) -> Vec<FrameId> {
         let source = self.clone();
         self.import_frames(&source, roots, layer, dx, dy, true)
+            .expect("same-document copies keep variable identities")
     }
 
     /// Import from a frozen source. Only a same-document copy may reuse resource IDs.
+    /// Refuses without changing the target if copied variables exceed its capacity.
     pub fn import_frames(
         &mut self,
         source: &Document,
@@ -37,7 +39,7 @@ impl Document {
         dx: f64,
         dy: f64,
         same_document: bool,
-    ) -> Vec<FrameId> {
+    ) -> Result<Vec<FrameId>, &'static str> {
         self.import_graph(
             source,
             roots,
@@ -52,6 +54,7 @@ impl Document {
     pub(crate) fn copy_page_frames(&mut self, roots: &[FrameId], dx: f64, dy: f64) -> Vec<FrameId> {
         let source = self.clone();
         self.import_graph(&source, roots, Destination::OriginalLayers, dx, dy, true)
+            .expect("same-document copies keep variable identities")
     }
 
     fn import_graph(
@@ -62,7 +65,7 @@ impl Document {
         dx: f64,
         dy: f64,
         same_document: bool,
-    ) -> Vec<FrameId> {
+    ) -> Result<Vec<FrameId>, &'static str> {
         let mut ids = Vec::new();
         let mut seen = HashSet::new();
         let mut pending = roots.to_vec();
@@ -93,6 +96,11 @@ impl Document {
                 _ => {}
             }
         }
+        // Plan variable identities before allocating anything: a full variable
+        // table must refuse the entire paste without leaving partial resources.
+        let first_new_variable = self.variables.len();
+        let (variables, definitions) = variable_plan(source, self, &ids, same_document)?;
+        self.variables = definitions;
         let frame_map: HashMap<_, _> = ids
             .iter()
             .map(|id| (*id, self.frames.insert(source.frames[*id].clone())))
@@ -107,7 +115,17 @@ impl Document {
             objects: HashMap::new(),
             links: HashMap::new(),
             swatches: HashMap::new(),
+            variables,
         };
+        for index in first_new_variable..transfer.target.variables.len() {
+            if let crate::variables::VariableKind::RunningHeader { style, which } =
+                transfer.target.variables[index].kind.clone()
+            {
+                let style = transfer.paragraph(style).unwrap_or_default();
+                transfer.target.variables[index].kind =
+                    crate::variables::VariableKind::RunningHeader { style, which };
+            }
+        }
         for id in &ids {
             let mut frame = source.frames[*id].clone();
             // Compose a document-space translation, preserving rotations and shears.
@@ -210,8 +228,71 @@ impl Document {
             }
         }
         transfer.target.touch();
-        roots
+        Ok(roots)
     }
+}
+
+type VariablePlan = (HashMap<u8, u8>, Vec<crate::variables::TextVariable>);
+
+fn variable_plan(
+    source: &Document,
+    target: &Document,
+    frames: &[FrameId],
+    same_document: bool,
+) -> Result<VariablePlan, &'static str> {
+    use crate::variables::{MOST_VARIABLES, TextVariable, VariableKind};
+    use tessera_text::{story::Story, variables::Marker};
+    fn collect(story: &Story, needed: &mut std::collections::BTreeSet<u8>) {
+        for c in story.text.chars() {
+            if let Some(Marker::Variable(index)) = Marker::of(c) {
+                needed.insert(index);
+            }
+        }
+        for note in &story.footnotes {
+            collect(note, needed);
+        }
+    }
+    let mut definitions = target.variables.clone();
+    let mut mapping = HashMap::new();
+    if same_document {
+        return Ok((mapping, definitions));
+    }
+    let mut needed = std::collections::BTreeSet::new();
+    for frame in frames {
+        let stories = match &source.frames[*frame].kind {
+            FrameKind::Text { story, .. } => vec![*story],
+            FrameKind::Table(table) => table.stories().collect(),
+            _ => Vec::new(),
+        };
+        for id in stories {
+            if let Some(story) = source.story(id) {
+                collect(story, &mut needed);
+            }
+        }
+    }
+    for index in needed {
+        // An undefined source marker means empty text, not a destination variable.
+        let definition = source
+            .variables
+            .get(usize::from(index))
+            .cloned()
+            .unwrap_or_else(|| TextVariable::custom("", ""));
+        let existing = matches!(definition.kind, VariableKind::Custom(_))
+            .then(|| definitions.iter().position(|v| v == &definition))
+            .flatten();
+        let mapped = if let Some(existing) = existing {
+            existing
+        } else {
+            if definitions.len() >= MOST_VARIABLES {
+                return Err("Cannot paste: the document has no room for the copied text variables");
+            }
+            let next = definitions.len();
+            definitions.push(definition);
+            next
+        };
+        mapping.insert(index, mapped as u8);
+    }
+    Ok((mapping, definitions))
 }
 
 struct Transfer<'a> {
@@ -224,6 +305,7 @@ struct Transfer<'a> {
     objects: HashMap<ObjectStyleId, ObjectStyleId>,
     links: HashMap<LinkId, LinkId>,
     swatches: HashMap<String, String>,
+    variables: HashMap<u8, u8>,
 }
 impl Transfer<'_> {
     fn color(&mut self, color: &mut Color) {
@@ -341,6 +423,12 @@ impl Transfer<'_> {
             return *mapped;
         }
         let mut story = self.source.story(id).cloned().unwrap_or_default();
+        self.remap_story(&mut story);
+        let mapped = self.target.add_story(story);
+        self.stories.insert(id, mapped);
+        mapped
+    }
+    fn remap_story(&mut self, story: &mut tessera_text::story::Story) {
         for run in &mut story.runs {
             run.style = run.style.and_then(|id| self.character(id));
             self.character_format(&mut run.local);
@@ -352,9 +440,23 @@ impl Transfer<'_> {
             }
             self.character_format(&mut para.local.character);
         }
-        let mapped = self.target.add_story(story);
-        self.stories.insert(id, mapped);
-        mapped
+        if !self.same_document {
+            use tessera_text::variables::Marker;
+            // Both marker code points occupy three bytes, preserving run offsets.
+            story.text = story
+                .text
+                .chars()
+                .map(|c| match Marker::of(c) {
+                    Some(Marker::Variable(index)) => {
+                        Marker::Variable(self.variables[&index]).character()
+                    }
+                    _ => c,
+                })
+                .collect();
+        }
+        for note in &mut story.footnotes {
+            self.remap_story(note);
+        }
     }
     fn link(&mut self, id: LinkId) -> LinkId {
         if self.same_document {

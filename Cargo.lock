@@ -3883,12 +3883,14 @@ dependencies = [
  "tessera_color",
  "tessera_document",
  "tessera_geometry",
+ "tessera_import",
  "tessera_layout",
  "tessera_pdf",
  "tessera_preflight",
  "tessera_render",
  "tessera_text",
  "tessera_ui",
+ "zip",
 ]
 
 [[package]]

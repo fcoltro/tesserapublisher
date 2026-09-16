@@ -1716,6 +1716,15 @@ impl Story {
     /// The trailing newline is included because it belongs to the paragraph it
     /// ends, which is where its own formatting lives.
     pub fn paragraph_bounds(&self, range: Range<usize>) -> Range<usize> {
+        // Public callers (including deserialized commands) may supply byte
+        // offsets inside a character. Never slice invalid UTF-8 boundaries.
+        let start = self
+            .text
+            .floor_char_boundary(range.start.min(self.text.len()));
+        let end = self
+            .text
+            .ceil_char_boundary(range.end.min(self.text.len()).max(start));
+        let range = start..end;
         let start = self.text[..range.start].rfind('\n').map_or(0, |i| i + 1);
         let last = if range.is_empty() {
             range.end

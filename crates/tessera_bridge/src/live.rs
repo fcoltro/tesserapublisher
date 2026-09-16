@@ -55,7 +55,10 @@ impl Listener {
         if let Some(dir) = port_file.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(&port_file, port.to_string())?;
+        {
+            let _registry = registry_lock(&port_file)?;
+            std::fs::write(&port_file, port.to_string())?;
+        }
 
         let (tx, requests) = channel::<Pending>();
         let wake = std::sync::Arc::new(wake);
@@ -99,8 +102,25 @@ impl Drop for Listener {
     /// relay falls back to headless, which is the right answer for a model
     /// that asked for a Tessera and found no window.
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.port_file);
+        if let Ok(_registry) = registry_lock(&self.port_file)
+            && read_port(&self.port_file) == Some(self.port)
+        {
+            let _ = std::fs::remove_file(&self.port_file);
+        }
     }
+}
+
+/// Serialize publication and conditional removal across processes. Keep the
+/// lock file in place so every opener locks the same filesystem object.
+fn registry_lock(port_file: &Path) -> std::io::Result<std::fs::File> {
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(port_file.with_extension("port.lock"))?;
+    lock.lock()?;
+    Ok(lock)
 }
 
 /// One client on the window's socket: each line crosses to the UI thread
@@ -137,6 +157,11 @@ fn serve_connection(stream: TcpStream, tx: &Sender<Pending>, wake: &dyn Fn()) {
 
 /// The port a running window recorded, if the file is there and readable.
 pub fn recorded_port(port_file: &Path) -> Option<u16> {
+    let _registry = registry_lock(port_file).ok()?;
+    read_port(port_file)
+}
+
+fn read_port(port_file: &Path) -> Option<u16> {
     std::fs::read_to_string(port_file).ok()?.trim().parse().ok()
 }
 

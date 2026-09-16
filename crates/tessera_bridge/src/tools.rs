@@ -335,7 +335,8 @@ static ALL: [Tool; 22] = [
         name: "get_preferences",
         description: "Every preference — units, theme, density, snapping, typographer's quotes, \
             dynamic spelling, recovery copy, export presets, update checking, shortcuts, \
-            workspaces — as the JSON they are saved in.",
+            workspaces — as JSON. The assistant key is omitted; api_key_configured says \
+            whether one is set.",
         arguments: &[],
         run: get_preferences,
     },
@@ -343,7 +344,8 @@ static ALL: [Tool; 22] = [
         name: "set_preferences",
         description: "Change preferences: an object of the fields to change, in the shape \
             get_preferences shows; the rest keep their values. Saved to disk when the \
-            application is one that saves. Returns the preferences after the change.",
+            application is one that saves. Returns the preferences after the change, with \
+            credentials omitted. Set API keys in the Preferences window.",
         arguments: &[(
             "changes",
             "object",
@@ -612,6 +614,11 @@ fn apply_paragraph_style(state: &mut TesseraApp, arguments: &Value) -> Result<Va
         .and_then(Value::as_u64)
         .map_or(length, |n| n as usize)
         .clamp(start, length);
+    if let Some(text) = doc.story(story).map(|s| &s.text)
+        && (!text.is_char_boundary(start) || !text.is_char_boundary(end))
+    {
+        return Err("start and end must be UTF-8 character boundaries".into());
+    }
     Ok(run(
         state,
         Command::SetParagraphStyleOf {
@@ -741,10 +748,50 @@ fn command(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
     let value = crate::catalogue::command_json(variant, given)?;
     let command: Command = serde_json::from_value(value)
         .map_err(|e| format!("{name}: the arguments did not read as the command: {e}. describe_shapes shows what each object looks like."))?;
+    match &command {
+        Command::SetCharacterFormat { story, range, .. }
+        | Command::SetParagraphFormat { story, range, .. }
+        | Command::ClearCharacterOverrides { story, range }
+        | Command::ClearParagraphOverrides { story, range }
+        | Command::RedefineCharacterStyle { story, range, .. }
+        | Command::RedefineParagraphStyle { story, range, .. }
+        | Command::BreakCharacterStyleLink { story, range }
+        | Command::BreakParagraphStyleLink { story, range }
+        | Command::SetCharacterStyleOf { story, range, .. }
+        | Command::SetParagraphStyleOf { story, range, .. } => {
+            validate_text_range(state, *story, range)?
+        }
+        Command::ReplaceMatches { edits } => {
+            for (story, range, _) in edits {
+                validate_text_range(state, *story, range)?;
+            }
+        }
+        _ => {}
+    }
     let mut outcome = run(state, command);
     outcome["command"] = json!(name);
     outcome["selection"] = json!(selection_keys(state));
     Ok(outcome)
+}
+
+pub(crate) fn validate_text_range(
+    state: &TesseraApp,
+    story: tessera_document::StoryId,
+    range: &std::ops::Range<usize>,
+) -> Result<(), String> {
+    let text = &state
+        .active()
+        .document()
+        .story(story)
+        .ok_or("the story does not exist")?
+        .text;
+    if text.get(range.clone()).is_none() {
+        return Err(
+            "text range must be ordered, within the story, and on UTF-8 character boundaries"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 fn describe_shapes(_: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
@@ -860,7 +907,20 @@ fn run_action(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String
 }
 
 fn get_preferences(state: &mut TesseraApp, _: &Value) -> Result<Value, String> {
-    serde_json::to_value(&state.prefs).map_err(|e| e.to_string())
+    public_preferences(&state.prefs)
+}
+
+/// Tool results become model conversation content. Credentials never belong there.
+fn public_preferences(prefs: &tessera_ui::prefs::Preferences) -> Result<Value, String> {
+    let mut value = serde_json::to_value(prefs).map_err(|e| e.to_string())?;
+    if let Some(assistant) = value.get_mut("assistant").and_then(Value::as_object_mut) {
+        assistant.remove("api_key");
+        assistant.insert(
+            "api_key_configured".into(),
+            json!(!prefs.assistant.api_key.trim().is_empty()),
+        );
+    }
+    Ok(value)
 }
 
 fn set_preferences(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
@@ -868,13 +928,19 @@ fn set_preferences(state: &mut TesseraApp, arguments: &Value) -> Result<Value, S
         .get("changes")
         .and_then(Value::as_object)
         .ok_or("changes must be an object of preference fields")?;
+    if changes
+        .get("assistant")
+        .is_some_and(|a| a.get("api_key").is_some())
+    {
+        return Err("Set the assistant API key in Preferences, not through a tool call".into());
+    }
     let mut current = serde_json::to_value(&state.prefs).map_err(|e| e.to_string())?;
     merge(&mut current, changes);
     let prefs: tessera_ui::prefs::Preferences = serde_json::from_value(current)
         .map_err(|e| format!("the changes did not read as preferences: {e}"))?;
     state.prefs = prefs;
     tessera_ui::prefs::remember(state);
-    serde_json::to_value(&state.prefs).map_err(|e| e.to_string())
+    public_preferences(&state.prefs)
 }
 
 /// Lay `changes` over `into`, object by object, so a nested field can be

@@ -175,7 +175,9 @@ fn cross_document_import_remaps_conflicting_styles_swatches_and_links() {
         ..Default::default()
     });
     target.add_link(tessera_document::links::Link::new("wrong.png", (1.0, 1.0)));
-    let copies = target.import_frames(&source, &[text, picture], layer, 12.0, 12.0, false);
+    let copies = target
+        .import_frames(&source, &[text, picture], layer, 12.0, 12.0, false)
+        .unwrap();
     let FrameKind::Text { story, .. } = target.frame(copies[0]).unwrap().kind else {
         panic!()
     };

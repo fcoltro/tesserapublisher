@@ -219,6 +219,9 @@ impl Session {
             }
             match self.step()? {
                 Step::Reply(reply) => {
+                    if self.cancelled() {
+                        return Err("stopped".into());
+                    }
                     heard(&Event::Said(reply.clone()));
                     return Ok(reply);
                 }
@@ -227,13 +230,22 @@ impl Session {
                         heard(&Event::Said(text));
                     }
                     for call in &calls {
-                        let (content, is_error) = run(call);
+                        // Answer every call, including skipped calls, so the next
+                        // turn never sends an incomplete tool batch to the provider.
+                        let (content, is_error) = if self.cancelled() {
+                            ("stopped before execution".into(), true)
+                        } else {
+                            run(call)
+                        };
                         heard(&Event::Ran {
                             call: call.clone(),
                             result: content.clone(),
                             is_error,
                         });
                         self.answer(call, content, is_error);
+                    }
+                    if self.cancelled() {
+                        return Err("stopped".into());
                     }
                 }
             }

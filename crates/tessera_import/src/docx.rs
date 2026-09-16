@@ -96,7 +96,7 @@ fn import_package(mut package: Package) -> Result<Imported, ImportError> {
             }
             let mut b = Builder::default();
             read_body(note, &styles, &HashMap::new(), &mut b, &mut out.dropped);
-            let mut story = b.finish();
+            let (mut story, _, _) = b.finish();
             let number = format!("{}\t", Marker::FootnoteNumber.character());
             story.insert_text(0, &number);
             footnotes.insert(id.to_owned(), story);
@@ -111,9 +111,7 @@ fn import_package(mut package: Package) -> Result<Imported, ImportError> {
     let mut b = Builder::default();
     read_body(body, &styles, &footnotes, &mut b, &mut out.dropped);
 
-    out.paragraph_style_names = b.paragraph_style_names.clone();
-    out.run_style_names = b.run_style_names.clone();
-    out.story = b.finish();
+    (out.story, out.run_style_names, out.paragraph_style_names) = b.finish();
 
     // The styles the story uses, as Tessera styles, in first-use order.
     let mut seen: Vec<String> = Vec::new();
@@ -176,19 +174,23 @@ struct Builder {
     footnotes: Vec<Story>,
 }
 
+type FinishedStory = (Story, Vec<Option<String>>, Vec<Option<String>>);
+
 impl Builder {
-    fn finish(self) -> Story {
+    fn finish(self) -> FinishedStory {
         let text = self.text;
         if text.is_empty() {
-            return Story::default();
+            return (Story::default(), Vec::new(), Vec::new());
         }
         let mut runs = Vec::new();
+        let mut run_names = Vec::new();
         let mut at = 0usize;
-        for (start, end, local) in self.runs {
+        for ((start, end, local), name) in self.runs.into_iter().zip(self.run_style_names) {
             let start = start.max(at).min(text.len());
             let end = end.min(text.len());
             if start > at {
                 runs.push(Run::plain(at..start));
+                run_names.push(None);
             }
             if end > start {
                 runs.push(Run {
@@ -196,21 +198,29 @@ impl Builder {
                     style: None,
                     local,
                 });
+                run_names.push(name);
                 at = end;
             }
         }
         if at < text.len() {
             runs.push(Run::plain(at..text.len()));
+            run_names.push(None);
         }
         let mut paragraphs = Vec::new();
+        let mut paragraph_names = Vec::new();
         let mut start = 0usize;
         for piece in text.split_inclusive('\n') {
-            let local = self
+            let source = self
                 .paragraphs
                 .iter()
-                .find(|(s, e, _)| *s <= start && start < *e)
-                .map(|(_, _, f)| f.clone())
-                .unwrap_or_default();
+                .enumerate()
+                .find(|(_, (s, e, _))| *s <= start && start < *e);
+            let local = source.map(|(_, (_, _, f))| f.clone()).unwrap_or_default();
+            paragraph_names.push(
+                source
+                    .and_then(|(i, _)| self.paragraph_style_names.get(i).cloned())
+                    .flatten(),
+            );
             paragraphs.push(ParagraphRun {
                 range: start..start + piece.len(),
                 style: None,
@@ -232,11 +242,13 @@ impl Builder {
             index_entries: Vec::<IndexEntry>::new(),
         };
         if story.runs_are_sound() && story.notes_are_sound() {
-            story
+            (story, run_names, paragraph_names)
         } else {
             let mut plain = Story::new(story.text.clone());
             plain.footnotes = story.footnotes;
-            plain
+            let runs = vec![None; plain.runs.len()];
+            let paragraphs = vec![None; plain.paragraphs.len()];
+            (plain, runs, paragraphs)
         }
     }
 }
