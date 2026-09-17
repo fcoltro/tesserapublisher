@@ -314,6 +314,8 @@ pub enum Run {
     PasteAnchored,
     /// The story's words in a plain box, without the page.
     StoryEditor,
+    /// Put text on the selected path, or open the text it carries.
+    TypeOnPath,
     /// Add a row or column beside the cell being edited.
     TableRow {
         above: bool,
@@ -389,7 +391,7 @@ pub fn guard(run: Run) -> Guard {
         Run::CheckSpelling => Guard::NotWhileTyping,
         // Only means anything while typing, like the special characters.
         Run::PasteAnchored => Guard::Always,
-        Run::StoryEditor => Guard::NotWhileTyping,
+        Run::StoryEditor | Run::TypeOnPath => Guard::NotWhileTyping,
         // Only useful while typing, like the special characters.
         Run::InsertFootnote
         | Run::EditFootnote
@@ -1075,6 +1077,7 @@ pub fn all() -> &'static [Action] {
             Group::Type,
             Run::StoryEditor,
         ),
+        a("Type on a path\u{2026}", None, Group::Type, Run::TypeOnPath),
         a(
             "Text variables\u{2026}",
             None,
@@ -1425,6 +1428,18 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             let mut window = std::mem::take(&mut state.story_editor);
             window.open(state);
             state.story_editor = window;
+        }
+        Run::TypeOnPath => {
+            // The selected path, if one is selected alone; anything else
+            // and there is nothing to put the text on.
+            if let Some(id) = state.active().selection.single()
+                && matches!(
+                    state.active().document().frame(id).map(|f| &f.kind),
+                    Some(tessera_document::nodes::FrameKind::Path(_))
+                )
+            {
+                crate::view::panels::put_text_on_path(state, id);
+            }
         }
         Run::CheckSpelling => {
             state.dictionaries.load_user_words();

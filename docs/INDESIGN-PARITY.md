@@ -47,7 +47,7 @@ outright, so the target is not twenty-six.
 | Gap tool | ✗ | — | — |
 | Content Collector / Placer | ✗ | — | — |
 | Type | ✅ `Tool::Text` | — | done |
-| Type on a Path | ✗ | model | — (recorded under M9) |
+| Type on a Path | ✅ Type ▸ Type on a path…; start, end, alignment and flip in the inspector; words in the story editor; no on-curve caret or drag handles | — | done 2026-09-17 |
 | Line | ✅ `Tool::Line` | — | done |
 | Pen | ✅ `Tool::Pen` | — | done |
 | Add / Delete Anchor Point | ✅ | — | done, M1 |

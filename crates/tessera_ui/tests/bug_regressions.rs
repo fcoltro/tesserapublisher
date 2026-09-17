@@ -636,6 +636,7 @@ fn pdf_keeps_the_stroke_of_a_filled_path() {
             tessera_color::Color::BLACK,
             9.0,
         )),
+        text: None,
     };
     let pdf = tessera_pdf::export(&doc).unwrap();
     let text = String::from_utf8_lossy(&pdf);

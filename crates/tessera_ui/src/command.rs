@@ -386,6 +386,23 @@ pub enum Command {
         path: kurbo::BezPath,
     },
 
+    /// Put a story on a path frame — type on a path. A new story holding
+    /// `text`, set along the whole path, standing on it. Does nothing to a
+    /// frame that is not a path, or to a path that already carries text.
+    PutTextOnPath {
+        id: FrameId,
+        text: String,
+    },
+
+    /// Change how a path carries its text — where along the path it starts
+    /// and ends, how it sits across the path, whether it runs the other way —
+    /// or take the text off the path (`None`). The story stays in the
+    /// document either way, as a text frame's does when the frame goes.
+    SetPathText {
+        id: FrameId,
+        text: Option<tessera_document::path_text::PathText>,
+    },
+
     /// Cut a frame's corners, or square them again.
     ///
     /// The whole of the corners in one command, as the shadow is: rounding four
@@ -1584,6 +1601,19 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
                 frame.corners = corners;
             }
+        }
+
+        Command::PutTextOnPath { id, text } => {
+            let doc = state.active_mut().document_mut();
+            let is_path = matches!(doc.frame(id).map(|f| &f.kind), Some(FrameKind::Path(_)));
+            if is_path && doc.path_text(id).is_none() {
+                let story = doc.add_story(Story::new(&text));
+                doc.set_path_text(id, Some(tessera_document::path_text::PathText::new(story)));
+            }
+        }
+
+        Command::SetPathText { id, text } => {
+            state.active_mut().document_mut().set_path_text(id, text);
         }
 
         Command::SetBlending { id, blend } => {
@@ -3213,6 +3243,92 @@ mod tests {
         let b = state.active().selection.single().expect("b");
         state.active_mut().selection.replace_all([a, b]);
         (state, a, b)
+    }
+
+    #[test]
+    fn text_goes_on_a_path_and_comes_off_it_one_undo_each() {
+        let mut state = TesseraApp::headless();
+        let mut path = kurbo::BezPath::new();
+        path.move_to((0.0, 10.0));
+        path.line_to((10.0, 0.0));
+        apply(&mut state, Command::AddPath(bounds(), path));
+        let id = state.active().selection.single().expect("the path");
+
+        apply(
+            &mut state,
+            Command::PutTextOnPath {
+                id,
+                text: "Up the slope".into(),
+            },
+        );
+        let carried = state
+            .active()
+            .document()
+            .path_text(id)
+            .copied()
+            .expect("the path carries text");
+        assert_eq!(
+            state
+                .active()
+                .document()
+                .story(carried.story)
+                .map(|s| s.text.as_str()),
+            Some("Up the slope")
+        );
+        // Asking again does not put a second story on it.
+        apply(
+            &mut state,
+            Command::PutTextOnPath {
+                id,
+                text: "Again".into(),
+            },
+        );
+        assert_eq!(state.active().document().path_text(id), Some(&carried));
+
+        let mut flipped = carried;
+        flipped.flip = true;
+        apply(
+            &mut state,
+            Command::SetPathText {
+                id,
+                text: Some(flipped),
+            },
+        );
+        assert_eq!(
+            state.active().document().path_text(id).map(|t| t.flip),
+            Some(true)
+        );
+
+        apply(&mut state, Command::SetPathText { id, text: None });
+        assert!(state.active().document().path_text(id).is_none());
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(
+            state.active().document().path_text(id).map(|t| t.flip),
+            Some(true)
+        );
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().path_text(id), Some(&carried));
+        // The refused second put was a command too, and took its entry.
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().path_text(id), Some(&carried));
+        apply(&mut state, Command::Undo);
+        assert!(
+            state.active().document().path_text(id).is_none(),
+            "and off again"
+        );
+
+        // A rectangle carries nothing, whatever it is asked.
+        apply(&mut state, Command::AddRectangle(bounds()));
+        let rect = state.active().selection.single().expect("rect");
+        apply(
+            &mut state,
+            Command::PutTextOnPath {
+                id: rect,
+                text: "No".into(),
+            },
+        );
+        assert!(state.active().document().path_text(rect).is_none());
     }
 
     #[test]

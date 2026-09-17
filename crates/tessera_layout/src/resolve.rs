@@ -68,6 +68,10 @@ pub enum ResolvedKind {
         path: kurbo::BezPath,
         fill: Option<Paint>,
         stroke: Option<Stroke>,
+        /// The story this path carries, set along it — type on a path — with
+        /// the colour it is drawn in. In the path's own coordinates, like the
+        /// path.
+        text: Option<(crate::path_text::PlacedPathText, Color)>,
     },
     /// A container showing artwork, or waiting for some.
     ///
@@ -1012,22 +1016,63 @@ fn resolve_one<'a>(
             fill: doc.resolve_paint(&frame.fill),
             stroke: resolved_stroke(doc, frame.stroke.as_ref()),
         },
-        FrameKind::Path(path) => ResolvedKind::Path {
-            path: fit_to_bounds(path, frame.bounds),
-            // An open path with no explicit stroke would be invisible, so
-            // a path frame's fill is treated as its stroke colour when it
-            // has no stroke of its own.
-            fill: None,
-            stroke: Some(
-                resolved_stroke(doc, frame.stroke.as_ref()).unwrap_or_else(|| {
-                    // A stroke is a single colour, so a gradient-filled path
-                    // standing in for its own stroke takes one colour from the
-                    // ramp rather than pretending to draw the ramp along it.
-                    // Gradient strokes are not modelled.
-                    Stroke::new(doc.resolve_colour(&frame.fill.representative()), 1.0)
-                }),
-            ),
-        },
+        FrameKind::Path(path) => {
+            let path = fit_to_bounds(path, frame.bounds);
+            // Type on a path: the story shaped to the length it may use and
+            // walked along the curve. Drawn in the story's colour, as a text
+            // frame's is.
+            let text = doc.path_text(id).and_then(|carried| {
+                let story = story_of(doc, composed, carried.story)?;
+                let placement = crate::path_text::Placement {
+                    start: carried.start,
+                    end: carried.end,
+                    align: match carried.align {
+                        tessera_document::path_text::PathTextAlign::Baseline => {
+                            crate::path_text::Align::Baseline
+                        }
+                        tessera_document::path_text::PathTextAlign::Centre => {
+                            crate::path_text::Align::Centre
+                        }
+                        tessera_document::path_text::PathTextAlign::Ascender => {
+                            crate::path_text::Align::Ascender
+                        }
+                        tessera_document::path_text::PathTextAlign::Descender => {
+                            crate::path_text::Align::Descender
+                        }
+                    },
+                    flip: carried.flip,
+                };
+                let measure = crate::path_text::measure(&path, &placement);
+                let shaped = shaper.shape(story, doc, measure);
+                let colour = story
+                    .runs
+                    .first()
+                    .map(|run| story.resolve_run(run, doc))
+                    .and_then(|f| f.colour)
+                    .unwrap_or(tessera_color::Color::BLACK);
+                Some((
+                    crate::path_text::place(&shaped, &path, &placement),
+                    doc.resolve_colour(&colour),
+                ))
+            });
+            ResolvedKind::Path {
+                path,
+                // An open path with no explicit stroke would be invisible, so
+                // a path frame's fill is treated as its stroke colour when it
+                // has no stroke of its own.
+                fill: None,
+                stroke: Some(
+                    resolved_stroke(doc, frame.stroke.as_ref()).unwrap_or_else(|| {
+                        // A stroke is a single colour, so a gradient-filled path
+                        // standing in for its own stroke takes one colour from the
+                        // ramp rather than pretending to draw the ramp along it.
+                        // Gradient strokes are not modelled.
+                        Stroke::new(doc.resolve_colour(&frame.fill.representative()), 1.0)
+                    }),
+                ),
+                text,
+            }
+        }
 
         // A group draws nothing of its own, and paint_order already
         // expanded it into its children, so it never reaches here.
@@ -1445,6 +1490,55 @@ mod tests {
         p.move_to((0.0, 0.0));
         p.line_to((10.0, 10.0));
         p
+    }
+
+    #[test]
+    fn a_path_with_text_resolves_its_glyphs_along_the_curve() {
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let story = doc.add_story(Story::new("Set along the line"));
+        let bounds = DocRect {
+            x: 20.0,
+            y: 20.0,
+            width: 300.0,
+            height: 10.0,
+        };
+        let mut line = kurbo::BezPath::new();
+        line.move_to((0.0, 5.0));
+        line.line_to((300.0, 5.0));
+        let id = doc.add_frame(layer, path_frame(bounds, line));
+
+        // A bare path carries nothing.
+        let resolved = resolve(&doc, &mut Shaper::new());
+        let ResolvedKind::Path { text, .. } = &resolved.items[0].kind else {
+            panic!("a path");
+        };
+        assert!(text.is_none());
+
+        doc.set_path_text(id, Some(tessera_document::path_text::PathText::new(story)));
+        let resolved = resolve(&doc, &mut Shaper::new());
+        let ResolvedKind::Path {
+            path,
+            text: Some((placed, colour)),
+            ..
+        } = &resolved.items[0].kind
+        else {
+            panic!("a path with text");
+        };
+        assert_eq!(*colour, Color::BLACK);
+        assert_eq!(placed.overset_lines, 0);
+        let glyphs: Vec<_> = placed.runs.iter().flat_map(|r| &r.glyphs).collect();
+        assert_eq!(glyphs.len(), "Set along the line".len());
+        // In the same coordinates as the path the renderers draw — the one
+        // fitted to the frame — on its line, upright.
+        let kurbo::PathEl::MoveTo(start) = path.elements()[0] else {
+            panic!("a move");
+        };
+        for g in &glyphs {
+            assert!((g.y - start.y).abs() < 1e-6, "{} vs {}", g.y, start.y);
+            assert!(g.angle.abs() < 1e-9);
+        }
+        assert!(!placed.fonts.is_empty(), "the font travels with the glyphs");
     }
 
     #[test]

@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 30;
+pub const FORMAT_VERSION: u32 = 31;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -105,6 +105,12 @@ pub fn load(path: &Path) -> Result<Document, FormatError> {
 /// ago follows exactly the path a document written two versions ago does, and
 /// each step only has to know about its own change.
 fn migrate(value: &mut serde_json::Value, from: u32) {
+    // 30 -> 31: the document gained `path_texts`, the stories its paths
+    // carry. **No step, on purpose**: absent reads as empty, and no earlier
+    // path carried text. The version moves so an older build refuses a
+    // document whose headline runs round a circle rather than opening it
+    // with a bare circle and a story nothing shows.
+
     // 29 -> 30: justification gained glyph scaling (`glyph_min`,
     // `glyph_desired`, `glyph_max`). **No step, on purpose**: absent reads
     // as 100 / 100 / 100, which is what every earlier line was set with.

@@ -153,6 +153,18 @@ stop so wrapped lines line up under the text. Numbers count on from the item
 before; a paragraph that is not an item ends the count, and *Restart at 1*
 starts it again.
 
+**Type on a path.** Draw a path with the pen or the line tool, select it, and
+choose Type ▸ Type on a path…. The path stays a path — stroke it, move it,
+reshape its anchors — and now carries a story, opened in the story editor for
+you to write. The *Type on a path* section of the inspector says where along
+the path the text starts and ends, as percentages of its length; whether the
+letters stand on the line (*Baseline*), have it run through them (*Centre*),
+hang from it (*Ascender*) or stand clear above it (*Descender*); and *Flip*,
+which runs the text the other way on the other side, turning text inside a
+circle into text outside it. Words that do not fit are overset, and preflight
+reports them. The words are edited in the story editor rather than on the
+curve.
+
 ## Colour
 
 The Swatches panel holds named colours. A **spot** colour is a pot of a specific

@@ -6,6 +6,7 @@
 
 pub mod cache;
 pub mod contents;
+pub mod path_text;
 pub mod resolve;
 pub mod running;
 pub mod snap;

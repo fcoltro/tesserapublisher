@@ -58,6 +58,10 @@ pub fn overset_text(doc: &Document, shaper: &mut Shaper) -> Vec<Problem> {
             tessera_layout::ResolvedKind::Table { laid, .. } => {
                 laid.cells.iter().map(|c| c.overset_lines).sum()
             }
+            tessera_layout::ResolvedKind::Path {
+                text: Some((text, _)),
+                ..
+            } => text.overset_lines,
             _ => continue,
         };
         if overset > 0 {

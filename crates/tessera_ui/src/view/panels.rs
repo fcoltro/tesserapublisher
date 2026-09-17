@@ -96,11 +96,13 @@ pub enum Section {
     Frame,
     Graphic,
     Wrap,
+    /// A path's text, when it is a path.
+    PathText,
 }
 
 impl Section {
     /// Display order. Universal sections first; see the type's note.
-    pub const ALL: [Section; 10] = [
+    pub const ALL: [Section; 11] = [
         Section::Transform,
         // Above Fill and Stroke, because it decides what those *start* as: an
         // object’s style is read before its own adjustments, and the panel reads
@@ -120,6 +122,7 @@ impl Section {
         Section::Graphic,
         Section::Text,
         Section::Frame,
+        Section::PathText,
     ];
 
     pub fn title(self) -> &'static str {
@@ -134,6 +137,7 @@ impl Section {
             Section::Graphic => "Artwork",
             Section::Effects => "Effects",
             Section::Style => "Object style",
+            Section::PathText => "Type on a path",
         }
     }
 
@@ -152,6 +156,7 @@ impl Section {
             Section::Graphic => Icon::PictureFrame,
             Section::Effects => Icon::Blend,
             Section::Style => Icon::Duplicate,
+            Section::PathText => Icon::Pen,
         }
     }
 
@@ -180,6 +185,7 @@ impl Section {
             // wrapped, and it is the obstacle that carries the setting.
             Section::Wrap => true,
             Section::Graphic => matches!(frame.kind, FrameKind::Graphic { .. }),
+            Section::PathText => matches!(frame.kind, FrameKind::Path(_)),
         }
     }
 }
@@ -238,6 +244,7 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
                     Section::Graphic => graphic_section(ui, state, id, &frame),
                     Section::Effects => effects_section(ui, state, id, &frame),
                     Section::Style => object_style_section(ui, state, id, &frame),
+                    Section::PathText => path_text_section(ui, state, id),
                 });
         });
     }
@@ -1127,6 +1134,125 @@ fn corners_section(
 /// A quiet line of explanation under a control.
 fn note_line(ui: &mut Ui, text: &str) {
     ui.colored_label(Theme::text_muted(), text);
+}
+
+/// Type on a path: put a story on the path, say where along it the text
+/// runs and how it sits, open the words in the story editor, or take the
+/// text off. The words themselves are edited in the story editor rather
+/// than on the curve — a caret that follows a circle is a gesture this
+/// does not have yet, and a plain box over the story is honest.
+fn path_text_section(ui: &mut Ui, state: &mut TesseraApp, id: tessera_document::ids::FrameId) {
+    use tessera_document::path_text::PathTextAlign;
+
+    let Some(current) = state.active().document().path_text(id).copied() else {
+        note_line(ui, "The path carries no text.");
+        if ui.button("Put text on the path").clicked() {
+            put_text_on_path(state, id);
+        }
+        return;
+    };
+    let mut edited = current;
+    let mut changed = false;
+
+    // Where along the path, in percent of its length.
+    let mut start = (current.start * 100.0) as f32;
+    let mut end = (current.end * 100.0) as f32;
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::text_muted(), "From");
+        if percent_of(ui, &mut start, 0.0..=100.0) {
+            edited.start = f64::from(start) / 100.0;
+            changed = true;
+        }
+        ui.colored_label(Theme::text_muted(), "to");
+        if percent_of(ui, &mut end, 0.0..=100.0) {
+            edited.end = f64::from(end) / 100.0;
+            changed = true;
+        }
+    });
+
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::text_muted(), "On the path");
+        for (label, align, hint) in [
+            (
+                "Baseline",
+                PathTextAlign::Baseline,
+                "The letters stand on the line",
+            ),
+            (
+                "Centre",
+                PathTextAlign::Centre,
+                "The line runs through the small letters",
+            ),
+            (
+                "Ascender",
+                PathTextAlign::Ascender,
+                "The letters hang below the line",
+            ),
+            (
+                "Descender",
+                PathTextAlign::Descender,
+                "The letters stand clear above the line",
+            ),
+        ] {
+            if ui
+                .selectable_label(current.align == align, label)
+                .on_hover_text(hint)
+                .clicked()
+                && current.align != align
+            {
+                edited.align = align;
+                changed = true;
+            }
+        }
+    });
+
+    let mut flip = current.flip;
+    if ui
+        .checkbox(&mut flip, "Flip")
+        .on_hover_text("Run the other way, on the other side of the path")
+        .changed()
+    {
+        edited.flip = flip;
+        changed = true;
+    }
+
+    if changed {
+        apply(
+            state,
+            Command::SetPathText {
+                id,
+                text: Some(edited),
+            },
+        );
+    }
+
+    ui.horizontal(|ui| {
+        if ui.button("Edit text\u{2026}").clicked() {
+            let mut window = std::mem::take(&mut state.story_editor);
+            window.open(state);
+            state.story_editor = window;
+        }
+        if ui.button("Take the text off").clicked() {
+            apply(state, Command::SetPathText { id, text: None });
+        }
+    });
+}
+
+/// Put a story on the path frame `id` and open its words for editing —
+/// or, if it already carries one, just open the words.
+pub(crate) fn put_text_on_path(state: &mut TesseraApp, id: tessera_document::ids::FrameId) {
+    if state.active().document().path_text(id).is_none() {
+        apply(
+            state,
+            Command::PutTextOnPath {
+                id,
+                text: "Type on a path".to_string(),
+            },
+        );
+    }
+    let mut window = std::mem::take(&mut state.story_editor);
+    window.open(state);
+    state.story_editor = window;
 }
 
 fn stroke_section(

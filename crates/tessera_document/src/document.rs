@@ -96,6 +96,15 @@ pub struct Document {
     #[serde(default)]
     pub overrides: slotmap::SecondaryMap<FrameId, FrameId>,
 
+    /// The stories carried along path frames — type on a path.
+    ///
+    /// On the document for the reason the overrides are: which story a path
+    /// carries is a relationship between the path and the story, and the
+    /// path stays a path (see [`crate::path_text`]). Removing the frame
+    /// removes its entry.
+    #[serde(default)]
+    pub path_texts: slotmap::SecondaryMap<FrameId, crate::path_text::PathText>,
+
     /// The layer new objects go onto.
     ///
     /// Saved with the document, as InDesign saves it — which layer you were
@@ -207,6 +216,7 @@ impl Document {
             masters: SlotMap::with_key(),
             master_order: Vec::new(),
             overrides: slotmap::SecondaryMap::new(),
+            path_texts: slotmap::SecondaryMap::new(),
             links: SlotMap::with_key(),
             output_intent: None,
             object_styles: slotmap::SlotMap::with_key(),
@@ -2006,11 +2016,40 @@ impl Document {
         for victim in victims {
             self.frames.remove(victim);
             self.overrides.remove(victim);
+            self.path_texts.remove(victim);
             for layer in self.layers.values_mut() {
                 layer.frames.retain(|f| *f != victim);
             }
         }
         self.revision += 1;
+    }
+
+    /// The text a path frame carries, if it carries one.
+    pub fn path_text(&self, frame: FrameId) -> Option<&crate::path_text::PathText> {
+        self.path_texts.get(frame)
+    }
+
+    /// Put a story on a path, change how it sits, or take it off (`None`).
+    /// Only a path frame carries one; on any other frame this does nothing
+    /// and says so.
+    pub fn set_path_text(
+        &mut self,
+        frame: FrameId,
+        text: Option<crate::path_text::PathText>,
+    ) -> bool {
+        let Some(FrameKind::Path(_)) = self.frames.get(frame).map(|f| &f.kind) else {
+            return false;
+        };
+        match text {
+            Some(text) => {
+                self.path_texts.insert(frame, text.normalised());
+            }
+            None => {
+                self.path_texts.remove(frame);
+            }
+        }
+        self.revision += 1;
+        true
     }
 
     /// The frames anchored in a story, by marker index.
@@ -6625,5 +6664,48 @@ mod tests {
         doc.place(b, link, Fit::Proportionally);
 
         assert_eq!(doc.link_uses(), vec![(link, 2)]);
+    }
+
+    #[test]
+    fn a_path_carries_text_and_a_removed_path_takes_it_with_it() {
+        use crate::path_text::PathText;
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let story = doc.add_story(Story::new("Along"));
+        let mut line = kurbo::BezPath::new();
+        line.move_to((0.0, 0.0));
+        line.line_to((100.0, 0.0));
+        let path = doc.add_frame(
+            layer,
+            shape(
+                FrameKind::Path(line),
+                DocRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 100.0,
+                    height: 10.0,
+                },
+            ),
+        );
+        let rect = doc.add_frame(layer, shape(FrameKind::Rectangle, square()));
+
+        // Only a path carries text.
+        assert!(!doc.set_path_text(rect, Some(PathText::new(story))));
+        assert!(doc.path_text(rect).is_none());
+        assert!(doc.set_path_text(path, Some(PathText::new(story))));
+        assert_eq!(doc.path_text(path).map(|t| t.story), Some(story));
+
+        // Start and end are kept in order and within the path.
+        let mut backwards = PathText::new(story);
+        backwards.start = 1.5;
+        backwards.end = 0.2;
+        doc.set_path_text(path, Some(backwards));
+        let kept = doc.path_text(path).expect("kept");
+        assert_eq!((kept.start, kept.end), (0.2, 1.0));
+
+        // Removing the frame removes the relationship; the story stays.
+        doc.remove_frame(path);
+        assert!(doc.path_text(path).is_none());
+        assert!(doc.story(story).is_some());
     }
 }

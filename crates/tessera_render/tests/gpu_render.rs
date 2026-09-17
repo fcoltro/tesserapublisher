@@ -386,6 +386,81 @@ fn text_puts_dark_pixels_on_the_page() {
 
 #[test]
 #[ignore = "needs a GPU adapter; run with -- --ignored"]
+fn text_on_a_path_marks_the_page_along_the_path_and_nowhere_else() {
+    // A vertical line down the page's left third, carrying text. The glyphs
+    // turn a quarter to follow it, so the ink lands in a narrow column beside
+    // the line and nowhere near the right of the page.
+    let mut shaper = tessera_text::shape::Shaper::new();
+    let mut story = tessera_text::story::Story::new("HHHHHH");
+    story.runs[0].local.size = Some(18.0);
+    let mut line = vello::kurbo::BezPath::new();
+    line.move_to((0.0, 0.0));
+    line.line_to((0.0, 90.0));
+    let placement = tessera_layout::path_text::Placement {
+        start: 0.0,
+        end: 1.0,
+        align: tessera_layout::path_text::Align::Baseline,
+        flip: false,
+    };
+    let measure = tessera_layout::path_text::measure(&line, &placement);
+    let shaped = shaper.shape(&story, &NoStyles::default(), measure);
+    let placed = tessera_layout::path_text::place(&shaped, &line, &placement);
+    assert!(!placed.runs.is_empty(), "the fixture must actually place");
+
+    let mut renderer = HeadlessRenderer::new(W, H).expect("adapter");
+    let scene = build_scene(
+        &ResolvedDocument {
+            bookmarks: Vec::new(),
+            pages: vec![resolved_page()],
+            items: vec![ResolvedItem {
+                frame: FrameId::default(),
+                on: None,
+                links: Vec::new(),
+                bounds: DocRect {
+                    x: 30.0,
+                    y: 5.0,
+                    width: 1.0,
+                    height: 90.0,
+                },
+                transform: Transform::IDENTITY,
+                spread_area: None,
+                blend: tessera_document::blending::Blending::PLAIN,
+                shadow: None,
+                kind: ResolvedKind::Path {
+                    path: line,
+                    fill: None,
+                    stroke: None,
+                    text: Some((placed, Color::BLACK)),
+                },
+            }],
+        },
+        ViewTransform::default(),
+    );
+    let pixels = renderer.render(&scene).expect("render");
+
+    let (rgba, _) = pixels.as_chunks::<4>();
+    let is_dark = |p: &[u8; 4]| p[0] < 128 && p[1] < 128 && p[2] < 128;
+    let mut beside = 0;
+    let mut far_right = 0;
+    for (i, p) in rgba.iter().enumerate() {
+        let x = i % W as usize;
+        if !is_dark(p) {
+            continue;
+        }
+        // Turned a quarter clockwise, the letters' "up" points page-right,
+        // so the ink sits to the right of the line — within a cap height of it.
+        if (30..50).contains(&x) {
+            beside += 1;
+        } else if x > 60 {
+            far_right += 1;
+        }
+    }
+    assert!(beside > 20, "ink beside the line, saw {beside}");
+    assert_eq!(far_right, 0, "and none across the page");
+}
+
+#[test]
+#[ignore = "needs a GPU adapter; run with -- --ignored"]
 fn rotating_a_bar_moves_the_pixels_it_covers() {
     let mut renderer = HeadlessRenderer::new(W, H).expect("adapter");
 

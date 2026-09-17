@@ -787,8 +787,59 @@ fn the_format_version_is_twenty_six() {
     // the side of an object text may run on, the largest area before; 28
     // text anchors and cross-references, empty before; 29 optical kerning
     // on a character format, metrics before; 30 glyph scaling in
-    // justification, 100 / 100 / 100 before.
-    assert_eq!(format::FORMAT_VERSION, 30);
+    // justification, 100 / 100 / 100 before; 31 type on a path, none before.
+    assert_eq!(format::FORMAT_VERSION, 31);
+}
+
+#[test]
+fn type_on_a_path_survives_a_save_and_load() {
+    use tessera_document::path_text::{PathText, PathTextAlign};
+    let path = temp_path("path-text.tessera");
+    let mut doc = Document::new();
+    let layer = doc.default_layer().expect("layer");
+    let story = doc.add_story(tessera_text::story::Story::new("Round the bend"));
+    let mut curve = kurbo::BezPath::new();
+    curve.move_to((0.0, 50.0));
+    curve.quad_to((50.0, 0.0), (100.0, 50.0));
+    let id = doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: 10.0,
+                y: 10.0,
+                width: 100.0,
+                height: 50.0,
+            },
+            kind: FrameKind::Path(curve),
+            transform: Transform::IDENTITY,
+            fill: Paint::Solid(Color::BLACK),
+            stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
+            shadow: None,
+            anchor: None,
+            style: None,
+        },
+    );
+    let carried = PathText {
+        story,
+        start: 0.1,
+        end: 0.9,
+        align: PathTextAlign::Centre,
+        flip: true,
+    };
+    assert!(doc.set_path_text(id, Some(carried)));
+
+    format::save(&doc, &path).expect("save");
+    let loaded = format::load(&path).expect("load");
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(loaded.path_text(id), Some(&carried));
+    assert_eq!(
+        loaded.story(story).map(|s| s.text.as_str()),
+        Some("Round the bend")
+    );
 }
 
 #[test]

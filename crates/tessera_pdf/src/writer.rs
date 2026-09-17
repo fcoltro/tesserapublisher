@@ -361,7 +361,15 @@ fn item_colours(kind: &ResolvedKind) -> Vec<Color> {
         ResolvedKind::Rectangle { fill, stroke, .. } | ResolvedKind::Ellipse { fill, stroke } => {
             (Some(fill), stroke.as_ref())
         }
-        ResolvedKind::Path { fill, stroke, .. } => (fill.as_ref(), stroke.as_ref()),
+        ResolvedKind::Path {
+            fill, stroke, text, ..
+        } => {
+            if let Some((text, colour)) = text {
+                colours.push(colour.clone());
+                colours.extend(text.runs.iter().filter_map(|r| r.colour.clone()));
+            }
+            (fill.as_ref(), stroke.as_ref())
+        }
         ResolvedKind::Graphic { stroke, .. } => (None, stroke.as_ref()),
         ResolvedKind::Text { shaped, color, .. } => {
             text_colours(shaped, color, &mut colours);
@@ -1291,6 +1299,18 @@ fn paint_shading(content: &mut Content, shading: &Shading) {
     content.shading(Name(shading.resource.as_bytes()));
 }
 
+/// A shaped text's glyphs as `(font index, size, glyph id, advance)`.
+fn glyphs_of(shaped: &ShapedText) -> Vec<(usize, f32, u32, f64)> {
+    shaped
+        .runs()
+        .flat_map(|r| {
+            r.glyphs
+                .iter()
+                .map(move |g| (r.font_index, r.size, g.glyph_id, g.advance))
+        })
+        .collect()
+}
+
 fn collect_fonts(
     resolved: &ResolvedDocument,
     alloc: &mut impl FnMut() -> Ref,
@@ -1298,12 +1318,36 @@ fn collect_fonts(
     // Group the glyphs actually drawn, per font, so only those are embedded.
     let mut used: Vec<(FontData, Vec<u16>, BTreeMap<u16, f64>)> = Vec::new();
 
-    for shaped in resolved.items.iter().flat_map(|item| match &item.kind {
-        ResolvedKind::Text { shaped, .. } => vec![shaped],
-        ResolvedKind::Table { laid, .. } => laid.cells.iter().map(|cell| &cell.shaped).collect(),
+    // Every source of glyphs: the fonts it shaped with, and each glyph as
+    // (font index, size, glyph id, advance). Text frames, table cells, and
+    // type on a path alike — a path's phrase is set in a font too, and a
+    // font not gathered here is a font not embedded, which a viewer shows
+    // as nothing at all.
+    let sources = resolved.items.iter().flat_map(|item| match &item.kind {
+        ResolvedKind::Text { shaped, .. } => vec![(&shaped.fonts, glyphs_of(shaped))],
+        ResolvedKind::Table { laid, .. } => laid
+            .cells
+            .iter()
+            .map(|cell| (&cell.shaped.fonts, glyphs_of(&cell.shaped)))
+            .collect(),
+        ResolvedKind::Path {
+            text: Some((text, _)),
+            ..
+        } => vec![(
+            &text.fonts,
+            text.runs
+                .iter()
+                .flat_map(|r| {
+                    r.glyphs
+                        .iter()
+                        .map(move |g| (r.font_index, r.size, g.glyph_id, g.advance))
+                })
+                .collect(),
+        )],
         _ => vec![],
-    }) {
-        for (index, font) in shaped.fonts.iter().enumerate() {
+    });
+    for (fonts, glyphs) in sources {
+        for (index, font) in fonts.iter().enumerate() {
             let slot = match used.iter().position(|(f, _, _)| f == font) {
                 Some(i) => i,
                 None => {
@@ -1311,21 +1355,19 @@ fn collect_fonts(
                     used.len() - 1
                 }
             };
-            for glyph in shaped
-                .runs()
-                .filter(|r| r.font_index == index)
-                .flat_map(|r| r.glyphs.iter().map(move |g| (r.size, g)))
-            {
-                let (size, glyph) = glyph;
-                let id = u16::try_from(glyph.glyph_id)
-                    .map_err(|_| PdfError::GlyphIdTooLarge(glyph.glyph_id))?;
+            for &(font_index, size, glyph_id, advance) in &glyphs {
+                if font_index != index {
+                    continue;
+                }
+                let id =
+                    u16::try_from(glyph_id).map_err(|_| PdfError::GlyphIdTooLarge(glyph_id))?;
                 used[slot].1.push(id);
                 // Advance is carried from the shaper in points at the size
                 // **its own run** was shaped at. Dividing by any other size
                 // gives a PDF whose text sits correctly and whose widths are
                 // wrong — which a viewer will not complain about and a
                 // printer will.
-                let width = glyph.advance / f64::from(size) * PDF_UNITS_PER_EM;
+                let width = advance / f64::from(size) * PDF_UNITS_PER_EM;
                 used[slot].2.insert(id, width);
             }
         }
@@ -1669,7 +1711,12 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                 content.restore_state();
             }
 
-            ResolvedKind::Path { path, fill, stroke } => {
+            ResolvedKind::Path {
+                path,
+                fill,
+                stroke,
+                text,
+            } => {
                 content.save_state();
                 content.save_state();
                 emit_path(&mut content, page, item.bounds, path);
@@ -1697,6 +1744,17 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                     content.stroke();
                 }
                 content.restore_state();
+                if let Some((text, colour)) = text {
+                    draw_path_text(
+                        &mut content,
+                        page,
+                        item.bounds,
+                        text,
+                        colour,
+                        fonts,
+                        &painting,
+                    )?;
+                }
             }
 
             ResolvedKind::Text { shaped, color, .. } => {
@@ -1998,6 +2056,53 @@ fn ellipse_path(content: &mut Content, page: DocRect, b: DocRect) {
         cy as f32,
     );
     content.close_path();
+}
+
+/// Type on a path: each glyph placed by its own text matrix, turned to its
+/// tangent. The page's y runs up where the layout's runs down, so the
+/// layout's clockwise angle is the matrix's counter-clockwise one.
+fn draw_path_text(
+    content: &mut Content,
+    page: DocRect,
+    bounds: DocRect,
+    text: &tessera_layout::path_text::PlacedPathText,
+    colour: &Color,
+    fonts: &[EmbeddedFont],
+    painting: &Painting<'_>,
+) -> Result<(), PdfError> {
+    for run in &text.runs {
+        let run_colour = run.colour.as_ref().unwrap_or(colour).clone();
+        if colour_alpha(&run_colour) == 0.0 {
+            continue;
+        }
+        let Some(embedded) = text
+            .fonts
+            .get(run.font_index)
+            .and_then(|font| fonts.iter().find(|embedded| &embedded.source == font))
+        else {
+            continue;
+        };
+        content.save_state();
+        painting.fill(content, &run_colour);
+        content.begin_text();
+        content.set_font(Name(embedded.resource.as_bytes()), run.size);
+        for glyph in &run.glyphs {
+            let old = u16::try_from(glyph.glyph_id)
+                .map_err(|_| PdfError::GlyphIdTooLarge(glyph.glyph_id))?;
+            let Some(cid) = embedded.remap.get(&old) else {
+                continue;
+            };
+            let x = bounds.x + glyph.x;
+            let y = to_pdf_y(page, bounds.y + glyph.y, 0.0);
+            let (s, c) = (-glyph.angle).sin_cos();
+            content.next_line(0.0, 0.0);
+            content.set_text_matrix([c as f32, s as f32, -s as f32, c as f32, x as f32, y as f32]);
+            content.show(Str(&cid.to_be_bytes()));
+        }
+        content.end_text();
+        content.restore_state();
+    }
+    Ok(())
 }
 
 fn draw_text(

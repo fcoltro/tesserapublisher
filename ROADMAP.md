@@ -2242,6 +2242,27 @@ is a milestone of its own, and none is what a person misses in the first
 hour. Footnotes, the table of contents and the index moved to milestone 11;
 IDML import to milestone 12.
 
+- [x] **Type on a path (2026-09-17).** A path stays a path and *carries* a
+  story: `Document.path_texts`, a map beside the master overrides, because
+  which story a path carries is a relationship (format 31). The layout
+  (`tessera_layout::path_text`) shapes the story to the length of path it
+  may use, then walks each glyph to its place by arc length — the glyph's
+  *centre* rides the curve, its origin set back half an advance along the
+  tangent, so a letter on a tight bend sits over the path rather than
+  swinging out from its left edge — and turns it to the tangent there.
+  Baseline, centre, ascender or descender on the path; a start and end as
+  fractions of the length; flip. What does not fit on the first line is
+  overset, and preflight says so. On screen one `draw_glyphs` per glyph,
+  since a glyph run has one transform for all its glyphs; in the PDF the
+  text matrix carries the turn, and the path's fonts are gathered for
+  embedding with the frames' and the cells'. Type ▸ Type on a path… puts a
+  story on the selected path and opens it in the story editor, which is
+  where a path's words are edited — a caret that follows a circle is a
+  gesture this does not have. A pixel test proves the ink lands beside a
+  vertical line and nowhere else. **Not built:** the caret on the curve;
+  the drag handles for start, end and flip; a path's text as a wrap
+  obstacle.
+
 ---
 
 # Milestone 10 — Page Numbers and Running Heads

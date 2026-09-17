@@ -655,7 +655,12 @@ fn build_inner(
                     );
                 }
             }
-            ResolvedKind::Path { path, fill, stroke } => {
+            ResolvedKind::Path {
+                path,
+                fill,
+                stroke,
+                text,
+            } => {
                 // The path is frame-local, so it is placed by translating to
                 // the frame's origin before the camera transform applies.
                 let placed = transform * Affine::translate((item.bounds.x, item.bounds.y));
@@ -683,6 +688,9 @@ fn build_inner(
                     // rectangle, and drawing it centred is honest where
                     // approximating the offset would not be.
                     scene.stroke(&stroke_of(s), placed, ink(&s.color, proof), None, path);
+                }
+                if let Some((text, colour)) = text {
+                    draw_path_text(&mut scene, placed, text, colour, proof);
                 }
             }
 
@@ -824,6 +832,40 @@ fn draw_table(
         // relative to the table's origin. Handing the cell's rectangle over
         // would add that offset a second time.
         draw_text(scene, transform, bounds, &cell.shaped, &cell.color, proof);
+    }
+}
+
+/// Type on a path: every glyph turned to its tangent, so one draw call each
+/// — a glyph run has one transform for all its glyphs, and these share none.
+/// A path carries a phrase, not a page, so the calls are few.
+fn draw_path_text(
+    scene: &mut Scene,
+    placed: Affine,
+    text: &tessera_layout::path_text::PlacedPathText,
+    colour: &Color,
+    proof: Option<&Proof>,
+) {
+    for run in &text.runs {
+        let Some(font) = text.fonts.get(run.font_index) else {
+            continue;
+        };
+        let ink = ink(run.colour.as_ref().unwrap_or(colour), proof);
+        for glyph in &run.glyphs {
+            let at = placed * Affine::translate((glyph.x, glyph.y)) * Affine::rotate(glyph.angle);
+            scene
+                .draw_glyphs(font)
+                .font_size(run.size)
+                .transform(at)
+                .brush(ink)
+                .draw(
+                    Fill::NonZero,
+                    std::iter::once(Glyph {
+                        id: glyph.glyph_id,
+                        x: 0.0,
+                        y: 0.0,
+                    }),
+                );
+        }
     }
 }
 

@@ -25,6 +25,7 @@ pub mod nodes;
 pub mod object_style;
 pub mod paint;
 pub mod path;
+pub mod path_text;
 pub mod polygon;
 pub mod sections;
 pub mod shadow;

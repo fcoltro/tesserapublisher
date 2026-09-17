@@ -37,6 +37,11 @@ impl StoryEditorWindow {
             let id = state.active().selection.single()?;
             match state.active().document().frame(id).map(|f| &f.kind) {
                 Some(FrameKind::Text { story, .. }) => Some(*story),
+                // A path's text has no caret on the page; this box is how
+                // its words are edited.
+                Some(FrameKind::Path(_)) => {
+                    state.active().document().path_text(id).map(|t| t.story)
+                }
                 _ => None,
             }
         });
