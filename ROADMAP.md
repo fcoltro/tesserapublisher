@@ -2428,10 +2428,19 @@ line of copy. The renderer and the PDF writer draw them without knowing.
   PDF, IDML's `CrossReferenceSource`, editing a reference in place (the
   caret after one is known — `reference_at_caret` — and nothing offers
   it yet).
-- Not built: footnote text edited on the canvas (the box does it), notes
-  that split across columns, endnotes, index sub-topics, page ranges
-  ("12–15"), and a contents that includes paragraphs from other documents
-  (a book). Contents entries *are* hyperlinks now — see below.
+- [x] **Notes split across columns (2026-09-17).** A note too long for the
+  room under its citation keeps what fits there — at least one line, or the
+  citing line moves as before — and the rest is carried to the foot of the
+  next column, under that column's own rule, and on again if that column
+  is short; a column may be all note and no copy. `flow_with_notes` works
+  in *pieces* of a note (`NotePiece`), so a carried tail is placed from its
+  own first line's ascent rather than the note's top. What is carried past
+  the last column counts as overset. Two tests: a four-line note across
+  three columns, and the whole-move case kept as it was.
+- Not built: footnote text edited on the canvas (the box does it), endnotes,
+  index sub-topics, page ranges ("12–15"), and a contents that includes
+  paragraphs from other documents (a book). Contents entries *are*
+  hyperlinks now — see below.
 
 ---
 

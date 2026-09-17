@@ -2077,9 +2077,34 @@ pub fn flow_with_notes(
     } else {
         0.0
     };
-    let room_for = |placed: &[&ShapedLine]| -> f64 {
+    // A note may be split: what fits under its citation stays, and the rest
+    // is carried to the foot of the next column, as every book does with a
+    // note too long for its page. A piece is a run of one note's lines.
+    let piece_height = |piece: &NotePiece<'_>| -> f64 {
+        let lines = &piece.note.text.lines[piece.lines.clone()];
+        match (lines.first(), lines.last()) {
+            // The whole of a note, or its head: as tall as the note is from
+            // its top, which is where the shaper put its first line.
+            (Some(_), Some(_)) if piece.lines.start == 0 => lines
+                .iter()
+                .map(|l| l.baseline + l.descent)
+                .fold(0.0, f64::max),
+            // The rest of one: from its own first line's ascent.
+            (Some(first), Some(last)) => {
+                last.baseline + last.descent - (first.baseline - first.ascent)
+            }
+            _ => 0.0,
+        }
+    };
+    // What a column's foot has to hold: the pieces carried into it, and
+    // every note the given lines cite, whole.
+    let room_for = |carried: Option<&NotePiece<'_>>, placed: &[&ShapedLine]| -> f64 {
         let mut total = 0.0;
         let mut count = 0usize;
+        if let Some(piece) = carried {
+            total += piece_height(piece);
+            count += 1;
+        }
         for line in placed {
             for note in notes_of(line) {
                 total += note_height(note);
@@ -2091,6 +2116,22 @@ pub fn flow_with_notes(
         } else {
             0.0
         }
+    };
+    // How many of a note's lines, from `from`, fit in `room`: the most
+    // whose stacked height stays within it.
+    let lines_that_fit = |note: &Note, from: usize, room: f64| -> usize {
+        let lines = &note.text.lines;
+        let top = lines.get(from).map_or(0.0, |l| {
+            if from == 0 {
+                0.0
+            } else {
+                l.baseline - l.ascent
+            }
+        });
+        lines[from..]
+            .iter()
+            .take_while(|l| l.baseline + l.descent - top <= room + 1e-6)
+            .count()
     };
 
     let mut out = ShapedText {
@@ -2120,13 +2161,50 @@ pub fn flow_with_notes(
     // back out of a column, but never this one: a column holds at least one
     // line, or nothing would ever be placed.
     let mut column_first = 0usize;
+    // The rest of a note that did not fit under its citation, owed to the
+    // next column's foot; and, per column, the piece it took that way and
+    // the note it cut short: `(the note's marker offset, lines kept)`.
+    let mut carry: Option<NotePiece<'_>> = None;
+    let mut carried_in: Vec<Option<NotePiece<'_>>> = vec![None; columns.len()];
+    let mut split: Vec<Option<(usize, usize)>> = vec![None; columns.len()];
 
     let mut i = 0usize;
-    while i < lines.len() {
+    loop {
         // Text flows in order, so once a line has nowhere to go neither has
         // anything after it.
         if column >= columns.len() {
             overset += lines.len() - i;
+            if let Some(piece) = carry.take() {
+                overset += piece.lines.len();
+            }
+            break;
+        }
+
+        // A carried piece goes in before any line: what fits of it, with the
+        // rest carried on again — a column can be all note and no copy.
+        if offset.is_none()
+            && let Some(piece) = carry.take()
+        {
+            let room = columns[column].height - gap - rule_air;
+            let fit = lines_that_fit(piece.note, piece.lines.start, room);
+            if fit >= piece.lines.len() {
+                carried_in[column] = Some(piece);
+            } else {
+                let fit = fit.max(1).min(piece.lines.len());
+                carried_in[column] = Some(NotePiece {
+                    note: piece.note,
+                    lines: piece.lines.start..piece.lines.start + fit,
+                });
+                carry = Some(NotePiece {
+                    note: piece.note,
+                    lines: piece.lines.start + fit..piece.lines.end,
+                });
+                column += 1;
+                column_first = i;
+                continue;
+            }
+        }
+        if i >= lines.len() {
             break;
         }
 
@@ -2162,12 +2240,52 @@ pub fn flow_with_notes(
         let shift_by = baseline - line.baseline;
         // This line's notes and those of the lines already in the column
         // have to fit under it.
+        let already: Vec<&ShapedLine> = lines[column_first..i].iter().collect();
         let reserved = {
-            let mut placed: Vec<&ShapedLine> = lines[column_first..i].iter().collect::<Vec<_>>();
+            let mut placed = already.clone();
             placed.push(line);
-            room_for(&placed)
+            room_for(carried_in[column].as_ref(), &placed)
         };
         let fits = baseline + below <= box_.y + box_.height - reserved;
+
+        // The line fits and its notes do not: the note splits, if at least
+        // one line of it can stand under its citation. What fits stays; the
+        // rest is owed to the next column, and this column is closed — the
+        // split note takes what is left of it.
+        if !fits && offset.is_some() {
+            let own = notes_of(line);
+            if let Some(last_note) = own.last() {
+                let base = room_for(carried_in[column].as_ref(), &already);
+                let joining = if base > 0.0 {
+                    layout.space_between
+                } else {
+                    gap + rule_air
+                };
+                let mut room = box_.y + box_.height - (baseline + below) - base - joining;
+                for note in &own[..own.len() - 1] {
+                    room -= note_height(note) + layout.space_between;
+                }
+                let kept = lines_that_fit(last_note, 0, room);
+                if kept >= 1 && kept < last_note.text.lines.len() {
+                    let mut line = line.clone();
+                    shift(&mut line, box_.x, shift_by);
+                    out.lines.push(line);
+                    boxes.push(column);
+                    split[column] = Some((last_note.at, kept));
+                    carry = Some(NotePiece {
+                        note: last_note,
+                        lines: kept..last_note.text.lines.len(),
+                    });
+                    i += 1;
+                    column += 1;
+                    offset = None;
+                    lowest = None;
+                    last_unmoved = None;
+                    column_first = i;
+                    continue;
+                }
+            }
+        }
 
         // A line taller than the column fits nowhere; putting it in
         // anyway is better than dropping every line of a story because
@@ -2218,18 +2336,47 @@ pub fn flow_with_notes(
         .map(|l| l.baseline + extent(l).1)
         .fold(0.0, f64::max);
 
-    // What each column has given up to its notes, so the slack shared out by
-    // the vertical setting stops above them.
-    let reserved: Vec<f64> = (0..columns.len())
+    // The pieces at each column's foot: what was carried in, then every
+    // note its lines cite — whole, but for the one the column cut short.
+    // Computed once, before the body is justified: the pieces name notes,
+    // not lines, so nothing here moves when the lines do.
+    let body = out.lines.len();
+    let column_pieces: Vec<Vec<NotePiece<'_>>> = (0..columns.len())
         .map(|c| {
-            let mine: Vec<&ShapedLine> = out
-                .lines
+            let mut pieces: Vec<NotePiece<'_>> = carried_in[c].clone().into_iter().collect();
+            for (line, _) in out.lines[..body]
                 .iter()
                 .zip(&boxes)
                 .filter(|(_, b)| **b == c)
-                .map(|(l, _)| l)
-                .collect();
-            room_for(&mine)
+            {
+                for note in notes_of(line) {
+                    let end = match split[c] {
+                        Some((at, kept)) if at == note.at => kept,
+                        _ => note.text.lines.len(),
+                    };
+                    pieces.push(NotePiece {
+                        note,
+                        lines: 0..end,
+                    });
+                }
+            }
+            pieces
+        })
+        .collect();
+
+    // What each column has given up to its notes, so the slack shared out by
+    // the vertical setting stops above them.
+    let reserved: Vec<f64> = column_pieces
+        .iter()
+        .map(|pieces| {
+            if pieces.is_empty() {
+                0.0
+            } else {
+                pieces.iter().map(piece_height).sum::<f64>()
+                    + gap
+                    + rule_air
+                    + layout.space_between * (pieces.len() - 1) as f64
+            }
         })
         .collect();
     justify(&mut out, &boxes, columns, vertical, &reserved);
@@ -2239,30 +2386,35 @@ pub fn flow_with_notes(
     let consumed_to = out.lines.last().map(|l| l.range.end);
 
     // The notes, stacked at the foot of their column.
-    let body = out.lines.len();
-    for (c, box_) in columns.iter().enumerate() {
-        let cited: Vec<&Note> = out.lines[..body]
-            .iter()
-            .zip(&boxes)
-            .filter(|(_, b)| **b == c)
-            .flat_map(|(l, _)| notes_of(l))
-            .collect();
-        if cited.is_empty() {
+    for (box_, pieces) in columns.iter().zip(&column_pieces) {
+        if pieces.is_empty() {
             continue;
         }
-        let total: f64 = cited.iter().map(|n| note_height(n)).sum::<f64>()
-            + layout.space_between * cited.len().saturating_sub(1) as f64;
+        let total: f64 = pieces.iter().map(piece_height).sum::<f64>()
+            + layout.space_between * pieces.len().saturating_sub(1) as f64;
         let mut y = box_.y + box_.height - total;
         let mut first = true;
-        for note in cited {
-            for line in &note.text.lines {
+        for piece in pieces {
+            let note = piece.note;
+            // A piece that is not a note's head is moved so its own top,
+            // not the note's, sits at `y`.
+            let top = note.text.lines[piece.lines.clone()]
+                .first()
+                .map_or(0.0, |l| {
+                    if piece.lines.start == 0 {
+                        0.0
+                    } else {
+                        l.baseline - l.ascent
+                    }
+                });
+            for line in &note.text.lines[piece.lines.clone()] {
                 let mut line = line.clone();
                 // The note's fonts follow it into the output table.
                 let base = out.fonts.len();
                 for run in &mut line.runs {
                     run.font_index += base;
                 }
-                shift(&mut line, box_.x, y);
+                shift(&mut line, box_.x, y - top);
                 line.hit = None;
                 line.range = note.at..note.at;
                 line.keep = LineKeep::default();
@@ -2283,7 +2435,7 @@ pub fn flow_with_notes(
                 out.lines.push(line);
             }
             out.fonts.extend(note.text.fonts.iter().cloned());
-            y += note_height(note) + layout.space_between;
+            y += piece_height(piece) + layout.space_between;
         }
     }
     if out.lines.len() > body {
@@ -2299,6 +2451,14 @@ pub fn flow_with_notes(
         overset_lines: overset,
         consumed_to,
     }
+}
+
+/// A run of one note's lines, set at a column's foot: the whole note, the
+/// head of it that fit under its citation, or the rest of it carried on.
+#[derive(Clone)]
+struct NotePiece<'a> {
+    note: &'a Note,
+    lines: std::ops::Range<usize>,
 }
 
 /// The rule above a column's footnotes: a third of the measure, half a point,
@@ -5278,6 +5438,103 @@ mod tests {
             notes.iter().all(|l| l.runs[0].glyphs[0].x >= 200.0),
             "and its note with it"
         );
+    }
+
+    #[test]
+    fn a_long_note_splits_under_its_citation_and_carries_on_to_the_next_column() {
+        // Column of 60: three 12pt lines take 36, leaving 24 — the rule's
+        // air takes 4, so one line of a note fits under the citing line.
+        // The note has four. The first stays; the other three go to the
+        // foot of the next column, which at 30 holds two under its own
+        // rule, and the last reaches the third.
+        let flowed = flow_with_notes(
+            ruled(3),
+            &[
+                column(0.0, 0.0, 100.0, 60.0),
+                column(200.0, 0.0, 100.0, 30.0),
+                column(400.0, 0.0, 100.0, 100.0),
+            ],
+            Vertical::Top,
+            None,
+            &[Note {
+                at: 25,
+                text: ruled(4),
+            }],
+            &NoteLayout::default(),
+        );
+        let third = flowed
+            .text
+            .lines
+            .iter()
+            .find(|l| l.range == (20..30))
+            .expect("placed");
+        assert!(third.runs[0].glyphs[0].x < 100.0, "the citing line stayed");
+        let notes: Vec<&ShapedLine> = flowed
+            .text
+            .lines
+            .iter()
+            .filter(|l| l.range.is_empty())
+            .collect();
+        assert_eq!(notes.len(), 4, "every line of the note is set");
+        let in_column = |x0: f64| {
+            notes
+                .iter()
+                .filter(|l| (l.runs[0].glyphs[0].x - x0).abs() < 100.0)
+                .count()
+        };
+        assert_eq!(in_column(0.0), 1, "one under the citation");
+        assert_eq!(in_column(200.0), 2, "two in the short column");
+        assert_eq!(in_column(400.0), 1, "the last in the third");
+        // Each column's piece ends at its foot and carries the rule.
+        for (x0, foot) in [(0.0, 60.0), (200.0, 30.0), (400.0, 100.0)] {
+            let mine: Vec<&&ShapedLine> = notes
+                .iter()
+                .filter(|l| (l.runs[0].glyphs[0].x - x0).abs() < 100.0)
+                .collect();
+            let bottom = mine
+                .iter()
+                .map(|l| l.baseline + l.descent)
+                .fold(0.0, f64::max);
+            assert!(
+                (bottom - foot).abs() < 1e-6,
+                "at the foot of {x0}: {bottom}"
+            );
+            assert_eq!(mine[0].rules.len(), 1, "a rule above the piece at {x0}");
+        }
+        assert_eq!(flowed.overset_lines, 0);
+        assert_eq!(
+            flowed.consumed_to,
+            Some(30),
+            "the thread continues after the copy"
+        );
+    }
+
+    #[test]
+    fn a_note_that_cannot_start_under_its_line_still_moves_whole() {
+        // As before: with no room for even one line of the note, the citing
+        // line goes to the next column with the note whole.
+        let flowed = flow_with_notes(
+            ruled(3),
+            &[
+                column(0.0, 0.0, 100.0, 40.0),
+                column(200.0, 0.0, 100.0, 100.0),
+            ],
+            Vertical::Top,
+            None,
+            &[Note {
+                at: 25,
+                text: ruled(4),
+            }],
+            &NoteLayout::default(),
+        );
+        let notes: Vec<&ShapedLine> = flowed
+            .text
+            .lines
+            .iter()
+            .filter(|l| l.range.is_empty())
+            .collect();
+        assert_eq!(notes.len(), 4);
+        assert!(notes.iter().all(|l| l.runs[0].glyphs[0].x >= 200.0));
     }
 
     // --- keep options --------------------------------------------------------
