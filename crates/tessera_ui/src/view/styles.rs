@@ -15,7 +15,7 @@ use tessera_color::Color;
 
 use tessera_text::story::{
     Alignment, Case, CharacterFormat, CharacterStyle, CharacterStyleId, Decoration, FigureCase,
-    FigureWidth, ParagraphFormat, ParagraphStyle, ParagraphStyleId,
+    FigureWidth, Kerning, ParagraphFormat, ParagraphStyle, ParagraphStyleId,
 };
 
 use crate::app::{StyleKind, TesseraApp};
@@ -849,6 +849,13 @@ fn character_format_fields(ui: &mut Ui, state: &mut TesseraApp, format: &mut Cha
         1.0,
         -200.0..=800.0,
         "/1000 em",
+    );
+    optional_choice(
+        ui,
+        "Kerning",
+        &mut format.kerning,
+        Kerning::Metrics,
+        &[("Metrics", Kerning::Metrics), ("Optical", Kerning::Optical)],
     );
     optional_choice(
         ui,

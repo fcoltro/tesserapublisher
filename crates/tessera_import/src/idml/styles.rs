@@ -12,7 +12,7 @@ use tessera_color::Color;
 use tessera_document::document::Document;
 use tessera_text::story::{
     Alignment, Case, CharacterFormat, CharacterStyle, CharacterStyleId, Decoration, KeepOptions,
-    KeepTogether, ListFormat, ListKind, ParagraphFormat, ParagraphStyle, ParagraphStyleId,
+    KeepTogether, Kerning, ListFormat, ListKind, ParagraphFormat, ParagraphStyle, ParagraphStyleId,
     TabAlignment, TabStop,
 };
 
@@ -203,6 +203,13 @@ pub(crate) fn character_format(
         }
     }
     f.tracking = attr_f32(node, "Tracking");
+    // InDesign's three: Metrics, Optical, and "$ID/manual", which is metrics
+    // with the pairs kerned by hand — and the hand kerns come with the runs.
+    f.kerning = match attr(node, "KerningMethod") {
+        Some("Optical") => Some(Kerning::Optical),
+        Some("Metrics") | Some("$ID/manual") => Some(Kerning::Metrics),
+        _ => None,
+    };
     f.baseline_shift = attr_f32(node, "BaselineShift");
     f.case = match attr(node, "Capitalization") {
         Some("AllCaps") => Some(Case::Upper),

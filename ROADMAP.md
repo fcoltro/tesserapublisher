@@ -2105,8 +2105,9 @@ and not a list of controls.
     can make text disappear — only fail to change it, which is what the
     hand check is for.
 - [~] **Kerning control and H&J parameters** — still owed from milestone 2,
-  and recorded there. Listed here so the debt has one home. **The manual kern
-  and H&J are built (by test; hand check owed). Optical kerning is not.**
+  and recorded there. Listed here so the debt has one home. **The manual
+  kern, H&J and optical kerning are built (by test; hand check owed). Glyph
+  scaling is not.**
   - **H&J meant writing a breaker, and it is written.** parley's breaker
     knows only a maximum advance, and a justification setting's whole point
     is that a line may take one more word by squeezing its spaces — which a
@@ -2169,8 +2170,24 @@ and not a list of controls.
   - Alt with an arrow at the caret, twenty thousandths a step, a hundred
     with Shift; a Kern field in the inspector when there is a caret and no
     selection. No style states a kern.
-  - **Optical kerning** — kerns computed from the outlines — is not built,
-    and is an algorithm rather than a setting.
+  - **Optical kerning is built (2026-09-17), and it is an algorithm rather
+    than a setting** — `tessera_text::optical`. A glyph is reduced to a
+    silhouette (leftmost and rightmost ink on 44 rows across the em, from
+    a flattened skrifa outline, once per glyph); a pair's fit is the mean
+    of the white between the two silhouettes, capped at half an em,
+    averaged with its minimum; the reference is what the two glyphs show
+    against their own kind, so the designer's own spacing of straights and
+    of rounds is read off the font rather than guessed; half the difference
+    is closed, never nearer than the font sets either glyph to itself, and
+    clamped to −100/+30 thousandths. Calibrated against Arial, Georgia,
+    Times and Segoe: `AV` and `To` land in the sixties to nineties, `P.` at
+    the clamp, `HH`, `nn`, `oo` untouched. **Replaces the table, as
+    InDesign's does**: an optical run is shaped with `kern` off. Applied
+    where the manual kern is, `cluster_shifts`, so glyphs, caret and click
+    agree by construction — and with the same cost, that it moves no line
+    break. `CharacterFormat.kerning: Metrics | Optical` (format 29), a pair
+    of buttons in the inspector, a choice in the style editor, and IDML's
+    `KerningMethod` on import. **The eye has not judged it.**
   - **H&J parameters** are not built. parley justifies by adjusting cluster
     advances and exposes no minimum, optimum or maximum for word or letter
     spacing, and no glyph scaling. Controlling *how* it justifies means

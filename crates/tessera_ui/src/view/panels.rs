@@ -3137,6 +3137,44 @@ fn text_section(
         );
     }
 
+    // Kerning: the font's table, or every pair judged from the glyphs'
+    // shapes. Stated either way, so a style that says optical can be
+    // overridden back to metrics on a range.
+    ui.horizontal(|ui| {
+        use tessera_text::story::Kerning;
+        ui.colored_label(Theme::text_muted(), "Kerning");
+        let current = shown.kerning.unwrap_or(Kerning::Metrics);
+        for (label, kerning, hint) in [
+            (
+                "Metrics",
+                Kerning::Metrics,
+                "The pairs the font's designer set",
+            ),
+            (
+                "Optical",
+                Kerning::Optical,
+                "Every pair judged from the shapes of its letters",
+            ),
+        ] {
+            if ui
+                .selectable_label(current == kerning, label)
+                .on_hover_text(hint)
+                .clicked()
+                && current != kerning
+            {
+                set_character(
+                    state,
+                    story,
+                    target.clone(),
+                    CharacterFormat {
+                        kerning: Some(kerning),
+                        ..CharacterFormat::default()
+                    },
+                );
+            }
+        }
+    });
+
     // Case. A display transform, not an edit: the story keeps what was typed,
     // so turning All Caps off gives back the original capitals rather than a
     // sentence that has forgotten where they were.

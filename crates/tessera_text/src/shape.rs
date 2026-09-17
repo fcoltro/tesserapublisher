@@ -53,6 +53,11 @@ pub struct Brush {
     /// break; a manual kern is a few thousandths of an em and that is what
     /// the trade buys.
     pub kern: f32,
+    /// Kern every pair of the run from the glyphs' shapes as well, by
+    /// [`crate::optical`]. On the brush for the reason the manual kern is,
+    /// and applied in the same place, [`cluster_shifts`], so the two cannot
+    /// disagree about where a letter went.
+    pub optical: bool,
     /// Carried on the brush so that a change in either splits the glyph run,
     /// exactly as a change of colour does: a run is then decorated whole or
     /// not at all, and the line under it is one rectangle per run.
@@ -430,13 +435,33 @@ pub(crate) fn cluster_shifts(
             continue;
         }
         seen = Some(key);
+        // The optical kern is between neighbours of one run — one font at
+        // one size, which is what a silhouette pair means — and is judged
+        // here, where both glyphs are known. A pair straddling two runs is
+        // left to the fonts' tables.
+        let face = skrifa::FontRef::from_index(inner.font().data.as_ref(), inner.font().index).ok();
+        let font_key = (inner.font().data.id(), inner.font().index);
+        let size = f64::from(inner.font_size());
+        let mut previous: Option<(usize, u32)> = None;
         for cluster in inner.visual_clusters() {
+            let style = cluster.first_style();
+            let glyph_ids: Vec<u32> = cluster.glyphs().map(|g| g.id).collect();
+            let kern = f64::from(style.brush.kern);
+            if style.brush.optical
+                && let Some((at, left)) = previous
+                && let (Some(face), Some(&right)) = (face.as_ref(), glyph_ids.first())
+            {
+                let em = crate::optical::kern_in_font(font_key, face, left, right);
+                all[at].3 += f64::from(em) * size;
+            }
+            let index = all.len();
             all.push((
                 cluster.text_range(),
-                cluster.glyphs().count(),
+                glyph_ids.len(),
                 cluster.is_space_or_nbsp(),
-                f64::from(cluster.first_style().brush.kern),
+                kern,
             ));
+            previous = glyph_ids.last().map(|&last| (index, last));
         }
     }
     let last_ink = all.iter().rposition(|(_, _, space, _)| !space);
@@ -2869,6 +2894,7 @@ impl Shaper {
                             kern: format.kern.map_or(0.0, |kern| {
                                 kern / 1000.0 * format.size.or(floor.size).unwrap_or(12.0)
                             }),
+                            optical: format.kerning == Some(crate::story::Kerning::Optical),
                             underline: format.underline.clone().filter(|d| d.on),
                             strikethrough: format.strikethrough.clone().filter(|d| d.on),
                         }),
@@ -4459,6 +4485,59 @@ mod tests {
             plain - tight
         );
         assert!((loose - plain - 2.0).abs() < 0.05, "and 2pt further");
+    }
+
+    #[test]
+    fn optical_kerning_closes_av_and_leaves_hh_where_the_font_put_it() {
+        // Set optically, the V sits closer to the A than the advances put
+        // it, by what the silhouettes say — the same number the layout
+        // moved it by, so the two cannot drift apart — and HH, whose
+        // silhouettes match, does not move at all. Metrics kerning is off
+        // for the run, so the closing is the optical kern alone.
+        use crate::story::{CharacterFormat, Kerning};
+
+        let shape = |text: &str, kerning: Option<Kerning>| {
+            let mut story = Story::new(text);
+            story.apply_character_format(
+                0..text.len(),
+                &CharacterFormat {
+                    size: Some(20.0),
+                    kerning,
+                    ..CharacterFormat::default()
+                },
+            );
+            Shaper::new().shape(&story, &NoStyles::default(), 400.0)
+        };
+        let second_x = |shaped: &ShapedText| shaped.lines[0].glyphs().nth(1).expect("second").x;
+        let advance_of_first =
+            |shaped: &ShapedText| shaped.lines[0].glyphs().next().unwrap().advance;
+
+        let av = shape("AV", Some(Kerning::Optical));
+        let font = &av.fonts[0];
+        let face = skrifa::FontRef::from_index(font.data.as_ref(), font.index).unwrap();
+        let ids: Vec<u32> = av.lines[0].glyphs().map(|g| g.glyph_id).collect();
+        let em = crate::optical::kern(
+            &crate::optical::silhouette(&face, ids[0]),
+            &crate::optical::silhouette(&face, ids[1]),
+        );
+        assert!(em < -0.03, "AV is a pair worth closing: {em}");
+        let expected = advance_of_first(&av) + f64::from(em) * 20.0;
+        assert!(
+            (second_x(&av) - expected).abs() < 0.05,
+            "the V is at the A's advance plus the optical kern: {} vs {expected}",
+            second_x(&av)
+        );
+
+        let hh = shape("HH", Some(Kerning::Optical));
+        assert!(
+            (second_x(&hh) - advance_of_first(&hh)).abs() < 0.05,
+            "HH is where the font put it"
+        );
+
+        // Metrics is the default, and says so: absent and stated agree.
+        let stated = shape("AV", Some(Kerning::Metrics));
+        let absent = shape("AV", None);
+        assert!((second_x(&stated) - second_x(&absent)).abs() < 1e-6);
     }
 
     // --- OpenType features ---------------------------------------------------

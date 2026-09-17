@@ -416,6 +416,7 @@ fn body_copy_formatting_survives_a_save_and_load() {
             }),
             ligatures: Some(false),
             kern: Some(-35.0),
+            kerning: Some(tessera_text::story::Kerning::Optical),
             language: Some("de".to_string()),
             figure_case: Some(tessera_text::story::FigureCase::OldStyle),
             figure_width: Some(tessera_text::story::FigureWidth::Tabular),
@@ -443,12 +444,17 @@ fn body_copy_formatting_survives_a_save_and_load() {
         "off is stated, not absent"
     );
     assert_eq!(run.local.kern, Some(-35.0));
+    assert_eq!(
+        run.local.kerning,
+        Some(tessera_text::story::Kerning::Optical)
+    );
     assert_eq!(run.local.language.as_deref(), Some("de"));
     assert_eq!(
         run.local.features(),
         vec![
             (*b"liga", 0),
             (*b"clig", 0),
+            (*b"kern", 0),
             (*b"onum", 1),
             (*b"tnum", 1),
             (*b"frac", 1),
@@ -776,8 +782,9 @@ fn the_format_version_is_twenty_six() {
     // silently undo; 25 added hyperlinks and their destinations; 26 the
     // footnote options, whose defaults are what the notes were set with; 27
     // the side of an object text may run on, the largest area before; 28
-    // text anchors and cross-references, empty before.
-    assert_eq!(format::FORMAT_VERSION, 28);
+    // text anchors and cross-references, empty before; 29 optical kerning
+    // on a character format, metrics before.
+    assert_eq!(format::FORMAT_VERSION, 29);
 }
 
 #[test]

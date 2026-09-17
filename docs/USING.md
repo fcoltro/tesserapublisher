@@ -108,6 +108,14 @@ the inspector shows the pair's value and takes a number. The font's own pair
 kerning is applied underneath; this is added to it. Tracking, beside it, is
 the control for a range.
 
+**Optical kerning.** Kerning is Metrics or Optical, on a range or in a
+character style. Metrics uses the pairs the font's designer set. Optical
+judges every pair from the shapes of its two letters — the wedge of white in
+AV, the o tucking under the T — and replaces the font's table with what it
+finds; a manual kern is still added on top. Reach for it when a font kerns
+little or not at all, or when two faces or a capital and a figure meet where
+no table can list the pair.
+
 **Language.** Text has a language, set in the Character section or on a
 character style, and it decides two things: which hyphenation patterns break
 its words — thirty-four languages are carried — and what the font is told,

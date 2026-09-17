@@ -11,6 +11,7 @@
 
 pub mod caret;
 pub mod edit;
+pub mod optical;
 pub mod shape;
 pub mod spell;
 pub mod story;

@@ -66,6 +66,19 @@ pub enum Alignment {
 
 /// Character formatting, every field optional.
 ///
+/// Where a pair's kern comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Kerning {
+    /// The font's own kern table, and nothing else. The default: the
+    /// designer's pairs, which for a well-made font are the right answer.
+    Metrics,
+    /// The font's table, plus a kern for every pair judged from the shapes
+    /// of its glyphs — see [`crate::optical`]. For a font with a thin table
+    /// or none, or for pairs the table cannot list: a capital against a
+    /// figure, two faces meeting.
+    Optical,
+}
+
 /// Which figures a font sets: the capitals' height or the lowercase's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FigureCase {
@@ -145,6 +158,9 @@ pub struct CharacterFormat {
     /// about one pair, and no style states one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kern: Option<f32>,
+    /// Metrics or optical kerning; absent means metrics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kerning: Option<Kerning>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub case: Option<Case>,
     /// Points above the baseline; negative sinks.
@@ -245,6 +261,12 @@ impl CharacterFormat {
         if let Some(on) = self.discretionary_ligatures {
             out.push((*b"dlig", u16::from(on)));
         }
+        // Optical kerning replaces the font's table rather than adding to
+        // it, as InDesign's does: the shaper's `kern` is turned off and the
+        // silhouettes decide every pair.
+        if self.kerning == Some(Kerning::Optical) {
+            out.push((*b"kern", 0));
+        }
         match self.figure_case {
             Some(FigureCase::Lining) => out.push((*b"lnum", 1)),
             Some(FigureCase::OldStyle) => out.push((*b"onum", 1)),
@@ -279,6 +301,7 @@ impl CharacterFormat {
             italic: self.italic.or(base.italic),
             tracking: self.tracking.or(base.tracking),
             kern: self.kern.or(base.kern),
+            kerning: self.kerning.or(base.kerning),
             case: self.case.or(base.case),
             baseline_shift: self.baseline_shift.or(base.baseline_shift),
             line_height: self.line_height.or(base.line_height),

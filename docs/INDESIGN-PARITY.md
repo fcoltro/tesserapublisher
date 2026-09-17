@@ -210,14 +210,14 @@ person reaches for once they start setting copy, and none of it had a row:
 
 | Element | Tessera today | Kind | Owner |
 |---|---|---|---|
-| Tab stops and leaders | ✗ | model | **M9** |
-| Paragraph rules above / below | ✗ | model | **M9** |
-| Keep options, widow / orphan control | ✗ | model | **M9** |
-| Bullets and numbering | ✗ | model | **M9** |
-| Underline, strikethrough | ✗ | model | **M9** |
-| OpenType features (figures, ligatures, stylistic sets) | small caps only | model | **M9** |
-| Kerning control, optical kerning | metrics kerning only | model | **M9** (from M2) |
-| H&J parameters | ✗ | model | **M9** (from M2) |
+| Tab stops and leaders | ✅ | — | done, M9 |
+| Paragraph rules above / below | ✅ | — | done, M9 |
+| Keep options, widow / orphan control | ✅ | — | done, M9 |
+| Bullets and numbering | ✅ | — | done, M9 |
+| Underline, strikethrough | ✅ | — | done, M9 |
+| OpenType features (figures, ligatures, stylistic sets) | ✅ | — | done, M9 |
+| Kerning control, optical kerning | ✅ manual kern at the caret; Metrics or Optical on a range or a style | — | done, M9; optical 2026-09-17 |
+| H&J parameters | ✅ word and letter spacing, own breaker; no glyph scaling | — | done, M9 |
 | Auto page number, sections, section marker | ✅ | — | done, M10 |
 | Text variables; running header (paragraph style) | ✅ custom text and running header | — | done, M10 |
 | Footnotes | ✅ reference, note at the column foot, box to edit it, document footnote options | — | done, M11 |
