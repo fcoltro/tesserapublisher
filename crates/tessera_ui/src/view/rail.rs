@@ -38,15 +38,17 @@ pub enum Dock {
     Swatches,
     Preflight,
     Console,
+    Glyphs,
 }
 
 impl Dock {
-    pub const ALL: [Dock; 7] = [
+    pub const ALL: [Dock; 8] = [
         Dock::Properties,
         Dock::Pages,
         Dock::Layers,
         Dock::Styles,
         Dock::Swatches,
+        Dock::Glyphs,
         // Last, because it is the one you go to when you have finished rather
         // than while you are working.
         Dock::Preflight,
@@ -62,6 +64,7 @@ impl Dock {
             Dock::Swatches => "Swatches",
             Dock::Preflight => "Preflight",
             Dock::Console => "AI Console",
+            Dock::Glyphs => "Glyphs",
         }
     }
 
@@ -74,6 +77,7 @@ impl Dock {
             Dock::Swatches => Icon::Swatches,
             Dock::Preflight => Icon::Preflight,
             Dock::Console => Icon::SquareTerminal,
+            Dock::Glyphs => Icon::CaseSensitive,
         }
     }
 
@@ -91,6 +95,7 @@ impl Dock {
             Dock::Swatches => state.swatches_window.open,
             Dock::Preflight => state.preflight.open,
             Dock::Console => state.console.open,
+            Dock::Glyphs => state.glyphs.open,
         }
     }
 
@@ -103,6 +108,7 @@ impl Dock {
             Dock::Swatches => state.swatches_window.open = open,
             Dock::Preflight => state.preflight.open = open,
             Dock::Console => state.console.open = open,
+            Dock::Glyphs => state.glyphs.open = open,
         }
     }
 }
@@ -181,6 +187,7 @@ pub(crate) fn body(ui: &mut Ui, state: &mut TesseraApp, dock: Dock) {
         Dock::Swatches => crate::view::swatches::docked(ui, state),
         Dock::Preflight => crate::view::preflight_panel::docked(ui, state),
         Dock::Console => crate::view::console::docked(ui, state),
+        Dock::Glyphs => crate::view::glyphs::docked(ui, state),
     }
 }
 
@@ -202,6 +209,7 @@ mod tests {
             Dock::Swatches,
             Dock::Preflight,
             Dock::Console,
+            Dock::Glyphs,
         ] {
             assert!(!dock.is_open(&state), "{} starts shut", dock.title());
         }

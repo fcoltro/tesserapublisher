@@ -2232,7 +2232,14 @@ and not a list of controls.
     apostrophe right and "’90s" the one case left to the menu. A preference,
     on by default, under Typing. Type ▸ Insert marker ▸ Glyph by code point…
     takes `2026`, `U+2026` or `&#x2026;` and shows the character before
-    inserting it. Not built: a panel that draws the font's glyphs.
+    inserting it. **The Glyphs panel (2026-09-17)** — Window ▸ Glyphs, in
+    the rail — draws every character the caret's face maps, in that face,
+    in a grid drawn by rows on demand; a click puts one at the caret, a
+    field narrows the grid by code point, and a combo shows another
+    family. The face is given to egui as a family of its own, installed
+    once per face because installing rebuilds the atlas. By character, not
+    glyph: alternates and ligatures have no code point to type, and would
+    need the story to name a glyph. Not seen running.
 
 ### Recorded, unscheduled, and probably not wanted yet
 

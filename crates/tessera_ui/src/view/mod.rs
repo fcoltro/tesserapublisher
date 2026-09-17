@@ -18,6 +18,7 @@ pub mod find;
 pub mod footnote_options;
 pub mod glass;
 pub mod glyph;
+pub mod glyphs;
 pub mod hyperlink;
 pub mod identity;
 pub mod layers;

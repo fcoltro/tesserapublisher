@@ -27,7 +27,7 @@ fn data(weight: f32) -> FontData {
     })
 }
 
-fn definitions() -> FontDefinitions {
+pub(crate) fn definitions() -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     fonts
         .font_data

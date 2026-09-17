@@ -128,6 +128,12 @@ dash is Shift+Alt+-, an en dash Alt+-, a discretionary hyphen Ctrl+Shift+-
 and a non-breaking space Ctrl+Alt+X. A discretionary hyphen is a break you
 allow in one word, honoured whether or not the paragraph hyphenates.
 
+**Glyphs.** Window ▸ Glyphs opens a panel in the rail drawing every character
+the face at the caret has, in that face. Click one to put it at the caret;
+type part of a code point in *Find* to narrow the grid; choose another
+family from *Face* to browse it. Type ▸ Insert special character ▸ Glyph by
+code point… is the same thing for a character whose number you know.
+
 **Features.** Below Case: common and discretionary ligatures on or off,
 lining or old-style figures, proportional or tabular, fractions, and
 stylistic sets by number. A font that lacks a feature ignores it — nothing

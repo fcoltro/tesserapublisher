@@ -517,7 +517,14 @@ mod tests {
             .collect();
         assert_eq!(
             named,
-            vec!["Pages", "Layers", "Swatches", "Preflight", "AI Console"]
+            vec![
+                "Pages",
+                "Layers",
+                "Swatches",
+                "Preflight",
+                "AI Console",
+                "Glyphs"
+            ]
         );
         assert_eq!(Group::Window.menu(), Some("Window"));
     }

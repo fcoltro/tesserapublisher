@@ -305,6 +305,23 @@ fn hyphen_of(font: &FontData, size: f32) -> Option<(u32, f64)> {
     Some((id.to_u32(), f64::from(advance)))
 }
 
+/// Every character `font` maps to a glyph, in code-point order, once each.
+/// What a glyphs panel draws.
+pub fn characters_of(font: &FontData) -> Vec<char> {
+    use skrifa::MetadataProvider as _;
+    let Ok(face) = skrifa::FontRef::from_index(font.data.as_ref(), font.index) else {
+        return Vec::new();
+    };
+    let mut out: Vec<char> = face
+        .charmap()
+        .mappings()
+        .filter_map(|(code, _)| char::from_u32(code))
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 /// The glyph a font draws `ch` with, and how wide it is at `size`.
 fn glyph_of(font: &FontData, size: f32, ch: char) -> Option<(u32, f64)> {
     use skrifa::MetadataProvider as _;
