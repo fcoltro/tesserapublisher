@@ -55,6 +55,13 @@ pub struct IndexWindow {
     pub draft: Option<Index>,
 }
 
+/// The endnotes box.
+#[derive(Debug, Default, Clone)]
+pub struct EndnotesWindow {
+    pub open: bool,
+    pub draft: Option<tessera_document::contents::Endnotes>,
+}
+
 /// The note's words without the number and tab a fresh note begins with.
 ///
 /// What the box shows and what it writes back around; the prefix is kept
@@ -111,6 +118,7 @@ impl FootnoteWindow {
 pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
     footnote(ctx, state);
     index_entry(ctx, state);
+    endnotes(ctx, state);
     contents(ctx, state);
     index(ctx, state);
 }
@@ -378,6 +386,70 @@ fn contents(ctx: &egui::Context, state: &mut TesseraApp) {
         window.draft = None;
     }
     state.contents = window;
+}
+
+fn endnotes(ctx: &egui::Context, state: &mut TesseraApp) {
+    if !state.endnotes.open {
+        return;
+    }
+    let mut window = state.endnotes.clone();
+    let draft = window
+        .draft
+        .get_or_insert_with(|| state.active().document().endnotes.clone());
+    let placed = draft
+        .story
+        .is_some_and(|s| state.active().document().story(s).is_some());
+    let at_end = state.active().document().footnotes.placement
+        == tessera_document::footnotes::NotePlacement::End;
+    let mut go = false;
+    let response = egui::Modal::new(egui::Id::new("endnotes"))
+        .frame(super::dialog_frame(ctx))
+        .show(ctx, |ui| {
+            ui.set_width((ctx.content_rect().width() - 64.0).clamp(300.0, 420.0));
+            ui.heading("Endnotes");
+            ui.add_space(Theme::space_2());
+            crate::view::panels::field(ui, "Title", |ui| {
+                ui.add(egui::TextEdit::singleline(&mut draft.title).desired_width(f32::INFINITY));
+            });
+            ui.colored_label(
+                Theme::text_muted(),
+                "Every note in the document, story by story, numbered as its reference is.",
+            );
+            if !at_end {
+                // Said here, where the list is made, rather than left for
+                // the person to find both the list and the notes at the foot.
+                ui.colored_label(
+                    Theme::error(),
+                    "The footnote options still set the notes at the foot of the column: \
+                     choose End of document there, or they will be set in both places.",
+                );
+            }
+            ui.add_space(Theme::space_2());
+            ui.horizontal(|ui| {
+                let verb = if placed {
+                    "Update"
+                } else {
+                    "Place on this page"
+                };
+                go = ui.add(super::primary_button(verb)).clicked();
+                if ui.button("Cancel").clicked() {
+                    window.open = false;
+                }
+            });
+        });
+    if response.should_close() {
+        window.open = false;
+    }
+    if go {
+        let endnotes = window.draft.take().unwrap_or_default();
+        apply(state, Command::SetEndnotes(endnotes));
+        apply(state, Command::UpdateEndnotes);
+        window.open = false;
+    }
+    if !window.open {
+        window.draft = None;
+    }
+    state.endnotes = window;
 }
 
 fn index(ctx: &egui::Context, state: &mut TesseraApp) {

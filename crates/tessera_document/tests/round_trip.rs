@@ -787,8 +787,10 @@ fn the_format_version_is_twenty_six() {
     // the side of an object text may run on, the largest area before; 28
     // text anchors and cross-references, empty before; 29 optical kerning
     // on a character format, metrics before; 30 glyph scaling in
-    // justification, 100 / 100 / 100 before; 31 type on a path, none before.
-    assert_eq!(format::FORMAT_VERSION, 31);
+    // justification, 100 / 100 / 100 before; 31 type on a path, none before;
+    // 32 endnotes — where the notes go, and the list's recipe — at the foot
+    // and no list before.
+    assert_eq!(format::FORMAT_VERSION, 32);
 }
 
 #[test]
@@ -860,6 +862,22 @@ fn footnote_options_survive_a_round_trip() {
     let back = format::load(&path).expect("load");
     let _ = std::fs::remove_file(&path);
     assert_eq!(back.footnotes, doc.footnotes);
+
+    // And at the end, with the list's recipe.
+    let mut doc = Document::default();
+    doc.set_footnote_options(FootnoteOptions {
+        placement: tessera_document::footnotes::NotePlacement::End,
+        ..Default::default()
+    });
+    doc.set_endnotes(tessera_document::contents::Endnotes {
+        title: "Sources".into(),
+        story: None,
+    });
+    format::save(&doc, &path).expect("save");
+    let back = format::load(&path).expect("load");
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(back.footnotes, doc.footnotes);
+    assert_eq!(back.endnotes, doc.endnotes);
 }
 
 #[test]

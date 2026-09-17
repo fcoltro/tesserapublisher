@@ -55,12 +55,27 @@ pub enum Restart {
     Page,
 }
 
+/// Where the notes are set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum NotePlacement {
+    /// At the foot of the column that cites them: footnotes.
+    #[default]
+    Foot,
+    /// Gathered into one story — Layout ▸ Endnotes… places and updates it —
+    /// with nothing at the foot: endnotes. The references in the text read
+    /// the same; the count runs through the story, whatever [`Restart`]
+    /// says, because a list at the end has no pages to restart on.
+    End,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FootnoteOptions {
     #[serde(default)]
     pub numbering: FootnoteNumbering,
     #[serde(default)]
     pub restart: Restart,
+    #[serde(default)]
+    pub placement: NotePlacement,
     /// What the first note is numbered.
     #[serde(default = "one")]
     pub start_at: u32,
@@ -101,6 +116,7 @@ impl Default for FootnoteOptions {
         Self {
             numbering: FootnoteNumbering::Arabic,
             restart: Restart::Never,
+            placement: NotePlacement::Foot,
             start_at: one(),
             space_before: default_space_before(),
             space_between: 0.0,

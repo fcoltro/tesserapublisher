@@ -302,6 +302,8 @@ pub enum Run {
     TableOfContents,
     /// The index recipe, and placing or updating the index.
     GenerateIndex,
+    /// The endnotes recipe, and placing or updating the list.
+    Endnotes,
     /// A character by its code point, at the caret.
     InsertGlyph,
     /// Where the selected words go when clicked.
@@ -384,7 +386,9 @@ pub fn guard(run: Run) -> Guard {
         Run::StepAndRepeat => Guard::NeedsSelection,
         // Dialogs over the document, not over the text.
         Run::SectionOptions | Run::TextVariables => Guard::Always,
-        Run::TableOfContents | Run::GenerateIndex | Run::InsertGlyph => Guard::Always,
+        Run::TableOfContents | Run::GenerateIndex | Run::Endnotes | Run::InsertGlyph => {
+            Guard::Always
+        }
         // Acts on the selected text, so it is only useful while typing.
         Run::Hyperlink => Guard::Always,
         Run::FootnoteOptions => Guard::Always,
@@ -1139,6 +1143,7 @@ pub fn all() -> &'static [Action] {
             Run::TableOfContents,
         ),
         a("Index\u{2026}", None, Group::Layout, Run::GenerateIndex),
+        a("Endnotes\u{2026}", None, Group::Layout, Run::Endnotes),
         // The Layout menu, which milestone 1.5 left empty for want of exactly
         // these commands. The menu bar is generated from this list, so adding
         // them is what makes the menu appear.
@@ -1453,6 +1458,7 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             state.hyperlink = window;
         }
         Run::GenerateIndex => state.index.open = true,
+        Run::Endnotes => state.endnotes.open = true,
         Run::FindAndChange => state.find.open(),
         Run::InsertTable => {
             // Into the type area of the first page, which is where a table

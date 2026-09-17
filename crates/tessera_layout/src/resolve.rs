@@ -763,12 +763,15 @@ fn compose_frame(
     // references are, for the flow to set at the foot of whichever column
     // their references land in. Shaped here because the flow has no shaper,
     // and all of them rather than the ones after `from`: the flow keeps only
-    // those whose line it places.
+    // those whose line it places. None when the notes are endnotes: they
+    // are gathered into a story of their own, and the foot stays copy.
+    let at_end = doc.footnotes.placement == tessera_document::footnotes::NotePlacement::End;
     let notes: Vec<tessera_text::shape::Note> = story
         .footnote_offsets()
         .into_iter()
         .zip(&story.footnotes)
         .enumerate()
+        .filter(|_| !at_end)
         .map(|(n, (at, note))| {
             let label = labels
                 .get(n)
@@ -813,7 +816,14 @@ fn footnote_labels(
     if count == 0 {
         return Vec::new();
     }
-    let base = match options.restart {
+    // Endnotes count once through the story: a list at the end has no
+    // pages to restart on, and its references must read as it does.
+    let restart = if options.placement == tessera_document::footnotes::NotePlacement::End {
+        tessera_document::footnotes::Restart::Never
+    } else {
+        options.restart
+    };
+    let base = match restart {
         tessera_document::footnotes::Restart::Never => 0,
         tessera_document::footnotes::Restart::Page => {
             // The first frame of the chain on this page, and where it starts.

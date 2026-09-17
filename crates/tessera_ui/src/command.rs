@@ -571,6 +571,12 @@ pub enum Command {
     UpdateContents,
     SetIndex(tessera_document::contents::Index),
     UpdateIndex,
+    /// The recipe for the endnotes: the list every story's notes are
+    /// gathered into when the footnote options set them at the end.
+    SetEndnotes(tessera_document::contents::Endnotes),
+    /// Rebuild the endnotes from the document as it is now, into the story
+    /// they were placed in — or into a new frame on the current page.
+    UpdateEndnotes,
     /// Point a named hyperlink destination at a page.
     SetDestination {
         name: String,
@@ -2062,6 +2068,23 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 tessera_layout::contents::index(state.active().document(), &resolved, &index.title);
             place_generated(state, story, index.story, |doc, id| {
                 doc.index.story = Some(id);
+            });
+        }
+
+        Command::SetEndnotes(endnotes) => {
+            state.active_mut().document_mut().set_endnotes(endnotes);
+        }
+
+        Command::UpdateEndnotes => {
+            let endnotes = state.active().document().endnotes.clone();
+            let resolved = state.resolve_active().clone();
+            let story = tessera_layout::contents::endnotes(
+                state.active().document(),
+                &resolved,
+                &endnotes.title,
+            );
+            place_generated(state, story, endnotes.story, |doc, id| {
+                doc.endnotes.story = Some(id);
             });
         }
 

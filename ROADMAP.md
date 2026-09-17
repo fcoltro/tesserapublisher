@@ -2437,8 +2437,20 @@ line of copy. The renderer and the PDF writer draw them without knowing.
   own first line's ascent rather than the note's top. What is carried past
   the last column counts as overset. Two tests: a four-line note across
   three columns, and the whole-move case kept as it was.
-- Not built: footnote text edited on the canvas (the box does it), endnotes,
-  index sub-topics, page ranges ("12–15"), and a contents that includes
+- [x] **Endnotes (2026-09-17).** `FootnoteOptions.placement: Foot | End`
+  and a `Document.endnotes` recipe beside the index's (format 32). At the
+  end, the flow is handed no notes — the foot stays copy — and the
+  references count once through the story whatever the restart says,
+  because a list has no pages to restart on. Layout ▸ Endnotes… builds the
+  list with `tessera_layout::contents::endnotes`: every story's notes in
+  reading order (a thread once, under its first frame), each a paragraph
+  with the number where the note's own marker was, and places or updates
+  it through `place_generated` as the index is. The dialog warns when the
+  options still say Foot, so the notes are not set in both places
+  unnoticed. Test: two stories placed in the opposite order to their
+  making, roman numerals, nothing at either foot, and back again.
+- Not built: footnote text edited on the canvas (the box does it), index
+  sub-topics, page ranges ("12–15"), and a contents that includes
   paragraphs from other documents (a book). Contents entries *are*
   hyperlinks now — see below.
 

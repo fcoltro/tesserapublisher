@@ -184,6 +184,11 @@ pub struct Document {
     #[serde(default)]
     pub index: crate::contents::Index,
 
+    /// And for the endnotes, when the footnote options set the notes at
+    /// the end rather than the foot.
+    #[serde(default)]
+    pub endnotes: crate::contents::Endnotes,
+
     /// Where named hyperlink destinations point. A link in text names one
     /// of these; a table of contents makes one per heading.
     #[serde(default)]
@@ -243,6 +248,7 @@ impl Document {
             variables: Vec::new(),
             contents: crate::contents::Contents::default(),
             index: crate::contents::Index::default(),
+            endnotes: crate::contents::Endnotes::default(),
             destinations: Vec::new(),
             footnotes: crate::footnotes::FootnoteOptions::default(),
             revision: 0,
@@ -739,6 +745,12 @@ impl Document {
     /// Replace the index recipe.
     pub fn set_index(&mut self, index: crate::contents::Index) {
         self.index = index;
+        self.touch();
+    }
+
+    /// Replace the endnotes recipe.
+    pub fn set_endnotes(&mut self, endnotes: crate::contents::Endnotes) {
+        self.endnotes = endnotes;
         self.touch();
     }
 

@@ -242,6 +242,45 @@ pub fn index(doc: &Document, resolved: &ResolvedDocument, title: &str) -> Story 
     assemble(paragraphs, 0.0)
 }
 
+/// The endnotes: every story's notes in reading order, each numbered as
+/// its reference is — from the footnote options' start, once through the
+/// story — and set as a paragraph, the number where the note's own marker
+/// was. A story's notes are listed under the story's first frame, so a
+/// thread contributes once.
+pub fn endnotes(doc: &Document, resolved: &ResolvedDocument, title: &str) -> Story {
+    let options = doc.footnotes;
+    let mut paragraphs: Vec<Paragraph> = Vec::new();
+    if !title.is_empty() {
+        paragraphs.push((title.to_owned(), None, false, None));
+    }
+    let mut seen: Vec<StoryId> = Vec::new();
+    for item in in_reading_order(doc, resolved) {
+        let Some(FrameKind::Text { story: id, .. }) = doc.frame(item.frame).map(|f| &f.kind) else {
+            continue;
+        };
+        if seen.contains(id) {
+            continue;
+        }
+        seen.push(*id);
+        let Some(story) = doc.story(*id) else {
+            continue;
+        };
+        for (n, note) in story.footnotes.iter().enumerate() {
+            let number = n as u32 + options.start_at.max(1);
+            let label = options.numbering.label(number);
+            let read = expand(
+                &note.text,
+                Some(&tessera_text::variables::Variables::for_footnote_labelled(
+                    n as u32 + 1,
+                    label,
+                )),
+            );
+            paragraphs.push((read, None, false, None));
+        }
+    }
+    assemble(paragraphs, 0.0)
+}
+
 /// "1, 3–5, 8": the pages a topic is on, with runs of neighbours joined
 /// by an en dash, as every index sets them. Pages in different sections
 /// are never joined — "iv–2" would be nonsense — so a run is neighbours in
@@ -459,6 +498,68 @@ mod tests {
         let resolved = crate::resolve(&doc, &mut shaper);
         let story = index(&doc, &resolved, "");
         assert_eq!(story.text, "Ink\t1\nType\t1\u{2013}2", "neighbours join");
+    }
+
+    #[test]
+    fn endnotes_list_every_story_s_notes_in_reading_order_numbered_as_cited() {
+        use tessera_document::footnotes::{FootnoteNumbering, FootnoteOptions, NotePlacement};
+        use tessera_text::variables::Marker;
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        let second = doc.add_page();
+        let first = doc.page_ids().next().unwrap();
+        let r = Marker::FootnoteReference.character();
+        let mut one = Story::new(format!("A claim{r} and another{r}."));
+        for (note, words) in one.footnotes.iter_mut().zip(["First source.", "Second."]) {
+            let end = note.text.len();
+            note.insert_text(end, words);
+        }
+        let mut two = Story::new(format!("Later{r}."));
+        let end = two.footnotes[0].text.len();
+        two.footnotes[0].insert_text(end, "Third, in its own story.");
+        // Placed on the pages the other way round: reading order, not the
+        // order the stories were made in, decides the list.
+        let one = doc.add_story(one);
+        let two = doc.add_story(two);
+        text_frame(&mut doc, second, one, 40.0);
+        text_frame(&mut doc, first, two, 40.0);
+        doc.set_footnote_options(FootnoteOptions {
+            placement: NotePlacement::End,
+            numbering: FootnoteNumbering::LowerRoman,
+            ..Default::default()
+        });
+
+        let mut shaper = Shaper::new();
+        let resolved = crate::resolve(&doc, &mut shaper);
+        let story = endnotes(&doc, &resolved, "Notes");
+        assert_eq!(
+            story.text,
+            "Notes
+i	Third, in its own story.
+i	First source.
+ii	Second.",
+            "each story's notes, counted from one, in the order the pages read"
+        );
+
+        // And nothing at the foot of either frame: the notes are the list's.
+        for item in &resolved.items {
+            let ResolvedKind::Text { shaped, .. } = &item.kind else {
+                continue;
+            };
+            assert!(
+                shaped.lines.iter().all(|l| !l.range.is_empty()),
+                "no note lines set at the foot"
+            );
+        }
+        // Set at the foot again, the same document puts them back.
+        doc.set_footnote_options(FootnoteOptions::default());
+        let resolved = crate::resolve(&doc, &mut shaper);
+        let at_foot = resolved.items.iter().any(|item| {
+            matches!(&item.kind, ResolvedKind::Text { shaped, .. }
+                if shaped.lines.iter().any(|l| l.range.is_empty()))
+        });
+        assert!(at_foot);
     }
 
     #[test]

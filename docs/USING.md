@@ -165,6 +165,15 @@ circle into text outside it. Words that do not fit are overset, and preflight
 reports them. The words are edited in the story editor rather than on the
 curve.
 
+**Notes.** Type ▸ Insert footnote puts a reference at the caret and opens a
+box for the note; the note is set at the foot of the column that cites it,
+under a short rule, and a note too long for the room continues at the foot
+of the next column. Type ▸ Footnote options… says what the numbers count in,
+where they restart, the space and the rule — and *Placement*. Set to *End of
+the document*, nothing is set at the foot: Layout ▸ Endnotes… gathers every
+story's notes into one story, numbered as their references are, places it
+on the current page, and updates it afterwards from the same command.
+
 ## Colour
 
 The Swatches panel holds named colours. A **spot** colour is a pot of a specific

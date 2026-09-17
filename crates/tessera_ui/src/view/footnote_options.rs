@@ -1,6 +1,6 @@
 //! Document footnote options: numbering, restart, spacing, rule.
 
-use tessera_document::footnotes::{FootnoteNumbering, FootnoteOptions, Restart};
+use tessera_document::footnotes::{FootnoteNumbering, FootnoteOptions, NotePlacement, Restart};
 
 use crate::app::TesseraApp;
 use crate::command::{Command, apply};
@@ -72,6 +72,31 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                         ui.selectable_value(&mut draft.restart, Restart::Page, "Every page");
                     });
             });
+            crate::view::panels::field(ui, "Placement", |ui| {
+                egui::ComboBox::from_id_salt("footnote-placement")
+                    .selected_text(match draft.placement {
+                        NotePlacement::Foot => "Foot of the column",
+                        NotePlacement::End => "End of the document",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut draft.placement,
+                            NotePlacement::Foot,
+                            "Foot of the column",
+                        );
+                        ui.selectable_value(
+                            &mut draft.placement,
+                            NotePlacement::End,
+                            "End of the document",
+                        );
+                    });
+            });
+            if draft.placement == NotePlacement::End {
+                ui.colored_label(
+                    Theme::text_muted(),
+                    "Layout \u{203a} Endnotes\u{2026} places the list and updates it.",
+                );
+            }
             ui.add_space(Theme::space_1());
             crate::view::panels::field(ui, "Space before", |ui| {
                 crate::view::panels::measure_bare(ui, &mut draft.space_before, unit);

@@ -68,3 +68,21 @@ impl Default for Index {
         }
     }
 }
+
+/// The recipe for the endnotes, and where they went: every story's notes,
+/// in reading order, numbered as their references are.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Endnotes {
+    pub title: String,
+    #[serde(default)]
+    pub story: Option<StoryId>,
+}
+
+impl Default for Endnotes {
+    fn default() -> Self {
+        Self {
+            title: "Notes".into(),
+            story: None,
+        }
+    }
+}
