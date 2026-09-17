@@ -2048,7 +2048,9 @@ fn draw_text(
             let x = bounds.x + glyph.x;
             let y = to_pdf_y(page, bounds.y + glyph.y, 0.0);
             content.next_line(0.0, 0.0);
-            content.set_text_matrix([1.0, 0.0, 0.0, 1.0, x as f32, y as f32]);
+            // Glyph scaling from justification goes through the matrix, so
+            // the font's `/W` widths stay the glyphs' natural ones.
+            content.set_text_matrix([run.scale_x as f32, 0.0, 0.0, 1.0, x as f32, y as f32]);
             content.show(Str(&cid.to_be_bytes()));
         }
 

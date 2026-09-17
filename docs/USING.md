@@ -134,11 +134,13 @@ stylistic sets by number. A font that lacks a feature ignores it — nothing
 here can make text disappear, only fail to change it.
 
 **Justification and hyphenation.** A justified paragraph reaches the measure
-by spacing its words, then its letters, within the percentages in the
-Justification rows — InDesign's 80 / 100 / 133 for words by default, letters
-held still — and a word that fits only by squeezing the spaces to their
-minimum is pulled up onto the line. Past every limit the words take the rest
-rather than leave the line short. With *Break words* on, the Hyphenation rows
+by spacing its words, then its letters, then scaling its glyphs, within the
+percentages in the Justification rows — InDesign's 80 / 100 / 133 for words
+by default, letters held still, glyphs at 100 / 100 / 100 — and a word that
+fits only by squeezing the spaces or the glyphs to their minimum is pulled up
+onto the line. Glyph scaling draws every glyph on the line the same fraction
+wider or narrower; a percent or two is invisible and buys a line, more shows.
+Past every limit the words take the rest rather than leave the line short. With *Break words* on, the Hyphenation rows
 say how short a word may be broken, how many letters stay on each side, how
 many lines in a row may end in a hyphen, and whether capitalised words may be
 broken.

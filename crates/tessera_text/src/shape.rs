@@ -414,6 +414,8 @@ pub(crate) struct KernShifts {
     pub glyphs: Vec<f64>,
     /// Per cluster: `(shaped text start, shift before it)`, in visual order.
     pub clusters: Vec<(usize, f64)>,
+    /// Where the line's end went: the sum of everything.
+    pub total: f64,
 }
 
 pub(crate) fn cluster_shifts(
@@ -423,7 +425,8 @@ pub(crate) fn cluster_shifts(
     let spacing = spacing.unwrap_or_default();
     // Clusters first, so the trailing whitespace — which takes no spacing
     // and gives none — can be told from the rest.
-    let mut all: Vec<(std::ops::Range<usize>, usize, bool, f64)> = Vec::new();
+    // (text range, glyphs, is a space, kern after, natural advance)
+    let mut all: Vec<(std::ops::Range<usize>, usize, bool, f64, f64)> = Vec::new();
     let mut seen: Option<std::ops::Range<usize>> = None;
     for item in line.items() {
         let parley::PositionedLayoutItem::GlyphRun(run) = item else {
@@ -460,20 +463,27 @@ pub(crate) fn cluster_shifts(
                 glyph_ids.len(),
                 cluster.is_space_or_nbsp(),
                 kern,
+                f64::from(cluster.advance()),
             ));
             previous = glyph_ids.last().map(|&last| (index, last));
         }
     }
-    let last_ink = all.iter().rposition(|(_, _, space, _)| !space);
+    let last_ink = all.iter().rposition(|(_, _, space, _, _)| !space);
 
     let mut glyphs = Vec::new();
     let mut clusters = Vec::new();
     let mut shift = 0.0f64;
     let mut any = false;
-    for (index, (range, n, space, kern)) in all.iter().enumerate() {
+    for (index, (range, n, space, kern, advance)) in all.iter().enumerate() {
         clusters.push((range.start, shift));
         glyphs.extend(std::iter::repeat_n(shift, *n));
         let mut after = *kern;
+        // A scaled glyph is wider by the stretch of its own width, and what
+        // follows moves by as much — the last ink included, so the line's
+        // end is where its last glyph's scaled edge is.
+        if last_ink.is_some_and(|last| index <= last) {
+            after += spacing.stretch * advance;
+        }
         if last_ink.is_some_and(|last| index < last) {
             after += spacing.letter;
             if *space {
@@ -485,7 +495,11 @@ pub(crate) fn cluster_shifts(
             shift += after;
         }
     }
-    any.then_some(KernShifts { glyphs, clusters })
+    any.then_some(KernShifts {
+        glyphs,
+        clusters,
+        total: shift,
+    })
 }
 
 /// The kern shift of a caret at `shaped` on `line`: what the glyph there
@@ -522,7 +536,7 @@ pub(crate) fn shift_at(
         }
     }
     // Past the last cluster: where the line's end went.
-    shifts.clusters.last().map_or(0.0, |(_, shift)| *shift)
+    shifts.total
 }
 
 /// Decide every tab's width from where the last pass put it.
@@ -964,6 +978,10 @@ pub(crate) struct LineSpacing {
     pub word: f64,
     /// Added after every cluster on the line but the last.
     pub letter: f64,
+    /// What every glyph on the line grows by, as a fraction of its own
+    /// width: 0.02 draws each glyph two percent wider and moves what
+    /// follows by as much. Negative narrows. Zero is nearly every line.
+    pub stretch: f64,
 }
 
 /// One thing the breaker counts: a cluster, or an in-flow inline box.
@@ -1074,6 +1092,15 @@ fn plan_total_fit(
     } else {
         0.0
     };
+    // What the glyphs can give or take, as a fraction of the line's ink.
+    let (glyph_stretch, glyph_squeeze) = if composition.justify {
+        (
+            (f64::from(rules.glyph_max) - f64::from(rules.glyph_desired)).max(0.0) / 100.0,
+            (f64::from(rules.glyph_desired) - f64::from(rules.glyph_min)).max(0.0) / 100.0,
+        )
+    } else {
+        (0.0, 0.0)
+    };
     // best[j]: the cheapest way to have broken after unit j (0 = nothing
     // taken yet), with where the line before it started, which line number
     // it is, how many hyphens in a row ended here, and what it chose.
@@ -1124,7 +1151,7 @@ fn plan_total_fit(
                 let take = j + 1 - i;
                 let last = j + 1 == n;
                 let slack = room - ink;
-                let min_ink = ink - spaces as f64 * space_width * squeeze;
+                let min_ink = ink - spaces as f64 * space_width * squeeze - ink * glyph_squeeze;
                 let fits = min_ink <= room + 1e-6;
                 if allowed && (fits || !any) {
                     // Badness: how far the spaces stretch or squeeze, cubed,
@@ -1142,9 +1169,9 @@ fn plan_total_fit(
                         OVERFULL
                     } else if composition.justify {
                         let capacity = if slack >= 0.0 {
-                            spaces as f64 * space_width * stretch
+                            spaces as f64 * space_width * stretch + ink * glyph_stretch
                         } else {
-                            spaces as f64 * space_width * squeeze
+                            spaces as f64 * space_width * squeeze + ink * glyph_squeeze
                         };
                         if capacity <= 0.0 {
                             // No spaces to give or take: only a line that
@@ -1266,6 +1293,12 @@ fn break_lines_with_room(
     } else {
         0.0
     };
+    // And how much of every glyph's, when glyphs may narrow.
+    let glyph_squeeze = if composition.justify {
+        (f64::from(rules.glyph_desired) - f64::from(rules.glyph_min)).max(0.0) / 100.0
+    } else {
+        0.0
+    };
 
     let mut spacings = Vec::new();
     let mut breaker = layout.break_lines();
@@ -1371,7 +1404,9 @@ fn break_lines_with_room(
             match unit.kind {
                 UnitKind::Space => {
                     // A break after this space: the space itself hangs.
-                    let fits = width - spaces as f64 * space_width * squeeze <= room + 1e-6;
+                    let fits =
+                        width - spaces as f64 * space_width * squeeze - width * glyph_squeeze
+                            <= room + 1e-6;
                     if fits || best.is_none() {
                         best = Some((j + 1 - i, width, spaces, false));
                     }
@@ -1384,7 +1419,10 @@ fn break_lines_with_room(
                 }
                 UnitKind::SoftHyphen => {
                     let with_hyphen = width + unit.hyphen;
-                    let fits = with_hyphen - spaces as f64 * space_width * squeeze <= room + 1e-6;
+                    let fits = with_hyphen
+                        - spaces as f64 * space_width * squeeze
+                        - with_hyphen * glyph_squeeze
+                        <= room + 1e-6;
                     if may_hyphenate && (fits || best.is_none()) {
                         best = Some((j + 1 - i, with_hyphen, spaces, true));
                     }
@@ -1394,7 +1432,9 @@ fn break_lines_with_room(
                 }
                 UnitKind::Text => {
                     width += unit.width;
-                    let fits = width - spaces as f64 * space_width * squeeze <= room + 1e-6;
+                    let fits =
+                        width - spaces as f64 * space_width * squeeze - width * glyph_squeeze
+                            <= room + 1e-6;
                     // Past the room with somewhere to break: break there. With
                     // nowhere, the word stays whole and overhangs, as parley
                     // has it — a word broken where no one said it could be is
@@ -1438,6 +1478,7 @@ fn break_lines_with_room(
         let mut spacing = LineSpacing {
             word: base_word,
             letter: 0.0,
+            stretch: f64::from(rules.glyph_desired) / 100.0 - 1.0,
         };
         // The last line is set as it falls — unless it was pulled up by
         // squeezing its spaces, in which case the squeeze is owed.
@@ -1460,6 +1501,18 @@ fn break_lines_with_room(
                     (remaining / gaps).clamp(letter_lo.min(letter_hi), letter_hi.max(letter_lo));
                 spacing.letter = letter;
                 remaining -= letter * gaps;
+            }
+            // Then the glyphs, each by the same fraction of its own width,
+            // within what the rules allow of it.
+            if ink > 0.0 && remaining.abs() > 1e-6 {
+                let (glyph_lo, glyph_hi) = (
+                    f64::from(rules.glyph_min) / 100.0 - 1.0,
+                    f64::from(rules.glyph_max) / 100.0 - 1.0,
+                );
+                let stretch =
+                    (remaining / ink).clamp(glyph_lo.min(glyph_hi), glyph_hi.max(glyph_lo));
+                spacing.stretch = stretch;
+                remaining -= stretch * ink;
             }
             // Past every limit, the words take the rest: InDesign does the
             // same and marks the line, and a justified line left short is
@@ -1617,6 +1670,13 @@ pub struct ShapedRun {
     /// glyphs. Both already walk run by run, for the size.
     pub colour: Option<tessera_color::Color>,
     pub glyphs: Vec<PositionedGlyph>,
+    /// Glyph scaling, from justification: how wide each glyph is drawn as
+    /// a factor of its natural width. `1.0` for nearly every run. The
+    /// glyphs' `x` already accounts for it; each `advance` is natural, so
+    /// the PDF's `/W` array — one width per glyph per font — stays true and
+    /// the scaling goes through the text matrix, as on screen it goes
+    /// through the glyph transform.
+    pub scale_x: f64,
 }
 
 /// Room to reserve in the text for something that is not text.
@@ -3303,6 +3363,11 @@ impl Shaper {
                         size,
                         colour,
                         glyphs,
+                        scale_x: 1.0
+                            + paragraph
+                                .spacing
+                                .get(index)
+                                .map_or(0.0, |spacing| spacing.stretch),
                     };
                     // Against the run's own baseline: a shifted run's
                     // underline rises with it.
@@ -4354,6 +4419,85 @@ mod tests {
     }
 
     #[test]
+    fn glyph_scaling_fills_a_line_the_spaces_may_not() {
+        // Words and letters pinned; glyphs may grow to 120%. The line is
+        // still flush at the measure — by every glyph growing the same
+        // fraction and what follows moving over — and the run says how
+        // wide to draw them, so the renderers agree with the layout.
+        use crate::story::Justification;
+        let rules = Justification {
+            word_min: 100.0,
+            word_max: 100.0,
+            glyph_max: 120.0,
+            ..Justification::default()
+        };
+        let shaped = justified(COPY, 200.0, Some(rules));
+        assert!(shaped.lines.len() >= 3);
+        let first = &shaped.lines[0];
+        let scale = first.runs[0].scale_x;
+        assert!((1.001..=1.2).contains(&scale), "the glyphs grew: {scale}");
+        // Flush: some glyph's *scaled* right edge is at the measure — the
+        // last word's; the trailing space hangs past it, as it always has.
+        assert!(
+            first
+                .glyphs()
+                .any(|g| (g.x + g.advance * scale - 200.0).abs() < 0.5),
+            "flush"
+        );
+        // Every glyph moved by the growth of those before it.
+        let g: Vec<_> = first.glyphs().collect();
+        assert!(
+            (g[1].x - g[0].x - g[0].advance * scale).abs() < 1e-6,
+            "the second glyph starts where the scaled first ends"
+        );
+        // And the caret at the end of the line agrees with the glyphs.
+        let end_of_word = first.range.end - 1;
+        let caret = shaped
+            .caret_geometry(
+                crate::edit::TextCursor {
+                    position: end_of_word,
+                    anchor: end_of_word,
+                },
+                1.0,
+            )
+            .caret
+            .expect("a caret");
+        assert!(
+            (caret.x0 - 200.0).abs() < 0.5,
+            "the caret is flush too: {}",
+            caret.x0
+        );
+        // The last line is set as it falls, at natural width.
+        let last = shaped.lines.last().unwrap();
+        assert!((last.runs[0].scale_x - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_word_that_fits_with_squeezed_glyphs_is_pulled_up() {
+        // Spaces pinned; glyphs may narrow to 95%. A line two points short
+        // of the measure takes its last word by narrowing everything.
+        use crate::story::Justification;
+        let text = "aaa bbb ccc ddd";
+        let plain = Shaper::new().shape(&Story::new(text), &NoStyles::default(), 1000.0);
+        let measure = ink_end(&plain.lines[0]) - 2.0;
+        let rules = Justification {
+            word_min: 100.0,
+            glyph_min: 95.0,
+            ..Justification::default()
+        };
+        let narrowed = justified(text, measure, Some(rules));
+        assert_eq!(narrowed.lines.len(), 1, "95% glyphs let it fit");
+        let scale = narrowed.lines[0].runs[0].scale_x;
+        assert!((0.95..0.999).contains(&scale), "narrowed: {scale}");
+        assert!(
+            narrowed.lines[0]
+                .glyphs()
+                .any(|g| (g.x + g.advance * scale - measure).abs() < 0.5),
+            "and flush"
+        );
+    }
+
+    #[test]
     fn a_word_that_fits_with_squeezed_spaces_is_pulled_up() {
         use crate::story::Justification;
         let text = "aaa bbb ccc ddd";
@@ -4920,6 +5064,9 @@ mod tests {
             letter_min: 0.0,
             letter_desired: 0.0,
             letter_max: 0.0,
+            glyph_min: 100.0,
+            glyph_desired: 100.0,
+            glyph_max: 100.0,
         }
     }
 
@@ -6578,6 +6725,7 @@ mod tests {
                         font_index: 0,
                         size: 12.0,
                         colour: None,
+                        scale_x: 1.0,
                         glyphs: vec![PositionedGlyph {
                             glyph_id: 1,
                             x: 0.0,

@@ -217,7 +217,7 @@ person reaches for once they start setting copy, and none of it had a row:
 | Underline, strikethrough | ✅ | — | done, M9 |
 | OpenType features (figures, ligatures, stylistic sets) | ✅ | — | done, M9 |
 | Kerning control, optical kerning | ✅ manual kern at the caret; Metrics or Optical on a range or a style | — | done, M9; optical 2026-09-17 |
-| H&J parameters | ✅ word and letter spacing, own breaker; no glyph scaling | — | done, M9 |
+| H&J parameters | ✅ word spacing, letter spacing, glyph scaling, own breaker | — | done, M9; glyph scaling 2026-09-17 |
 | Auto page number, sections, section marker | ✅ | — | done, M10 |
 | Text variables; running header (paragraph style) | ✅ custom text and running header | — | done, M10 |
 | Footnotes | ✅ reference, note at the column foot, box to edit it, document footnote options | — | done, M11 |

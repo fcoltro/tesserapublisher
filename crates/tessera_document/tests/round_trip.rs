@@ -373,6 +373,9 @@ fn body_copy_formatting_survives_a_save_and_load() {
         letter_min: -2.0,
         letter_desired: 0.0,
         letter_max: 5.0,
+        glyph_min: 98.0,
+        glyph_desired: 100.0,
+        glyph_max: 103.0,
     };
     let hyphenation = tessera_text::story::Hyphenation {
         min_word: 6,
@@ -783,8 +786,9 @@ fn the_format_version_is_twenty_six() {
     // footnote options, whose defaults are what the notes were set with; 27
     // the side of an object text may run on, the largest area before; 28
     // text anchors and cross-references, empty before; 29 optical kerning
-    // on a character format, metrics before.
-    assert_eq!(format::FORMAT_VERSION, 29);
+    // on a character format, metrics before; 30 glyph scaling in
+    // justification, 100 / 100 / 100 before.
+    assert_eq!(format::FORMAT_VERSION, 30);
 }
 
 #[test]

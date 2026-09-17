@@ -465,11 +465,12 @@ pub struct KeepOptions {
 /// InDesign's Justification dialog, in percent of the natural spacing.
 ///
 /// Word spacing is the space character; letter spacing is the gap between
-/// every pair of characters, as a percentage of the space's width. The
-/// breaker uses `word_min` to pull a word up onto a line it would not
-/// otherwise fit, and the composer hands slack to words first, then letters,
-/// then — as InDesign does — back to words past their maximum rather than
-/// leave a justified line short.
+/// every pair of characters, as a percentage of the space's width; glyph
+/// scaling is the width of every glyph, as a percentage of its own. The
+/// breaker uses `word_min` and `glyph_min` to pull a word up onto a line it
+/// would not otherwise fit, and the composer hands slack to words first,
+/// then letters, then glyphs, then — as InDesign does — back to words past
+/// their maximum rather than leave a justified line short.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Justification {
     pub word_min: f32,
@@ -478,10 +479,24 @@ pub struct Justification {
     pub letter_min: f32,
     pub letter_desired: f32,
     pub letter_max: f32,
+    /// Percent of a glyph's own width. A document written before glyphs
+    /// could scale reads as 100 / 100 / 100, which is what its lines were
+    /// set with.
+    #[serde(default = "full_width")]
+    pub glyph_min: f32,
+    #[serde(default = "full_width")]
+    pub glyph_desired: f32,
+    #[serde(default = "full_width")]
+    pub glyph_max: f32,
+}
+
+fn full_width() -> f32 {
+    100.0
 }
 
 impl Default for Justification {
-    /// InDesign's defaults: words 80 / 100 / 133, letters 0 / 0 / 0.
+    /// InDesign's defaults: words 80 / 100 / 133, letters 0 / 0 / 0, glyphs
+    /// 100 / 100 / 100.
     fn default() -> Self {
         Self {
             word_min: 80.0,
@@ -490,6 +505,9 @@ impl Default for Justification {
             letter_min: 0.0,
             letter_desired: 0.0,
             letter_max: 0.0,
+            glyph_min: 100.0,
+            glyph_desired: 100.0,
+            glyph_max: 100.0,
         }
     }
 }

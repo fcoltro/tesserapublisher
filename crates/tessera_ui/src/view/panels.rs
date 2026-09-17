@@ -1626,6 +1626,12 @@ pub(crate) fn justification_editor(
         changed |= percent_of(ui, &mut j.letter_desired, -100.0..=500.0);
         changed |= percent_of(ui, &mut j.letter_max, -100.0..=500.0);
     });
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::text_muted(), "Glyphs");
+        changed |= percent_of(ui, &mut j.glyph_min, 50.0..=200.0);
+        changed |= percent_of(ui, &mut j.glyph_desired, 50.0..=200.0);
+        changed |= percent_of(ui, &mut j.glyph_max, 50.0..=200.0);
+    });
     // Kept in order: a minimum above its maximum is not a setting anyone
     // means, and the breaker would only refuse to squeeze.
     if changed {
@@ -1633,6 +1639,8 @@ pub(crate) fn justification_editor(
         j.word_max = j.word_max.max(j.word_desired);
         j.letter_min = j.letter_min.min(j.letter_desired);
         j.letter_max = j.letter_max.max(j.letter_desired);
+        j.glyph_min = j.glyph_min.min(j.glyph_desired);
+        j.glyph_max = j.glyph_max.max(j.glyph_desired);
     }
 
     if inherit {

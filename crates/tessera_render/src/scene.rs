@@ -881,10 +881,15 @@ fn draw_text(
             })
             .collect();
 
+        // Glyph scaling from justification: each glyph drawn wider or
+        // narrower about its own origin; the positions already allow for it.
+        let glyph_transform =
+            (run.scale_x != 1.0).then(|| Affine::scale_non_uniform(run.scale_x, 1.0));
         scene
             .draw_glyphs(font)
             .font_size(run.size)
             .transform(transform)
+            .glyph_transform(glyph_transform)
             .brush(ink(colour, proof))
             .draw(Fill::NonZero, glyphs.into_iter());
     }

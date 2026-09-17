@@ -2106,8 +2106,8 @@ and not a list of controls.
     hand check is for.
 - [~] **Kerning control and H&J parameters** — still owed from milestone 2,
   and recorded there. Listed here so the debt has one home. **The manual
-  kern, H&J and optical kerning are built (by test; hand check owed). Glyph
-  scaling is not.**
+  kern, H&J, optical kerning and glyph scaling are built (by test; hand
+  check owed).**
   - **H&J meant writing a breaker, and it is written.** parley's breaker
     knows only a maximum advance, and a justification setting's whole point
     is that a line may take one more word by squeezing its spaces — which a
@@ -2152,8 +2152,17 @@ and not a list of controls.
     Over-stretch now costs `100 + 10 000·(r − 1)` and an unsettable line a
     million, and the test runs in five faces. **The eye is still the real
     judge and has not seen it.**
-  - **Not built:** glyph scaling, single-word justification, and optical
-    kerning.
+  - **Glyph scaling is built (2026-09-17).** `Justification.glyph_{min,
+    desired, max}` (format 30, 100 / 100 / 100 by default). The composer
+    hands slack to words, then letters, then glyphs — every glyph on the
+    line by one fraction of its own width, `LineSpacing::stretch`, applied
+    in `cluster_shifts` so glyphs and caret agree — and the breaker and the
+    plan count what glyphs can give or take when they choose the breaks.
+    The line's factor rides on `ShapedRun::scale_x`; on screen it is
+    vello's glyph transform, in the PDF the text matrix, so `/W` keeps the
+    natural widths. Two tests: a line the spaces may not fill comes out
+    flush by growth, and a line two points short takes its word by
+    narrowing. **Not built:** single-word justification.
   - **A kern is on the brush, not in the letter spacing, and that is the
     finding.** Milestone 2 recorded that tracking one letter of a kerned pair
     made it *wider* and did not know why. The cause: parley starts a new
