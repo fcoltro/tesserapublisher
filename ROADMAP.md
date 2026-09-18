@@ -2565,8 +2565,11 @@ which cost one afternoon's confusion and a namespace check.
   was from the page's corner. The control bar's W and H resize the current
   page; Properties still resizes them all. Format **24**, no step — the
   bounds were always per page — but an older build's reflow would square
-  them to the first, so it refuses. Not built: dragging a page's edge with
-  a tool, and "objects move with page edge" options.
+  them to the first, so it refuses. **2026-09-17:** a page's right or
+  bottom edge, or its corner, drags with the select tool when nothing
+  else is under the pointer — `page_edge_at`, `DragKind::PageEdge`,
+  previewed live and committed as one `SetPageSizeOf`. Not built:
+  "objects move with page edge" options.
 - [x] **Story editor** (added 2026-09-14). Type ▸ Edit in story editor…: the
   whole story's words in a plain box, overset included. Applied as the
   smallest edit the two texts disagree on — common prefix, common suffix —
