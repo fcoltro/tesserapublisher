@@ -316,6 +316,38 @@ fn hit_tolerance(state: &TesseraApp) -> f64 {
     f64::from(HIT_TOLERANCE_PX) / state.active().view.zoom.max(f64::EPSILON)
 }
 
+/// The page whose right or bottom edge is under `pos`, and which edge — the
+/// corner where both are, when it is both. Only the edges a drag can pull:
+/// the left and top are where the spread put the page.
+pub(crate) fn page_edge_at(
+    state: &TesseraApp,
+    rect: Rect,
+    pos: egui::Pos2,
+) -> Option<(tessera_document::ids::PageId, crate::tools::PageEdge)> {
+    use crate::tools::PageEdge;
+    let at = doc_pos(state, rect, pos);
+    let tolerance = hit_tolerance(state);
+    let doc = state.active().document();
+    for page in doc.page_ids() {
+        let b = doc.pages[page].bounds;
+        let (right, bottom) = (b.x + b.width, b.y + b.height);
+        let near_right = (at.x - right).abs() <= tolerance
+            && at.y >= b.y - tolerance
+            && at.y <= bottom + tolerance;
+        let near_bottom = (at.y - bottom).abs() <= tolerance
+            && at.x >= b.x - tolerance
+            && at.x <= right + tolerance;
+        let edge = match (near_right, near_bottom) {
+            (true, true) => PageEdge::Corner,
+            (true, false) => PageEdge::Right,
+            (false, true) => PageEdge::Bottom,
+            (false, false) => continue,
+        };
+        return Some((page, edge));
+    }
+    None
+}
+
 /// Where the caret, its selection and any composition sit for the frame being
 /// edited, in the frame's own local points.
 pub struct CaretOnPage {
@@ -1978,6 +2010,7 @@ fn canvas_cursor(
                 );
             }
             DragKind::Move { .. } => return Cursor::new(Icon::Move),
+            DragKind::PageEdge { edge, .. } => return page_edge_cursor(*edge),
             // An anchor drag keeps the crosshair it started with; a draw or a
             // marquee has no cursor of its own.
             DragKind::Anchor | DragKind::Draw | DragKind::Marquee => {}
@@ -2005,7 +2038,12 @@ fn canvas_cursor(
             Some(grabbed) => grip_cursor(&grabbed),
             None => match move_target_at(state, rect, pos) {
                 Some(id) if state.active().selection.contains(id) => Cursor::new(Icon::Move),
-                _ => Cursor::new(Icon::Select),
+                Some(_) => Cursor::new(Icon::Select),
+                // Over nothing but a page's edge: the page can be pulled.
+                None => match page_edge_at(state, rect, pos) {
+                    Some((_, edge)) => page_edge_cursor(edge),
+                    None => Cursor::new(Icon::Select),
+                },
             },
         },
     }
@@ -2188,8 +2226,23 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
                     .collect();
                 state.drag = Some(Drag::new(at, DragKind::Move { origins }));
             }
-            // Dragging empty canvas rubber-bands.
-            None => state.drag = Some(Drag::new(at, DragKind::Marquee)),
+            // Dragging a page's edge makes the page another size; dragging
+            // empty canvas rubber-bands.
+            None => match press_pos(ui, response).and_then(|p| page_edge_at(state, rect, p)) {
+                Some((page, edge)) => {
+                    let b = state.active().document().pages[page].bounds;
+                    state.drag = Some(Drag::new(
+                        at,
+                        DragKind::PageEdge {
+                            page,
+                            edge,
+                            width: b.width,
+                            height: b.height,
+                        },
+                    ));
+                }
+                None => state.drag = Some(Drag::new(at, DragKind::Marquee)),
+            },
         }
     }
 
@@ -2199,6 +2252,28 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
         let at = state.active().view.screen_to_doc(local(rect, pos));
         if let Some(drag) = state.drag.as_mut() {
             drag.current = at;
+        }
+        // Live resize of a page, the same way: preview now, one command
+        // when the mouse comes up.
+        if let Some(Drag {
+            kind:
+                DragKind::PageEdge {
+                    page,
+                    edge,
+                    width,
+                    height,
+                },
+            ..
+        }) = state.drag.clone()
+        {
+            let (dx, dy) = state.drag.as_ref().expect("just matched").delta();
+            let (w, h) = edge.resized(width, height, dx, dy);
+            // undo-bracketed: preview only; `drag_stopped` restores the size
+            // and reapplies it through a Command.
+            state
+                .active_mut()
+                .document_mut()
+                .set_page_size_of(page, w, h);
         }
         // Live move, without recording undo per frame.
         if let Some(Drag {
@@ -2247,6 +2322,31 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
                 }
                 if dx != 0.0 || dy != 0.0 {
                     apply(state, Command::TranslateSelection { dx, dy });
+                }
+            }
+            DragKind::PageEdge {
+                page,
+                edge,
+                width,
+                height,
+            } => {
+                let (dx, dy) = drag.delta();
+                let (w, h) = edge.resized(width, height, dx, dy);
+                // undo-bracketed: the size the drag began with goes back,
+                // and the new one arrives as one command.
+                state
+                    .active_mut()
+                    .document_mut()
+                    .set_page_size_of(page, width, height);
+                if (w - width).abs() > 1e-9 || (h - height).abs() > 1e-9 {
+                    apply(
+                        state,
+                        Command::SetPageSizeOf {
+                            page,
+                            width: w,
+                            height: h,
+                        },
+                    );
                 }
             }
             DragKind::Marquee => {
@@ -2530,6 +2630,20 @@ fn draw_gesture(
             | Tool::Zoom => {}
         }
     }
+}
+
+/// The scale cursor, turned to the edge being pulled: across for the
+/// right edge, down for the bottom, between for the corner.
+fn page_edge_cursor(edge: crate::tools::PageEdge) -> crate::cursor::Cursor {
+    use crate::cursor::Cursor;
+    use crate::icons::Icon;
+    use crate::tools::PageEdge;
+    let degrees = match edge {
+        PageEdge::Right => 0.0,
+        PageEdge::Bottom => 90.0,
+        PageEdge::Corner => 45.0,
+    };
+    Cursor::turned(Icon::Scale, degrees)
 }
 
 // --- the eyedropper ---------------------------------------------------------
@@ -3107,6 +3221,7 @@ fn draw_overlays(
             DragKind::Move { .. }
             | DragKind::Scale { .. }
             | DragKind::Rotate { .. }
+            | DragKind::PageEdge { .. }
             | DragKind::Anchor => {}
         }
     }
@@ -3587,6 +3702,84 @@ mod tests {
         // Putting the tool down empties it.
         crate::actions::run(&mut state, crate::actions::Run::PickTool(Tool::Select));
         assert!(state.eyedropper.is_none());
+    }
+
+    #[test]
+    fn a_page_s_right_bottom_and_corner_are_found_and_its_middle_is_not() {
+        use crate::tools::PageEdge;
+        let mut state = TesseraApp::headless();
+        let canvas = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 800.0));
+        let page = state.current_page().expect("a page");
+        let b = state.active().document().pages[page].bounds;
+        let screen = |x: f64, y: f64| to_screen_pos(&state, canvas, DocPoint { x, y });
+
+        let right = screen(b.x + b.width, b.y + b.height / 2.0);
+        assert_eq!(
+            page_edge_at(&state, canvas, right),
+            Some((page, PageEdge::Right))
+        );
+        let bottom = screen(b.x + b.width / 2.0, b.y + b.height);
+        assert_eq!(
+            page_edge_at(&state, canvas, bottom),
+            Some((page, PageEdge::Bottom))
+        );
+        let corner = screen(b.x + b.width, b.y + b.height);
+        assert_eq!(
+            page_edge_at(&state, canvas, corner),
+            Some((page, PageEdge::Corner))
+        );
+        let middle = screen(b.x + b.width / 2.0, b.y + b.height / 2.0);
+        assert_eq!(page_edge_at(&state, canvas, middle), None);
+        // The left and top edges are not for pulling.
+        let left = screen(b.x, b.y + b.height / 2.0);
+        assert_eq!(page_edge_at(&state, canvas, left), None);
+
+        // The arithmetic: each edge changes only its own dimension, the
+        // corner both, and nothing goes below a postage stamp.
+        assert_eq!(
+            PageEdge::Right.resized(100.0, 200.0, 30.0, 99.0),
+            (130.0, 200.0)
+        );
+        assert_eq!(
+            PageEdge::Bottom.resized(100.0, 200.0, 99.0, -50.0),
+            (100.0, 150.0)
+        );
+        assert_eq!(
+            PageEdge::Corner.resized(100.0, 200.0, 10.0, 10.0),
+            (110.0, 210.0)
+        );
+        assert_eq!(
+            PageEdge::Corner.resized(100.0, 200.0, -500.0, -500.0),
+            (36.0, 36.0)
+        );
+
+        // Committed through the command, the page is the new size and one
+        // undo puts it back.
+        state.drag = Some(crate::tools::Drag::new(
+            DocPoint { x: 0.0, y: 0.0 },
+            crate::tools::DragKind::PageEdge {
+                page,
+                edge: PageEdge::Corner,
+                width: b.width,
+                height: b.height,
+            },
+        ));
+        apply(
+            &mut state,
+            Command::SetPageSizeOf {
+                page,
+                width: b.width + 20.0,
+                height: b.height + 10.0,
+            },
+        );
+        let after = state.active().document().pages[page].bounds;
+        assert_eq!(
+            (after.width, after.height),
+            (b.width + 20.0, b.height + 10.0)
+        );
+        apply(&mut state, Command::Undo);
+        let back = state.active().document().pages[page].bounds;
+        assert_eq!((back.width, back.height), (b.width, b.height));
     }
 
     #[test]

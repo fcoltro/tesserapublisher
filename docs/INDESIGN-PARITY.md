@@ -43,7 +43,7 @@ outright, so the target is not twenty-six.
 |---|---|---|---|
 | Selection | ✅ `Tool::Select` | — | done |
 | Direct Selection (anchor editing) | ✅ `Tool::DirectSelect` | — | done, M1 |
-| Page tool (per-page size) | ✅ the control bar's W/H resize the current page; Properties resizes them all | — | done |
+| Page tool (per-page size) | ✅ the control bar's W/H resize the current page; Properties resizes them all; a page's right or bottom edge, or its corner, drags with the select tool | — | done; drag 2026-09-17 |
 | Gap tool | ✗ | — | — |
 | Content Collector / Placer | ✗ | — | — |
 | Type | ✅ `Tool::Text` | — | done |

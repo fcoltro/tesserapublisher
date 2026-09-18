@@ -185,6 +185,42 @@ pub enum DragKind {
         center: DocPoint,
         leaves: Vec<crate::transform::Origin>,
     },
+    /// Dragging a page's right or bottom edge, or the corner where they
+    /// meet, to make the page another size. Carries the size the page had
+    /// when the drag began, so the new size is computed from it rather than
+    /// accumulated.
+    PageEdge {
+        page: tessera_document::ids::PageId,
+        edge: PageEdge,
+        width: f64,
+        height: f64,
+    },
+}
+
+/// Which edge of a page a drag is pulling. The left and top stay: a page's
+/// origin is where its spread put it, and the size is what changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageEdge {
+    Right,
+    Bottom,
+    Corner,
+}
+
+impl PageEdge {
+    /// The size a page of `width` by `height` becomes when this edge is
+    /// dragged by `(dx, dy)`: never smaller than a postage stamp.
+    pub fn resized(self, width: f64, height: f64, dx: f64, dy: f64) -> (f64, f64) {
+        const SMALLEST: f64 = 36.0;
+        let w = match self {
+            PageEdge::Right | PageEdge::Corner => (width + dx).max(SMALLEST),
+            PageEdge::Bottom => width,
+        };
+        let h = match self {
+            PageEdge::Bottom | PageEdge::Corner => (height + dy).max(SMALLEST),
+            PageEdge::Right => height,
+        };
+        (w, h)
+    }
 }
 
 /// A gesture in progress.
