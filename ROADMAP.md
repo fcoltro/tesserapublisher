@@ -2261,6 +2261,14 @@ is a milestone of its own, and none is what a person misses in the first
 hour. Footnotes, the table of contents and the index moved to milestone 11;
 IDML import to milestone 12.
 
+- [x] **Print (2026-09-18).** File ▸ Print…, Ctrl+P: all pages or a range,
+  written as a plain PDF — no standard's refusals between a person and a
+  proof — into the system's temporary folder and handed to its print path:
+  the shell's *print* verb through PowerShell on Windows, `lpr` on macOS,
+  `lp` elsewhere. Tessera talks to no driver, and the dialog says so. The
+  page cut (`print::only_pages`) drops the bookmarks and links that named
+  the other pages and renumbers the rest. Not seen running.
+
 - [x] **Type on a path (2026-09-17).** A path stays a path and *carries* a
   story: `Document.path_texts`, a map beside the master overrides, because
   which story a path carries is a relationship (format 31). The layout

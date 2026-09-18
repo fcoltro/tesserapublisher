@@ -256,6 +256,27 @@ pub enum ExportError {
     Pdf(#[from] tessera_pdf::PdfError),
     #[error(transparent)]
     Io(#[from] tessera_io::atomic::IoError),
+    /// The system's print path would not take the file.
+    #[error("{0}")]
+    Print(String),
+}
+
+/// Print `pages` of the active document by way of a PDF: written as a
+/// plain PDF — no standard's refusals stand between a person and a proof —
+/// and handed to the system's print path. Returns what happened, for the
+/// status line.
+pub fn print(
+    state: &mut TesseraApp,
+    pages: crate::print::Pages,
+) -> Result<&'static str, ExportError> {
+    let resolved = state.resolve_uncached();
+    let chosen = crate::print::only_pages(&resolved, pages);
+    let mut options = state.export.options(state);
+    options.standard = tessera_pdf::Standard::Plain;
+    let bytes = tessera_pdf::export_with(&chosen, &options)?;
+    let path = crate::print::spool_path();
+    tessera_io::atomic::write_atomic(&path, &bytes)?;
+    crate::print::send(&path).map_err(ExportError::Print)
 }
 
 /// Put artwork into the selected picture box.

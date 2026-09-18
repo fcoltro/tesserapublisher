@@ -227,7 +227,7 @@ person reaches for once they start setting copy, and none of it had a row:
 | Typographer's quotes; Glyphs panel | ✅ a preference; a panel drawing the face's characters (by character, not glyph id), and a box for a code point | — | done; panel 2026-09-17 |
 | Spell check | ✅ Hunspell dictionaries from a folder, dynamic spelling, suggestions in the box and on right-click; no bundled list | — | done; squiggles + suggestions 2026-09-15 |
 | Story editor | ✅ a plain box over the story, applied as a minimal edit | — | done |
-| Print dialog | ✗ — PDF export only | — | — |
+| Print dialog | ✅ File ▸ Print… (Ctrl+P): a page range, written as a plain PDF and handed to the system's print path — the shell's print verb on Windows, lpr/lp elsewhere | — | done 2026-09-18 |
 | IDML import | ✅ pages, parents, threads, styles, swatches, sections, footnotes, anchored objects, tables, cross-references, object styles, gradients, effects | — | done, M12; appearance 2026-09-17 |
 | Book | ✅ a book file; chapters numbered on, one contents, one PDF; no style synchronising | — | done 2026-09-17 |
 | Word import | ✅ File ▸ Place a `.docx`; styles merged by name | — | done, M12 |

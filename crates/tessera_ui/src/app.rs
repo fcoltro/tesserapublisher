@@ -292,6 +292,8 @@ pub struct TesseraApp {
 
     /// What the next export will produce.
     pub export: crate::view::export_dialog::ExportWindow,
+    /// File ▸ Print…: which pages.
+    pub print: crate::view::print_dialog::PrintWindow,
 
     /// The name being typed for a new workspace, if that box is open.
     ///
@@ -508,6 +510,7 @@ impl TesseraApp {
             preflight: crate::preflight::Preflight::default(),
             reveal: None,
             export: crate::view::export_dialog::ExportWindow::default(),
+            print: crate::view::print_dialog::PrintWindow::default(),
             closing: None,
             naming_workspace: None,
             ambient: crate::view::ambient::Ambient::default(),

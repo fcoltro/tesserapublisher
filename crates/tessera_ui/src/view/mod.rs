@@ -30,6 +30,7 @@ pub mod palette;
 pub mod panels;
 pub mod ports;
 pub mod preflight_panel;
+pub mod print_dialog;
 pub mod quit;
 pub mod rail;
 pub mod rulers;
@@ -132,6 +133,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // and everything in them is judged against the document behind.
     settings::show(ui.ctx(), state);
     export_dialog::show(ui.ctx(), state);
+    print_dialog::show(ui.ctx(), state);
     new_document::show(ui.ctx(), state);
     step_repeat::show(ui.ctx(), state);
     sections::show(ui.ctx(), state);

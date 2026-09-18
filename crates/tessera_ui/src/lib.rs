@@ -24,6 +24,7 @@ pub mod package;
 pub mod pen;
 pub mod preflight;
 pub mod prefs;
+pub mod print;
 pub mod recovery;
 pub mod selection;
 pub mod softproof;

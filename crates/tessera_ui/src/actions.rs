@@ -281,6 +281,8 @@ pub enum Run {
     Save,
     SaveAs,
     ExportPdf,
+    /// The pages, as a PDF, to the system's print path.
+    Print,
     Place,
     Command(Cmd),
     PickTool(Tool),
@@ -368,6 +370,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::Save
         | Run::SaveAs
         | Run::ExportPdf
+        | Run::Print
         | Run::Package
         | Run::Place
         | Run::OpenSettings
@@ -563,6 +566,7 @@ pub fn all() -> &'static [Action] {
         a("Save", Some("Ctrl+S"), Group::File, Save),
         a("Save as…", Some("Ctrl+Shift+S"), Group::File, SaveAs),
         a("Export PDF…", Some("Ctrl+Shift+E"), Group::File, ExportPdf),
+        a("Print…", Some("Ctrl+P"), Group::File, Print),
         // Beside Export, because packaging is the other way a job leaves the
         // studio and somebody looking for one will look where the other is.
         a("Package…", Some("Ctrl+Alt+Shift+P"), Group::File, Package),
@@ -1326,6 +1330,7 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             // silently, from whatever was chosen last.
             state.export.open = true;
         }
+        Run::Print => state.print.open = true,
         Run::Place => crate::file_ops::place(state),
         Run::OpenSettings => state.settings.open = true,
         Run::ShowTour => state.tour.begin(),
@@ -1864,6 +1869,7 @@ mod tests {
                 | "Save"
                 | "Save as\u{2026}"
                 | "Export PDF\u{2026}"
+                | "Print\u{2026}"
                 | "Package\u{2026}"
                 | "Place artwork\u{2026}"
                 | "Undo"

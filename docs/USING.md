@@ -219,6 +219,12 @@ press has been chosen at all. Click a problem to jump to it.
 
 Errors mean the job comes back wrong. Warnings mean somebody should look.
 
+**Print** — File ▸ Print…, Ctrl+P. Choose all pages or a range. The pages are
+written as a PDF and handed to the system's print path — on Windows,
+whatever prints PDFs shows its own dialog for the printer and the paper; on
+macOS and Linux the file goes to the default printer. For a particular press,
+export the PDF instead.
+
 **Export** — File ▸ Export PDF. Choose PDF/X-1a or PDF/X-4 if the printer asked
 for one. Tessera will **refuse** to write a standard it cannot honour rather
 than claim it: a printer's preflight believes the file, so a document claiming
