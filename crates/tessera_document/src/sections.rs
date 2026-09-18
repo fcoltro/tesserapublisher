@@ -44,6 +44,11 @@ pub struct Section {
     /// Carried by the auto page number and shown in the pages panel.
     #[serde(default)]
     pub prefix: String,
+    /// Whether the prefix is part of the number the page prints — "A-1" —
+    /// or only names the section, so the folio reads "1". InDesign's
+    /// "Include Prefix when Numbering Pages"; on, as InDesign has it.
+    #[serde(default = "yes")]
+    pub include_prefix: bool,
     /// What the section marker character reads as on every page of the
     /// section: a chapter title, a part name.
     #[serde(default)]
@@ -58,9 +63,14 @@ impl Section {
             start: Some(1),
             style: Numbering::Arabic,
             prefix: String::new(),
+            include_prefix: true,
             marker: String::new(),
         }
     }
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// One page's number, as its section writes it.
@@ -93,7 +103,11 @@ pub fn number_pages(pages: &[PageId], sections: &[Section]) -> Vec<PageNumber> {
         if let Some((index, found)) = sections.iter().enumerate().find(|(_, s)| s.first == *page) {
             section = Some(index);
             style = found.style;
-            prefix = found.prefix.clone();
+            prefix = if found.include_prefix {
+                found.prefix.clone()
+            } else {
+                String::new()
+            };
             marker = found.marker.clone();
             if let Some(start) = found.start {
                 next = start;
@@ -143,6 +157,7 @@ mod tests {
                 start: Some(1),
                 style: Numbering::LowerRoman,
                 prefix: String::new(),
+                include_prefix: true,
                 marker: "Front matter".into(),
             },
             Section::starting_at(p[3]),
@@ -158,14 +173,19 @@ mod tests {
     #[test]
     fn a_section_that_only_changes_the_prefix_continues_the_count() {
         let p = pages(4);
-        let sections = [Section {
+        let mut sections = [Section {
             first: p[2],
             start: None,
             style: Numbering::Arabic,
             prefix: "B-".into(),
+            include_prefix: true,
             marker: String::new(),
         }];
         assert_eq!(labels(&p, &sections), ["1", "2", "B-3", "B-4"]);
+        // The prefix left off the number names the section and nothing
+        // else: the folio reads "3".
+        sections[0].include_prefix = false;
+        assert_eq!(labels(&p, &sections), ["1", "2", "3", "4"]);
     }
 
     #[test]
@@ -176,6 +196,7 @@ mod tests {
             start: Some(101),
             style: Numbering::Arabic,
             prefix: String::new(),
+            include_prefix: true,
             marker: String::new(),
         }];
         assert_eq!(labels(&p, &sections), ["101", "102"]);

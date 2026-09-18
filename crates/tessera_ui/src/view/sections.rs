@@ -143,6 +143,11 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                     ui.add(egui::TextEdit::singleline(&mut draft.prefix).desired_width(80.0))
                         .on_hover_text("Written in front of every number: \"A-\" makes \"A-1\"");
                 });
+                ui.checkbox(
+                    &mut draft.include_prefix,
+                    "Include the prefix in the page numbers",
+                )
+                .on_hover_text("Off, the prefix only names the section and the folio reads \"1\"");
                 crate::view::panels::field(ui, "Section marker", |ui| {
                     ui.add(egui::TextEdit::singleline(&mut draft.marker))
                         .on_hover_text("What the section marker character reads as on these pages");
@@ -221,6 +226,7 @@ mod tests {
                 start: Some(1),
                 style: Numbering::LowerRoman,
                 prefix: String::new(),
+                include_prefix: true,
                 marker: String::new(),
             }]);
 

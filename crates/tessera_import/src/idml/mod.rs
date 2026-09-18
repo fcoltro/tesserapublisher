@@ -358,6 +358,8 @@ fn import_package(mut package: Package) -> Result<Imported, ImportError> {
             start: if continues { None } else { start.or(Some(1)) },
             style,
             prefix,
+            // InDesign's own attribute for the same choice; absent, on.
+            include_prefix: attr(node, "IncludeSectionPrefix") != Some("false"),
             marker,
         });
     }

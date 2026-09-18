@@ -789,8 +789,9 @@ fn the_format_version_is_twenty_six() {
     // on a character format, metrics before; 30 glyph scaling in
     // justification, 100 / 100 / 100 before; 31 type on a path, none before;
     // 32 endnotes — where the notes go, and the list's recipe — at the foot
-    // and no list before; 33 an index entry's span, the marker's page before.
-    assert_eq!(format::FORMAT_VERSION, 33);
+    // and no list before; 33 an index entry's span, the marker's page before;
+    // 34 a section's prefix left off the number, always on before.
+    assert_eq!(format::FORMAT_VERSION, 34);
 }
 
 #[test]
@@ -1005,6 +1006,7 @@ fn sections_and_variables_survive_a_round_trip() {
             start: Some(1),
             style: Numbering::LowerRoman,
             prefix: String::new(),
+            include_prefix: true,
             marker: "Front matter".into(),
         },
         Section::starting_at(second),

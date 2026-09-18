@@ -2343,9 +2343,12 @@ master story cannot share one layout and an ordinary story keys as before.
 - [x] **Threads compose on their own pages.** `story_starts_at` composes each
   earlier frame with that frame's page, so a "continued on page 98" in frame
   one is measured at its real width before this frame's start is decided.
-- Not built: the section prefix as a separate "include prefix" toggle (the
-  prefix is always in the label), chapter numbers as a variable, "last page
-  number", file name and date variables, and a variable in a table cell.
+- [x] **The prefix left off the number (2026-09-17):** `Section.include_prefix`
+  (format 34), InDesign's "Include Prefix when Numbering Pages", a checkbox
+  in the section box and IDML's `IncludeSectionPrefix` on import. Off, the
+  folio reads "1" and the Pages panel follows it, as its comment argues.
+- Not built: chapter numbers as a variable, "last page number", file name
+  and date variables, and a variable in a table cell.
 
 ---
 

@@ -1909,6 +1909,7 @@ mod tests {
             start: Some(1),
             style: Numbering::LowerRoman,
             prefix: String::new(),
+            include_prefix: true,
             marker: String::new(),
         }]);
         let mut shaper = Shaper::new();
