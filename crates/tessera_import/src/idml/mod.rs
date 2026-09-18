@@ -209,6 +209,7 @@ fn import_package(mut package: Package) -> Result<Imported, ImportError> {
         layers: &layers,
         fallback_layer,
         colours: &colours,
+        styles: &styles,
         frames: HashMap::new(),
         threads: Vec::new(),
         image_fit_noted: false,
@@ -473,6 +474,7 @@ struct Items<'a> {
     layers: &'a HashMap<String, LayerId>,
     fallback_layer: LayerId,
     colours: &'a Colours,
+    styles: &'a Styles,
     /// Every frame made, by its IDML Self — for threads.
     frames: HashMap<String, FrameId>,
     /// `(from, to)` by IDML Self, resolved once every frame exists.
@@ -729,14 +731,20 @@ impl Items<'_> {
 
         let fill = self
             .colours
-            .get(attr(node, "FillColor"))
-            .map(|colour| tinted(colour, attr_f64(node, "FillTint")))
-            .unwrap_or(Color::Rgb {
+            .paint(
+                attr(node, "FillColor"),
+                attr_f64(node, "FillTint"),
+                attr_f64(node, "GradientFillAngle"),
+            )
+            .unwrap_or(Paint::Solid(Color::Rgb {
                 r: 0.0,
                 g: 0.0,
                 b: 0.0,
                 a: 0.0,
-            });
+            }));
+        let (blend, shadow) = styles::effects(node, self.colours);
+        let style =
+            attr(node, "AppliedObjectStyle").and_then(|s| self.styles.object.get(s).copied());
         let stroke = match (
             self.colours.get(attr(node, "StrokeColor")),
             attr_f64(node, "StrokeWeight"),
@@ -820,15 +828,15 @@ impl Items<'_> {
                 bounds,
                 kind,
                 transform: frame_transform,
-                fill: Paint::Solid(fill),
+                fill,
                 stroke,
                 wrap,
-                blend: tessera_document::blending::Blending::PLAIN,
+                blend,
                 corners: tessera_document::corners::Corners::SQUARE,
-                shadow: None,
+                shadow,
                 anchor: anchored
                     .map(|(story, index)| tessera_document::anchored::Anchored::new(story, index)),
-                style: None,
+                style,
             },
         );
         if let Some(name) = attr(node, "Self") {
@@ -837,7 +845,7 @@ impl Items<'_> {
     }
 }
 
-fn tinted(colour: Color, tint: Option<f64>) -> Color {
+pub(crate) fn tinted(colour: Color, tint: Option<f64>) -> Color {
     let Some(tint) = tint.filter(|t| *t >= 0.0 && *t < 100.0) else {
         return colour;
     };

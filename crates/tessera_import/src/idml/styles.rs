@@ -16,12 +16,14 @@ use tessera_text::story::{
     TabAlignment, TabStop,
 };
 
-use crate::xml::{attr, attr_f32, child, children, numbers, property};
+use crate::xml::{attr, attr_f32, attr_f64, child, children, numbers, property};
 
-/// Every colour the package defines, by its `Self`.
+/// Every colour the package defines, by its `Self` — and every gradient,
+/// which a fill may name in the colour's place.
 #[derive(Debug, Default)]
 pub(crate) struct Colours {
     by_name: HashMap<String, Color>,
+    gradients: HashMap<String, tessera_document::paint::Gradient>,
 }
 
 impl Colours {
@@ -62,7 +64,68 @@ impl Colours {
             };
             by_name.insert(name.to_owned(), colour);
         }
-        Self { by_name }
+        // Gradients after the colours, since their stops name colours. The
+        // angle is not the gradient's: InDesign puts it on the object that
+        // is filled, as Tessera's ramp does, so it is read there.
+        let mut gradients = HashMap::new();
+        for node in graphic
+            .descendants()
+            .filter(|n| n.tag_name().name() == "Gradient")
+        {
+            let Some(name) = attr(node, "Self") else {
+                continue;
+            };
+            let ramp = match attr(node, "Type") {
+                Some("Radial") => tessera_document::paint::Ramp::Radial,
+                _ => tessera_document::paint::Ramp::Linear { angle: 0.0 },
+            };
+            let stops: Vec<tessera_document::paint::Stop> = node
+                .children()
+                .filter(|n| n.is_element() && n.tag_name().name() == "GradientStop")
+                .filter_map(|stop| {
+                    let colour = by_name.get(attr(stop, "StopColor")?)?.clone();
+                    let at = (attr_f64(stop, "Location").unwrap_or(0.0) / 100.0).clamp(0.0, 1.0);
+                    Some(tessera_document::paint::Stop {
+                        at: at as f32,
+                        colour,
+                    })
+                })
+                .collect();
+            if stops.is_empty() {
+                continue;
+            }
+            gradients.insert(
+                name.to_owned(),
+                tessera_document::paint::Gradient::new(ramp, stops),
+            );
+        }
+        Self { by_name, gradients }
+    }
+
+    /// What a fill reference paints: a colour, tinted as asked, or a
+    /// gradient turned to `angle` — InDesign's `GradientFillAngle`, counter-
+    /// clockwise in a y-up world, so Tessera's clockwise ramp takes its
+    /// negative. `None` for `Swatch/None` and anything unknown.
+    pub(crate) fn paint(
+        &self,
+        reference: Option<&str>,
+        tint: Option<f64>,
+        angle: Option<f64>,
+    ) -> Option<tessera_document::paint::Paint> {
+        let reference = reference?;
+        if let Some(gradient) = self.gradients.get(reference) {
+            let mut gradient = gradient.clone();
+            if let (tessera_document::paint::Ramp::Linear { .. }, Some(angle)) =
+                (gradient.ramp, angle)
+            {
+                gradient.ramp = tessera_document::paint::Ramp::Linear { angle: -angle };
+            }
+            return Some(tessera_document::paint::Paint::Gradient(gradient));
+        }
+        let colour = self.by_name.get(reference)?.clone();
+        Some(tessera_document::paint::Paint::Solid(super::tinted(
+            colour, tint,
+        )))
     }
 
     /// What a `FillColor="Color/..."` reference means. `None` for
@@ -90,6 +153,76 @@ impl Colours {
 pub(crate) struct Styles {
     pub(crate) paragraph: HashMap<String, ParagraphStyleId>,
     pub(crate) character: HashMap<String, CharacterStyleId>,
+    pub(crate) object: HashMap<String, tessera_document::ids::ObjectStyleId>,
+}
+
+/// An object's effects as IDML writes them, in a `TransparencySetting`
+/// child: opacity and blend mode, and a drop shadow. Absent, the object is
+/// plain and casts none.
+pub(crate) fn effects(
+    node: Node,
+    colours: &Colours,
+) -> (
+    tessera_document::blending::Blending,
+    Option<tessera_document::shadow::Shadow>,
+) {
+    use tessera_document::blending::{BlendMode, Blending};
+    use tessera_document::shadow::Shadow;
+    let Some(setting) = child(node, "TransparencySetting") else {
+        return (Blending::PLAIN, None);
+    };
+    let mut blend = Blending::PLAIN;
+    if let Some(blending) = child(setting, "BlendingSetting") {
+        blend.opacity =
+            (attr_f64(blending, "Opacity").unwrap_or(100.0) / 100.0).clamp(0.0, 1.0) as f32;
+        blend.mode = match attr(blending, "BlendMode") {
+            Some("Multiply") => BlendMode::Multiply,
+            Some("Screen") => BlendMode::Screen,
+            Some("Overlay") => BlendMode::Overlay,
+            // The rest InDesign has — darken, lighten, hue and so on — are
+            // not modelled; painted over rather than lost, since the object
+            // is worth more than its mode.
+            _ => BlendMode::Normal,
+        };
+    }
+    let shadow = child(setting, "DropShadowSetting")
+        .filter(|s| attr(*s, "Mode") == Some("Drop"))
+        .map(|s| {
+            let opacity = (attr_f64(s, "Opacity").unwrap_or(75.0) / 100.0).clamp(0.0, 1.0) as f32;
+            let colour = colours.get(attr(s, "EffectColor")).unwrap_or(Color::BLACK);
+            let colour = match colour {
+                Color::Rgb { r, g, b, .. } => Color::Rgb {
+                    r,
+                    g,
+                    b,
+                    a: opacity,
+                },
+                Color::Cmyk { c, m, y, k, .. } => Color::Cmyk {
+                    c,
+                    m,
+                    y,
+                    k,
+                    a: opacity,
+                },
+                Color::Lab { l, a, b, .. } => Color::Lab {
+                    l,
+                    a,
+                    b,
+                    alpha: opacity,
+                },
+                other => other,
+            };
+            Shadow {
+                offset: (
+                    attr_f64(s, "XOffset").unwrap_or(Shadow::TYPICAL.offset.0),
+                    attr_f64(s, "YOffset").unwrap_or(Shadow::TYPICAL.offset.1),
+                ),
+                // InDesign's Size is the blur's reach; near enough its sigma.
+                blur: attr_f64(s, "Size").unwrap_or(Shadow::TYPICAL.blur),
+                colour,
+            }
+        });
+    (blend, shadow)
 }
 
 impl Styles {
@@ -138,6 +271,64 @@ impl Styles {
             out.paragraph.insert(name.to_owned(), id);
             if let Some(parent) = property(node, "BasedOn") {
                 paragraph_parents.push((id, parent.to_owned()));
+            }
+        }
+
+        // Object styles: what the style states of fill, stroke and effects.
+        // InDesign's `[None]` and `[Normal ...]` roots are the document's own
+        // defaults and are not added.
+        let mut object_parents: Vec<(tessera_document::ids::ObjectStyleId, String)> = Vec::new();
+        for node in styles
+            .descendants()
+            .filter(|n| n.tag_name().name() == "ObjectStyle")
+        {
+            let Some(name) = attr(node, "Self") else {
+                continue;
+            };
+            if is_root(name) {
+                continue;
+            }
+            let fill = colours.paint(
+                attr(node, "FillColor"),
+                attr_f64(node, "FillTint"),
+                attr_f64(node, "GradientFillAngle"),
+            );
+            let stroke = match (
+                colours.get(attr(node, "StrokeColor")),
+                attr_f64(node, "StrokeWeight"),
+            ) {
+                (Some(colour), Some(weight)) if weight > 0.0 => {
+                    Some(Some(tessera_document::nodes::Stroke::new(
+                        super::tinted(colour, attr_f64(node, "StrokeTint")),
+                        weight,
+                    )))
+                }
+                (None, _) if attr(node, "StrokeColor").is_some() => Some(None),
+                _ => None,
+            };
+            let (blend, shadow) = effects(node, colours);
+            let states_effects = child(node, "TransparencySetting").is_some();
+            let id = doc.add_object_style(tessera_document::object_style::ObjectStyle {
+                name: shown_name(attr(node, "Name").unwrap_or(name)),
+                based_on: None,
+                format: tessera_document::object_style::ObjectFormat {
+                    fill,
+                    stroke,
+                    blend: states_effects.then_some(blend),
+                    shadow: states_effects.then_some(shadow),
+                    wrap: None,
+                },
+            });
+            out.object.insert(name.to_owned(), id);
+            if let Some(parent) = property(node, "BasedOn") {
+                object_parents.push((id, parent.to_owned()));
+            }
+        }
+        for (id, parent) in object_parents {
+            if let (Some(parent), Some(style)) =
+                (out.object.get(&parent), doc.object_styles.get_mut(id))
+            {
+                style.based_on = Some(*parent);
             }
         }
 

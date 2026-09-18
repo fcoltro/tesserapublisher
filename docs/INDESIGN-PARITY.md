@@ -86,7 +86,7 @@ geometry, from the interface work) and the canvas toolbar (spatial verbs).
 | Constrain-proportions chain | ✅ | — | done, M1.5 |
 | Scale X %, Scale Y % | ✅ | — | done, M1.5 |
 | Rotation angle | ✅ | — | done |
-| **Shear angle** | a field in Properties; `[~]` in the roadmap for the decomposition it rests on | — | M1, partial |
+| **Shear angle** | ✅ a field in Properties, read from and written through the affine decomposition | — | done, M1.5 |
 | Rotate 90° CW / CCW | ✅ canvas toolbar and menu | — | done, M1.5 C7 |
 | Flip horizontal / vertical | ✅ canvas toolbar and menu | — | done, M1.5 C7 |
 | Stroke weight | ✅ | — | done, M1.5 C4 |
@@ -228,7 +228,7 @@ person reaches for once they start setting copy, and none of it had a row:
 | Spell check | ✅ Hunspell dictionaries from a folder, dynamic spelling, suggestions in the box and on right-click; no bundled list | — | done; squiggles + suggestions 2026-09-15 |
 | Story editor | ✅ a plain box over the story, applied as a minimal edit | — | done |
 | Print dialog | ✗ — PDF export only | — | — |
-| IDML import | ✅ pages, parents, threads, styles, swatches, sections, footnotes, anchored objects, tables | — | done, M12 |
+| IDML import | ✅ pages, parents, threads, styles, swatches, sections, footnotes, anchored objects, tables, cross-references, object styles, gradients, effects | — | done, M12; appearance 2026-09-17 |
 | Book | ✅ a book file; chapters numbered on, one contents, one PDF; no style synchronising | — | done 2026-09-17 |
 | Word import | ✅ File ▸ Place a `.docx`; styles merged by name | — | done, M12 |
 

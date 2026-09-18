@@ -67,6 +67,10 @@ fn a_book() -> Vec<u8> {
   <Color Self="Color/Black" Model="Process" Space="CMYK" ColorValue="0 0 0 100" Name="Black"/>
   <Color Self="Color/Brand red" Model="Process" Space="RGB" ColorValue="255 0 0" Name="Brand red"/>
   <Swatch Self="Swatch/None" Name="None"/>
+  <Gradient Self="Gradient/Sunset" Name="Sunset" Type="Linear">
+    <GradientStop Self="ug1" StopColor="Color/Brand red" Location="0"/>
+    <GradientStop Self="ug2" StopColor="Color/Black" Location="100"/>
+  </Gradient>
 </idPkg:Graphic>"#
     );
     let styles = format!(
@@ -82,6 +86,10 @@ fn a_book() -> Vec<u8> {
       <ParagraphStyle Self="ParagraphStyle/Headings%3aHeading" Name="Heading" PointSize="24" Justification="CenterAlign" SpaceBefore="12" KeepWithNext="1"><Properties><BasedOn type="object">ParagraphStyle/Body</BasedOn><AppliedFont type="string">Helvetica</AppliedFont></Properties></ParagraphStyle>
     </ParagraphStyleGroup>
   </RootParagraphStyleGroup>
+  <RootObjectStyleGroup Self="u80">
+    <ObjectStyle Self="ObjectStyle/$ID/[None]" Name="$ID/[None]"/>
+    <ObjectStyle Self="ObjectStyle/Callout" Name="Callout" FillColor="Color/Brand red" StrokeColor="Color/Black" StrokeWeight="1"><TransparencySetting><BlendingSetting Opacity="60" BlendMode="Normal"/></TransparencySetting></ObjectStyle>
+  </RootObjectStyleGroup>
 </idPkg:Styles>"#
     );
     let preferences = format!(
@@ -106,9 +114,11 @@ fn a_book() -> Vec<u8> {
   <Page Self="ub8" Name="1" AppliedMaster="ub6" GeometricBounds="0 0 792 612" ItemTransform="1 0 0 1 0 -396"><MarginPreference Top="36" Left="54" Bottom="48" Right="36" ColumnCount="1"/></Page>
   <TextFrame Self="uf2" ParentStory="u12" PreviousTextFrame="n" NextTextFrame="uf3" ItemLayer="ub3" ItemTransform="1 0 0 1 54 -360"><TextFramePreference TextColumnCount="2" TextColumnGutter="12" VerticalJustification="TopAlign"/>{}</TextFrame>
   <Rectangle Self="ur1" FillColor="Color/Brand red" StrokeColor="Color/Black" StrokeWeight="2" ItemLayer="ub3" ItemTransform="1 0 0 1 100 200"><TextWrapPreference TextWrapMode="BoundingBoxTextWrap" TextWrapSide="BothSides"><Properties><TextWrapOffset Top="4" Left="4" Bottom="4" Right="4"/></Properties></TextWrapPreference>{}</Rectangle>
+  <Rectangle Self="ur2" FillColor="Gradient/Sunset" GradientFillAngle="90" AppliedObjectStyle="ObjectStyle/Callout" ItemLayer="ub3" ItemTransform="1 0 0 1 300 200"><TransparencySetting><BlendingSetting Opacity="50" BlendMode="Multiply"/><DropShadowSetting Mode="Drop" Opacity="40" XOffset="3" YOffset="4" Size="6" EffectColor="Color/Black"/></TransparencySetting>{}</Rectangle>
 </Spread></idPkg:Spread>"#,
         rect_path(0.0, 0.0, 300.0, 400.0),
-        rect_path(0.0, 0.0, 100.0, 50.0)
+        rect_path(0.0, 0.0, 100.0, 50.0),
+        rect_path(0.0, 0.0, 80.0, 80.0)
     );
     // Spread two: verso and recto, the body continuing on the verso.
     let spread2 = format!(
@@ -383,6 +393,72 @@ fn a_book_comes_back_as_pages_parents_frames_threads_styles_and_sections() {
     );
 
     assert!(imported.dropped.is_empty(), "{:?}", imported.dropped);
+}
+
+#[test]
+fn a_gradient_fill_effects_and_an_object_style_come_through() {
+    use tessera_document::blending::BlendMode;
+    use tessera_document::paint::{Paint, Ramp};
+    let imported = idml::import_bytes(a_book(), Path::new("book.idml")).expect("import");
+    let doc = &imported.document;
+
+    // The object style, with what it states.
+    let (style_id, style) = doc
+        .object_styles
+        .iter()
+        .find(|(_, s)| s.name == "Callout")
+        .expect("the Callout style");
+    assert!(
+        !doc.object_styles
+            .values()
+            .any(|s| s.name.contains("[None]")),
+        "InDesign's root is not a style"
+    );
+    assert!(matches!(style.format.fill, Some(Paint::Solid(_))));
+    assert_eq!(
+        style
+            .format
+            .stroke
+            .as_ref()
+            .and_then(|s| s.as_ref())
+            .map(|s| s.width),
+        Some(1.0)
+    );
+    assert!((style.format.blend.expect("stated").opacity - 0.6).abs() < 1e-6);
+
+    // The rectangle wearing it: a gradient turned as InDesign turns it,
+    // half-opaque multiply, a soft shadow, and the style attached.
+    let frame = doc
+        .paint_order()
+        .into_iter()
+        .filter_map(|id| doc.frame(id))
+        .find(|f| matches!(&f.fill, Paint::Gradient(_)))
+        .expect("the gradient-filled rectangle");
+    let Paint::Gradient(gradient) = &frame.fill else {
+        unreachable!()
+    };
+    assert_eq!(gradient.ramp, Ramp::Linear { angle: -90.0 });
+    assert_eq!(gradient.stops().len(), 2);
+    assert!((frame.blend.opacity - 0.5).abs() < 1e-6);
+    assert_eq!(frame.blend.mode, BlendMode::Multiply);
+    let shadow = frame.shadow.as_ref().expect("a drop shadow");
+    assert_eq!(shadow.offset, (3.0, 4.0));
+    assert_eq!(shadow.blur, 6.0);
+    assert!(
+        (shadow.colour.to_rgb_f32()[3] - 0.4).abs() < 1e-6,
+        "its opacity in the alpha"
+    );
+    assert_eq!(frame.style, Some(style_id));
+
+    // The plain red rectangle beside it has none of that.
+    let plain = doc
+        .paint_order()
+        .into_iter()
+        .filter_map(|id| doc.frame(id))
+        .find(|f| f.stroke.as_ref().is_some_and(|s| s.width == 2.0))
+        .expect("the red rectangle");
+    assert!(plain.shadow.is_none());
+    assert_eq!(plain.style, None);
 }
 
 #[test]

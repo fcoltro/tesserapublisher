@@ -298,8 +298,12 @@ Making the skeleton pleasant to use. No new file-format surface area.
 - [x] Every gesture records exactly one undo entry, on completion.
 - [x] **Reference point**: transforms resolve about a chosen one of nine
   anchors, which subsumes the from-centre scaling missing above.
-- [~] **Shear**, with an honest affine decomposition replacing
-  `Transform::rotation_degrees()`'s assumption that no shear exists.
+- [x] **Shear**, with an honest affine decomposition replacing
+  `Transform::rotation_degrees()`'s assumption that no shear exists. *(Ticked
+  2026-09-17: A3's decomposition and `rotation_degrees` read the same angle
+  off the x-axis while the shear leans the y-axis, and a test now pins that
+  they agree on every scale, shear and rotation; the `[~]` had outlived the
+  work.)*
 - [x] **Align and distribute** across a multiple selection. Nineteen actions,
   each reachable from the Object menu, the palette and the canvas toolbar.
 - [x] Corner options and corner radius. Rounded, bevelled and inverse, with a
@@ -2645,9 +2649,16 @@ which cost one afternoon's confusion and a namespace check.
   object into the text at the caret.
 - Dropped out loud: images' crops, parents with more pages than the setup
   allows, a group anchored in text beyond its first member, an object
-  inside a table cell, and the index. Not read: object styles, gradients, effects, text wrap, corner
-  options, hyperlinks, XML structure, cross-references, conditional text,
-  and `.doc`/`.rtf`.
+  inside a table cell, and the index. **Read since 2026-09-17:** object
+  styles (`ObjectStyle` into `ObjectFormat`, based-on followed, the
+  frame's `AppliedObjectStyle` attached), gradients (`Gradient` and its
+  stops into the colour table, a fill naming one becomes a `Paint::Gradient`
+  turned by the object's `GradientFillAngle`, negated for a y-down page),
+  effects (`TransparencySetting`: opacity, Multiply/Screen/Overlay, and a
+  drop shadow with its opacity in the colour's alpha), and cross-references.
+  Not read: text wrap beyond the bounding box, corner options, hyperlinks,
+  XML structure, conditional text, blend modes Tessera has not got, and
+  `.doc`/`.rtf`.
 
 ---
 

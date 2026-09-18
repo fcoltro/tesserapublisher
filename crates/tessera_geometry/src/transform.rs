@@ -473,4 +473,34 @@ mod tests {
         );
         assert!(t.determinant().abs() > 1e-9, "and it did not collapse");
     }
+
+    #[test]
+    fn the_inspectors_angle_is_the_decompositions_whatever_the_shear() {
+        // `rotation_degrees` once assumed no shear. It reads the image of the
+        // x-axis, and the decomposition leans the y-axis for its shear, so
+        // the two agree on every transform a person can make — which is what
+        // lets a sheared frame show one angle and be turned by it.
+        for shear in [-30.0, 0.0, 12.0, 45.0] {
+            for rotation in [-170.0, -45.0, 0.0, 30.0, 120.0] {
+                // In the decomposition's own order — scale, then shear, then
+                // rotation — so the shear reads back as it was given; a shear
+                // *before* a non-uniform scale is a different, steeper lean.
+                let t = Transform::scale_about(1.5, 0.75, DocPoint::ZERO)
+                    .then(Transform::shear_about(shear, DocPoint::ZERO))
+                    .then(Transform::rotate_about(rotation, DocPoint::ZERO));
+                let d = t.decompose();
+                assert!(
+                    (t.rotation_degrees() - d.rotation_degrees).abs() < 1e-9,
+                    "shear {shear}, rotation {rotation}: {} vs {}",
+                    t.rotation_degrees(),
+                    d.rotation_degrees
+                );
+                assert!(
+                    (d.shear_degrees - shear).abs() < 1e-6,
+                    "and the shear reads back: {} vs {shear}",
+                    d.shear_degrees
+                );
+            }
+        }
+    }
 }
