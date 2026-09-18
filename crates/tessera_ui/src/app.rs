@@ -367,6 +367,8 @@ pub struct TesseraApp {
     pub console: crate::view::console::Console,
     /// The Glyphs panel: a face's characters, to click into the text.
     pub glyphs: crate::view::glyphs::GlyphsPanel,
+    /// What the eyedropper picked up, while it is the tool.
+    pub eyedropper: Option<crate::tools::Sampled>,
     /// Find and Change. Modeless, so it is not in `modal_open`.
     pub find: crate::view::find::FindWindow,
 
@@ -532,6 +534,7 @@ impl TesseraApp {
             spell_menu: None,
             console: crate::view::console::Console::default(),
             glyphs: crate::view::glyphs::GlyphsPanel::default(),
+            eyedropper: None,
             persists: false,
             editing_master: None,
             rail_open: true,

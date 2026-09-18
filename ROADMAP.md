@@ -2240,6 +2240,14 @@ and not a list of controls.
     once per face because installing rebuilds the atlas. By character, not
     glyph: alternates and ligatures have no code point to type, and would
     need the story to name a glyph. Not seen running.
+  - **The eyedropper (2026-09-17)**, `I`: a click picks up an object's
+    appearance — `ObjectFormat::sampled_from` (fill, stroke, blend,
+    shadow), the corners, and a text frame's common character format —
+    and the next clicks put it down through one command,
+    `ApplyAppearance`, so a dropped appearance is one undo. Alt-click
+    picks up afresh; putting the tool down empties it. The wrap is left
+    alone, as InDesign leaves it: it is about the text around the object.
+    Not seen running.
 
 ### Recorded, unscheduled, and probably not wanted yet
 

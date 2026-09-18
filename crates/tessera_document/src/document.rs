@@ -1298,6 +1298,22 @@ impl Document {
         folded
     }
 
+    /// Write everything `format` states onto a frame, leaving the rest and
+    /// the style it follows alone: what the eyedropper does with what it
+    /// picked up.
+    pub fn write_object_format(
+        &mut self,
+        frame: crate::ids::FrameId,
+        format: &crate::object_style::ObjectFormat,
+    ) -> bool {
+        let Some(target) = self.frames.get_mut(frame) else {
+            return false;
+        };
+        write_format(target, format);
+        self.revision += 1;
+        true
+    }
+
     /// Attach a style to an object and write everything it states.
     pub fn apply_object_style(
         &mut self,

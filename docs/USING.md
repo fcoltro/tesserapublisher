@@ -56,6 +56,7 @@ what a layout designer's fingers already know.
 | `T` | Type | |
 | `F` | Frame | A box for artwork |
 | `C` | Scissors | Cuts a path where you click |
+| `I` | Eyedropper | Click an object to pick up its fill, stroke, effects, corners and type; click others to give it to them; Alt-click to pick up afresh |
 | `H` | Hand | Or hold space |
 | `Z` | Zoom | Click in, Alt-click out, drag to a region |
 

@@ -1258,6 +1258,12 @@ pub fn all() -> &'static [Action] {
             Group::Tool,
             PickTool(Tool::Scissors),
         ),
+        a(
+            "Eyedropper tool",
+            Some("I"),
+            Group::Tool,
+            PickTool(Tool::Eyedropper),
+        ),
     ];
     LIST
 }
@@ -1387,6 +1393,11 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         Run::PickTool(tool) => {
             if state.active_tool == Tool::Pen && tool != Tool::Pen {
                 crate::view::viewport::commit_pen(state);
+            }
+            // Putting the eyedropper down empties it: what it carried was
+            // for the objects it was pointed at, not for next week.
+            if tool != Tool::Eyedropper {
+                state.eyedropper = None;
             }
             state.active_tool = tool;
         }

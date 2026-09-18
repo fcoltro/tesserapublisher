@@ -30,6 +30,18 @@ pub enum Tool {
     /// Click to zoom in, hold Alt to zoom out, drag to zoom to what was
     /// dragged around.
     Zoom,
+    /// Pick an object's appearance up, and put it on others.
+    Eyedropper,
+}
+
+/// What the eyedropper is carrying: an object's appearance, with its
+/// corners, and — off a text frame — its type. Held until the tool is put
+/// down; Alt-click picks up afresh.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sampled {
+    pub format: tessera_document::object_style::ObjectFormat,
+    pub corners: tessera_document::corners::Corners,
+    pub text: Option<tessera_text::story::CharacterFormat>,
 }
 
 impl Tool {
@@ -47,6 +59,7 @@ impl Tool {
             Self::Scissors => "Scissors",
             Self::Hand => "Hand",
             Self::Zoom => "Zoom",
+            Self::Eyedropper => "Eyedropper",
         }
     }
 
@@ -64,6 +77,7 @@ impl Tool {
             Self::Scissors => crate::icons::Icon::Scissors,
             Self::Hand => crate::icons::Icon::Hand,
             Self::Zoom => crate::icons::Icon::ZoomIn,
+            Self::Eyedropper => crate::icons::Icon::Pipette,
         }
     }
 
@@ -102,10 +116,12 @@ impl Tool {
             Self::Polygon => egui::Key::G,
             Self::Scissors => egui::Key::C,
             Self::Zoom => egui::Key::Z,
+            // I, as InDesign's eyedropper is.
+            Self::Eyedropper => egui::Key::I,
         }
     }
 
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Select,
         Self::DirectSelect,
         Self::Rectangle,
@@ -116,6 +132,7 @@ impl Tool {
         Self::Graphic,
         Self::Polygon,
         Self::Scissors,
+        Self::Eyedropper,
         Self::Hand,
         Self::Zoom,
     ];

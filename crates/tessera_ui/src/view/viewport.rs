@@ -806,6 +806,14 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
         Tool::Pen => pen_gesture(ui, response, rect, state),
         Tool::DirectSelect => direct_gesture(ui, response, rect, state),
         Tool::Zoom => zoom_gesture(ui, response, rect, state),
+        Tool::Eyedropper => {
+            if response.clicked()
+                && let Some(pos) = response.interact_pointer_pos()
+            {
+                let alt = ui.input(|i| i.modifiers.alt);
+                eyedropper_click(state, rect, pos, alt);
+            }
+        }
         Tool::Scissors => {
             if response.clicked()
                 && let Some(pos) = response.interact_pointer_pos()
@@ -1987,6 +1995,7 @@ fn canvas_cursor(
             Cursor::new(Icon::Crosshair)
         }
         Tool::Zoom => Cursor::new(Icon::ZoomIn),
+        Tool::Eyedropper => Cursor::new(Icon::Pipette),
         Tool::Polygon => Cursor::new(Icon::Crosshair),
         Tool::Scissors => Cursor::new(Icon::Crosshair),
         // The pointer over an anchor is the anchor's own business; away from
@@ -2517,7 +2526,54 @@ fn draw_gesture(
             | Tool::Hand
             | Tool::Pen
             | Tool::Scissors
+            | Tool::Eyedropper
             | Tool::Zoom => {}
+        }
+    }
+}
+
+// --- the eyedropper ---------------------------------------------------------
+
+/// A click with the eyedropper: empty, or with Alt, it picks up the
+/// appearance of the object under the pointer — fill, stroke, blend,
+/// shadow, corners, and a text frame's type; carrying something, it puts
+/// that on the object under the pointer, as one undo entry. A click on
+/// nothing does nothing, and says nothing: there was nothing to say.
+pub(crate) fn eyedropper_click(state: &mut TesseraApp, rect: Rect, pos: egui::Pos2, alt: bool) {
+    let Some(id) = frame_at(state, rect, pos) else {
+        return;
+    };
+    match state.eyedropper.clone() {
+        Some(sampled) if !alt => {
+            apply(
+                state,
+                Command::ApplyAppearance {
+                    id,
+                    format: sampled.format,
+                    corners: Some(sampled.corners),
+                    text: sampled.text,
+                },
+            );
+        }
+        _ => {
+            let doc = state.active().document();
+            let Some(frame) = doc.frame(id) else {
+                return;
+            };
+            let text = match &frame.kind {
+                tessera_document::nodes::FrameKind::Text { story, .. } => doc
+                    .story(*story)
+                    .map(|s| s.common_format(0..s.text.len(), doc)),
+                _ => None,
+            };
+            state.eyedropper = Some(crate::tools::Sampled {
+                format: tessera_document::object_style::ObjectFormat::sampled_from(frame),
+                corners: frame.corners,
+                text,
+            });
+            state.status = Some(crate::app::Status::info(
+                "picked up: click an object to give it this appearance; Alt-click to pick up another",
+            ));
         }
     }
 }
@@ -3419,6 +3475,118 @@ mod tests {
         let canvas = Rect::from_min_max(egui::pos2(60.0, 40.0), egui::pos2(1700.0, 1040.0));
         let inside = egui::pos2(400.0, 500.0);
         assert_eq!(on_canvas(Some(inside), canvas), Some(inside));
+    }
+
+    #[test]
+    fn the_eyedropper_picks_an_appearance_up_and_puts_it_down_in_one_undo() {
+        use tessera_color::Color;
+        use tessera_document::corners::{CornerShape, Corners};
+        use tessera_document::nodes::Stroke;
+        let mut state = TesseraApp::headless();
+        let canvas = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 800.0));
+        let page = state.current_page().expect("a page");
+        let origin = state.active().document().pages[page].bounds;
+        let at = |x: f64, y: f64| DocRect {
+            x: origin.x + x,
+            y: origin.y + y,
+            width: 100.0,
+            height: 100.0,
+        };
+        apply(&mut state, Command::AddRectangle(at(20.0, 20.0)));
+        let red = state.active().selection.single().expect("red");
+        apply(&mut state, Command::AddRectangle(at(300.0, 20.0)));
+        let plain = state.active().selection.single().expect("plain");
+        let fill = Paint::Solid(Color::Rgb {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        });
+        apply(
+            &mut state,
+            Command::SetFill {
+                id: red,
+                paint: fill.clone(),
+            },
+        );
+        apply(
+            &mut state,
+            Command::SetStroke {
+                id: red,
+                stroke: Some(Stroke::new(Color::BLACK, 3.0)),
+            },
+        );
+        apply(
+            &mut state,
+            Command::SetCorners {
+                id: red,
+                corners: Corners {
+                    shape: CornerShape::Round,
+                    radii: [8.0; 4],
+                },
+            },
+        );
+        let before = state
+            .active()
+            .document()
+            .frame(plain)
+            .cloned()
+            .expect("plain");
+
+        state.active_tool = Tool::Eyedropper;
+        let centre = |state: &TesseraApp, r: DocRect| {
+            to_screen_pos(
+                state,
+                canvas,
+                DocPoint {
+                    x: r.x + r.width / 2.0,
+                    y: r.y + r.height / 2.0,
+                },
+            )
+        };
+        // Empty: a click picks up.
+        let on_red = centre(&state, at(20.0, 20.0));
+        eyedropper_click(&mut state, canvas, on_red, false);
+        let carried = state.eyedropper.clone().expect("picked up");
+        assert_eq!(carried.format.fill, Some(fill.clone()));
+        assert_eq!(carried.corners.radii, [8.0; 4]);
+        assert!(carried.text.is_none(), "a rectangle has no type");
+        let entries = state.active().history.undo_depth();
+
+        // Carrying: a click puts down, in one undo entry.
+        let on_plain = centre(&state, at(300.0, 20.0));
+        eyedropper_click(&mut state, canvas, on_plain, false);
+        let after = state
+            .active()
+            .document()
+            .frame(plain)
+            .cloned()
+            .expect("plain");
+        assert_eq!(after.fill, fill);
+        assert_eq!(after.stroke.map(|s| s.width), Some(3.0));
+        assert_eq!(after.corners.radii, [8.0; 4]);
+        assert_eq!(
+            state.active().history.undo_depth(),
+            entries + 1,
+            "one undo entry"
+        );
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().frame(plain), Some(&before));
+
+        // Still carrying; Alt-click picks up afresh, from the plain one.
+        assert!(state.eyedropper.is_some());
+        eyedropper_click(&mut state, canvas, on_plain, true);
+        assert_eq!(
+            state
+                .eyedropper
+                .as_ref()
+                .and_then(|s| s.format.fill.clone()),
+            Some(before.fill.clone())
+        );
+
+        // Putting the tool down empties it.
+        crate::actions::run(&mut state, crate::actions::Run::PickTool(Tool::Select));
+        assert!(state.eyedropper.is_none());
     }
 
     #[test]

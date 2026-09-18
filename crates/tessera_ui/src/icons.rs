@@ -56,6 +56,8 @@ pub enum Icon {
     /// The type tool before anything is drawn: a frame waiting to be dragged.
     TextFrame,
     Crosshair,
+    /// The eyedropper.
+    Pipette,
 
     // The canvas toolbar's spatial verbs. Named for what they do here rather
     // than for Lucide's own name, which describes the divider's axis; each
@@ -294,6 +296,13 @@ impl Icon {
                 "M6 12H2",
                 "M12 6V2",
                 "M12 18v4",
+            ],
+
+            // lucide: pipette
+            Self::Pipette => &[
+                "m2 22 1-1h3l9-9",
+                "M3 21v-3l9-9",
+                "m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z",
             ],
 
             // lucide: align-start-vertical
@@ -536,6 +545,8 @@ impl Icon {
             // (2.3, 2.3). Reading the nib as the bottom-left corner put the
             // whole icon a full grid away from the point it draws from.
             Self::Pen => (2.3, 2.3),
+            // The pipette's tip, at the bottom-left of Lucide's outline.
+            Self::Pipette => (2.0, 22.0),
             Self::Rectangle
             | Self::Ellipse
             | Self::Line

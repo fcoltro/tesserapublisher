@@ -53,6 +53,19 @@ pub struct ObjectFormat {
 }
 
 impl ObjectFormat {
+    /// Everything about `frame`'s appearance, stated: what an eyedropper
+    /// picks up. The wrap is left unsaid — it is about the text around the
+    /// object, not the object, and InDesign's eyedropper leaves it too.
+    pub fn sampled_from(frame: &crate::nodes::Frame) -> Self {
+        Self {
+            fill: Some(frame.fill.clone()),
+            stroke: Some(frame.stroke.clone()),
+            blend: Some(frame.blend),
+            shadow: Some(frame.shadow.clone()),
+            wrap: None,
+        }
+    }
+
     /// Whether this format says anything at all.
     ///
     /// A style stating nothing is a name attached to no appearance. Worth being

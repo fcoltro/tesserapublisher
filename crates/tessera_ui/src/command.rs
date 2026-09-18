@@ -403,6 +403,17 @@ pub enum Command {
         text: Option<tessera_document::path_text::PathText>,
     },
 
+    /// Give a frame another's appearance — what the eyedropper does with
+    /// what it picked up. Every property `format` states is written, the
+    /// corners with it, and `text` is merged into the whole of a text
+    /// frame's story. One command, so a dropped appearance is one undo.
+    ApplyAppearance {
+        id: FrameId,
+        format: tessera_document::object_style::ObjectFormat,
+        corners: Option<tessera_document::corners::Corners>,
+        text: Option<CharacterFormat>,
+    },
+
     /// Cut a frame's corners, or square them again.
     ///
     /// The whole of the corners in one command, as the shadow is: rounding four
@@ -1607,6 +1618,31 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
                 frame.corners = corners;
             }
+        }
+
+        Command::ApplyAppearance {
+            id,
+            format,
+            corners,
+            text,
+        } => {
+            let doc = state.active_mut().document_mut();
+            doc.write_object_format(id, &format);
+            if let Some(corners) = corners
+                && let Some(frame) = doc.frame_mut(id)
+            {
+                frame.corners = corners;
+            }
+            if let Some(text) = text
+                && let Some(FrameKind::Text { story, .. }) = doc.frame(id).map(|f| &f.kind)
+            {
+                let story = *story;
+                let len = doc.story(story).map_or(0, |s| s.text.len());
+                if let Some(s) = doc.story_mut(story) {
+                    s.apply_character_format(0..len, &text);
+                }
+            }
+            state.active_mut().document_mut().touch();
         }
 
         Command::PutTextOnPath { id, text } => {

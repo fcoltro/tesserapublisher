@@ -61,7 +61,7 @@ outright, so the target is not twenty-six.
 | Gradient Swatch | gradients are set in the inspector; there is no drag-to-angle tool, by D6's argument | — | done, M5 |
 | Gradient Feather | ✗ | model | — |
 | Note | ✗ | — | — |
-| Eyedropper | ✗ | view | — (recorded under M9) |
+| Eyedropper | ✅ `Tool::Eyedropper`, I: picks up fill, stroke, blend, shadow, corners and a text frame's type; puts them down as one undo; Alt-click picks up afresh | — | done 2026-09-17 |
 | Color Theme | ✗ | — | — |
 | Measure | ✗ | view | — |
 | Hand | ✅ `Tool::Hand` | — | done |
