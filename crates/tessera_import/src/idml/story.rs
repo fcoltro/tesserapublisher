@@ -11,8 +11,13 @@
 //! What is not carried is said: a table, an anchored object, a nested
 //! group — each becomes a line in [`crate::Dropped`] rather than a gap.
 
+use std::collections::HashMap;
+
 use roxmltree::Node;
-use tessera_text::story::{CharacterFormat, IndexEntry, ParagraphFormat, ParagraphRun, Run, Story};
+use tessera_text::story::{
+    CharacterFormat, CrossReference, CrossReferenceFormat, IndexEntry, ParagraphFormat,
+    ParagraphRun, Run, Story, TextAnchor,
+};
 use tessera_text::variables::Marker;
 
 use super::styles::{Colours, Styles, character_format, paragraph_format};
@@ -30,13 +35,42 @@ pub(crate) struct Read<'a, 'i> {
 }
 
 /// The story a `<Story>` element describes.
+/// What a cross-reference in one story points at: the spine's hyperlinks,
+/// source to destination, and every destination's name, gathered from all
+/// the stories before any is read — a reference may point forward.
+#[derive(Debug, Default)]
+pub(crate) struct Links {
+    /// `CrossReferenceSource` Self → destination Self.
+    pub sources: HashMap<String, String>,
+    /// Destination Self → its Name: what the anchor is called here.
+    pub destinations: HashMap<String, String>,
+}
+
+impl Links {
+    /// The name the anchor a source points at is given here, if the spine
+    /// knows the source and a story holds the destination.
+    fn target_of(&self, source: &str) -> Option<String> {
+        let destination = self.sources.get(source)?;
+        self.destinations.get(destination).cloned()
+    }
+}
+
+/// The name a destination element is known by: its Name, else its Self.
+pub(crate) fn destination_name(node: Node) -> Option<String> {
+    attr(node, "Name")
+        .filter(|n| !n.is_empty())
+        .or_else(|| attr(node, "Self"))
+        .map(str::to_owned)
+}
+
 pub(crate) fn read<'a, 'i>(
     story: Node<'a, 'i>,
     styles: &Styles,
     colours: &Colours,
+    links: &Links,
 ) -> Read<'a, 'i> {
     let mut b = Builder::default();
-    read_ranges(story, styles, colours, &mut b);
+    read_ranges(story, styles, colours, links, &mut b);
     let inline = std::mem::take(&mut b.inline);
     Read {
         story: b.finish(),
@@ -65,6 +99,9 @@ struct Builder<'a, 'i> {
         ParagraphFormat,
     )>,
     footnotes: Vec<Story>,
+    /// Text anchors and cross-references, one per marker, in text order.
+    anchors: Vec<TextAnchor>,
+    cross_references: Vec<CrossReference>,
 }
 
 impl<'a, 'i> Builder<'a, 'i> {
@@ -150,8 +187,8 @@ impl<'a, 'i> Builder<'a, 'i> {
             paragraphs,
             footnotes,
             index_entries: vec![IndexEntry::default(); entries],
-            anchors: Vec::new(),
-            cross_references: Vec::new(),
+            anchors: self.anchors,
+            cross_references: self.cross_references,
         };
         if story.runs_are_sound() && story.notes_are_sound() {
             story
@@ -169,6 +206,7 @@ fn read_ranges<'a, 'i>(
     node: Node<'a, 'i>,
     styles: &Styles,
     colours: &Colours,
+    links: &Links,
     b: &mut Builder<'a, 'i>,
 ) {
     for child in node.children() {
@@ -186,7 +224,7 @@ fn read_ranges<'a, 'i>(
                     .and_then(|s| styles.paragraph.get(s))
                     .copied();
                 let local = paragraph_format(child, colours);
-                read_ranges(child, styles, colours, b);
+                read_ranges(child, styles, colours, links, b);
                 b.paragraphs.push((start, b.text.len(), style, local));
             }
             "CharacterStyleRange" => {
@@ -195,7 +233,7 @@ fn read_ranges<'a, 'i>(
                     .and_then(|s| styles.character.get(s))
                     .copied();
                 let local = character_format(child, colours, None);
-                read_ranges(child, styles, colours, b);
+                read_ranges(child, styles, colours, links, b);
                 b.runs.push((start, b.text.len(), style, local));
             }
             "Content" => {
@@ -214,7 +252,7 @@ fn read_ranges<'a, 'i>(
             "Footnote" => {
                 b.text.push(Marker::FootnoteReference.character());
                 let mut note: Builder<'a, 'i> = Builder::default();
-                read_ranges(child, styles, colours, &mut note);
+                read_ranges(child, styles, colours, links, &mut note);
                 let mut note = note.finish();
                 // A note that did not carry its own number gets one.
                 if !note.text.starts_with(Marker::FootnoteNumber.character()) {
@@ -227,12 +265,54 @@ fn read_ranges<'a, 'i>(
             "Table" | "Rectangle" | "Oval" | "Polygon" | "TextFrame" | "Group" | "GraphicLine" => {
                 b.push_inline(child);
             }
-            "HyperlinkTextSource" | "HyperlinkTextDestination" | "XMLElement" | "Change" => {
+            "HyperlinkTextSource" | "XMLElement" | "Change" => {
                 // Wrappers around ordinary ranges: read through them.
-                read_ranges(child, styles, colours, b);
+                read_ranges(child, styles, colours, links, b);
+            }
+            // A place a cross-reference can point at: an anchor here, named
+            // as the destination is, so a reference to it reads the same
+            // after the import as before.
+            "HyperlinkTextDestination" | "ParagraphDestination" => {
+                if let Some(name) = destination_name(child) {
+                    b.text.push(Marker::TextAnchor.character());
+                    b.anchors.push(TextAnchor { name });
+                }
+                read_ranges(child, styles, colours, links, b);
+            }
+            // A cross-reference: a marker that reads as where its target
+            // is. The words InDesign wrote inside are not kept — they are
+            // what the reference read as *then*, and Tessera reads it afresh.
+            "CrossReferenceSource" => {
+                let target = attr(child, "Self")
+                    .and_then(|s| links.target_of(s))
+                    .unwrap_or_default();
+                if target.is_empty() {
+                    // Pointing nowhere the package can find: keep the words,
+                    // as a reader would rather have them than a "?".
+                    read_ranges(child, styles, colours, links, b);
+                    continue;
+                }
+                let applied = attr(child, "AppliedFormat").unwrap_or_default();
+                let format = cross_reference_format(applied);
+                b.text.push(Marker::CrossReference.character());
+                b.cross_references.push(CrossReference { target, format });
             }
             _ => {}
         }
+    }
+}
+
+/// InDesign's built-in cross-reference formats, by what their names say
+/// they show: "Page Number", "Paragraph Text", "Full Paragraph & Page
+/// Number" and the rest. A custom format is read by the same words.
+fn cross_reference_format(applied: &str) -> CrossReferenceFormat {
+    let lower = applied.to_ascii_lowercase();
+    let paragraph = lower.contains("paragraph") || lower.contains("text anchor name");
+    let page = lower.contains("page");
+    match (paragraph, page) {
+        (true, true) => CrossReferenceFormat::ParagraphAndPage,
+        (true, false) => CrossReferenceFormat::ParagraphText,
+        _ => CrossReferenceFormat::PageNumber,
     }
 }
 
@@ -264,12 +344,90 @@ mod tests {
     use tessera_document::document::Document;
 
     fn story_from(xml: &str) -> (Story, usize) {
+        story_with_links(xml, &Links::default())
+    }
+
+    fn story_with_links(xml: &str, links: &Links) -> (Story, usize) {
         let doc = roxmltree::Document::parse(xml).expect("xml");
         let colours = Colours::default();
         let mut tessera = Document::default();
         let styles = Styles::read(doc.root(), &mut tessera, &colours);
-        let read = read(doc.root_element(), &styles, &colours);
+        let read = read(doc.root_element(), &styles, &colours, links);
         (read.story, read.inline.len())
+    }
+
+    #[test]
+    fn a_cross_reference_source_becomes_a_reference_to_the_named_destination() {
+        // The spine says source u10 points at destination u20, and a story
+        // holds u20 under the name "Chapter Two"; the reference reads afresh
+        // as where that anchor is, in the format InDesign applied.
+        let mut links = Links::default();
+        links.sources.insert("u10".into(), "u20".into());
+        links
+            .destinations
+            .insert("u20".into(), "Chapter Two".into());
+        let (story, _) = story_with_links(
+            r#"<Story Self="u1">
+  <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/NormalParagraphStyle">
+    <CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]">
+      <Content>See </Content>
+      <CrossReferenceSource Self="u10" Name="ref" AppliedFormat="CrossReferenceFormat/Full Paragraph &amp; Page Number">
+        <Content>Chapter Two on page 9</Content>
+      </CrossReferenceSource>
+      <Content>.</Content><Br/>
+    </CharacterStyleRange>
+  </ParagraphStyleRange>
+  <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/NormalParagraphStyle">
+    <CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]">
+      <ParagraphDestination Self="u20" Name="Chapter Two"/>
+      <Content>Chapter Two</Content>
+    </CharacterStyleRange>
+  </ParagraphStyleRange>
+</Story>"#,
+            &links,
+        );
+        let r = Marker::CrossReference.character();
+        let a = Marker::TextAnchor.character();
+        assert_eq!(story.text, format!("See {r}.\n{a}Chapter Two"));
+        assert_eq!(story.cross_references.len(), 1);
+        assert_eq!(story.cross_references[0].target, "Chapter Two");
+        assert_eq!(
+            story.cross_references[0].format,
+            CrossReferenceFormat::ParagraphAndPage
+        );
+        assert_eq!(story.anchors.len(), 1);
+        assert_eq!(story.anchors[0].name, "Chapter Two");
+        assert!(story.runs_are_sound());
+
+        // A source the spine does not know keeps the words it carried.
+        let (story, _) = story_from(
+            r#"<Story Self="u1"><ParagraphStyleRange><CharacterStyleRange>
+      <CrossReferenceSource Self="u99" AppliedFormat="CrossReferenceFormat/Page Number"><Content>page 9</Content></CrossReferenceSource>
+</CharacterStyleRange></ParagraphStyleRange></Story>"#,
+        );
+        assert_eq!(story.text, "page 9");
+        assert!(story.cross_references.is_empty());
+    }
+
+    #[test]
+    fn indesign_s_format_names_say_what_a_reference_shows() {
+        assert_eq!(
+            cross_reference_format("CrossReferenceFormat/Page Number"),
+            CrossReferenceFormat::PageNumber
+        );
+        assert_eq!(
+            cross_reference_format("CrossReferenceFormat/Paragraph Text"),
+            CrossReferenceFormat::ParagraphText
+        );
+        assert_eq!(
+            cross_reference_format("CrossReferenceFormat/Full Paragraph & Page Number"),
+            CrossReferenceFormat::ParagraphAndPage
+        );
+        assert_eq!(
+            cross_reference_format("CrossReferenceFormat/Text Anchor Name & Page Number"),
+            CrossReferenceFormat::ParagraphAndPage
+        );
+        assert_eq!(cross_reference_format(""), CrossReferenceFormat::PageNumber);
     }
 
     #[test]

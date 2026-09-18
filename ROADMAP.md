@@ -2439,10 +2439,16 @@ line of copy. The renderer and the PDF writer draw them without knowing.
   rather than the document's size (fixed); and `describe_document` gave
   pages no id while the page commands took one (fixed, and
   `start_editing`/`stop_editing` tools put the caret where the caret-bound
-  menu actions act). Not built: cross-references as hyperlinks in the
-  PDF, IDML's `CrossReferenceSource`, editing a reference in place (the
-  caret after one is known — `reference_at_caret` — and nothing offers
-  it yet).
+  menu actions act). **2026-09-17:** every cross-reference is a link
+  in the PDF to the page its target is on, over the words it reads as
+  (`links_in` walks the markers with the running anchors); and IDML's
+  `CrossReferenceSource` imports as a live reference — the spine's
+  `Hyperlink`s map source to destination, `ParagraphDestination` and
+  `HyperlinkTextDestination` become named anchors, and the applied
+  format's name says what it shows; a source the spine cannot place
+  keeps its words. Not built: editing a reference in place (the caret
+  after one is known — `reference_at_caret` — and nothing offers it
+  yet); a reference inside a table cell imports as its words.
 - [x] **Notes split across columns (2026-09-17).** A note too long for the
   room under its citation keeps what fits there — at least one line, or the
   citing line moves as before — and the rest is carried to the foot of the

@@ -857,34 +857,25 @@ fn links_in(
     story: &TextStory,
     shaped: &ShapedText,
     width: f32,
+    running: &Running,
 ) -> Vec<ResolvedLink> {
     use tessera_text::edit::TextCursor;
     use tessera_text::story::Hyperlink;
+    use tessera_text::variables::Marker;
 
     let pages: Vec<PageId> = doc.page_ids().collect();
-    let mut out = Vec::new();
-    for run in &story.runs {
-        let target = match story.resolve_run(run, doc).link {
-            Some(Hyperlink::Url(url)) if !url.trim().is_empty() => LinkTarget::Url(url),
-            Some(Hyperlink::Destination(name)) => {
-                let Some(page) = doc.destination_page(&name) else {
-                    continue; // a link to nowhere is no link
-                };
-                let Some(index) = pages.iter().position(|p| *p == page) else {
-                    continue;
-                };
-                LinkTarget::Page(index)
-            }
-            _ => continue,
-        };
+    let page_index = |page: PageId| pages.iter().position(|p| *p == page);
+    // The rectangles a stretch of the story covers, as a selection over it
+    // would be drawn — so a link covers exactly what looks linked.
+    let rects_over = |range: std::ops::Range<usize>| -> Vec<DocRect> {
         let geometry = shaped.caret_geometry(
             TextCursor {
-                position: run.range.end,
-                anchor: run.range.start,
+                position: range.end,
+                anchor: range.start,
             },
             width,
         );
-        let rects: Vec<DocRect> = geometry
+        geometry
             .selection
             .iter()
             .filter(|r| r.width() > 0.0 && r.height() > 0.0)
@@ -894,11 +885,56 @@ fn links_in(
                 width: r.width(),
                 height: r.height(),
             })
-            .collect();
+            .collect()
+    };
+
+    let mut out = Vec::new();
+    for run in &story.runs {
+        let target = match story.resolve_run(run, doc).link {
+            Some(Hyperlink::Url(url)) if !url.trim().is_empty() => LinkTarget::Url(url),
+            Some(Hyperlink::Destination(name)) => {
+                let Some(page) = doc.destination_page(&name) else {
+                    continue; // a link to nowhere is no link
+                };
+                let Some(index) = page_index(page) else {
+                    continue;
+                };
+                LinkTarget::Page(index)
+            }
+            _ => continue,
+        };
+        let rects = rects_over(run.range.clone());
         if rects.is_empty() {
             continue;
         }
         out.push(ResolvedLink { rects, target });
+    }
+
+    // Every cross-reference is a link to the page its target is on: the
+    // words it reads as — "Chapter Two on page 12" — are what a reader
+    // clicks. The marker is one stored character; the rectangles come from
+    // the shaped text, where it is the whole phrase.
+    let marker = Marker::CrossReference.character().len_utf8();
+    for (at, reference) in story
+        .cross_reference_offsets()
+        .into_iter()
+        .zip(&story.cross_references)
+    {
+        let page = match running.anchor(&reference.target) {
+            Some((page, _)) => Some(*page),
+            None => doc.destination_page(&reference.target),
+        };
+        let Some(index) = page.and_then(page_index) else {
+            continue; // a reference to nowhere reads "?" and links nowhere
+        };
+        let rects = rects_over(at..at + marker);
+        if rects.is_empty() {
+            continue;
+        }
+        out.push(ResolvedLink {
+            rects,
+            target: LinkTarget::Page(index),
+        });
     }
     out
 }
@@ -1149,7 +1185,7 @@ fn resolve_one<'a>(
                 doc, shaper, id, frame, *story_id, story, from, on, running, composed,
             );
 
-            links = links_in(doc, story, &flowed.text, frame.bounds.width as f32);
+            links = links_in(doc, story, &flowed.text, frame.bounds.width as f32, running);
             ResolvedKind::Text {
                 shaped: flowed.text,
                 color: colour,
@@ -2243,6 +2279,25 @@ The body of the chapter.",
         let resolved = resolve(&doc, &mut shaper);
         let shown = shown_text(&resolved, &doc, a);
         assert_eq!(shown, "See Chapter Two on page 2.", "{shown}");
+
+        // And the reference is a link to the page its anchor is on, over
+        // the words it reads as.
+        let item = item_for(&resolved, a).expect("resolved");
+        let link = item
+            .links
+            .iter()
+            .find(|l| l.target == LinkTarget::Page(1))
+            .expect("a link to the second page");
+        let covered: f64 = link.rects.iter().map(|r| r.width).sum();
+        let whole = shown_text(&resolved, &doc, a).len() as f64;
+        assert!(
+            covered > 0.0 && covered < whole * 12.0,
+            "over the phrase, not the line"
+        );
+        assert!(
+            covered > 50.0,
+            "and the phrase is not a marker's width: {covered}"
+        );
 
         // Just the page, just the paragraph.
         doc.stories[referring].cross_references[0].format = CrossReferenceFormat::PageNumber;

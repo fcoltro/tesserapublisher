@@ -131,6 +131,36 @@ fn import_package(mut package: Package) -> Result<Imported, ImportError> {
     for (src, text) in &story_texts {
         story_xml.push(parse(src, text)?);
     }
+    // Where cross-references point: the spine's hyperlinks from a source
+    // to a destination, and every destination's name, wherever it sits —
+    // before any story is read, since a reference may point forward.
+    let mut links = story::Links::default();
+    for hyperlink in root.descendants().filter(|n| is_plain(*n, "Hyperlink")) {
+        let Some(source) = attr(hyperlink, "Source") else {
+            continue;
+        };
+        let destination = hyperlink
+            .children()
+            .find(|n| is_plain(*n, "Destination"))
+            .and_then(|n| n.text())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if let Some(destination) = destination {
+            links
+                .sources
+                .insert(source.to_owned(), destination.to_owned());
+        }
+    }
+    for xml in &story_xml {
+        for node in xml.descendants().filter(|n| {
+            is_plain(*n, "HyperlinkTextDestination") || is_plain(*n, "ParagraphDestination")
+        }) {
+            if let (Some(id), Some(name)) = (attr(node, "Self"), story::destination_name(node)) {
+                links.destinations.insert(id.to_owned(), name);
+            }
+        }
+    }
+
     let mut stories: HashMap<String, StoryId> = HashMap::new();
     let mut inline: Vec<(StoryId, usize, Node)> = Vec::new();
     for xml in &story_xml {
@@ -138,7 +168,7 @@ fn import_package(mut package: Package) -> Result<Imported, ImportError> {
             let Some(name) = attr(node, "Self") else {
                 continue;
             };
-            let read = story::read(node, &styles, &colours);
+            let read = story::read(node, &styles, &colours, &links);
             let id = doc.add_story(read.story);
             stories.insert(name.to_owned(), id);
             for (index, item) in read.inline {
@@ -539,7 +569,10 @@ impl Items<'_> {
                 columns: attr_f64(cell, "ColumnSpan").map_or(1, |n| n as u16).max(1),
                 rows: attr_f64(cell, "RowSpan").map_or(1, |n| n as u16).max(1),
             };
-            let read = story::read(cell, styles, colours);
+            // A cross-reference inside a table cell keeps the words InDesign
+            // wrote for it rather than becoming a live reference: the cells
+            // are read after the stories, without the spine's links to hand.
+            let read = story::read(cell, styles, colours, &story::Links::default());
             if !read.inline.is_empty() {
                 dropped.note("an object anchored inside a table cell");
             }
