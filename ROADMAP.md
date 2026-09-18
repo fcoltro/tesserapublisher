@@ -2473,8 +2473,26 @@ line of copy. The renderer and the PDF writer draw them without knowing.
   so a chapter's subject is indexed "1–3" (format 33). The entry box has a
   hint for the colon and a *Reaches* choice. Test: a story threaded over
   three pages, and a sub-topic with no topic of its own.
-- Not built: footnote text edited on the canvas (the box does it), and a
-  contents that includes paragraphs from other documents (a book).
+- [x] **The book (2026-09-17).** `tessera_document::book::Book`: a JSON
+  file listing documents, kept relative to itself, with a *continue
+  numbering* flag. `tessera_layout::book` gives it its three meanings:
+  `continue_numbering` puts each chapter's first page on a section
+  starting after the chapter before's last (a chapter already beginning a
+  section keeps it and takes the number); `combine` stacks every
+  chapter's resolved pages and items into one resolved document — the
+  move rides on each item's transform, so the PDF writer, which puts an
+  item on the page its geometry says, writes one file; and
+  `table_of_contents` across chapters, the recipe's styles matched by
+  name, each entry with its own chapter's page label, linked only within
+  the placing chapter. `tessera_ui::book_ops` does the file work: an open
+  chapter changes through a command in its tab, a closed one is loaded,
+  changed and saved back. Window ▸ Book, in the rail: new or open a book,
+  add and order chapters (double-click opens one), Number now, Update
+  contents, Export PDF…. Tests at every layer, ending with a real
+  five-page PDF from two chapter files. **Not built:** synchronising
+  styles across chapters; an index across the book; a book's chapters
+  shown in the Pages panel.
+- Not built: footnote text edited on the canvas (the box does it).
   Contents entries *are* hyperlinks now — see below.
 
 ---

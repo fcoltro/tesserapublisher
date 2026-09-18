@@ -229,6 +229,7 @@ person reaches for once they start setting copy, and none of it had a row:
 | Story editor | ✅ a plain box over the story, applied as a minimal edit | — | done |
 | Print dialog | ✗ — PDF export only | — | — |
 | IDML import | ✅ pages, parents, threads, styles, swatches, sections, footnotes, anchored objects, tables | — | done, M12 |
+| Book | ✅ a book file; chapters numbered on, one contents, one PDF; no style synchronising | — | done 2026-09-17 |
 | Word import | ✅ File ▸ Place a `.docx`; styles merged by name | — | done, M12 |
 
 ---

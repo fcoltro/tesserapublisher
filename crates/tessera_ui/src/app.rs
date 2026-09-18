@@ -369,6 +369,8 @@ pub struct TesseraApp {
     pub glyphs: crate::view::glyphs::GlyphsPanel,
     /// What the eyedropper picked up, while it is the tool.
     pub eyedropper: Option<crate::tools::Sampled>,
+    /// The Book panel: the chapters of a publication, and the book file.
+    pub book: crate::view::book::BookPanel,
     /// Find and Change. Modeless, so it is not in `modal_open`.
     pub find: crate::view::find::FindWindow,
 
@@ -535,6 +537,7 @@ impl TesseraApp {
             console: crate::view::console::Console::default(),
             glyphs: crate::view::glyphs::GlyphsPanel::default(),
             eyedropper: None,
+            book: crate::view::book::BookPanel::default(),
             persists: false,
             editing_master: None,
             rail_open: true,

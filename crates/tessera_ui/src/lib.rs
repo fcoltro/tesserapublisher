@@ -7,6 +7,7 @@
 pub mod actions;
 pub mod align;
 pub mod app;
+pub mod book_ops;
 pub mod camera;
 pub mod catalogue;
 pub mod command;

@@ -580,6 +580,13 @@ pub enum Command {
     /// Rebuild the contents from the document as it is laid out now, into
     /// the story it was placed in — or into a new frame on the current page.
     UpdateContents,
+    /// Put a contents story already built — by the Book panel, from every
+    /// chapter — where the document's contents go, with the destinations
+    /// its entries name.
+    PlaceContents {
+        story: Story,
+        destinations: Vec<(String, PageId)>,
+    },
     SetIndex(tessera_document::contents::Index),
     UpdateIndex,
     /// The recipe for the endnotes: the list every story's notes are
@@ -1932,19 +1939,8 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             // they were placed in, measured for the right tab.
             let contents = state.active().document().contents.clone();
             let resolved = state.resolve_active().clone();
+            let measure = contents_measure(state, &contents);
             let doc = state.active().document();
-            let measure = contents
-                .story
-                .and_then(|s| frame_of_story(doc, s))
-                .and_then(|f| doc.frame(f))
-                .map(|f| f.bounds.width as f32)
-                .or_else(|| {
-                    state
-                        .current_page()
-                        .and_then(|p| doc.margin_rect(p))
-                        .map(|r| r.width as f32)
-                })
-                .unwrap_or(0.0);
             let generated = tessera_layout::contents::table_of_contents(
                 doc,
                 &resolved,
@@ -1953,16 +1949,13 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 &contents.levels,
                 measure,
             );
-            for (name, page) in &generated.destinations {
-                state
-                    .active_mut()
-                    .document_mut()
-                    .set_destination(name.clone(), *page);
-            }
-            place_generated(state, generated.story, contents.story, |doc, id| {
-                doc.contents.story = Some(id);
-            });
+            place_contents(state, generated.story, generated.destinations);
         }
+
+        Command::PlaceContents {
+            story,
+            destinations,
+        } => place_contents(state, story, destinations),
 
         Command::SetIndex(index) => {
             state.active_mut().document_mut().set_index(index);
@@ -2357,6 +2350,42 @@ fn frame_of_story(doc: &tessera_document::Document, story: StoryId) -> Option<Fr
 /// the first run's and paragraph's formatting, but a generated story carries
 /// its own paragraph styles per entry, so the whole story is written and only
 /// the frame is kept.
+/// The measure a contents story is set to: the frame it was placed in, or
+/// the current page's type area for a first placing.
+pub(crate) fn contents_measure(
+    state: &TesseraApp,
+    contents: &tessera_document::contents::Contents,
+) -> f32 {
+    let doc = state.active().document();
+    contents
+        .story
+        .and_then(|s| frame_of_story(doc, s))
+        .and_then(|f| doc.frame(f))
+        .map(|f| f.bounds.width as f32)
+        .or_else(|| {
+            state
+                .current_page()
+                .and_then(|p| doc.margin_rect(p))
+                .map(|r| r.width as f32)
+        })
+        .unwrap_or(0.0)
+}
+
+/// Record the destinations a contents names, and put its story where the
+/// document's contents go.
+fn place_contents(state: &mut TesseraApp, story: Story, destinations: Vec<(String, PageId)>) {
+    for (name, page) in destinations {
+        state
+            .active_mut()
+            .document_mut()
+            .set_destination(name, page);
+    }
+    let into = state.active().document().contents.story;
+    place_generated(state, story, into, |doc, id| {
+        doc.contents.story = Some(id);
+    });
+}
+
 fn place_generated(
     state: &mut TesseraApp,
     generated: Story,

@@ -58,6 +58,8 @@ pub enum Icon {
     Crosshair,
     /// The eyedropper.
     Pipette,
+    /// The Book panel.
+    Book,
 
     // The canvas toolbar's spatial verbs. Named for what they do here rather
     // than for Lucide's own name, which describes the divider's axis; each
@@ -297,6 +299,9 @@ impl Icon {
                 "M12 6V2",
                 "M12 18v4",
             ],
+
+            // lucide: book
+            Self::Book => &["M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"],
 
             // lucide: pipette
             Self::Pipette => &[
@@ -614,6 +619,7 @@ impl Icon {
             | Self::Pages
             | Self::Preflight
             | Self::SquareTerminal
+            | Self::Book
             | Self::Swatches
             | Self::Styles
             | Self::Close

@@ -4,6 +4,7 @@
 //! model, and separated from `tessera_render` because a headless PDF export
 //! needs the same answers a screen redraw does.
 
+pub mod book;
 pub mod cache;
 pub mod contents;
 pub mod path_text;

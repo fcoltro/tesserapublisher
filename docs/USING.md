@@ -187,6 +187,15 @@ runs — this page, the next few paragraphs, or to the end of the story — so a
 subject discussed for a chapter is indexed "12–15". Layout ▸ Index… places
 the index and updates it.
 
+**Book.** Window ▸ Book opens the Book panel. *New…* makes a book file —
+a list of documents that are one publication — and *Add document…* fills it;
+the arrows order the chapters, double-clicking one opens it. With *Number the
+pages on* ticked, *Number now* gives each chapter's first page the number
+after the chapter before's last, saving chapters that are not open and
+changing open ones undoably. *Update contents* rebuilds the open chapter's
+table of contents from every chapter's headings, and *Export PDF…* writes the
+whole book as one file.
+
 ## Colour
 
 The Swatches panel holds named colours. A **spot** colour is a pot of a specific

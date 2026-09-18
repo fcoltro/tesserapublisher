@@ -39,16 +39,18 @@ pub enum Dock {
     Preflight,
     Console,
     Glyphs,
+    Book,
 }
 
 impl Dock {
-    pub const ALL: [Dock; 8] = [
+    pub const ALL: [Dock; 9] = [
         Dock::Properties,
         Dock::Pages,
         Dock::Layers,
         Dock::Styles,
         Dock::Swatches,
         Dock::Glyphs,
+        Dock::Book,
         // Last, because it is the one you go to when you have finished rather
         // than while you are working.
         Dock::Preflight,
@@ -65,6 +67,7 @@ impl Dock {
             Dock::Preflight => "Preflight",
             Dock::Console => "AI Console",
             Dock::Glyphs => "Glyphs",
+            Dock::Book => "Book",
         }
     }
 
@@ -78,6 +81,7 @@ impl Dock {
             Dock::Preflight => Icon::Preflight,
             Dock::Console => Icon::SquareTerminal,
             Dock::Glyphs => Icon::CaseSensitive,
+            Dock::Book => Icon::Book,
         }
     }
 
@@ -96,6 +100,7 @@ impl Dock {
             Dock::Preflight => state.preflight.open,
             Dock::Console => state.console.open,
             Dock::Glyphs => state.glyphs.open,
+            Dock::Book => state.book.open,
         }
     }
 
@@ -109,6 +114,7 @@ impl Dock {
             Dock::Preflight => state.preflight.open = open,
             Dock::Console => state.console.open = open,
             Dock::Glyphs => state.glyphs.open = open,
+            Dock::Book => state.book.open = open,
         }
     }
 }
@@ -188,6 +194,7 @@ pub(crate) fn body(ui: &mut Ui, state: &mut TesseraApp, dock: Dock) {
         Dock::Preflight => crate::view::preflight_panel::docked(ui, state),
         Dock::Console => crate::view::console::docked(ui, state),
         Dock::Glyphs => crate::view::glyphs::docked(ui, state),
+        Dock::Book => crate::view::book::docked(ui, state),
     }
 }
 
@@ -210,6 +217,7 @@ mod tests {
             Dock::Preflight,
             Dock::Console,
             Dock::Glyphs,
+            Dock::Book,
         ] {
             assert!(!dock.is_open(&state), "{} starts shut", dock.title());
         }

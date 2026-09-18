@@ -280,7 +280,7 @@ pub struct Generated {
 /// One paragraph of a generated story: its words, the style it is set in,
 /// whether it carries a right tab for a page label, the link on it, and how
 /// many levels it is nested — a sub-topic under its topic.
-type Paragraph = (
+pub(crate) type Paragraph = (
     String,
     Option<ParagraphStyleId>,
     bool,
@@ -432,7 +432,7 @@ fn page_ranges(doc: &Document, order: &[PageId], on: &[PageId]) -> String {
 
 /// Paragraphs into a story, each with its style; the tabbed ones with a
 /// right stop at `measure` when there is a measure to stop at.
-fn assemble(paragraphs: Vec<Paragraph>, measure: f32) -> Story {
+pub(crate) fn assemble(paragraphs: Vec<Paragraph>, measure: f32) -> Story {
     let mut text = String::new();
     let mut runs = Vec::new();
     let mut links: Vec<Run> = Vec::new();
