@@ -110,9 +110,19 @@ pub fn headings(
     out
 }
 
-/// Every index marker, with the page its line fell on.
+/// A line of a story as laid out: the page it fell on and what of the
+/// story it holds.
+type PlacedLine = (PageId, std::ops::Range<usize>);
+
+/// Every index marker, with the page its line fell on — and, for an entry
+/// that reaches past its marker, every page through to where it reaches.
 pub fn mentions(doc: &Document, resolved: &ResolvedDocument) -> Vec<Mention> {
-    let mut out = Vec::new();
+    use tessera_text::story::IndexSpan;
+
+    // Every line of every story, with its page, in reading order: a story
+    // threaded through several frames has its lines on several pages, and
+    // an entry that reaches to the end of the story reaches across them.
+    let mut lines_of: Vec<(StoryId, Vec<PlacedLine>)> = Vec::new();
     for item in in_reading_order(doc, resolved) {
         let (Some(page), ResolvedKind::Text { shaped, .. }) = (item.on, &item.kind) else {
             continue;
@@ -120,35 +130,92 @@ pub fn mentions(doc: &Document, resolved: &ResolvedDocument) -> Vec<Mention> {
         let Some(FrameKind::Text { story: id, .. }) = doc.frame(item.frame).map(|f| &f.kind) else {
             continue;
         };
+        let slot = match lines_of.iter_mut().find(|(s, _)| s == id) {
+            Some(slot) => slot,
+            None => {
+                lines_of.push((*id, Vec::new()));
+                lines_of.last_mut().expect("just pushed")
+            }
+        };
+        slot.1.extend(
+            shaped
+                .lines
+                .iter()
+                .filter(|l| !l.range.is_empty())
+                .map(|l| (page, l.range.clone())),
+        );
+    }
+
+    let mut out = Vec::new();
+    // A marker reads as nothing, so a line beginning with one begins, by
+    // its stored range, at the character after it. The marker is on the
+    // line holding the position just past it — see the same test in
+    // `running::Running::read_anchors`.
+    let width = Marker::IndexEntry.character().len_utf8();
+    for (id, lines) in &lines_of {
         let Some(story) = doc.story(*id) else {
             continue;
         };
-        let offsets = story.index_offsets();
-        // A marker reads as nothing, so a line beginning with one begins,
-        // by its stored range, at the character after it. The marker is on
-        // the line holding the position just past it — see the same test in
-        // `running::Running::read_anchors`.
-        let width = Marker::IndexEntry.character().len_utf8();
-        let mut seen: Vec<usize> = Vec::new();
-        for line in &shaped.lines {
-            if line.range.is_empty() {
+        let paragraphs = story.paragraph_ranges();
+        for (n, at) in story.index_offsets().into_iter().enumerate() {
+            let Some(entry) = story.index_entries.get(n) else {
+                continue;
+            };
+            if entry.topic.trim().is_empty() {
                 continue;
             }
-            for (n, at) in offsets.iter().enumerate() {
-                let past = at + width;
-                if !(line.range.start <= past && past <= line.range.end) || seen.contains(&n) {
-                    continue;
+            let past = at + width;
+            let Some(first) = lines
+                .iter()
+                .position(|(_, r)| r.start <= past && past <= r.end)
+            else {
+                continue;
+            };
+            // Where the mention stops: on its own line, or at the end of a
+            // later paragraph or the story — the last line that begins
+            // before that offset.
+            let end = match entry.span {
+                IndexSpan::Here => None,
+                IndexSpan::ToEndOfStory => Some(story.text.len()),
+                IndexSpan::Paragraphs(more) => {
+                    let own = paragraphs
+                        .iter()
+                        .position(|r| r.contains(&at) || r.end == at);
+                    own.map(|p| {
+                        let last = (p + more as usize).min(paragraphs.len().saturating_sub(1));
+                        paragraphs[last].end
+                    })
                 }
-                seen.push(n);
-                let Some(entry) = story.index_entries.get(n) else {
-                    continue;
-                };
-                if entry.topic.trim().is_empty() {
-                    continue;
+            };
+            let last = match end {
+                Some(end) => lines
+                    .iter()
+                    .rposition(|(_, r)| r.start < end.max(1))
+                    .unwrap_or(first)
+                    .max(first),
+                None => first,
+            };
+            let topic = entry.topic.trim().to_owned();
+            let mut on: Vec<PageId> = Vec::new();
+            for (page, _) in &lines[first..=last] {
+                if !on.contains(page) {
+                    on.push(*page);
                 }
+            }
+            // Every page between the first and the last counts, whether or
+            // not a line of this story fell on it: a subject that runs from
+            // 12 to 15 is on 13 and 14 too.
+            let order: Vec<PageId> = doc.page_ids().collect();
+            let (Some(a), Some(b)) = (
+                on.first().and_then(|p| order.iter().position(|q| q == p)),
+                on.last().and_then(|p| order.iter().position(|q| q == p)),
+            ) else {
+                continue;
+            };
+            for page in &order[a.min(b)..=a.max(b)] {
                 out.push(Mention {
-                    topic: entry.topic.trim().to_owned(),
-                    page,
+                    topic: topic.clone(),
+                    page: *page,
                 });
             }
         }
@@ -172,7 +239,7 @@ pub fn table_of_contents(
 
     let mut paragraphs: Vec<Paragraph> = Vec::new();
     if !title.is_empty() {
-        paragraphs.push((title.to_owned(), title_style, false, None));
+        paragraphs.push((title.to_owned(), title_style, false, None, 0));
     }
     let mut destinations = Vec::new();
     for (n, heading) in found.iter().enumerate() {
@@ -191,6 +258,7 @@ pub fn table_of_contents(
             entry_style,
             true,
             Some(Hyperlink::Destination(name)),
+            0,
         ));
     }
     Generated {
@@ -209,18 +277,37 @@ pub struct Generated {
 
 /// One paragraph to assemble: its words, style, whether it is tabbed, and
 /// what it links to.
-type Paragraph = (String, Option<ParagraphStyleId>, bool, Option<Hyperlink>);
+/// One paragraph of a generated story: its words, the style it is set in,
+/// whether it carries a right tab for a page label, the link on it, and how
+/// many levels it is nested — a sub-topic under its topic.
+type Paragraph = (
+    String,
+    Option<ParagraphStyleId>,
+    bool,
+    Option<Hyperlink>,
+    usize,
+);
 
 /// Build the index story: topics sorted, each with the labels of every page
 /// it is mentioned on, once per page, in page order.
 pub fn index(doc: &Document, resolved: &ResolvedDocument, title: &str) -> Story {
     let pages: Vec<PageId> = doc.page_ids().collect();
-    let mut by_topic: Vec<(String, Vec<PageId>)> = Vec::new();
+    // Keyed by the topic's levels: "Type: Serif" is a page under
+    // ["Type", "Serif"], and "Type" alone under ["Type"].
+    let mut by_topic: Vec<(Vec<String>, Vec<PageId>)> = Vec::new();
     for mention in mentions(doc, resolved) {
-        let slot = match by_topic.iter_mut().find(|(t, _)| *t == mention.topic) {
+        let levels = tessera_text::story::IndexEntry {
+            topic: mention.topic.clone(),
+            span: Default::default(),
+        }
+        .levels();
+        if levels.is_empty() {
+            continue;
+        }
+        let slot = match by_topic.iter_mut().find(|(t, _)| *t == levels) {
             Some(slot) => slot,
             None => {
-                by_topic.push((mention.topic.clone(), Vec::new()));
+                by_topic.push((levels, Vec::new()));
                 by_topic.last_mut().expect("just pushed")
             }
         };
@@ -228,16 +315,36 @@ pub fn index(doc: &Document, resolved: &ResolvedDocument, title: &str) -> Story 
             slot.1.push(mention.page);
         }
     }
-    by_topic.sort_by_key(|(t, _)| t.to_lowercase());
+    // A sub-topic needs its topic above it, listed even when nothing is
+    // filed under the topic itself.
+    let mut parents: Vec<Vec<String>> = Vec::new();
+    for (levels, _) in &by_topic {
+        for depth in 1..levels.len() {
+            let parent = levels[..depth].to_vec();
+            if !by_topic.iter().any(|(t, _)| *t == parent) && !parents.contains(&parent) {
+                parents.push(parent);
+            }
+        }
+    }
+    by_topic.extend(parents.into_iter().map(|p| (p, Vec::new())));
+    // Sorted by the levels, case aside, so a sub-topic follows its topic
+    // and the sub-topics of one topic are in order among themselves.
+    by_topic.sort_by_cached_key(|(t, _)| t.iter().map(|s| s.to_lowercase()).collect::<Vec<_>>());
 
     let mut paragraphs: Vec<Paragraph> = Vec::new();
     if !title.is_empty() {
-        paragraphs.push((title.to_owned(), None, false, None));
+        paragraphs.push((title.to_owned(), None, false, None, 0));
     }
-    for (topic, mut on) in by_topic {
+    for (levels, mut on) in by_topic {
         on.sort_by_key(|p| pages.iter().position(|q| q == p));
-        let labels = page_ranges(doc, &pages, &on);
-        paragraphs.push((format!("{topic}\t{labels}"), None, true, None));
+        let name = levels.last().cloned().unwrap_or_default();
+        let depth = levels.len() - 1;
+        if on.is_empty() {
+            paragraphs.push((name, None, false, None, depth));
+        } else {
+            let labels = page_ranges(doc, &pages, &on);
+            paragraphs.push((format!("{name}\t{labels}"), None, true, None, depth));
+        }
     }
     assemble(paragraphs, 0.0)
 }
@@ -251,7 +358,7 @@ pub fn endnotes(doc: &Document, resolved: &ResolvedDocument, title: &str) -> Sto
     let options = doc.footnotes;
     let mut paragraphs: Vec<Paragraph> = Vec::new();
     if !title.is_empty() {
-        paragraphs.push((title.to_owned(), None, false, None));
+        paragraphs.push((title.to_owned(), None, false, None, 0));
     }
     let mut seen: Vec<StoryId> = Vec::new();
     for item in in_reading_order(doc, resolved) {
@@ -275,7 +382,7 @@ pub fn endnotes(doc: &Document, resolved: &ResolvedDocument, title: &str) -> Sto
                     label,
                 )),
             );
-            paragraphs.push((read, None, false, None));
+            paragraphs.push((read, None, false, None, 0));
         }
     }
     assemble(paragraphs, 0.0)
@@ -329,7 +436,7 @@ fn assemble(paragraphs: Vec<Paragraph>, measure: f32) -> Story {
     let mut text = String::new();
     let mut runs = Vec::new();
     let mut links: Vec<Run> = Vec::new();
-    for (i, (words, style, tabbed, link)) in paragraphs.iter().enumerate() {
+    for (i, (words, style, tabbed, link, depth)) in paragraphs.iter().enumerate() {
         let start = text.len();
         text.push_str(words);
         // The link covers the words and not the break after them.
@@ -346,6 +453,11 @@ fn assemble(paragraphs: Vec<Paragraph>, measure: f32) -> Story {
             links.push(Run::plain(text.len() - 1..text.len()));
         }
         let mut local = tessera_text::story::ParagraphFormat::default();
+        // A nested entry steps in by a pica a level, as every index sets
+        // its sub-entries.
+        if *depth > 0 {
+            local.indent_left = Some(12.0 * *depth as f32);
+        }
         if *tabbed && measure > 0.0 {
             local.tab_stops = Some(vec![TabStop {
                 position: measure,
@@ -560,6 +672,91 @@ ii	Second.",
                 if shaped.lines.iter().any(|l| l.range.is_empty()))
         });
         assert!(at_foot);
+    }
+
+    #[test]
+    fn sub_topics_nest_under_their_topic_and_a_span_reaches_across_pages() {
+        use tessera_text::story::IndexSpan;
+        use tessera_text::variables::Marker;
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        let first = doc.page_ids().next().unwrap();
+        let second = doc.add_page();
+        let third = doc.add_page();
+        let e = Marker::IndexEntry.character();
+        // Enough copy that the story runs from the first page, through a
+        // frame on the second, onto the third.
+        let filler = "words and words and words and words and words and words\n".repeat(45);
+        let mut long = Story::new(format!("{e}Serif faces{e} here. {filler}the end."));
+        long.index_entries[0].topic = "Type: Serif".into();
+        long.index_entries[0].span = IndexSpan::ToEndOfStory;
+        long.index_entries[1].topic = "Type".into();
+        let long = doc.add_story(long);
+        let a = text_frame(&mut doc, first, long, 40.0);
+        let b = text_frame(&mut doc, second, long, 40.0);
+        let c = text_frame(&mut doc, third, long, 40.0);
+        assert!(doc.thread(a, b) && doc.thread(b, c));
+
+        let mut shaper = Shaper::new();
+        let resolved = crate::resolve(&doc, &mut shaper);
+        // The story must really reach the third page for the span to mean
+        // anything: checked rather than assumed.
+        let reaches_third = resolved.items.iter().any(|i| {
+            i.frame == c
+                && matches!(&i.kind, ResolvedKind::Text { shaped, .. } if !shaped.lines.is_empty())
+        });
+        assert!(reaches_third, "the fixture must thread onto the third page");
+
+        let story = index(&doc, &resolved, "");
+        assert_eq!(
+            story.text, "Type\t1\nSerif\t1\u{2013}3",
+            "the topic, then its sub-topic, reaching from the marker to the story's end"
+        );
+        assert_eq!(
+            story.paragraphs[1].local.indent_left,
+            Some(12.0),
+            "stepped in one level"
+        );
+        assert_eq!(story.paragraphs[0].local.indent_left, None);
+
+        // A sub-topic with no topic of its own still gets the heading.
+        let mut only_sub = Story::new(format!("{e}Bold"));
+        only_sub.index_entries[0].topic = "Weight: Bold".into();
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        let first = doc.page_ids().next().unwrap();
+        let only_sub = doc.add_story(only_sub);
+        text_frame(&mut doc, first, only_sub, 40.0);
+        let resolved = crate::resolve(&doc, &mut shaper);
+        let story = index(&doc, &resolved, "");
+        assert_eq!(story.text, "Weight\nBold\t1");
+    }
+
+    #[test]
+    fn a_span_of_paragraphs_reaches_to_the_end_of_the_last_one() {
+        use tessera_text::story::IndexSpan;
+        use tessera_text::variables::Marker;
+        let e = Marker::IndexEntry.character();
+        let mut story = Story::new(format!("{e}One.\nTwo.\nThree.\nFour."));
+        story.index_entries[0].topic = "Counting".into();
+        story.index_entries[0].span = IndexSpan::Paragraphs(1);
+        // The paragraph after the marker's ends before "Three.".
+        let ranges = story.paragraph_ranges();
+        assert_eq!(ranges.len(), 4);
+        assert!(story.text[..ranges[1].end].ends_with("Two.\n"));
+        // On one page, one page: the reach across pages is proven above;
+        // this pins that a span of paragraphs indexes at all.
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        doc.reflow_spreads();
+        let first = doc.page_ids().next().unwrap();
+        let story = doc.add_story(story);
+        text_frame(&mut doc, first, story, 40.0);
+        let mut shaper = Shaper::new();
+        let resolved = crate::resolve(&doc, &mut shaper);
+        assert_eq!(index(&doc, &resolved, "").text, "Counting\t1");
     }
 
     #[test]

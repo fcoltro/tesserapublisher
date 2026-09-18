@@ -181,6 +181,12 @@ the document*, nothing is set at the foot: Layout ▸ Endnotes… gathers every
 story's notes into one story, numbered as their references are, places it
 on the current page, and updates it afterwards from the same command.
 
+**Index.** Type ▸ Insert index entry files the caret's place under a topic;
+"Type: Serif" nests Serif under Type. *Reaches* says how far the mention
+runs — this page, the next few paragraphs, or to the end of the story — so a
+subject discussed for a chapter is indexed "12–15". Layout ▸ Index… places
+the index and updates it.
+
 ## Colour
 
 The Swatches panel holds named colours. A **spot** colour is a pot of a specific

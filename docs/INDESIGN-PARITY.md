@@ -221,7 +221,7 @@ person reaches for once they start setting copy, and none of it had a row:
 | Auto page number, sections, section marker | ✅ | — | done, M10 |
 | Text variables; running header (paragraph style) | ✅ custom text and running header | — | done, M10 |
 | Footnotes, endnotes | ✅ reference, note at the column foot (splitting across columns) or gathered at the end by Layout ▸ Endnotes…, box to edit it, document footnote options | — | done, M11; split + endnotes 2026-09-17 |
-| Table of contents, index | ✅ generated stories, placed and updated from Layout | — | done, M11 |
+| Table of contents, index | ✅ generated stories, placed and updated from Layout; index sub-topics by colon, page ranges from an entry's reach | — | done, M11; sub-topics + ranges 2026-09-17 |
 | Hyperlinks, bookmarks | ✅ URL and page links on text, PDF annotations, contents entries link; the contents headings are the PDF outline | — | done |
 | Language on text; special-character insertion | ✅ | — | done, M9 |
 | Typographer's quotes; Glyphs panel | ✅ a preference; a panel drawing the face's characters (by character, not glyph id), and a box for a code point | — | done; panel 2026-09-17 |

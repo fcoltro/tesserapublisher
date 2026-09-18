@@ -39,6 +39,8 @@ pub struct FootnoteWindow {
 pub struct IndexEntryWindow {
     pub open: bool,
     pub topic: String,
+    /// How far the mention reaches, as the box holds it.
+    pub span: tessera_text::story::IndexSpan,
 }
 
 /// The contents box, with the recipe as the fields hold it.
@@ -180,7 +182,48 @@ fn index_entry(ctx: &egui::Context, state: &mut TesseraApp) {
             ui.heading("Index entry");
             ui.add_space(Theme::space_2());
             crate::view::panels::field(ui, "Topic", |ui| {
-                ui.add(egui::TextEdit::singleline(&mut window.topic).desired_width(f32::INFINITY));
+                ui.add(
+                    egui::TextEdit::singleline(&mut window.topic)
+                        .hint_text("Type: Serif nests Serif under Type")
+                        .desired_width(f32::INFINITY),
+                );
+            });
+            crate::view::panels::field(ui, "Reaches", |ui| {
+                use tessera_text::story::IndexSpan;
+                let label = match window.span {
+                    IndexSpan::Here => "This page".to_string(),
+                    IndexSpan::ToEndOfStory => "To the end of the story".to_string(),
+                    IndexSpan::Paragraphs(n) => format!("{} more paragraph(s)", n),
+                };
+                egui::ComboBox::from_id_salt("index-span")
+                    .selected_text(label)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut window.span, IndexSpan::Here, "This page");
+                        ui.selectable_value(
+                            &mut window.span,
+                            IndexSpan::ToEndOfStory,
+                            "To the end of the story",
+                        );
+                        if ui
+                            .selectable_label(
+                                matches!(window.span, IndexSpan::Paragraphs(_)),
+                                "The next paragraphs",
+                            )
+                            .clicked()
+                        {
+                            window.span = IndexSpan::Paragraphs(1);
+                        }
+                    });
+                if let IndexSpan::Paragraphs(n) = &mut window.span {
+                    let mut count = f64::from(*n);
+                    ui.add(
+                        egui::DragValue::new(&mut count)
+                            .range(0.0..=999.0)
+                            .speed(0.2)
+                            .fixed_decimals(0),
+                    );
+                    *n = count.round() as u32;
+                }
             });
             ui.add_space(Theme::space_2());
             ui.horizontal(|ui| {
@@ -200,16 +243,22 @@ fn index_entry(ctx: &egui::Context, state: &mut TesseraApp) {
     }
     state.index_entry = window;
     if go {
-        insert_index_entry(state, &state.index_entry.topic.clone());
+        let (topic, span) = (state.index_entry.topic.clone(), state.index_entry.span);
+        insert_index_entry(state, &topic, span);
         state.index_entry.open = false;
     }
 }
 
-/// Put an index marker at the caret, filed under `topic`.
+/// Put an index marker at the caret, filed under `topic`, reaching as far
+/// as `span` says.
 ///
 /// At the *start* of a selection, and without replacing it: the words a
 /// person selected are what they want indexed, not what they want gone.
-pub(crate) fn insert_index_entry(state: &mut TesseraApp, topic: &str) -> bool {
+pub(crate) fn insert_index_entry(
+    state: &mut TesseraApp,
+    topic: &str,
+    span: tessera_text::story::IndexSpan,
+) -> bool {
     let Some((id, buffer)) = state.active_mut().editing.as_mut() else {
         return false;
     };
@@ -238,6 +287,7 @@ pub(crate) fn insert_index_entry(state: &mut TesseraApp, topic: &str) -> bool {
         && let Some(entry) = buffer.story_mut().index_entries.get_mut(index)
     {
         entry.topic = topic.trim().to_owned();
+        entry.span = span;
     }
     let Some(updated) = state
         .active()
@@ -587,7 +637,11 @@ mod tests {
         if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
             buffer.select(0..6);
         }
-        assert!(insert_index_entry(&mut state, "Caslon, William"));
+        assert!(insert_index_entry(
+            &mut state,
+            "Caslon, William",
+            tessera_text::story::IndexSpan::Here
+        ));
         let story = story_of(&state, id);
         assert!(story.text.starts_with(Marker::IndexEntry.character()));
         assert!(

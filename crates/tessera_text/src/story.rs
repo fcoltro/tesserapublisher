@@ -1058,11 +1058,44 @@ pub enum CrossReferenceFormat {
     ParagraphAndPage,
 }
 
+/// How far a mention reaches past its marker: the page it is on, or the
+/// pages up to where something ends — so a subject discussed for a chapter
+/// is indexed "12–15" and not "12".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IndexSpan {
+    /// The marker's page alone.
+    #[default]
+    Here,
+    /// Through the end of the paragraph `n` after the marker's: `0` is the
+    /// marker's own paragraph.
+    Paragraphs(u32),
+    /// Through the end of the story.
+    ToEndOfStory,
+}
+
 /// Where a topic is mentioned, for the index to collect.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndexEntry {
-    /// What the index lists it under: "Typography", "Caslon, William".
+    /// What the index lists it under: "Typography", "Caslon, William". A
+    /// colon nests: "Type: Serif" files Serif under Type.
     pub topic: String,
+    /// The pages the mention reaches, past the marker's own.
+    #[serde(default)]
+    pub span: IndexSpan,
+}
+
+impl IndexEntry {
+    /// The topic's levels, outermost first, each trimmed: "Type: Serif" is
+    /// `["Type", "Serif"]`. Empty levels are dropped, so a stray colon nests
+    /// nothing.
+    pub fn levels(&self) -> Vec<String> {
+        self.topic
+            .split(':')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
 }
 
 impl Story {

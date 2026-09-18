@@ -2464,10 +2464,18 @@ line of copy. The renderer and the PDF writer draw them without knowing.
   options still say Foot, so the notes are not set in both places
   unnoticed. Test: two stories placed in the opposite order to their
   making, roman numerals, nothing at either foot, and back again.
-- Not built: footnote text edited on the canvas (the box does it), index
-  sub-topics, page ranges ("12–15"), and a contents that includes
-  paragraphs from other documents (a book). Contents entries *are*
-  hyperlinks now — see below.
+- [x] **Index sub-topics and page ranges (2026-09-17).** A colon in the
+  topic nests: "Type: Serif" files Serif under Type, stepped in a pica a
+  level, and a topic nobody filed under directly is still listed above
+  its sub-topics. An entry's `span` — this page, the next *n* paragraphs,
+  or to the end of the story — reaches past its marker across every page
+  the story's lines fall on, threads included, and every page in between,
+  so a chapter's subject is indexed "1–3" (format 33). The entry box has a
+  hint for the colon and a *Reaches* choice. Test: a story threaded over
+  three pages, and a sub-topic with no topic of its own.
+- Not built: footnote text edited on the canvas (the box does it), and a
+  contents that includes paragraphs from other documents (a book).
+  Contents entries *are* hyperlinks now — see below.
 
 ---
 
