@@ -4,8 +4,11 @@ use egui::epaint::text::{FontTweak, HintingTarget, SmoothHinting, VariationCoord
 use egui::{Context, FontData, FontDefinitions, FontFamily};
 
 const NOTO_SANS: &[u8] = include_bytes!("../../../assets/fonts/NotoSansVariable.ttf");
-/// The user's preferred light weight for 13-point interface labels.
-const BODY_WEIGHT: f32 = 300.0;
+/// The body weight. It was 300 at thirteen points, which the user chose;
+/// at twelve, which they then asked for, a light face is thin strokes over
+/// dark grey, so it is the regular weight — smaller *and* lighter would
+/// have taken the contrast they asked for in the same breath.
+const BODY_WEIGHT: f32 = 400.0;
 const HEADING_WEIGHT: f32 = 600.0;
 pub const HEADING_FAMILY: &str = "Tessera UI Semibold";
 

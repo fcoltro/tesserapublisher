@@ -2686,7 +2686,7 @@ fn group_label(ui: &mut Ui, text: &str) {
 /// the heavier face.
 fn caps(text: &str) -> egui::RichText {
     egui::RichText::new(text.to_uppercase())
-        .size(Theme::TYPE_SM - 2.0)
+        .size(Theme::TYPE_SM - 1.0)
         .color(Theme::text_muted())
 }
 

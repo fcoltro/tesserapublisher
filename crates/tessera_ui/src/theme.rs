@@ -142,20 +142,32 @@ impl Palette {
         self.steps[n - 1]
     }
 
+    // Radix Colors' *gray* scale, dark, with the roles as published: 1 and 2
+    // the app backgrounds, 3 to 5 the component states (rest, hover,
+    // pressed), 6 to 8 the lines (subtle, control, focus), 9 and 10 the
+    // solid accent, 11 and 12 the text (low and high contrast). The first
+    // cut of this scale was compressed — steps 2 to 7 spanned 0x16 to 0x30,
+    // where the published scale spans 0x19 to 0x48 — and every surface sat
+    // on every other: a field, a band and the panel behind them within a few
+    // levels of grey. The user's word was a heap. The scale as published is
+    // what gives a control an edge and a section a ground without any line
+    // getting louder. Two levels of blue over the neutral, as the charcoal
+    // test allows, and step 8 held a little above published so the focus
+    // ring keeps 3:1 on the lighter panel.
     pub const DARK: Self = Self {
         steps: [
             Color32::from_rgb(0x11, 0x11, 0x13),
-            Color32::from_rgb(0x16, 0x16, 0x18),
-            Color32::from_rgb(0x1C, 0x1C, 0x1F),
+            Color32::from_rgb(0x19, 0x19, 0x1B),
             Color32::from_rgb(0x22, 0x22, 0x25),
-            Color32::from_rgb(0x26, 0x26, 0x29),
-            Color32::from_rgb(0x2A, 0x2A, 0x2F),
-            Color32::from_rgb(0x30, 0x30, 0x36),
-            Color32::from_rgb(0x66, 0x66, 0x66),
+            Color32::from_rgb(0x2A, 0x2A, 0x2D),
+            Color32::from_rgb(0x31, 0x31, 0x34),
+            Color32::from_rgb(0x3A, 0x3A, 0x3E),
+            Color32::from_rgb(0x48, 0x48, 0x4D),
+            Color32::from_rgb(0x6A, 0x6A, 0x6E),
             Color32::from_rgb(0x5B, 0x8D, 0xEF),
             Color32::from_rgb(0x7A, 0xA3, 0xF4),
-            Color32::from_rgb(0xA0, 0xA0, 0xAA),
-            Color32::from_rgb(0xEA, 0xEA, 0xEE),
+            Color32::from_rgb(0xB2, 0xB4, 0xB8),
+            Color32::from_rgb(0xED, 0xEE, 0xF0),
         ],
         canvas_bg: Color32::from_rgb(0x11, 0x11, 0x13),
         // Flat, recessed inputs, separated from the panel by a subtle border.
@@ -170,15 +182,17 @@ impl Palette {
         frame_edge: Color32::from_rgb(0x66, 0x66, 0x66),
     };
 
+    // The same scale, light, as published — but step 8, the focus ring, is
+    // held darker than published so it keeps 3:1 on the panel.
     pub const LIGHT: Self = Self {
         steps: [
             Color32::from_rgb(0xFC, 0xFC, 0xFC),
-            Color32::from_rgb(0xF5, 0xF5, 0xF5),
-            Color32::from_rgb(0xEE, 0xEE, 0xEE),
-            Color32::from_rgb(0xE5, 0xE5, 0xE5),
-            Color32::from_rgb(0xDC, 0xDC, 0xDC),
-            Color32::from_rgb(0xD0, 0xD0, 0xD0),
-            Color32::from_rgb(0xBB, 0xBB, 0xBB),
+            Color32::from_rgb(0xF9, 0xF9, 0xF9),
+            Color32::from_rgb(0xF0, 0xF0, 0xF0),
+            Color32::from_rgb(0xE8, 0xE8, 0xE8),
+            Color32::from_rgb(0xE0, 0xE0, 0xE0),
+            Color32::from_rgb(0xD9, 0xD9, 0xD9),
+            Color32::from_rgb(0xCE, 0xCE, 0xCE),
             Color32::from_rgb(0x89, 0x89, 0x89),
             Color32::from_rgb(0x2C, 0x5F, 0xC4),
             Color32::from_rgb(0x23, 0x4E, 0xA6),
@@ -266,9 +280,14 @@ pub fn opposite_of(ground: Color32) -> Color32 {
 /// A text frame's fill is transparent by default, so the colour behind a caret
 /// is usually the page rather than the frame — and "usually" is not something
 /// to draw with.
+///
+/// A `Color32` is stored **premultiplied**: its channels already carry the
+/// alpha. So the sum is `over + under × (1 − α)`, not `over × α + …` — the
+/// first cut multiplied by α again and faded every translucent colour twice,
+/// which is why a chip meant to be a third accent came out a whisper of it.
 pub fn composite(over: Color32, under: Color32) -> Color32 {
     let a = f32::from(over.a()) / 255.0;
-    let mix = |o: u8, u: u8| (f32::from(o) * a + f32::from(u) * (1.0 - a)) as u8;
+    let mix = |o: u8, u: u8| (f32::from(o) + f32::from(u) * (1.0 - a)).round().min(255.0) as u8;
     Color32::from_rgb(
         mix(over.r(), under.r()),
         mix(over.g(), under.g()),
@@ -339,6 +358,28 @@ impl Theme {
     }
 
     pub fn accent() -> Color32 {
+        palette().accent
+    }
+    /// The accent as a ground: behind a chosen choice, behind selected
+    /// text. The accent at a third of its strength over the panel, so a
+    /// selected chip is unmistakably *the chosen one* — the same blue that
+    /// marks the open tab in the rail — and still a surface primary text
+    /// reads on (7:1 in the dark theme). A grey chip a step lighter than its neighbours, which is
+    /// what selection was, said "hovered" as easily as "chosen".
+    pub fn accent_soft() -> Color32 {
+        {
+            // Unmultiplied on purpose: `composite` reads the alpha and mixes the
+            // channels itself, and a premultiplied colour would be faded twice.
+            let accent = palette().accent;
+            composite(
+                Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 89),
+                Self::panel_bg(),
+            )
+        }
+    }
+    /// The accent as an edge: around the chosen choice, at full strength —
+    /// the one-pixel line is what the eye finds first.
+    pub fn accent_edge() -> Color32 {
         palette().accent
     }
     pub fn accent_hover() -> Color32 {
@@ -437,13 +478,14 @@ impl Theme {
     /// one, no two panels line up and long labels clip instead of wrapping.
     pub const LABEL_COLUMN: f32 = 64.0;
 
-    /// Captions, units, page numbers. Keep the smallest UI text at 13 px so
-    /// the light body face remains legible across display scales.
-    pub const TYPE_SM: f32 = 13.0;
-    /// Everything else.
-    pub const TYPE_MD: f32 = 13.0;
+    /// Captions, units, page numbers.
+    pub const TYPE_SM: f32 = 11.0;
+    /// Everything else. Twelve, down from thirteen at the user's ask, and
+    /// the body weight went up a step with it (see `ui_fonts`): the same
+    /// face lighter and smaller is a face that reads as fog.
+    pub const TYPE_MD: f32 = 12.0;
     /// Section headings.
-    pub const TYPE_LG: f32 = 17.0;
+    pub const TYPE_LG: f32 = 15.0;
 
     pub const RADIUS: f32 = 3.0;
 
@@ -758,7 +800,7 @@ pub fn apply(ctx: &Context) {
         // every text field the colour of the surround around the page.
         style.visuals.extreme_bg_color = Theme::field_bg();
         style.visuals.override_text_color = Some(Theme::text_primary());
-        style.visuals.selection.bg_fill = Theme::selected_bg();
+        style.visuals.selection.bg_fill = Theme::accent_soft();
         style.visuals.window_shadow = egui::epaint::Shadow::NONE;
         style.visuals.popup_shadow = egui::epaint::Shadow::NONE;
         // Steps 4 and 5 are the component states, and using them is what
@@ -794,9 +836,9 @@ pub fn apply(ctx: &Context) {
         style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, Theme::border());
         style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.5, Theme::accent());
         style.visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, Theme::text_primary());
-        // A bright text cursor and selected-item outline remain visible over
-        // the neutral selection fill. Document selections retain their accent.
-        style.visuals.selection.stroke = egui::Stroke::new(1.0, Theme::text_primary());
+        // The chosen chip's edge, in the accent: with the soft fill it is the
+        // pair that says "this one", the way the rail marks its open tab.
+        style.visuals.selection.stroke = egui::Stroke::new(1.0, Theme::accent_edge());
         style.visuals.window_stroke = egui::Stroke::new(1.0, Theme::rule());
 
         // One radius. Rounded enough to soften a rule, not enough to read as
@@ -1031,6 +1073,32 @@ mod tests {
     }
 
     #[test]
+    fn a_chosen_chip_is_the_accent_and_its_text_still_reads() {
+        // The soft accent is what says "chosen" rather than "hovered"; it
+        // has to be visibly the accent and still a ground for primary text.
+        for choice in [
+            crate::prefs::ThemeChoice::Dark,
+            crate::prefs::ThemeChoice::Light,
+        ] {
+            let _held = hold_the_screen();
+            use_palette(choice);
+            let soft = Theme::accent_soft();
+            assert!(
+                contrast_ratio(Theme::text_primary(), soft) >= 4.5,
+                "{choice:?}: text on the chosen chip is {:.2}:1",
+                contrast_ratio(Theme::text_primary(), soft)
+            );
+            assert!(
+                contrast_ratio(soft, Theme::panel_bg()) >= 1.3,
+                "{choice:?}: the chosen chip does not stand off the panel"
+            );
+            let (r, g, b) = (soft.r(), soft.g(), soft.b());
+            assert!(b > r && b > g, "{choice:?}: the chip is not blue: {soft:?}");
+            use_palette(crate::prefs::ThemeChoice::Dark);
+        }
+    }
+
+    #[test]
     fn a_caret_on_a_white_page_is_dark() {
         // The bug this exists for: the caret was `TEXT_PRIMARY`, a light grey,
         // on the white page it spends most of its time on.
@@ -1092,6 +1160,15 @@ mod tests {
     #[test]
     fn an_opaque_fill_hides_what_is_under_it() {
         assert_eq!(composite(Color32::BLACK, Color32::WHITE), Color32::BLACK);
+    }
+
+    #[test]
+    fn a_half_fill_is_halfway_and_not_a_quarter() {
+        // `Color32` is premultiplied, so the alpha must not be applied
+        // twice: half black over white is mid grey, not three-quarters.
+        let half = Color32::from_rgba_unmultiplied(0, 0, 0, 128);
+        let out = composite(half, Color32::WHITE);
+        assert!((120..=136).contains(&out.r()), "got {out:?}");
     }
 
     #[test]

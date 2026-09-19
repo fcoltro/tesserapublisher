@@ -143,3 +143,34 @@ for a single still image, which rewards big type, generous space and low
 density — every one of which is wrong for a sovereign application. The best
 references for Tessera are InDesign, Blender and Nuke, and Cooper is the one
 who explains *why* they look the way they do.
+
+## Revision, 2026-09-19: the heap
+
+The user's word for the inspector was "a heap": every heading looked like a
+row, every surface sat within a few levels of grey of every other, and the
+chosen chip in a row of choices was a grey a step lighter than its
+neighbours — which said "hovered" as easily as "chosen". What changed, and
+what each change is argued from:
+
+- **The grey scale is Radix's as published.** The first cut of the twelve
+  steps was compressed — steps 2 to 7 spanned `0x16` to `0x30`, where the
+  published dark gray scale spans `0x19` to `0x48`. Radix's roles are kept
+  exactly: 1–2 app backgrounds, 3–5 component states (rest, hover, pressed),
+  6–8 lines (subtle, control, focus), 9–10 solid accent, 11–12 text. Step 8
+  is held a little above published in both themes so the focus ring keeps
+  3:1 on the panel, which the contrast test requires.
+- **A section heading is a band**, always on step 3 in the heading face at
+  the body size, with air above it; group names inside a section are small
+  capitals in the muted colour. Three levels — band, small caps, label —
+  told apart by weight, case and colour, never by a rule.
+- **Chosen means the accent.** A selected chip has the accent at a third
+  over the panel and the accent as its edge — the same blue that marks the
+  open tab in the rail. This is Radix's "soft" variant of a toggled control
+  (accent steps 3–5 as ground, accent 9 as line).
+- **Type is 12 regular, down from 13 light.** Smaller was the ask; lighter
+  *and* smaller would have been fog, so the body weight went from 300 to
+  400 with it. Figma's UI3 sets its inspector at 11, Adobe's at 12.
+- **`composite` was faded twice.** A `Color32` is premultiplied and the
+  helper multiplied by alpha again; every translucent chip built through it
+  was a quarter of what was asked for. Fixed, with a test that half black
+  over white is mid grey.
