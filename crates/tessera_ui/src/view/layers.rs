@@ -232,12 +232,6 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, ROW), Sense::click_and_drag());
     // The row's name is painted, so nothing in the widget tree carries it, and
     // "active" is the whole reason somebody clicks a layer row. Both said here.
-    //
-    // **The eye and the lock are still unnamed**, and that is a known gap rather
-    // than an oversight: they are hit-tested as zones inside *this* response
-    // because the row itself drags to reorder, so giving each its own would mean
-    // reworking the interaction — which is not something to do blind. Written up
-    // in the roadmap under the accessibility requirement.
     let response = crate::icons::reads_as(
         response,
         &name,
@@ -276,6 +270,24 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
             egui::Stroke::new(1.0, Theme::accent()),
             egui::StrokeKind::Inside,
         );
+    }
+
+    // The eye and the lock, for a screen reader: each a check box node over
+    // its zone, named for the layer, saying which way it is set. The zones
+    // are still hit-tested inside the row's own response — the row drags to
+    // reorder, and a press has to be able to become either — so these take
+    // no input; they only say what is there. Pressing Space on the row
+    // toggles the eye, Shift+Space the lock, so a keyboard reaches both.
+    for (zone, what, on) in [(eye, "Visible", visible), (lock, "Locked", locked)] {
+        let node = ui.interact(zone, response.id.with(what), egui::Sense::empty());
+        node.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::Checkbox,
+                ui.is_enabled(),
+                on,
+                format!("{what}: {name}"),
+            )
+        });
     }
 
     let pointer = ui.ctx().pointer_interact_pos();
@@ -399,6 +411,35 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
         };
     }
 
+    // The keyboard's way to the eye and the lock: with the row focused,
+    // Space toggles whether the layer shows, Shift+Space whether it is
+    // locked. egui gives a focused row Enter and Space as a click, which
+    // would only activate it; these are read first and eat the press.
+    if response.has_focus()
+        && let Some(shift) = ui.input_mut(|i| {
+            let shift = i.modifiers.shift;
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Space)
+                .then_some(false)
+                .or_else(|| {
+                    i.consume_key(egui::Modifiers::SHIFT, egui::Key::Space)
+                        .then_some(true)
+                })
+                .map(|by_shift| by_shift || shift)
+        })
+    {
+        out.touched = Some(Touched::Command(Box::new(if shift {
+            Command::SetLayerLocked {
+                id,
+                locked: !locked,
+            }
+        } else {
+            Command::SetLayerVisible {
+                id,
+                visible: !visible,
+            }
+        })));
+    }
+
     out
 }
 
@@ -473,6 +514,41 @@ mod tests {
         assert!(state.layers_window.open);
         crate::actions::run(&mut state, crate::actions::Run::ToggleLayers);
         assert!(!state.layers_window.open);
+    }
+
+    #[test]
+    fn the_eye_and_the_lock_read_as_check_boxes_named_for_their_layer() {
+        // The two zones a screen reader could not see: each is a check box
+        // node now, saying which layer and which way it is set.
+        let mut state = TesseraApp::headless();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| docked(ui, &mut state));
+        let update = output
+            .platform_output
+            .accesskit_update
+            .expect("accessibility was enabled, so there is a tree");
+        let boxes: Vec<(String, bool)> = update
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.role() == egui::accesskit::Role::CheckBox)
+            .filter_map(|(_, n)| {
+                Some((
+                    n.label()?.to_string(),
+                    n.toggled() == Some(egui::accesskit::Toggled::True),
+                ))
+            })
+            .collect();
+        let layer = state.active().document().default_layer().unwrap();
+        let name = state.active().document().layers[layer].name.clone();
+        assert!(
+            boxes.contains(&(format!("Visible: {name}"), true)),
+            "the eye, on: {boxes:?}"
+        );
+        assert!(
+            boxes.contains(&(format!("Locked: {name}"), false)),
+            "the lock, off: {boxes:?}"
+        );
     }
 
     #[test]

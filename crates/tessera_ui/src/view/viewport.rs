@@ -110,6 +110,13 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
         )
     });
 
+    // The objects themselves, as nodes under the canvas — one per frame in
+    // the reading order, with its bounds and a name — so a screen reader's
+    // own object navigation can walk the page rather than hear one sentence
+    // about it. Only while accessibility is on: a widget per frame every
+    // frame is a cost nobody sighted pays.
+    object_nodes(ui, &response, rect, state);
+
     // An object somebody asked to be shown — from the preflight panel, and one
     // day from a search. Served here because centring needs the size of the
     // canvas, and this is the only place that knows it.
@@ -309,6 +316,58 @@ fn doc_pos(state: &TesseraApp, rect: Rect, pos: egui::Pos2) -> DocPoint {
 fn press_pos(ui: &Ui, response: &egui::Response) -> Option<egui::Pos2> {
     ui.input(|i| i.pointer.press_origin())
         .or_else(|| response.interact_pointer_pos())
+}
+
+/// One accessibility node per object on the spread, under the canvas's.
+///
+/// Each is a widget with no sense at all — it takes no click, no hover, no
+/// focus — placed over the object's screen rectangle inside a child `Ui`
+/// whose accessibility parent is the canvas, so the tree reads canvas →
+/// objects. A text frame reads as a label with its opening words, artwork
+/// as an image, everything else as a pane. Nothing is built unless the
+/// tree is being built.
+fn object_nodes(ui: &mut Ui, canvas: &egui::Response, rect: Rect, state: &TesseraApp) {
+    if ui.ctx().accesskit_node_builder(canvas.id, |_| ()).is_none() {
+        return;
+    }
+    let Some(spread) = current_spread(state) else {
+        return;
+    };
+    let open = state.active();
+    let document = open.document();
+    let order = crate::object_order::reading_order(document, spread);
+    let total = order.len();
+    let child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .accessibility_parent(canvas.id),
+    );
+    for (index, id) in order.iter().enumerate() {
+        let Some(frame) = document.frame(*id) else {
+            continue;
+        };
+        let corners = frame.corners().map(|p| to_screen_pos(state, rect, p));
+        let bounds = corners
+            .iter()
+            .fold(Rect::NOTHING, |r, p| r.union(Rect::from_min_max(*p, *p)));
+        let node_id = egui::Id::new(("canvas-object", state.active, *id));
+        let response = child.interact(bounds, node_id, egui::Sense::empty());
+        let kind = match &frame.kind {
+            tessera_document::nodes::FrameKind::Text { .. } => egui::WidgetType::Label,
+            tessera_document::nodes::FrameKind::Graphic { placed: Some(_) } => {
+                egui::WidgetType::Image
+            }
+            _ => egui::WidgetType::Panel,
+        };
+        let selected = open.selection.contains(*id);
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                kind,
+                true,
+                crate::object_order::describe_one(document, *id, index + 1, total, selected),
+            )
+        });
+    }
 }
 
 /// [`HIT_TOLERANCE_PX`] in document units at the current zoom.
@@ -3702,6 +3761,81 @@ mod tests {
         // Putting the tool down empties it.
         crate::actions::run(&mut state, crate::actions::Run::PickTool(Tool::Select));
         assert!(state.eyedropper.is_none());
+    }
+
+    #[test]
+    fn every_object_on_the_page_is_a_node_under_the_canvas_with_its_bounds() {
+        // A screen reader's own object navigation walks the tree; before this
+        // the canvas was one node and the page under it was nothing. Each
+        // object is a child of the canvas node, placed where it is drawn,
+        // named for what it is and where it comes in the reading order.
+        let (mut state, upper, lower) = two_objects();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        canvas_pass(&ctx, &mut state, Vec::new());
+        state.active_mut().selection.set(lower);
+
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let (allocated, response) = allocate_canvas(ui);
+            let open = state.active();
+            let document = open.document();
+            let selected = open.selection.as_slice();
+            response.widget_info(|| {
+                let order = current_spread(&state)
+                    .map(|spread| crate::object_order::reading_order(document, spread))
+                    .unwrap_or_default();
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Panel,
+                    ui.is_enabled(),
+                    crate::object_order::announce(document, &order, selected),
+                )
+            });
+            object_nodes(ui, &response, allocated, &state);
+        });
+        let update = output
+            .platform_output
+            .accesskit_update
+            .expect("accessibility was enabled, so there is a tree");
+        let node = |label: &str| {
+            update
+                .nodes
+                .iter()
+                .find(|(_, n)| n.label() == Some(label))
+                .map(|(id, n)| (*id, n.clone()))
+        };
+        let (canvas_id, canvas) =
+            node("Page canvas, 2 objects. Rectangle, 2 of 2.").expect("the canvas node");
+        let (first_id, first) = node("Rectangle, 1 of 2").expect("the first object's node");
+        let (second_id, second) =
+            node("Rectangle, 2 of 2, selected").expect("the selected object's node");
+        // Under the canvas: the canvas node lists them, possibly through the
+        // child Ui that groups them.
+        let descends = |from: egui::accesskit::NodeId, to: egui::accesskit::NodeId| -> bool {
+            let mut stack = vec![from];
+            while let Some(at) = stack.pop() {
+                if at == to {
+                    return true;
+                }
+                if let Some((_, n)) = update.nodes.iter().find(|(id, _)| *id == at) {
+                    stack.extend(n.children().iter().copied());
+                }
+            }
+            false
+        };
+        assert!(
+            descends(canvas_id, first_id),
+            "the first object is under the canvas"
+        );
+        assert!(descends(canvas_id, second_id));
+        let _ = canvas;
+        // Where they are drawn: the upper object's node is above the lower's.
+        let (top, bottom) = (
+            first.bounds().expect("bounds"),
+            second.bounds().expect("bounds"),
+        );
+        assert!(top.y1 <= bottom.y0 + 1.0, "{top:?} above {bottom:?}");
+        assert!(top.x1 > top.x0 && top.y1 > top.y0, "a real rectangle");
+        let _ = upper;
     }
 
     #[test]

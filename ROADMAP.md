@@ -140,17 +140,29 @@ Never "done" until shipping; re-checked at the close of every milestone.
     layout tool lists "move left one point", and eight rows of it would bury
     the Transform submenu. The palette lists them and they can be remapped.
 
-  **Still owed, and none is an oversight:**
+  **2026-09-19 — the two that were owed are built; the third is not code.**
 
-  - **The layers panel's eye and lock.** They are hit-tested as zones inside the
-    row's own response because the row drags to reorder, so giving each its own
-    means reworking that interaction — not something to do without seeing it.
-  - **The objects themselves are not nodes in the tree.** The canvas is one
-    node that says what is selected; a screen reader's own object navigation
-    cannot walk the page. Putting a node under the canvas for each frame is the
-    next step, and a bigger one: each needs bounds, a role, and to *not* take
-    pointer input, which egui's response-per-widget model does not make natural.
-  - **Nobody has run a screen reader against any of it.**
+  - **The layers panel's eye and lock are check boxes in the tree**, named
+    "Visible: Artwork" and "Locked: Artwork" and saying which way they are
+    set, as nodes over their zones that take no input — the row still
+    hit-tests the zones itself, since it drags to reorder. What a screen
+    reader user could not do was *toggle* them: now a focused row takes
+    Space for the eye and Shift+Space for the lock, read before egui turns
+    the press into a click. A test reads the real tree for both boxes.
+  - **Every object on the spread is a node under the canvas**, with its
+    bounds on screen and a name — "Text frame, 2 of 4: "It was a bright
+    cold day…", selected" — so a screen reader's own object navigation
+    walks the page. The way egui made natural after all: a child `Ui` whose
+    accessibility parent is the canvas, and in it one `interact` per frame
+    with `Sense::empty()`, which registers a widget with a rectangle and a
+    role and takes no click, hover or focus. A text frame is a label, artwork
+    an image, the rest panes. Built only while the tree is being built —
+    `accesskit_node_builder` returns `None` otherwise — so a sighted person
+    pays nothing for it. The test proves descent from the canvas node and
+    that the upper object's bounds sit above the lower's.
+  - **Nobody has run a screen reader against any of it.** Still true, and
+    not a line of code away: it needs a person with NVDA or VoiceOver at the
+    window.
 - [x] **Performance is measured, not asserted.** A guard over a 500-frame
   document holds resolve and scene-build time under one whole frame. Baseline
   on the development machine, 2026-09-03: **0.41 ms**, roughly fifty times

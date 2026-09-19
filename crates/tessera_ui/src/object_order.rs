@@ -173,6 +173,38 @@ pub fn describe(document: &Document, id: FrameId) -> &'static str {
     }
 }
 
+/// What one object on the page reads as, for a screen reader walking the
+/// page object by object: its kind, its place in the reading order, and —
+/// for a text frame — its opening words, which is how a person tells one
+/// column from another. "Selected" when it is.
+pub fn describe_one(
+    document: &Document,
+    id: FrameId,
+    ordinal: usize,
+    total: usize,
+    selected: bool,
+) -> String {
+    let mut out = format!("{}, {ordinal} of {total}", describe(document, id));
+    if let Some(FrameKind::Text { story, .. }) = document.frame(id).map(|f| &f.kind)
+        && let Some(story) = document.story(*story)
+    {
+        let words: String = story
+            .text
+            .split_whitespace()
+            .take(8)
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !words.is_empty() {
+            let more = story.text.split_whitespace().nth(8).is_some();
+            out.push_str(&format!(": \"{words}{}\"", if more { "…" } else { "" }));
+        }
+    }
+    if selected {
+        out.push_str(", selected");
+    }
+    out
+}
+
 /// What the canvas tells a screen reader.
 ///
 /// The canvas contributed **nothing** to the accessibility tree before this: a
@@ -213,6 +245,32 @@ mod tests {
     use super::*;
     use tessera_document::nodes::Frame;
     use tessera_geometry::{DocRect, Transform};
+
+    #[test]
+    fn an_object_reads_as_its_kind_its_place_and_for_text_its_opening_words() {
+        let (mut doc, layer, _) = page();
+        let rect = doc.add_frame(layer, box_at(10.0, 10.0));
+        let story = doc.add_story(tessera_text::story::Story::new(
+            "It was a bright cold day in April, and the clocks were striking thirteen.",
+        ));
+        let mut text = box_at(10.0, 100.0);
+        text.kind = FrameKind::text(story);
+        let text = doc.add_frame(layer, text);
+        assert_eq!(describe_one(&doc, rect, 1, 2, false), "Rectangle, 1 of 2");
+        assert_eq!(
+            describe_one(&doc, text, 2, 2, true),
+            "Text frame, 2 of 2: \"It was a bright cold day in April,…\", selected"
+        );
+        let short = doc.add_story(tessera_text::story::Story::new("Short."));
+        let mut brief = box_at(10.0, 200.0);
+        brief.kind = FrameKind::text(short);
+        let brief = doc.add_frame(layer, brief);
+        assert_eq!(
+            describe_one(&doc, brief, 3, 3, false),
+            "Text frame, 3 of 3: \"Short.\"",
+            "no ellipsis when the words are all there"
+        );
+    }
 
     /// A document with one page, and a way to put a box on it.
     ///
