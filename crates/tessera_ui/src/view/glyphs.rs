@@ -147,12 +147,37 @@ fn install(
 }
 
 /// Every character the face maps to a glyph, in code-point order, without
-/// the controls and the space — nothing a person would click to insert.
+/// the controls, the space and the format characters — nothing a person
+/// would click to insert, and nothing that draws as a dotted box.
 fn characters_of(face: &tessera_text::shape::FontData) -> Vec<char> {
     tessera_text::shape::characters_of(face)
         .into_iter()
-        .filter(|c| !c.is_control() && !c.is_whitespace())
+        .filter(|c| !c.is_control() && !c.is_whitespace() && !is_format(*c))
         .collect()
+}
+
+/// The format characters a font tends to map: joiners, direction marks,
+/// the byte-order mark. They have no shape of their own — egui draws them
+/// as a dotted box — and inserting one by click is never what was meant.
+fn is_format(c: char) -> bool {
+    matches!(
+        u32::from(c),
+        0x00AD | 0x061C | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x206F | 0xFEFF | 0xFFF9..=0xFFFB
+    )
+}
+
+/// The size to draw a glyph at so it stays in its cell: [`DRAWN_AT`], or
+/// less for one whose natural width at that size is wider than the cell
+/// allows — a ligature of a whole phrase, a currency sign with its word.
+/// The first cut drew every glyph at one size and the wide ones ran over
+/// their neighbours and out of the panel.
+fn size_to_fit(natural_width: f32) -> f32 {
+    let allowed = CELL - 4.0;
+    if natural_width <= allowed {
+        DRAWN_AT
+    } else {
+        (DRAWN_AT * allowed / natural_width).max(4.0)
+    }
 }
 
 /// The characters the filter leaves, recomputed only when the filter or
@@ -285,13 +310,34 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
                         insert = Some(cells[column]);
                     }
                 }
-                let painter = ui.painter();
+                // Each glyph at the size that fits its cell, and nothing
+                // painted past the row: egui keeps a galley per text and
+                // font, so measuring is a lookup after the first frame.
+                let painter = ui.painter().with_clip_rect(rect);
                 for (column, c) in cells.iter().enumerate() {
-                    painter.text(
-                        egui::pos2(rect.left() + (column as f32 + 0.5) * CELL, rect.center().y),
-                        egui::Align2::CENTER_CENTER,
-                        c,
-                        font.clone(),
+                    let text = c.to_string();
+                    let natural = ui.fonts_mut(|fonts| {
+                        fonts.layout_no_wrap(text.clone(), font.clone(), Theme::text_primary())
+                    });
+                    let size = size_to_fit(natural.size().x);
+                    let galley = if size < DRAWN_AT {
+                        ui.fonts_mut(|fonts| {
+                            fonts.layout_no_wrap(
+                                text,
+                                FontId::new(size, font.family.clone()),
+                                Theme::text_primary(),
+                            )
+                        })
+                    } else {
+                        natural
+                    };
+                    let at =
+                        egui::pos2(rect.left() + (column as f32 + 0.5) * CELL, rect.center().y);
+                    painter.galley(
+                        egui::Align2::CENTER_CENTER
+                            .anchor_size(at, galley.size())
+                            .min,
+                        galley,
                         Theme::text_primary(),
                     );
                 }
@@ -322,6 +368,30 @@ mod tests {
         assert!(chars.contains(&'A') && chars.contains(&'z'));
         assert!(!chars.contains(&' '), "nothing invisible to click");
         assert!(chars.windows(2).all(|p| p[0] < p[1]), "in order, once each");
+        assert!(
+            !chars.iter().any(|c| is_format(*c)),
+            "no joiners or marks: they draw as a dotted box and mean nothing clicked"
+        );
+    }
+
+    #[test]
+    fn a_glyph_wider_than_its_cell_is_drawn_smaller_to_fit() {
+        assert_eq!(size_to_fit(10.0), DRAWN_AT, "a letter is drawn as is");
+        assert_eq!(
+            size_to_fit(CELL - 4.0),
+            DRAWN_AT,
+            "up to the cell's inner width"
+        );
+        let phrase = size_to_fit(60.0);
+        assert!(
+            phrase < DRAWN_AT / 2.0,
+            "a ligature of a phrase shrinks in proportion"
+        );
+        assert!(
+            size_to_fit(10_000.0) >= 4.0,
+            "and never to nothing: {}",
+            size_to_fit(10_000.0)
+        );
     }
 
     #[test]
