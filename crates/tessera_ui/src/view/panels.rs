@@ -219,6 +219,10 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
         if !section.applies_to(&frame) {
             continue;
         }
+        // Air above each heading: the band separates a section from the one
+        // before it, and the space is what keeps the bands from reading as
+        // a ladder of bars.
+        ui.add_space(Theme::space_2());
         if !section_heading(ui, state, section.icon(), section.title()) {
             continue;
         }
@@ -231,7 +235,7 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
                     left: Theme::space_3() as i8,
                     right: 0,
                     top: 0,
-                    bottom: Theme::space_2() as i8,
+                    bottom: Theme::space_1() as i8,
                 })
                 .show(ui, |ui| match section {
                     Section::Transform => transform_section(ui, state, id, &frame),
@@ -2672,26 +2676,27 @@ fn text_frame_controls(
 /// Not a section heading: it does not collapse and it carries no icon. The
 /// difference in weight is what says one is a level above the other.
 fn group_label(ui: &mut Ui, text: &str) {
-    ui.add_space(Theme::space_1());
-    ui.separator();
-    ui.add(
-        egui::Label::new(
-            egui::RichText::new(text)
-                .size(Theme::TYPE_SM)
-                .color(Theme::text_muted()),
-        )
-        .selectable(false),
-    );
+    ui.add_space(Theme::space_2());
+    ui.add(egui::Label::new(caps(text)).selectable(false));
+}
+
+/// A group's name as the inspector sets it: small capitals, muted. One
+/// level below a section's band and one above a field's label, and told
+/// apart from both by the case alone — the rows have none, the bands have
+/// the heavier face.
+fn caps(text: &str) -> egui::RichText {
+    egui::RichText::new(text.to_uppercase())
+        .size(Theme::TYPE_SM - 2.0)
+        .color(Theme::text_muted())
 }
 
 /// Linking is UI state, scoped to this document/object and group. Toggling it
 /// never modifies the document; the next edit supplies the shared value.
 fn linked_group_heading(ui: &mut Ui, id: egui::Id, title: &str, default: bool) -> bool {
     let mut linked = ui.ctx().data_mut(|data| *data.get_temp_mut_or(id, default));
-    ui.add_space(Theme::space_1());
-    ui.separator();
+    ui.add_space(Theme::space_2());
     ui.horizontal(|ui| {
-        ui.colored_label(Theme::text_muted(), title);
+        ui.add(egui::Label::new(caps(title)).selectable(false));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let (rect, response) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), Sense::click());
             if response.clicked() {
@@ -2782,12 +2787,12 @@ fn linked_edges(
 
 /// A heading inside a section, with the glyph that names what follows.
 fn subheading(ui: &mut Ui, icon: crate::icons::Icon, label: &str) {
-    ui.add_space(Theme::space_1());
+    ui.add_space(Theme::space_2());
     ui.horizontal(|ui| {
         let size = Vec2::splat(Theme::ICON_SIZE);
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
         crate::icons::paint(ui.painter(), rect, icon, Theme::text_muted());
-        ui.colored_label(Theme::text_muted(), label);
+        ui.add(egui::Label::new(caps(label)).selectable(false));
     });
 }
 
@@ -3040,12 +3045,18 @@ pub(crate) fn section_heading_with(
     );
     let painter = ui.painter_at(rect);
 
+    // On the raised surface, always — not only under the pointer. A heading
+    // that looks like the rows under it is one more row, and a column of
+    // sections read as one heap; the user's word. The band is what says
+    // where one section ends and the next begins, and the heavier face is
+    // what says this line names the rows rather than being one of them.
+    painter.rect_filled(rect, Theme::RADIUS, Theme::panel_bg_alt());
     if response.hovered() {
         painter.rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
     }
 
     let caret = egui::Rect::from_min_size(
-        egui::pos2(rect.left(), rect.center().y - 5.0),
+        egui::pos2(rect.left() + Theme::space_1(), rect.center().y - 5.0),
         Vec2::splat(10.0),
     );
     crate::icons::paint_rotated(
@@ -3066,11 +3077,22 @@ pub(crate) fn section_heading_with(
     );
     crate::icons::paint(&painter, glyph, icon, Theme::text_muted());
 
+    // The heading face at the body size: semibold where the theme installed
+    // it, and whatever the heading style resolves to where it did not — a
+    // test context has no such face, and naming one it lacks is a panic.
+    let font = egui::FontId {
+        size: Theme::TYPE_MD,
+        family: ui
+            .style()
+            .text_styles
+            .get(&egui::TextStyle::Heading)
+            .map_or(egui::FontFamily::Proportional, |f| f.family.clone()),
+    };
     painter.text(
         egui::pos2(glyph.right() + Theme::space_2(), rect.center().y),
         egui::Align2::LEFT_CENTER,
         title,
-        egui::FontId::proportional(Theme::TYPE_MD),
+        font,
         Theme::text_primary(),
     );
 
