@@ -4,12 +4,9 @@
 //! change it by dragging a tab. The two are separate because the arrangement is
 //! the part worth testing and none of it needs a screen.
 //!
-//! ## A tab bar, not a column of headings
-//!
-//! The rail used to stack every open panel vertically, each under its own
-//! heading. That is fine for two panels and unreadable for six: the one you
-//! want is below the fold, and opening another pushes it further down. Tabs put
-//! every panel in the stack one click away and cost one row.
+//! Each stack has a vertical strip of icon tabs on its left and the selected
+//! panel on its right. The title stays above the panel's controls; tab icons
+//! keep the same footprint whether selected or not.
 //!
 //! ## Dragging
 //!
@@ -26,7 +23,7 @@ use crate::docking::Region;
 use crate::theme::Theme;
 use crate::view::rail::Dock;
 
-/// How wide a side is before anybody drags its splitter.
+/// Default content width, excluding the vertical tab strip.
 pub const WIDTH: f32 = 292.0;
 
 /// The narrowest a side may be dragged.
@@ -40,6 +37,10 @@ const NARROWEST: f32 = 232.0;
 // `pair` start overlapping, and a splitter that can be dragged into an unusable
 // layout is one that will be.
 const _: () = assert!(NARROWEST >= 232.0);
+
+fn tab_strip_width() -> f32 {
+    Theme::row() + 2.0 * Theme::space_1()
+}
 
 /// How deep the strip at the outer edge of a side is, for dropping a new stack.
 const EDGE: f32 = 18.0;
@@ -86,8 +87,8 @@ fn side(ui: &mut Ui, state: &mut TesseraApp, region: Region) {
     };
 
     let showing_panel = panel
-        .default_size(WIDTH)
-        .min_size(NARROWEST)
+        .default_size(WIDTH + tab_strip_width())
+        .min_size(NARROWEST + tab_strip_width())
         .frame(crate::view::glass::panel_frame(state))
         .show(ui, |ui| {
             crate::view::glass::behind(
@@ -145,7 +146,7 @@ fn open_by_title(state: &TesseraApp, title: &str) -> bool {
     dock_by_title(title).is_some_and(|d| d.is_open(state))
 }
 
-/// One stack: its tabs, then the panel showing.
+/// One stack: a vertical tab strip beside the panel showing.
 fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
     let Some(stack) = state.prefs.docking.stacks(region).get(at).cloned() else {
         return;
@@ -154,26 +155,23 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
     let mut chose = None;
     let mut dropped: Option<(String, usize)> = None;
 
-    let bar = egui::Frame::NONE
-        .inner_margin(egui::Margin::symmetric(Theme::space_1() as i8, 2))
-        .fill(Theme::panel_bg_alt())
+    let bar = Panel::left(egui::Id::new(("dock-tabs", region, at)))
+        .exact_size(tab_strip_width())
+        .resizable(false)
+        .frame(
+            egui::Frame::NONE
+                .inner_margin(Theme::space_1())
+                .fill(Theme::panel_bg_alt()),
+        )
         .show(ui, |ui| {
-            // **A tab bar scrolls; it does not wrap.** Wrapped, egui put the
-            // tab that did not fit on a line of its own — and with almost no
-            // width left it wrapped *inside the word*, one letter per line, so
-            // "Preflight" became nine rows and the bar grew nine rows tall,
-            // pushing the panel's own contents down behind it.
-            egui::ScrollArea::horizontal()
+            // Independent scrolling keeps tabs reachable in short split stacks.
+            egui::ScrollArea::vertical()
                 .id_salt(("tabs", region, at))
-                .auto_shrink([false, true])
-                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
+                .auto_shrink([false, false])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                 .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = Theme::space_1();
-                        // Belt as well as braces: a horizontal layout is enough to stop
-                        // the row wrapping, and this stops any single label breaking
-                        // even if one is given less room than its own text.
-                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    ui.vertical_centered(|ui| {
+                        ui.spacing_mut().item_spacing.y = Theme::space_1();
                         for (slot, title) in stack.panels.iter().enumerate() {
                             // A shut panel keeps its tab. Closing a panel is not the
                             // same as taking it out of the layout, and a tab that
@@ -190,9 +188,17 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
                                 dock.icon(),
                                 title,
                                 showing,
-                                showing,
+                                false,
                                 egui::Sense::click_and_drag(),
                             );
+
+                            if showing {
+                                ui.painter().vline(
+                                    response.rect.left(),
+                                    response.rect.shrink(4.0).y_range(),
+                                    egui::Stroke::new(2.0, Theme::accent()),
+                                );
+                            }
 
                             // **The payload is raised on `drag_started`, not on
                             // press.** `dnd_drag_source` makes a widget a drag
@@ -247,9 +253,9 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
         }
     }
 
-    ui.painter().hline(
-        bar.rect.x_range(),
-        bar.rect.bottom(),
+    ui.painter().vline(
+        bar.rect.right(),
+        bar.rect.y_range(),
         egui::Stroke::new(1.0, Theme::rule()),
     );
 
@@ -272,6 +278,13 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
     let Some(dock) = dock_by_title(&title) else {
         return;
     };
+
+    egui::Frame::NONE
+        .inner_margin(Theme::space_2())
+        .show(ui, |ui| {
+            ui.strong(&title);
+        });
+    ui.separator();
 
     egui::ScrollArea::vertical()
         .id_salt(("dock", region, at))

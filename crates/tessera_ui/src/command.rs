@@ -1121,7 +1121,8 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 // A range that no longer fits is one the document changed
                 // under the search. Skipped rather than clamped: a clamped
                 // range would edit text nobody looked for.
-                if range.end > s.text.len()
+                if range.start > range.end
+                    || range.end > s.text.len()
                     || !s.text.is_char_boundary(range.start)
                     || !s.text.is_char_boundary(range.end)
                 {
@@ -1132,6 +1133,12 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 // describing a length the text no longer has.
                 s.delete_range(range.clone());
                 s.insert_text(range.start, &with);
+                // Protect every caller, including the generic command bridge.
+                // A canvas buffer must never write its pre-replacement copy back.
+                if editing_buffer_for(state, story).is_some() {
+                    state.active_mut().editing = None;
+                    state.active_mut().editing_cell = None;
+                }
                 // As an edit, so a marker replaced away takes its anchored
                 // frame with it rather than leaving it pointing at nothing.
                 state

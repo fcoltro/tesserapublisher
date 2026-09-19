@@ -21,14 +21,14 @@ pub struct FindWindow {
     pub replacement: String,
     /// Which hit of the last search we are standing on.
     ///
-    /// An index rather than a range, because the document can change under it:
-    /// every button re-runs the search, so the position has to be expressed in
-    /// terms the new results can still answer.
+    /// Invalidated whenever the document, revision or query changes.
     pub at: Option<usize>,
     /// What the last action did, in words. `None` before anything is asked.
     pub note: Option<String>,
     /// Set when the window opens, so typing can start immediately.
     focus: bool,
+    /// A result index only has meaning for this document, revision and query.
+    context: Option<(crate::app::DocumentKey, u64, Query)>,
 }
 
 impl FindWindow {
@@ -36,6 +36,8 @@ impl FindWindow {
         self.open = true;
         self.focus = true;
         self.note = None;
+        self.at = None;
+        self.context = None;
     }
 }
 
@@ -47,7 +49,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
     egui::Window::new("Find and Change")
         .open(&mut open)
         .resizable(false)
-        .default_width(360.0)
+        .default_width(420.0)
         .show(ctx, |ui| body(ui, state));
     if !open {
         state.find.open = false;
@@ -56,59 +58,88 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
 
 fn body(ui: &mut Ui, state: &mut TesseraApp) {
     ui.spacing_mut().item_spacing.y = Theme::space_2();
+    ui.weak(format!("Search in {}", state.active().title()));
 
-    let needle = ui.horizontal(|ui| {
-        ui.label("Find");
-        ui.add(
-            egui::TextEdit::singleline(&mut state.find.query.needle)
-                .desired_width(f32::INFINITY)
-                .hint_text("text to find"),
-        )
-    });
-    let needle = needle.inner;
+    let needle = egui::Grid::new("find-fields")
+        .num_columns(2)
+        .show(ui, |ui| {
+            let label = ui.label("Find");
+            let needle = ui
+                .add(
+                    egui::TextEdit::singleline(&mut state.find.query.needle)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("text to find"),
+                )
+                .labelled_by(label.id);
+            ui.end_row();
+            let label = ui.label("Change to");
+            ui.add(
+                egui::TextEdit::singleline(&mut state.find.replacement)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("leave empty to delete"),
+            )
+            .labelled_by(label.id);
+            ui.end_row();
+            needle
+        })
+        .inner;
     if std::mem::take(&mut state.find.focus) {
         needle.request_focus();
     }
 
     ui.horizontal(|ui| {
-        ui.label("Change to");
-        ui.add(
-            egui::TextEdit::singleline(&mut state.find.replacement)
-                .desired_width(f32::INFINITY)
-                .hint_text("leave empty to delete"),
-        );
-    });
-
-    ui.horizontal(|ui| {
         ui.checkbox(&mut state.find.query.match_case, "Match case");
         ui.checkbox(&mut state.find.query.whole_word, "Whole word");
     });
+    sync_context(state);
 
     // Return in the find box is Find Next, which is what every search box in
     // every application does and what a person will try first.
     let entered = needle.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    let backwards = ui.input(|i| i.modifiers.shift);
+    if entered {
+        needle.request_focus();
+    }
 
     ui.separator();
 
     let runnable = state.find.query.is_runnable();
-    let mut find_next = entered;
+    let mut find_next = entered && !backwards;
+    let mut find_previous = entered && backwards;
     let mut change = false;
     let mut change_all = false;
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
+        find_previous |= ui
+            .add_enabled(runnable, egui::Button::new("Previous"))
+            .on_hover_text("Shift+Enter in the Find field")
+            .clicked();
         find_next |= ui
             .add_enabled(runnable, super::primary_button("Find next"))
+            .on_hover_text("Enter in the Find field")
             .clicked();
+    });
+    ui.horizontal_wrapped(|ui| {
         change |= ui
-            .add_enabled(runnable, egui::Button::new("Change"))
+            .add_enabled(
+                runnable && state.find.at.is_some(),
+                egui::Button::new("Change"),
+            )
+            .on_disabled_hover_text("Find an occurrence before changing it")
             .clicked();
         change_all |= ui
             .add_enabled(runnable, egui::Button::new("Change all"))
+            .on_hover_text(
+                "Change every occurrence in this document. Undo reverses the whole change.",
+            )
             .clicked();
     });
 
     if find_next {
         go_to_next(state);
+    }
+    if find_previous {
+        go_to_previous(state);
     }
     if change {
         change_one(state);
@@ -119,11 +150,35 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
 
     if let Some(note) = &state.find.note {
         ui.colored_label(Theme::text_muted(), note);
+    } else {
+        ui.weak("Enter to find next · Shift+Enter to find previous");
+    }
+}
+
+fn sync_context(state: &mut TesseraApp) {
+    let context = (
+        state.active,
+        state.active().document().revision(),
+        state.find.query.clone(),
+    );
+    if state.find.context.as_ref() != Some(&context) {
+        state.find.at = None;
+        state.find.note = None;
+        state.find.context = Some(context);
     }
 }
 
 /// Move to the hit after the one we are on, wrapping at the end.
 fn go_to_next(state: &mut TesseraApp) {
+    navigate(state, false);
+}
+
+fn go_to_previous(state: &mut TesseraApp) {
+    navigate(state, true);
+}
+
+fn navigate(state: &mut TesseraApp, backwards: bool) {
+    sync_context(state);
     let hits = find::search(state.active().document(), &state.find.query);
     if hits.is_empty() {
         state.find.at = None;
@@ -133,11 +188,17 @@ fn go_to_next(state: &mut TesseraApp) {
     // Wrapping is what a person expects and InDesign asks about; asking is a
     // dialog in front of a dialog, and stopping dead at the last hit means a
     // search started halfway down the document never sees the top of it.
-    let next = match state.find.at {
-        Some(at) if at + 1 < hits.len() => at + 1,
-        Some(_) => 0,
-        None => 0,
+    let next = match (state.find.at, backwards) {
+        (Some(at), true) if at > 0 && at < hits.len() => at - 1,
+        (_, true) => hits.len() - 1,
+        (Some(at), false) if at + 1 < hits.len() => at + 1,
+        _ => 0,
     };
+    select_hit(state, &hits, next);
+}
+
+fn select_hit(state: &mut TesseraApp, hits: &[find::Hit], next: usize) {
+    sync_context(state);
     state.find.at = Some(next);
     state.find.note = Some(format!("{} of {}", next + 1, hits.len()));
     reveal(state, &hits[next]);
@@ -145,12 +206,22 @@ fn go_to_next(state: &mut TesseraApp) {
 
 /// Select the frame the hit is in and put the caret on the text.
 fn reveal(state: &mut TesseraApp, hit: &find::Hit) {
+    state.edit_master(None);
     let chain = state.active().document().thread_of(hit.frame);
     let frame = state.resolve_active().items.iter().find(|item| {
         chain.contains(&item.frame) && matches!(&item.kind,
             tessera_layout::ResolvedKind::Text { shaped, .. } if shaped.lines.iter().any(|l| l.range.contains(&hit.range.start)))
     }).map_or(hit.frame, |item| item.frame);
     state.active_mut().selection.set(frame);
+    let doc = state.active().document();
+    let spread = doc.page_of_frame(frame).and_then(|page| {
+        doc.spread_ids()
+            .position(|spread| doc.pages_of(spread).contains(&page))
+    });
+    if let Some(spread) = spread {
+        state.active_mut().current_spread = spread;
+    }
+    state.reveal = Some(frame);
     crate::view::viewport::start_editing_cell(state, frame, hit.cell);
     if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
         buffer.select(hit.range.clone());
@@ -159,6 +230,7 @@ fn reveal(state: &mut TesseraApp, hit: &find::Hit) {
 
 /// Change the hit we are standing on, then go to the next.
 fn change_one(state: &mut TesseraApp) {
+    sync_context(state);
     let hits = find::search(state.active().document(), &state.find.query);
     let Some(at) = state.find.at.filter(|at| *at < hits.len()) else {
         // Nothing is standing on a hit yet, so the first press finds rather
@@ -170,28 +242,45 @@ fn change_one(state: &mut TesseraApp) {
 
     // The edit closes the editing session, because the buffer holds its own
     // copy of the story and would write a stale one back over the change.
-    state.active_mut().editing = None;
     let edits = find::edits_for(&hits[at..=at], &state.find.replacement);
     crate::apply(state, crate::Command::ReplaceMatches { edits });
 
-    // Standing on the hit before the one we changed, so the search that
-    // follows lands on the next occurrence rather than skipping it.
-    state.find.at = at.checked_sub(1);
-    state.find.note = Some("Changed.".into());
-    go_to_next(state);
+    // Resume beyond the inserted text, whose length may differ from the hit.
+    let resume = hits[at].range.start + state.find.replacement.len();
+    let remaining = find::search(state.active().document(), &state.find.query);
+    sync_context(state);
+    if remaining.is_empty() {
+        state.find.note = Some("Changed 1 occurrence. No matches remain.".into());
+    } else {
+        // Skip matches inside the replacement itself, even when it contains
+        // the search term (cat → catfish). Continue with the next original hit.
+        let next = remaining
+            .iter()
+            .enumerate()
+            .skip(at)
+            .find(|(_, hit)| hit.story != hits[at].story || hit.range.start >= resume)
+            .map_or(0, |(index, _)| index);
+        select_hit(state, &remaining, next);
+        state.find.note = Some(format!(
+            "Changed 1 occurrence. {} of {}",
+            next + 1,
+            remaining.len()
+        ));
+    }
 }
 
 /// Change every hit in the document, as one undo entry.
 fn change_every(state: &mut TesseraApp) {
+    sync_context(state);
     let hits = find::search(state.active().document(), &state.find.query);
     if hits.is_empty() {
         state.find.note = Some("Not found.".into());
         return;
     }
     let count = hits.len();
-    state.active_mut().editing = None;
     let edits = find::edits_for(&hits, &state.find.replacement);
     crate::apply(state, crate::Command::ReplaceMatches { edits });
+    sync_context(state);
     state.find.at = None;
     state.find.note = Some(match count {
         1 => "Changed 1 occurrence.".into(),
@@ -204,6 +293,36 @@ mod tests {
     use super::*;
     use crate::command::{Command, apply};
     use tessera_geometry::DocRect;
+
+    #[test]
+    fn enter_and_shift_enter_keep_search_focus_and_navigate() {
+        let mut state = a_document_saying("cat cat cat");
+        state.find.query.needle = "cat".into();
+        state.find.open();
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            let _ = ctx.run_ui(Default::default(), |ui| show(ui.ctx(), &mut state));
+        }
+        for (shift, expected) in [(false, 0), (false, 1), (true, 0), (true, 2)] {
+            let modifiers = egui::Modifiers {
+                shift,
+                ..Default::default()
+            };
+            let input = egui::RawInput {
+                modifiers,
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                }],
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(input, |ui| show(ui.ctx(), &mut state));
+            assert_eq!(state.find.at, Some(expected));
+        }
+    }
 
     fn a_document_saying(text: &str) -> TesseraApp {
         let mut state = TesseraApp::headless();
@@ -359,5 +478,97 @@ mod tests {
         change_one(&mut state);
         assert_eq!(text_of(&state), "cat cat", "nothing may change yet");
         assert_eq!(state.find.note.as_deref(), Some("1 of 2"));
+    }
+
+    #[test]
+    fn changing_the_query_requires_a_new_confirmed_hit() {
+        let mut state = a_document_saying("cat dog dog");
+        state.find.query.needle = "cat".into();
+        go_to_next(&mut state);
+        state.find.query.needle = "dog".into();
+        state.find.replacement = "fox".into();
+        change_one(&mut state);
+        assert_eq!(text_of(&state), "cat dog dog");
+        assert_eq!(state.find.at, Some(0));
+    }
+
+    #[test]
+    fn switching_documents_requires_a_new_confirmed_hit() {
+        let mut state = a_document_saying("cat cat");
+        state.find.query.needle = "cat".into();
+        go_to_next(&mut state);
+        let other = a_document_saying("cat unrelated");
+        state.add_document(other.active().document().clone(), None);
+        state.find.replacement = "fox".into();
+        change_one(&mut state);
+        assert_eq!(text_of(&state), "cat unrelated");
+    }
+
+    #[test]
+    fn editing_the_document_invalidates_a_confirmed_hit() {
+        let mut state = a_document_saying("cat cat");
+        state.find.query.needle = "cat".into();
+        go_to_next(&mut state);
+        let id = state.active().selection.single().unwrap();
+        apply(
+            &mut state,
+            Command::SetText {
+                id,
+                text: "new cat cat".into(),
+            },
+        );
+        state.find.replacement = "fox".into();
+        change_one(&mut state);
+        assert_eq!(text_of(&state), "new cat cat");
+    }
+
+    #[test]
+    fn replacement_containing_the_query_advances_past_inserted_text() {
+        let mut state = a_document_saying("cat cat cat");
+        state.find.query.needle = "cat".into();
+        state.find.replacement = "catfish".into();
+        go_to_next(&mut state);
+        change_one(&mut state);
+        change_one(&mut state);
+        assert_eq!(text_of(&state), "catfish catfish cat");
+    }
+
+    #[test]
+    fn previous_walks_backwards_and_wraps() {
+        let mut state = a_document_saying("cat cat cat");
+        state.find.query.needle = "cat".into();
+        for expected in [2, 1, 0, 2] {
+            go_to_previous(&mut state);
+            assert_eq!(state.find.at, Some(expected));
+        }
+    }
+
+    #[test]
+    fn finding_a_hit_on_another_spread_reveals_it() {
+        let mut state = a_document_saying("needle");
+        let frame = state.active().selection.single().unwrap();
+        apply(&mut state, Command::AddPage);
+        let page = state.active().document().page_ids().last().unwrap();
+        let bounds = state.active().document().pages[page].bounds;
+        apply(&mut state, Command::SetBounds { id: frame, bounds });
+        state.active_mut().current_spread = 0;
+        state.find.query.needle = "needle".into();
+        go_to_next(&mut state);
+        assert_eq!(state.active().current_spread, 1);
+        assert_eq!(state.reveal, Some(frame));
+    }
+
+    #[test]
+    fn replacing_the_final_hit_reports_success() {
+        let mut state = a_document_saying("cat");
+        state.find.query.needle = "cat".into();
+        state.find.replacement = "dog".into();
+        go_to_next(&mut state);
+        change_one(&mut state);
+        assert_eq!(
+            state.find.note.as_deref(),
+            Some("Changed 1 occurrence. No matches remain.")
+        );
+        assert!(state.find.at.is_none());
     }
 }

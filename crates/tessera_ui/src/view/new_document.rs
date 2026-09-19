@@ -116,6 +116,32 @@ impl Default for NewDocument {
 }
 
 impl NewDocument {
+    pub fn validation_error(&self) -> Option<&'static str> {
+        if !self.width.is_finite()
+            || !self.height.is_finite()
+            || self.width <= 0.0
+            || self.height <= 0.0
+        {
+            return Some("Enter a page width and height greater than zero.");
+        }
+        if !(1..=2000).contains(&self.pages) {
+            return Some("Choose between 1 and 2,000 pages.");
+        }
+        if !self.margin.is_finite() || self.margin < 0.0 {
+            return Some("Enter a margin of zero or greater.");
+        }
+        if self.margin * 2.0 >= self.width.min(self.height) {
+            return Some("Reduce the margin so there is space for content on the page.");
+        }
+        if !self.bleed.is_finite() || self.bleed < 0.0 {
+            return Some("Enter a bleed of zero or greater.");
+        }
+        if !self.minimum_ppi.is_finite() || !(36.0..=1200.0).contains(&self.minimum_ppi) {
+            return Some("Choose a resolution warning between 36 and 1,200 ppi.");
+        }
+        None
+    }
+
     /// The page size as it will actually be made, orientation applied.
     pub fn page(&self) -> (f64, f64) {
         self.orientation.apply(self.width, self.height)
@@ -154,11 +180,34 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                 .max_height((ctx.content_rect().height() - 200.0).max(160.0))
                 .show(ui, |ui| body(ui, &mut settings, unit));
             ui.add_space(Theme::space_3());
+            if let Some(error) = settings.validation_error() {
+                ui.colored_label(Theme::error(), error);
+            } else {
+                let (width, height) = settings.page();
+                ui.weak(format!(
+                    "{} page{} · {:.1} × {:.1} {} · {}",
+                    settings.pages,
+                    if settings.pages == 1 { "" } else { "s" },
+                    unit.from_points(width),
+                    unit.from_points(height),
+                    unit.suffix().trim(),
+                    if settings.facing_pages {
+                        "Facing pages"
+                    } else {
+                        "Single pages"
+                    }
+                ));
+            }
             ui.separator();
             ui.horizontal(|ui| {
                 ui.checkbox(&mut settings.preview, "Preview");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    make = ui.add(super::primary_button("Create document")).clicked();
+                    make = ui
+                        .add_enabled(
+                            settings.validation_error().is_none(),
+                            super::primary_button("Create document"),
+                        )
+                        .clicked();
                     cancel = ui.button("Cancel").clicked();
                 });
             });
@@ -218,18 +267,16 @@ fn body(ui: &mut Ui, settings: &mut NewDocument, unit: tessera_geometry::Unit) {
         settings.take(preset);
     }
 
-    let mut resized = false;
+    let (mut width, mut height) = settings.page();
     let (a, b) = pair(
         ui,
-        ("Width", |ui: &mut Ui| {
-            measure_bare(ui, &mut settings.width, unit)
-        }),
-        ("Height", |ui: &mut Ui| {
-            measure_bare(ui, &mut settings.height, unit)
-        }),
+        ("Width", |ui: &mut Ui| measure_bare(ui, &mut width, unit)),
+        ("Height", |ui: &mut Ui| measure_bare(ui, &mut height, unit)),
     );
-    resized |= a || b;
-    if resized {
+    if a || b {
+        settings.width = width;
+        settings.height = height;
+        settings.orientation = Orientation::of(width, height);
         // Typing a size makes it Custom, unless it happens to be a paper. That
         // is not a special case: it is `matching` answering honestly.
         settings.preset = PagePreset::matching(settings.width, settings.height);
@@ -359,7 +406,10 @@ pub fn showing_nothing(state: &TesseraApp) -> bool {
 /// that dirtied the document would make Tessera ask whether to save a page
 /// somebody only looked at.
 pub fn sync_preview(state: &mut TesseraApp) {
-    if !state.new_document.open || !state.new_document.preview {
+    if !state.new_document.open
+        || !state.new_document.preview
+        || state.new_document.validation_error().is_some()
+    {
         return;
     }
     // Only ever the placeholder. Somebody who opens File > New with work on
@@ -403,7 +453,9 @@ pub fn sync_preview(state: &mut TesseraApp) {
         let Some(last) = document.page_ids().last() else {
             break;
         };
-        document.remove_page(last);
+        if !document.remove_page(last) {
+            break;
+        }
     }
     while document.page_ids().count() < settings.pages as usize {
         document.add_page();
@@ -418,6 +470,10 @@ pub fn sync_preview(state: &mut TesseraApp) {
 /// Make the document `state.new_document` describes and open it. Public so
 /// the bridge can make one from a model's choices without the dialog.
 pub fn create(state: &mut TesseraApp) {
+    if let Some(error) = state.new_document.validation_error() {
+        state.status = Some(crate::app::Status::error(error));
+        return;
+    }
     let settings = state.new_document.clone();
     let (width, height) = settings.page();
 
@@ -453,6 +509,9 @@ pub fn create(state: &mut TesseraApp) {
     }
 
     state.add_document(document, None);
+    // Page setup is authored work even before the first frame is drawn.
+    // Protect it on close and do not reuse it as the startup placeholder.
+    state.active_mut().dirty = true;
     state.prefs.minimum_ppi = settings.minimum_ppi;
     state.status = Some(crate::app::Status::info("New document"));
 }
@@ -460,6 +519,65 @@ pub fn create(state: &mut TesseraApp) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_setup_never_reaches_preview_or_creation() {
+        let invalid = [
+            NewDocument {
+                pages: 0,
+                ..Default::default()
+            },
+            NewDocument {
+                pages: 2001,
+                ..Default::default()
+            },
+            NewDocument {
+                width: 0.0,
+                ..Default::default()
+            },
+            NewDocument {
+                height: f64::NAN,
+                ..Default::default()
+            },
+            NewDocument {
+                margin: 1000.0,
+                ..Default::default()
+            },
+            NewDocument {
+                bleed: -1.0,
+                ..Default::default()
+            },
+        ];
+        for mut settings in invalid {
+            let mut state = TesseraApp::headless();
+            let before = state.active().document().clone();
+            settings.open = true;
+            state.new_document = settings;
+            sync_preview(&mut state);
+            create(&mut state);
+            assert_eq!(
+                serde_json::to_value(state.active().document()).unwrap(),
+                serde_json::to_value(&before).unwrap()
+            );
+            assert!(state.status.as_ref().unwrap().is_error);
+        }
+    }
+
+    #[test]
+    fn a_configured_empty_document_is_work_not_a_placeholder() {
+        let mut state = TesseraApp::headless();
+        state.new_document.pages = 5;
+        create(&mut state);
+        let first = state.active;
+        assert!(state.active().dirty);
+        state.new_document.pages = 2;
+        state.new_document.open = true;
+        sync_preview(&mut state);
+        assert_eq!(state.active().document().page_ids().count(), 5);
+        create(&mut state);
+        assert_ne!(state.active, first);
+        assert_eq!(state.documents[first].document().page_ids().count(), 5);
+    }
 
     #[test]
     fn escape_cancels_new_with_one_document_without_changing_its_work() {

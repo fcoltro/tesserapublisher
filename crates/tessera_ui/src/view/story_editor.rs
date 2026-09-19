@@ -24,6 +24,8 @@ pub struct StoryEditorWindow {
     pub open: bool,
     pub story: Option<StoryId>,
     pub text: String,
+    document: Option<crate::app::DocumentKey>,
+    original: String,
 }
 
 impl StoryEditorWindow {
@@ -55,8 +57,44 @@ impl StoryEditorWindow {
             return;
         };
         self.story = Some(story);
+        self.document = Some(state.active);
+        self.original = text.clone();
         self.text = text;
         self.open = true;
+    }
+
+    fn conflict(&self, state: &TesseraApp) -> Option<&'static str> {
+        if self.document != Some(state.active) {
+            return Some("Switch back to the original document to apply this draft.");
+        }
+        let current = self
+            .story
+            .and_then(|story| state.active().document().story(story));
+        match current {
+            None => Some("This story was removed. Copy your draft before closing."),
+            Some(story) if story.text != self.original => Some(
+                "The story changed while this editor was open. Copy your draft and reopen the story to avoid overwriting newer text.",
+            ),
+            _ => None,
+        }
+    }
+
+    fn apply_draft(&mut self, state: &mut TesseraApp) {
+        if self.conflict(state).is_some() {
+            return;
+        }
+        if let Some(story) = self.story
+            && self.original != self.text
+        {
+            let (range, with) = minimal_edit(&self.original, &self.text);
+            apply(
+                state,
+                Command::ReplaceMatches {
+                    edits: vec![(story, range, with)],
+                },
+            );
+        }
+        self.open = false;
     }
 }
 
@@ -116,9 +154,22 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                     );
                 });
             ui.add_space(Theme::space_2());
+            ui.weak(format!(
+                "{} words · {} characters",
+                window.text.split_whitespace().count(),
+                window.text.chars().count()
+            ));
+            if let Some(conflict) = window.conflict(state) {
+                ui.colored_label(Theme::error(), conflict);
+            }
             ui.horizontal(|ui| {
-                go = ui.add(super::primary_button("Apply")).clicked();
-                if ui.button("Close").clicked() {
+                go = ui
+                    .add_enabled(
+                        window.conflict(state).is_none(),
+                        super::primary_button("Apply changes"),
+                    )
+                    .clicked();
+                if ui.button("Cancel").clicked() {
                     window.open = false;
                 }
             });
@@ -126,25 +177,8 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
     if response.should_close() {
         window.open = false;
     }
-    if go && let Some(story) = window.story {
-        let before = state
-            .active()
-            .document()
-            .story(story)
-            .map(|s| s.text.clone())
-            .unwrap_or_default();
-        if before != window.text {
-            let (range, with) = minimal_edit(&before, &window.text);
-            // The buffer holds its own copy; the edit closes the session.
-            state.active_mut().editing = None;
-            apply(
-                state,
-                Command::ReplaceMatches {
-                    edits: vec![(story, range, with)],
-                },
-            );
-        }
-        window.open = false;
+    if go {
+        window.apply_draft(state);
     }
     state.story_editor = window;
 }
@@ -152,6 +186,48 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_draft_cannot_overwrite_another_document_or_newer_text() {
+        let mut state = TesseraApp::headless();
+        let bounds = state.first_page_bounds();
+        apply(&mut state, Command::AddTextFrame(bounds));
+        let frame = state.active().selection.single().unwrap();
+        apply(
+            &mut state,
+            Command::SetText {
+                id: frame,
+                text: "original".into(),
+            },
+        );
+        let mut editor = StoryEditorWindow::default();
+        editor.open(&state);
+        editor.text = "my draft".into();
+        let source = state.active;
+        state.add_document(state.active().document().clone(), None);
+        editor.apply_draft(&mut state);
+        assert!(editor.open);
+        let story = editor.story.unwrap();
+        assert_eq!(
+            state.active().document().story(story).unwrap().text,
+            "original"
+        );
+        state.active = source;
+        apply(
+            &mut state,
+            Command::SetText {
+                id: frame,
+                text: "newer copy".into(),
+            },
+        );
+        editor.apply_draft(&mut state);
+        assert!(editor.open);
+        assert_eq!(editor.text, "my draft");
+        assert_eq!(
+            state.active().document().story(story).unwrap().text,
+            "newer copy"
+        );
+    }
 
     #[test]
     fn the_edit_is_the_smallest_stretch_that_changed() {

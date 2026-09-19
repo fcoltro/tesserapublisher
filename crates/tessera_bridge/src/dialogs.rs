@@ -240,6 +240,9 @@ fn new_document(state: &mut TesseraApp, arguments: &Value) -> Result<Value, Stri
         Some(other) => return Err(format!("intent {other:?} is not print or screen")),
     }
     settings.open = false;
+    if let Some(error) = settings.validation_error() {
+        return Err(error.into());
+    }
     state.new_document = settings;
     tessera_ui::view::new_document::create(state);
     let doc = state.active().document();

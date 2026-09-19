@@ -72,6 +72,21 @@ pub(crate) fn modal_open(state: &TesseraApp) -> bool {
         || state.closing.is_some()
         || state.export.open
         || state.step.open
+        || state.print.open
+        || state.numbering.open
+        || state.variables.open
+        || state.footnote.open
+        || state.index_entry.open
+        || state.text_anchor.open
+        || state.cross_reference.open
+        || state.contents.open
+        || state.index.open
+        || state.endnotes.open
+        || state.glyph.open
+        || state.hyperlink.open
+        || state.footnote_options.open
+        || state.spelling.open
+        || state.story_editor.open
 }
 
 /// The whole window, outermost first.
@@ -640,6 +655,37 @@ fn accelerators(ui: &Ui, state: &mut TesseraApp) {
 #[cfg(test)]
 mod interaction_tests {
     use super::*;
+
+    #[test]
+    fn every_modal_blocks_document_delete_shortcuts() {
+        let openers: [fn(&mut TesseraApp); 16] = [
+            |s| s.print.open = true,
+            |s| s.numbering.open = true,
+            |s| s.variables.open = true,
+            |s| s.footnote.open = true,
+            |s| s.index_entry.open = true,
+            |s| s.text_anchor.open = true,
+            |s| s.cross_reference.open = true,
+            |s| s.contents.open = true,
+            |s| s.index.open = true,
+            |s| s.endnotes.open = true,
+            |s| s.glyph.open = true,
+            |s| s.hyperlink.open = true,
+            |s| s.footnote_options.open = true,
+            |s| s.spelling.open = true,
+            |s| s.story_editor.open = true,
+            |s| s.step.open = true,
+        ];
+        for open in openers {
+            let mut state = TesseraApp::headless();
+            let bounds = state.first_page_bounds();
+            crate::apply(&mut state, crate::Command::AddRectangle(bounds));
+            open(&mut state);
+            let ctx = egui::Context::default();
+            let _ = ctx.run_ui(key(egui::Key::Delete), |ui| accelerators(ui, &mut state));
+            assert_eq!(state.active().document().frames.len(), 1);
+        }
+    }
 
     fn key(key: egui::Key) -> egui::RawInput {
         egui::RawInput {
