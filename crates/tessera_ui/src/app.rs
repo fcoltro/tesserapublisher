@@ -633,9 +633,21 @@ impl TesseraApp {
             ));
             return;
         };
-        let (prefs, complaint) = crate::prefs::Preferences::load_from(&path);
+        let (mut prefs, complaint) = crate::prefs::Preferences::load_from(&path);
+        // The keychain's key wins over the file's: the file's is either the
+        // same, or an older one left from before the keychain held it.
+        if let Some(key) = crate::keychain::read() {
+            prefs.assistant.api_key = key;
+        }
         self.prefs = prefs;
         self.persists = true;
+        // What was said at the console last time, so a restart is not an
+        // amnesia. The model's own memory does not come back: it starts
+        // afresh, and the transcript says so.
+        if let Some(dir) = crate::prefs::Preferences::directory() {
+            self.console
+                .restore_from(&dir.join(crate::view::console::TRANSCRIPT_FILE));
+        }
         self.dictionaries
             .locate(crate::view::spelling::Dictionaries::folder());
         if let Some(message) = complaint {

@@ -91,6 +91,72 @@ pub struct ToolCall {
     pub arguments: Value,
 }
 
+/// A picture a tool hands back with its words: what `render_page` drew,
+/// so a model with eyes can look at the page rather than at a path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Image {
+    /// `image/png`, or whatever the bytes are.
+    pub media_type: String,
+    /// The bytes, base64.
+    pub data: String,
+}
+
+impl Image {
+    pub fn png(bytes: &[u8]) -> Self {
+        Self {
+            media_type: "image/png".into(),
+            data: base64(bytes),
+        }
+    }
+}
+
+/// What one tool call came to: its words, whether they are an error, and
+/// a picture when it drew one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Outcome {
+    pub content: String,
+    pub is_error: bool,
+    pub image: Option<Image>,
+}
+
+impl Outcome {
+    pub fn text(content: impl Into<String>, is_error: bool) -> Self {
+        Self {
+            content: content.into(),
+            is_error,
+            image: None,
+        }
+    }
+}
+
+/// Standard base64, no line breaks — twenty lines against a crate for one
+/// call.
+pub fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        out.push(TABLE[(n >> 18) as usize & 63] as char);
+        out.push(TABLE[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            TABLE[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
 /// The conversation, in neither provider's words.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
@@ -104,6 +170,8 @@ pub enum Message {
         name: String,
         content: String,
         is_error: bool,
+        /// A picture with the words, when the tool drew one.
+        image: Option<Image>,
     },
 }
 
@@ -160,12 +228,13 @@ impl Session {
     }
 
     /// What a tool answered.
-    pub fn answer(&mut self, call: &ToolCall, content: String, is_error: bool) {
+    pub fn answer(&mut self, call: &ToolCall, outcome: Outcome) {
         self.messages.push(Message::ToolResult {
             id: call.id.clone(),
             name: call.name.clone(),
-            content,
-            is_error,
+            content: outcome.content,
+            is_error: outcome.is_error,
+            image: outcome.image,
         });
     }
 
@@ -209,7 +278,7 @@ impl Session {
     pub fn turn(
         &mut self,
         text: &str,
-        mut run: impl FnMut(&ToolCall) -> (String, bool),
+        mut run: impl FnMut(&ToolCall) -> Outcome,
         mut heard: impl FnMut(&Event),
     ) -> Result<String, String> {
         self.ask(text);
@@ -232,17 +301,17 @@ impl Session {
                     for call in &calls {
                         // Answer every call, including skipped calls, so the next
                         // turn never sends an incomplete tool batch to the provider.
-                        let (content, is_error) = if self.cancelled() {
-                            ("stopped before execution".into(), true)
+                        let outcome = if self.cancelled() {
+                            Outcome::text("stopped before execution", true)
                         } else {
                             run(call)
                         };
                         heard(&Event::Ran {
                             call: call.clone(),
-                            result: content.clone(),
-                            is_error,
+                            result: outcome.content.clone(),
+                            is_error: outcome.is_error,
                         });
-                        self.answer(call, content, is_error);
+                        self.answer(call, outcome);
                     }
                     if self.cancelled() {
                         return Err("stopped".into());
@@ -317,12 +386,26 @@ mod anthropic {
                     id,
                     content,
                     is_error,
+                    image,
                     ..
                 } => {
                     // Consecutive results share one user message, as the
-                    // API asks.
+                    // API asks. A picture goes inside the result, after
+                    // the words, which is where the API lets a tool show
+                    // one.
+                    let result_content = match image {
+                        Some(image) => json!([
+                            { "type": "text", "text": content },
+                            { "type": "image", "source": {
+                                "type": "base64",
+                                "media_type": image.media_type,
+                                "data": image.data,
+                            } },
+                        ]),
+                        None => json!(content),
+                    };
                     let block = json!({
-                        "type": "tool_result", "tool_use_id": id, "content": content,
+                        "type": "tool_result", "tool_use_id": id, "content": result_content,
                         "is_error": is_error,
                     });
                     match messages.last_mut() {
@@ -435,9 +518,29 @@ mod openai {
                     }
                     messages.push(msg);
                 }
-                Message::ToolResult { id, content, .. } => {
+                Message::ToolResult {
+                    id,
+                    content,
+                    image,
+                    name,
+                    ..
+                } => {
                     messages
                         .push(json!({ "role": "tool", "tool_call_id": id, "content": content }));
+                    // The chat-completions shape lets a tool answer only in
+                    // words; the picture follows as the user showing it,
+                    // which every vision-capable server of this shape reads.
+                    if let Some(image) = image {
+                        messages.push(json!({
+                            "role": "user",
+                            "content": [
+                                { "type": "text", "text": format!("The image {name} produced:") },
+                                { "type": "image_url", "image_url": {
+                                    "url": format!("data:{};base64,{}", image.media_type, image.data),
+                                } },
+                            ],
+                        }));
+                    }
                 }
             }
         }
@@ -542,6 +645,82 @@ mod tests {
     }
 
     #[test]
+    fn base64_matches_the_standard_vectors() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        assert_eq!(base64(&[0xff, 0xee, 0xdd]), "/+7d");
+    }
+
+    #[test]
+    fn a_picture_a_tool_drew_reaches_each_provider_where_its_api_takes_one() {
+        // A model asks to render the page; the tool answers with words and
+        // a picture. Anthropic takes the picture inside the tool result;
+        // the chat-completions shape takes it as the user showing it next.
+        let calls = json!({ "content": [
+            { "type": "tool_use", "id": "t1", "name": "render_page", "input": { "page": 0, "path": "p.png" } },
+        ], "stop_reason": "tool_use" });
+        let done = json!({ "content": [{ "type": "text", "text": "A blank page." }], "stop_reason": "end_turn" });
+        let (transport, asked) = canned(&[calls, done]);
+        let provider = Provider::from_settings("anthropic", "sk-test", "claude-x", "").unwrap();
+        let mut session = Session::new(provider, "sys".into(), tools(), transport);
+        let picture = Image::png(b"\x89PNG not really");
+        let outcome = Outcome {
+            content: "{\"rendered\":\"p.png\"}".into(),
+            is_error: false,
+            image: Some(picture.clone()),
+        };
+        session
+            .turn("Look at the page", |_| outcome.clone(), |_| {})
+            .unwrap();
+        let asked = asked.lock().unwrap();
+        let second = &asked[1].2;
+        let result = second
+            .pointer("/messages/2/content/0")
+            .expect("the tool result block");
+        assert_eq!(result["type"], "tool_result");
+        assert_eq!(result["content"][0]["type"], "text");
+        assert_eq!(result["content"][1]["type"], "image");
+        assert_eq!(result["content"][1]["source"]["media_type"], "image/png");
+        assert_eq!(result["content"][1]["source"]["data"], picture.data);
+        drop(asked);
+
+        let calls = json!({ "choices": [{ "message": { "role": "assistant", "content": null,
+            "tool_calls": [{ "id": "c1", "type": "function", "function": { "name": "render_page", "arguments": "{\"page\":0,\"path\":\"p.png\"}" } }] },
+            "finish_reason": "tool_calls" }] });
+        let done = json!({ "choices": [{ "message": { "role": "assistant", "content": "A blank page." }, "finish_reason": "stop" }] });
+        let (transport, asked) = canned(&[calls, done]);
+        let provider =
+            Provider::from_settings("openai", "", "llava", "http://localhost:11434/v1").unwrap();
+        let mut session = Session::new(provider, "sys".into(), tools(), transport);
+        session
+            .turn("Look at the page", |_| outcome.clone(), |_| {})
+            .unwrap();
+        let asked = asked.lock().unwrap();
+        let messages = asked[1].2["messages"].as_array().unwrap();
+        let tool = messages
+            .iter()
+            .find(|m| m["role"] == "tool")
+            .expect("a tool message");
+        assert_eq!(
+            tool["content"], "{\"rendered\":\"p.png\"}",
+            "words only, as the shape allows"
+        );
+        let shown = messages.last().unwrap();
+        assert_eq!(shown["role"], "user");
+        assert_eq!(shown["content"][1]["type"], "image_url");
+        assert!(
+            shown["content"][1]["image_url"]["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:image/png;base64,"),
+            "a data URL, which every vision server of this shape reads"
+        );
+    }
+
+    #[test]
     fn an_anthropic_turn_runs_the_tools_it_is_asked_for_and_ends_in_words() {
         let (transport, asked) = canned(&[
             json!({ "content": [
@@ -562,9 +741,9 @@ mod tests {
                 |call| {
                     let mut state = state.borrow_mut();
                     match crate::tools::call(&mut state, &call.name, &call.arguments) {
-                        Ok(v) => (v.to_string(), false),
-                        Err(crate::Failure::Refused(m)) => (m, true),
-                        Err(crate::Failure::NoSuchTool) => ("no such tool".into(), true),
+                        Ok(v) => Outcome::text(v.to_string(), false),
+                        Err(crate::Failure::Refused(m)) => Outcome::text(m, true),
+                        Err(crate::Failure::NoSuchTool) => Outcome::text("no such tool", true),
                     }
                 },
                 |e| events.borrow_mut().push(e.clone()),
@@ -615,7 +794,7 @@ mod tests {
         let reply = session
             .turn(
                 "What is on the page?",
-                |_| ("{\"pages\":1}".into(), false),
+                |_| Outcome::text("{\"pages\":1}", false),
                 |_| {},
             )
             .unwrap();
@@ -645,7 +824,7 @@ mod tests {
         let provider = Provider::from_settings("anthropic", "bad", "claude-x", "").unwrap();
         let mut session = Session::new(provider, "sys".into(), tools(), transport);
         let err = session
-            .turn("hi", |_| ("".into(), false), |_| {})
+            .turn("hi", |_| Outcome::text("", false), |_| {})
             .unwrap_err();
         assert!(err.contains("invalid x-api-key"), "{err}");
 
@@ -657,7 +836,7 @@ mod tests {
         let provider = Provider::from_settings("anthropic", "k", "claude-x", "").unwrap();
         let mut session = Session::new(provider, "sys".into(), tools(), transport);
         let err = session
-            .turn("loop", |_| ("ok".into(), false), |_| {})
+            .turn("loop", |_| Outcome::text("ok", false), |_| {})
             .unwrap_err();
         assert!(err.contains("stopped after"), "{err}");
     }

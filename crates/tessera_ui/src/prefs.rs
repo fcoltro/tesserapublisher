@@ -144,7 +144,10 @@ pub struct Assistant {
     /// empty for none.
     #[serde(default)]
     pub provider: String,
-    #[serde(default)]
+    /// In memory here; on disk in the platform's keychain where there is
+    /// one (see [`crate::keychain`]), and in this file only where there is
+    /// not, or until the keychain has taken it.
+    #[serde(default, skip_serializing_if = "crate::keychain::held")]
     pub api_key: String,
     /// The model's name, as the provider spells it.
     #[serde(default)]
@@ -395,6 +398,9 @@ pub fn remember(state: &mut crate::app::TesseraApp) {
         // for this run and that is all that was ever promised.
         return;
     };
+    // The key goes to the keychain first, so the file written next can
+    // leave it out — or keep it, if the keychain would not take it.
+    crate::keychain::store(&state.prefs.assistant.api_key);
     if let Err(error) = state.prefs.save_to(&path) {
         state.status = Some(crate::app::Status::error(format!(
             "preferences could not be saved: {error}"

@@ -17,6 +17,7 @@ pub mod file_ops;
 pub mod find;
 pub mod icons;
 pub mod ime;
+pub mod keychain;
 pub mod keys;
 pub mod object_order;
 pub mod open_document;
@@ -85,6 +86,12 @@ impl eframe::App for TesseraApp {
     ///
     /// Only a crash should leave it behind. That is the whole point of it.
     fn on_exit(&mut self) {
+        if self.persists
+            && let Some(dir) = crate::prefs::Preferences::directory()
+        {
+            self.console
+                .save_to(&dir.join(crate::view::console::TRANSCRIPT_FILE));
+        }
         if self.quit.confirmed || !self.documents.values().any(|doc| doc.dirty) {
             for open in self.documents.values_mut() {
                 open.recovery.discard_copy();

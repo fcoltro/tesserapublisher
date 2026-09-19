@@ -84,8 +84,9 @@ pub(crate) static ALL: [Tool; 10] = [
     Tool {
         name: "render_page",
         description: "Draw one page to a PNG file, as it prints — trim only, no guides — so a \
-            model can look at it. Needs a GPU; says so when there is none. Default 72 pixels \
-            per inch, one pixel a point; 144 doubles it.",
+            model can look at it: at the console the picture itself comes back with this \
+            result, for a model with eyes. Needs a GPU; says so when there is none. Default \
+            72 pixels per inch, one pixel a point; 144 doubles it.",
         arguments: &[
             (
                 "page",

@@ -17,7 +17,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use tessera_ui::TesseraApp;
 use tessera_ui::view::console::{Line, context_line};
 
-use crate::assistant::{Event, Provider, Session, ToolCall, Transport};
+use crate::assistant::{Event, Image, Outcome, Provider, Session, ToolCall, Transport};
 
 /// Makes a transport for each session: the binary hands in a ureq one, a
 /// test hands in canned replies.
@@ -38,10 +38,29 @@ pub fn system_prompt() -> String {
     )
 }
 
+/// The picture a tool's result points at, read for the model: a
+/// `rendered` PNG path — what `render_page` returns — becomes the image
+/// itself, so a model with eyes looks at the page rather than at a path
+/// it has no way to open. Capped, because a page at 600 ppi is a request
+/// nobody's context window wants: past four megabytes the path stands.
+pub(crate) fn picture_in(value: &serde_json::Value) -> Option<Image> {
+    const LARGEST: u64 = 4 * 1024 * 1024;
+    let path = value.get("rendered")?.as_str()?;
+    if !path.to_ascii_lowercase().ends_with(".png") {
+        return None;
+    }
+    let size = std::fs::metadata(path).ok()?.len();
+    if size > LARGEST {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    Some(Image::png(&bytes))
+}
+
 /// A tool call waiting for the UI thread, and where to send its result.
 struct Pending {
     call: ToolCall,
-    reply: Sender<(String, bool)>,
+    reply: Sender<Outcome>,
 }
 
 /// What a turn's thread sends back as it goes.
@@ -106,13 +125,17 @@ impl Driver {
             }
             while let Ok(pending) = running.pending.try_recv() {
                 let outcome = if running.cancel.load(Ordering::SeqCst) {
-                    ("stopped before execution".into(), true)
+                    Outcome::text("stopped before execution", true)
                 } else {
                     match crate::tools::call(state, &pending.call.name, &pending.call.arguments) {
-                        Ok(value) => (value.to_string(), false),
-                        Err(crate::Failure::Refused(message)) => (message, true),
+                        Ok(value) => Outcome {
+                            image: picture_in(&value),
+                            content: value.to_string(),
+                            is_error: false,
+                        },
+                        Err(crate::Failure::Refused(message)) => Outcome::text(message, true),
                         Err(crate::Failure::NoSuchTool) => {
-                            (format!("no tool named {:?}", pending.call.name), true)
+                            Outcome::text(format!("no tool named {:?}", pending.call.name), true)
                         }
                     }
                 };
@@ -189,7 +212,7 @@ impl Driver {
             .spawn(move || {
                 let mut session = session;
                 session.cancel = Some(cancel_for_thread);
-                let run = |call: &ToolCall| -> (String, bool) {
+                let run = |call: &ToolCall| -> Outcome {
                     let (reply_tx, reply_rx) = channel();
                     if pending_tx
                         .send(Pending {
@@ -198,12 +221,12 @@ impl Driver {
                         })
                         .is_err()
                     {
-                        return ("the window is gone".into(), true);
+                        return Outcome::text("the window is gone", true);
                     }
                     wake();
                     reply_rx
                         .recv()
-                        .unwrap_or_else(|_| ("the window is gone".into(), true))
+                        .unwrap_or_else(|_| Outcome::text("the window is gone", true))
                 };
                 let heard = |event: &Event| {
                     let _ = happened_tx.send(Happened::Event(event.clone()));

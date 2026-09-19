@@ -13,13 +13,22 @@
 //! network out of this crate is what keeps the panel testable and what
 //! keeps this crate free of an HTTP client, as the update check is.
 
+use std::path::Path;
+
 use egui::Ui;
+use serde::{Deserialize, Serialize};
 
 use crate::app::TesseraApp;
 use crate::theme::Theme;
 
+/// Where the transcript is kept between runs, beside the preferences.
+pub const TRANSCRIPT_FILE: &str = "console.json";
+/// How many lines are kept: enough to read back what was done this week,
+/// not a log.
+pub const TRANSCRIPT_KEPT: usize = 400;
+
 /// One line of the transcript.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Line {
     /// What the person typed.
     You(String),
@@ -73,6 +82,42 @@ impl Console {
     pub fn clear(&mut self) {
         self.transcript.clear();
         self.outbox.clear();
+    }
+
+    /// Write the transcript out — its last [`TRANSCRIPT_KEPT`] lines — for
+    /// the next run to read back. Quietly: a transcript that could not be
+    /// kept is not worth an error over the work.
+    pub fn save_to(&self, path: &Path) {
+        if self.transcript.is_empty() {
+            let _ = std::fs::remove_file(path);
+            return;
+        }
+        let from = self.transcript.len().saturating_sub(TRANSCRIPT_KEPT);
+        let kept = &self.transcript[from..];
+        if let Ok(json) = serde_json::to_vec(kept) {
+            let _ = tessera_io::atomic::write_atomic(path, &json);
+        }
+    }
+
+    /// Read back what the last run saved, with a note that the model does
+    /// not remember any of it — its session starts afresh, and a person
+    /// who refers to "the frame you made" should know why the model asks
+    /// which. Nothing to read back is nothing said.
+    pub fn restore_from(&mut self, path: &Path) {
+        let Ok(bytes) = std::fs::read(path) else {
+            return;
+        };
+        let Ok(lines) = serde_json::from_slice::<Vec<Line>>(&bytes) else {
+            return;
+        };
+        if lines.is_empty() {
+            return;
+        }
+        self.transcript = lines;
+        self.heard(Line::Note(
+            "Restored from the last session. The model starts afresh and remembers none of it."
+                .into(),
+        ));
     }
 
     /// Send what is in the input, if anything.
@@ -246,5 +291,75 @@ mod tests {
         let line = context_line(&state);
         assert!(line.contains("1 page(s)"), "{line}");
         assert!(line.contains("selection: none"), "{line}");
+    }
+
+    #[test]
+    fn the_transcript_comes_back_after_a_restart_with_a_note_and_no_more_than_kept() {
+        let path =
+            std::env::temp_dir().join(format!("tessera-console-{}.json", std::process::id()));
+        let mut console = Console::default();
+        for n in 0..(TRANSCRIPT_KEPT + 50) {
+            console.heard(Line::You(format!("prompt {n}")));
+        }
+        console.heard(Line::Tool {
+            name: "add_text_frame".into(),
+            summary: "frame 3".into(),
+            is_error: false,
+        });
+        console.save_to(&path);
+
+        let mut back = Console::default();
+        back.restore_from(&path);
+        assert_eq!(
+            back.transcript.len(),
+            TRANSCRIPT_KEPT + 1,
+            "the last lines, plus the note"
+        );
+        assert!(matches!(back.transcript.last(), Some(Line::Note(n)) if n.contains("afresh")));
+        assert_eq!(
+            back.transcript[TRANSCRIPT_KEPT - 1],
+            Line::Tool {
+                name: "add_text_frame".into(),
+                summary: "frame 3".into(),
+                is_error: false,
+            },
+            "the tool line survived with its shape"
+        );
+        assert!(
+            back.outbox.is_empty() && !back.busy,
+            "nothing is pending after a restore"
+        );
+
+        // An empty transcript takes the file away rather than leaving a
+        // stale one to restore next time.
+        Console::default().save_to(&path);
+        assert!(!path.exists());
+        let mut nothing = Console::default();
+        nothing.restore_from(&path);
+        assert!(
+            nothing.transcript.is_empty(),
+            "nothing to read back is nothing said"
+        );
+    }
+
+    #[test]
+    fn the_key_stays_in_the_file_until_a_keychain_has_taken_it() {
+        // No test touches a real keychain: `held` starts false, so the
+        // preferences file carries the key as it always has.
+        let prefs = crate::prefs::Preferences {
+            assistant: crate::prefs::Assistant {
+                provider: "anthropic".into(),
+                api_key: "sk-test".into(),
+                model: "claude".into(),
+                base_url: String::new(),
+            },
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&prefs).unwrap();
+        assert_eq!(
+            json.contains("sk-test"),
+            !crate::keychain::held(&String::new()),
+            "written to the file exactly when no keychain holds it"
+        );
     }
 }

@@ -30,6 +30,12 @@ egui-wgpu.workspace = true
 vello.workspace = true
 rfd.workspace = true
 thiserror.workspace = true
+# The assistant's API key goes to the platform's own keychain — Windows'
+# Credential Manager, macOS's Keychain — rather than the preferences file.
+# Linux is not listed: its persistent store needs a D-Bus secret service,
+# which is a runtime dependency a headless box may not have, so there the
+# key stays in the file as before.
+keyring = { version = "3", features = ["apple-native", "windows-native"] }
 
 [dev-dependencies]
 zip.workspace = true

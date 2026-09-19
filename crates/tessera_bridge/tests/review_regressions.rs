@@ -115,7 +115,7 @@ fn stop_during_http_must_prevent_subsequent_tool_execution() {
         "stop before applying",
         |_| {
             ran += 1;
-            ("ok".into(), false)
+            tessera_bridge::assistant::Outcome::text("ok", false)
         },
         |_| {},
     );
