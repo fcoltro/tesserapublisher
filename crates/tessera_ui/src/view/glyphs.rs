@@ -38,9 +38,13 @@ pub struct GlyphsPanel {
     characters: Vec<char>,
 }
 
-/// The cell each character sits in, and the size it is drawn at.
-const CELL: f32 = 34.0;
-const DRAWN_AT: f32 = 22.0;
+/// The cell each character sits in, and the size it is drawn at: a
+/// specimen's size, not a headline's — the user's word, seen in the
+/// window, was that the first cut was too big.
+const CELL: f32 = 26.0;
+const DRAWN_AT: f32 = 16.0;
+/// What the grid leaves under itself for the status bar.
+const FOOT: f32 = 40.0;
 
 /// The family at the caret, when a caret is in text: what is held there,
 /// over what the text says, over the style.
@@ -183,12 +187,16 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
 
     // A grid drawn by rows on demand: a face maps thousands of characters
     // and a panel that laid out every one each frame would not scroll.
+    // As tall as the window leaves it: the rail hands a panel unbounded
+    // height, so the room is measured from here to the window's bottom —
+    // a grid eight rows tall over a foot of empty rail was the first cut.
     let columns = ((ui.available_width() / CELL).floor() as usize).max(1);
     let rows = shown.len().div_ceil(columns);
+    let room = (ui.ctx().content_rect().bottom() - ui.cursor().top() - FOOT).max(CELL * 4.0);
     let mut insert: Option<char> = None;
     egui::ScrollArea::vertical()
         .id_salt("glyphs-grid")
-        .max_height(CELL * 8.0)
+        .max_height(room)
         .auto_shrink([false, true])
         .show_rows(ui, CELL, rows, |ui, range| {
             for row in range {
