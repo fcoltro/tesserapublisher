@@ -18,13 +18,19 @@
 //! use — which the story cannot say yet. Everything with a code point is
 //! here, which is nearly everything a person comes looking for.
 
-use egui::{FontFamily, RichText, Ui};
+use egui::{FontFamily, FontId, Ui};
 
 use crate::app::TesseraApp;
 use crate::theme::Theme;
 
 /// The panel's state: open, which family it shows (none for the caret's),
-/// what it is filtered to, and which face is installed in egui.
+/// what it is filtered to, and which face is installed in egui — with
+/// everything a frame would otherwise recompute kept from the frame before.
+///
+/// The first cut recomputed it all each frame: shaped a letter to find the
+/// face, listed the system's families, formatted every code point to test
+/// the filter, and made a widget of every visible cell. It was slow, and
+/// the user said so. Now a frame that changes nothing computes nothing.
 #[derive(Debug, Clone, Default)]
 pub struct GlyphsPanel {
     pub open: bool,
@@ -34,8 +40,20 @@ pub struct GlyphsPanel {
     pub filter: String,
     /// The face egui has: its blob id and index, and the egui family name.
     installed: Option<((u64, u32), String)>,
-    /// The characters of the installed face, in code-point order.
-    characters: Vec<char>,
+    /// The characters of the installed face, in code-point order, each
+    /// with its code point written out once for the filter.
+    characters: Vec<(char, String)>,
+    /// The face the family last asked for resolved to, so a frame that
+    /// asks for the same family shapes nothing.
+    face_for: Option<(Option<String>, tessera_text::shape::FontData)>,
+    /// The system's families, listed once.
+    families: Vec<String>,
+    /// The characters the filter leaves, and the filter they were left by.
+    shown: Vec<char>,
+    shown_for: Option<(String, usize)>,
+    /// The character under the pointer, for the code point read out under
+    /// the grid rather than as a tooltip per cell.
+    hovered: Option<char>,
 }
 
 /// The cell each character sits in, and the size it is drawn at: a
@@ -61,6 +79,19 @@ fn caret_family(state: &TesseraApp) -> Option<String> {
 
 /// The face a family resolves to on this machine, by the same route the
 /// page takes: shape one letter in it and read the font off the result.
+/// Remembered per family, so the shaping happens once and not per frame.
+fn face_for(state: &mut TesseraApp, family: Option<&str>) -> Option<tessera_text::shape::FontData> {
+    if let Some((asked, face)) = &state.glyphs.face_for
+        && asked.as_deref() == family
+    {
+        return Some(face.clone());
+    }
+    let face = face_of(state, family)?;
+    state.glyphs.face_for = Some((family.map(str::to_owned), face.clone()));
+    Some(face)
+}
+
+/// The face a family resolves to, by shaping one letter in it.
 fn face_of(state: &mut TesseraApp, family: Option<&str>) -> Option<tessera_text::shape::FontData> {
     use tessera_text::story::{CharacterFormat, NoStyles, Story};
     let mut story = Story::new("A");
@@ -105,7 +136,11 @@ fn install(
         .insert(FontFamily::Name(name.clone().into()), vec![name.clone()]);
     ctx.set_fonts(definitions);
 
-    panel.characters = characters_of(face);
+    panel.characters = characters_of(face)
+        .into_iter()
+        .map(|c| (c, format!("{:04X}", u32::from(c))))
+        .collect();
+    panel.shown_for = None;
     panel.installed = Some((key, name));
     ctx.request_repaint();
     None
@@ -120,12 +155,38 @@ fn characters_of(face: &tessera_text::shape::FontData) -> Vec<char> {
         .collect()
 }
 
+/// The characters the filter leaves, recomputed only when the filter or
+/// the face has changed.
+fn shown(panel: &mut GlyphsPanel) -> &[char] {
+    let filter = panel
+        .filter
+        .trim()
+        .trim_start_matches("U+")
+        .trim_start_matches("u+")
+        .to_ascii_uppercase();
+    let key = (filter, panel.characters.len());
+    if panel.shown_for.as_ref() != Some(&key) {
+        panel.shown = panel
+            .characters
+            .iter()
+            .filter(|(_, hex)| key.0.is_empty() || hex.contains(&key.0))
+            .map(|(c, _)| *c)
+            .collect();
+        panel.shown_for = Some(key);
+    }
+    &panel.shown
+}
+
 pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
     let typing = state.active().editing.is_some();
     let caret = caret_family(state);
 
-    // The family: the caret's, or the one chosen here.
-    let families: Vec<String> = state.shaper.families().to_vec();
+    // The family: the caret's, or the one chosen here. The system's list
+    // is read once: enumerating every installed face is not per-frame work.
+    if state.glyphs.families.is_empty() {
+        state.glyphs.families = state.shaper.families().to_vec();
+    }
+    let families = state.glyphs.families.clone();
     let mut chosen = state.glyphs.family.clone();
     ui.horizontal(|ui| {
         ui.colored_label(Theme::text_muted(), "Face");
@@ -146,7 +207,7 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
     state.glyphs.family = chosen;
     let family = state.glyphs.family.clone().or(caret);
 
-    let Some(face) = face_of(state, family.as_deref()) else {
+    let Some(face) = face_for(state, family.as_deref()) else {
         ui.colored_label(Theme::text_muted(), "No face to draw.");
         return;
     };
@@ -169,53 +230,74 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
 
     // What is shown: everything, or the characters whose code point
     // contains what was typed — `20` finds U+2026 and U+2020 alike.
-    let filter = state
-        .glyphs
-        .filter
-        .trim()
-        .trim_start_matches("U+")
-        .trim_start_matches("u+")
-        .to_ascii_uppercase();
-    let shown: Vec<char> = state
-        .glyphs
-        .characters
-        .iter()
-        .copied()
-        .filter(|c| filter.is_empty() || format!("{:04X}", u32::from(*c)).contains(&filter))
-        .collect();
-    ui.colored_label(Theme::text_muted(), format!("{} characters", shown.len()));
+    let shown: Vec<char> = shown(&mut state.glyphs).to_vec();
+    ui.horizontal(|ui| {
+        ui.colored_label(Theme::text_muted(), format!("{} characters", shown.len()));
+        if let Some(c) = state.glyphs.hovered {
+            ui.colored_label(Theme::text_muted(), format!("U+{:04X}", u32::from(c)));
+        }
+    });
 
     // A grid drawn by rows on demand: a face maps thousands of characters
     // and a panel that laid out every one each frame would not scroll.
     // As tall as the window leaves it: the rail hands a panel unbounded
     // height, so the room is measured from here to the window's bottom —
     // a grid eight rows tall over a foot of empty rail was the first cut.
+    //
+    // One widget per *row*, not per cell: a row is a click target whose
+    // column is read off the pointer, and its characters are painted
+    // straight to the painter. Five hundred buttons a frame was the other
+    // half of why the panel dragged.
     let columns = ((ui.available_width() / CELL).floor() as usize).max(1);
     let rows = shown.len().div_ceil(columns);
     let room = (ui.ctx().content_rect().bottom() - ui.cursor().top() - FOOT).max(CELL * 4.0);
+    let font = FontId::new(DRAWN_AT, FontFamily::Name(egui_family.into()));
     let mut insert: Option<char> = None;
+    let mut hovered: Option<char> = None;
     egui::ScrollArea::vertical()
         .id_salt("glyphs-grid")
         .max_height(room)
         .auto_shrink([false, true])
         .show_rows(ui, CELL, rows, |ui, range| {
             for row in range {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    for c in shown.iter().skip(row * columns).take(columns) {
-                        let text = RichText::new(c.to_string())
-                            .family(FontFamily::Name(egui_family.clone().into()))
-                            .size(DRAWN_AT);
-                        let response = ui
-                            .add_sized([CELL, CELL], egui::Button::new(text).frame(false))
-                            .on_hover_text(format!("U+{:04X}", u32::from(*c)));
-                        if response.clicked() {
-                            insert = Some(*c);
-                        }
+                let cells = &shown[row * columns..(row * columns + columns).min(shown.len())];
+                let (rect, response) = ui.allocate_exact_size(
+                    egui::vec2(CELL * columns as f32, CELL),
+                    egui::Sense::click(),
+                );
+                let column_at = |pos: egui::Pos2| -> Option<usize> {
+                    let column = ((pos.x - rect.left()) / CELL).floor();
+                    (column >= 0.0 && (column as usize) < cells.len()).then_some(column as usize)
+                };
+                let under = response
+                    .hover_pos()
+                    .filter(|_| response.hovered())
+                    .and_then(column_at);
+                if let Some(column) = under {
+                    hovered = Some(cells[column]);
+                    let cell = egui::Rect::from_min_size(
+                        egui::pos2(rect.left() + column as f32 * CELL, rect.top()),
+                        egui::vec2(CELL, CELL),
+                    );
+                    ui.painter()
+                        .rect_filled(cell.shrink(1.0), 3.0, Theme::hover_bg());
+                    if response.clicked() {
+                        insert = Some(cells[column]);
                     }
-                });
+                }
+                let painter = ui.painter();
+                for (column, c) in cells.iter().enumerate() {
+                    painter.text(
+                        egui::pos2(rect.left() + (column as f32 + 0.5) * CELL, rect.center().y),
+                        egui::Align2::CENTER_CENTER,
+                        c,
+                        font.clone(),
+                        Theme::text_primary(),
+                    );
+                }
             }
         });
+    state.glyphs.hovered = hovered;
 
     if let Some(c) = insert {
         if typing {
