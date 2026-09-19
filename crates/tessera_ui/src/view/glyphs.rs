@@ -74,17 +74,22 @@ fn face_of(state: &mut TesseraApp, family: Option<&str>) -> Option<tessera_text:
 }
 
 /// Make sure egui can draw `face`, installing it if it is not the one
-/// installed; and read its characters. Returns the egui family name.
+/// installed; and read its characters. Returns the egui family name —
+/// or `None` on the frame that installed it, because egui binds new
+/// fonts at the start of the *next* pass, and drawing in a family it has
+/// not bound yet is a panic in epaint. Found by opening the panel in the
+/// window: the first frame took the application down. So that frame asks
+/// for another and draws nothing in the face.
 fn install(
     ctx: &egui::Context,
     panel: &mut GlyphsPanel,
     face: &tessera_text::shape::FontData,
-) -> String {
+) -> Option<String> {
     let key = (face.data.id(), face.index);
     if let Some((installed, name)) = &panel.installed
         && *installed == key
     {
-        return name.clone();
+        return Some(name.clone());
     }
     let name = format!("Tessera document face {}/{}", key.0, key.1);
     let mut definitions = crate::ui_fonts::definitions();
@@ -97,8 +102,9 @@ fn install(
     ctx.set_fonts(definitions);
 
     panel.characters = characters_of(face);
-    panel.installed = Some((key, name.clone()));
-    name
+    panel.installed = Some((key, name));
+    ctx.request_repaint();
+    None
 }
 
 /// Every character the face maps to a glyph, in code-point order, without
@@ -140,7 +146,10 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
         ui.colored_label(Theme::text_muted(), "No face to draw.");
         return;
     };
-    let egui_family = install(ui.ctx(), &mut state.glyphs, &face);
+    let Some(egui_family) = install(ui.ctx(), &mut state.glyphs, &face) else {
+        ui.colored_label(Theme::text_muted(), "Loading the face\u{2026}");
+        return;
+    };
 
     ui.horizontal(|ui| {
         ui.colored_label(Theme::text_muted(), "Find");
@@ -223,6 +232,27 @@ mod tests {
         assert!(chars.contains(&'A') && chars.contains(&'z'));
         assert!(!chars.contains(&' '), "nothing invisible to click");
         assert!(chars.windows(2).all(|p| p[0] < p[1]), "in order, once each");
+    }
+
+    #[test]
+    fn the_panel_survives_its_first_two_frames() {
+        // The first frame installs the face and must not draw in it — egui
+        // binds new fonts on the next pass, and drawing before that is a
+        // panic in epaint that took the window down. The second frame draws.
+        let mut state = TesseraApp::headless();
+        state.glyphs.open = true;
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| docked(ui, &mut state));
+        assert!(
+            state.glyphs.installed.is_some(),
+            "the first frame installed the face"
+        );
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| docked(ui, &mut state));
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| docked(ui, &mut state));
+        assert!(
+            !state.glyphs.characters.is_empty(),
+            "and the grid has characters to draw"
+        );
     }
 
     #[test]

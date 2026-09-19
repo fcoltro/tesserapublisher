@@ -2206,8 +2206,11 @@ and not a list of controls.
     is closed, never nearer than the font sets either glyph to itself, and
     clamped to −100/+30 thousandths. Calibrated against Arial, Georgia,
     Times and Segoe: `AV` and `To` land in the sixties to nineties, `P.` at
-    the clamp, `HH`, `nn`, `oo` untouched. **Replaces the table, as
-    InDesign's does**: an optical run is shaped with `kern` off. Applied
+    the clamp, `HH`, `nn`, `oo` untouched. **Seen running 2026-09-19**: two
+    headlines, "AVATAR To Type", metrics above optical, the optical one
+    visibly tighter at AV, To and Ty and nothing else moved. **Replaces
+    the table, as InDesign's does**: an optical run is shaped with `kern`
+    off. Applied
     where the manual kern is, `cluster_shifts`, so glyphs, caret and click
     agree by construction — and with the same cost, that it moves no line
     break. `CharacterFormat.kerning: Metrics | Optical` (format 29), a pair
@@ -2255,7 +2258,13 @@ and not a list of controls.
     family. The face is given to egui as a family of its own, installed
     once per face because installing rebuilds the atlas. By character, not
     glyph: alternates and ligatures have no code point to type, and would
-    need the story to name a glyph. Not seen running.
+    need the story to name a glyph. **Seen running 2026-09-19, and it
+    took the window down on first open**: the panel installed the face
+    with `set_fonts` and drew in it the same frame, and egui binds a new
+    font only on the next pass — epaint panics "not bound to any fonts".
+    The installing frame now draws nothing in the face and asks for
+    another; a test runs the panel through its first frames. The grid
+    drew afterwards: 3492 characters of the default sans in seven columns.
   - **The eyedropper (2026-09-17)**, `I`: a click picks up an object's
     appearance — `ObjectFormat::sampled_from` (fill, stroke, blend,
     shadow), the corners, and a text frame's common character format —
@@ -2298,7 +2307,13 @@ IDML import to milestone 12.
   story on the selected path and opens it in the story editor, which is
   where a path's words are edited — a caret that follows a circle is a
   gesture this does not have. A pixel test proves the ink lands beside a
-  vertical line and nowhere else. **Not built:** the caret on the curve;
+  vertical line and nowhere else. **Seen running 2026-09-19** through the
+  bridge: text on a cubic arc, turned with it, sitting on the curve. Two
+  bridge faults found on the way: `describe_document` gave a text frame
+  no story id, so a model could read the words and not address them; and
+  an id *inside* an object argument (`SetPathText`'s `story`) was refused
+  as a number — `command_json` now translates the id-bearing fields of
+  nested objects by name. **Not built:** the caret on the curve;
   the drag handles for start, end and flip; a path's text as a wrap
   obstacle.
 

@@ -466,12 +466,16 @@ fn describe_document(state: &mut TesseraApp, _: &Value) -> Result<Value, String>
         .frames
         .iter()
         .map(|(id, frame)| {
+            // A path carrying text reports that story, as a text frame
+            // does: the words are what a model asks after.
             let (kind, story) = match &frame.kind {
                 FrameKind::Text { story, .. } => ("text", Some(*story)),
                 FrameKind::Rectangle => ("rectangle", None),
                 FrameKind::Ellipse => ("ellipse", None),
                 FrameKind::Graphic { .. } => ("graphic", None),
-                _ => ("other", None),
+                FrameKind::Path(_) => ("path", doc.path_text(id).map(|t| t.story)),
+                FrameKind::Table(_) => ("table", None),
+                FrameKind::Group(_) => ("group", None),
             };
             // Where it is seen, transform included: a frame moved by a
             // translation keeps its bounds and gains a transform, and a
@@ -487,6 +491,10 @@ fn describe_document(state: &mut TesseraApp, _: &Value) -> Result<Value, String>
                 "width": seen.width,
                 "height": seen.height,
                 "rotation_degrees": frame.transform.rotation_degrees(),
+                // The story's id as the commands take it — SetCharacterFormat,
+                // SetParagraphFormat, ApplyParagraphStyle — which was missing:
+                // a model could read the words and not address them.
+                "story": story.map(|s| slotmap::Key::data(&s).as_ffi()),
                 "text": story.and_then(|s| doc.story(s)).map(|s| s.text.clone()),
                 "overset_lines": overset.iter().find(|(f, _)| *f == id).map(|(_, n)| *n),
             })

@@ -283,6 +283,50 @@ mod tests {
         let doc = tool(&mut bridge, "describe_document", json!({}));
         let frames = doc["frames"].as_array().expect("frames");
         assert_eq!(frames.len(), 1);
+        // A text frame carries its story's id, so the story commands can be
+        // aimed at it — found missing by driving the window: a model could
+        // read the words and had no number to format them by.
+        let story = frames[0]["story"].as_u64().expect("a story id");
+        let formatted = tool(
+            &mut bridge,
+            "command",
+            json!({ "name": "SetCharacterFormat", "arguments": {
+                "story": story, "range": { "start": 0, "end": 5 }, "format": { "kerning": "Optical" },
+            } }),
+        );
+        assert!(formatted.get("error").is_none(), "{formatted}");
+        // And an id inside an object argument is a number too: the story a
+        // path carries, handed to SetPathText as describe_document reports
+        // it. Refused before the nested ids were translated.
+        let curve = json!([{ "MoveTo": [0.0, 50.0] }, { "LineTo": [200.0, 50.0] }]);
+        let path = tool(
+            &mut bridge,
+            "command",
+            json!({ "name": "AddPath", "arguments": [
+                { "x": 20, "y": 200, "width": 200, "height": 60 }, curve,
+            ] }),
+        );
+        let path_id = path["selection"][0].as_u64().expect("the path");
+        tool(
+            &mut bridge,
+            "command",
+            json!({ "name": "PutTextOnPath", "arguments": { "id": path_id, "text": "Along" } }),
+        );
+        let carried = tool(&mut bridge, "describe_document", json!({}))["frames"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["frame"] == path_id)
+            .and_then(|f| f["story"].as_u64())
+            .expect("the path reports the story it carries");
+        let flipped = tool(
+            &mut bridge,
+            "command",
+            json!({ "name": "SetPathText", "arguments": { "id": path_id, "text": {
+                "story": carried, "start": 0.1, "end": 0.9, "align": "Centre", "flip": true,
+            } } }),
+        );
+        assert!(flipped.get("error").is_none(), "{flipped}");
         // A page carries the id the page commands take, beside its index.
         let page_id = doc["pages"][0]["page"].as_u64().expect("a page id");
         tool(

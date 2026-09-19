@@ -296,10 +296,52 @@ pub fn command_json(variant: &Variant, arguments: Value) -> Result<Value, String
     Ok(json!({ &variant.name: payload }))
 }
 
-/// An id number becomes a key; anything else passes through.
+/// The fields that hold an id inside the objects a command takes — a
+/// path's text names its `story`, a section its `first` page, a contents
+/// level its `style` — so a number a model hands in there becomes the key
+/// the document keeps, as a top-level id field's does. By name, because
+/// the catalogue reads the command's own fields and not the types behind
+/// them; found by driving the window, where `SetPathText` refused the
+/// story number `describe_document` had just reported.
+const NESTED_ID_FIELDS: &[&str] = &[
+    "story",
+    "style",
+    "first",
+    "based_on",
+    "entry_style",
+    "title_style",
+    "page",
+    "frame",
+    "layer",
+    "next",
+];
+
+/// Every nested id number turned into a key, through objects and arrays.
+fn deepen(value: Value) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(k, v)| {
+                    let v = match v {
+                        Value::Number(n) if NESTED_ID_FIELDS.contains(&k.as_str()) => {
+                            n.as_u64().map(key_json).unwrap_or(Value::Number(n))
+                        }
+                        other => deepen(other),
+                    };
+                    (k, v)
+                })
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.into_iter().map(deepen).collect()),
+        other => other,
+    }
+}
+
+/// An id number becomes a key; anything else passes through — with the
+/// ids inside an object argument turned into keys too.
 fn translate(ty: &str, value: Value) -> Result<Value, String> {
     if !is_id_type(ty) {
-        return Ok(value);
+        return Ok(deepen(value));
     }
     match value {
         Value::Null if ty.starts_with("Option<") => Ok(Value::Null),
