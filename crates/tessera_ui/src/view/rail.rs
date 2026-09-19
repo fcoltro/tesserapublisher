@@ -80,7 +80,7 @@ impl Dock {
             Dock::Swatches => Icon::Swatches,
             Dock::Preflight => Icon::Preflight,
             Dock::Console => Icon::SquareTerminal,
-            Dock::Glyphs => Icon::CaseSensitive,
+            Dock::Glyphs => Icon::Pi,
             Dock::Book => Icon::Book,
         }
     }

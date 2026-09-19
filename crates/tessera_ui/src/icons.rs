@@ -60,6 +60,8 @@ pub enum Icon {
     Pipette,
     /// The Book panel.
     Book,
+    /// The Glyphs panel: a letter that is only a glyph.
+    Pi,
 
     // The canvas toolbar's spatial verbs. Named for what they do here rather
     // than for Lucide's own name, which describes the divider's axis; each
@@ -298,6 +300,13 @@ impl Icon {
                 "M6 12H2",
                 "M12 6V2",
                 "M12 18v4",
+            ],
+
+            // lucide: pi
+            Self::Pi => &[
+                "M9 4v16",
+                "M4 7c0-1.7 1.3-3 3-3h13",
+                "M18 20c-1.7 0-3-1.3-3-3V4",
             ],
 
             // lucide: book
@@ -620,6 +629,7 @@ impl Icon {
             | Self::Preflight
             | Self::SquareTerminal
             | Self::Book
+            | Self::Pi
             | Self::Swatches
             | Self::Styles
             | Self::Close
