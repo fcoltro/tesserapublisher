@@ -275,24 +275,13 @@ impl Theme {
         palette().step(3)
     }
 
-    /// The panel colour when it must not be seen through.
+    /// The ground a colour is judged against: a swatch, a ramp, a fill proxy.
     ///
-    /// The same value as [`Self::PANEL_BG`] and named separately on purpose: a
-    /// glass panel tints with the first at partial alpha, and the surfaces where
-    /// colour is *judged* paint with this at full. Two names for one colour so
-    /// that changing how glass is tinted cannot accidentally make a swatch
-    /// translucent.
+    /// The same value as [`Self::panel_bg`] and named separately on purpose,
+    /// so that a change to how panels are painted cannot reach the surfaces
+    /// where colour is *judged*.
     pub fn panel_bg_solid() -> Color32 {
         palette().step(2)
-    }
-
-    /// The hairline along a glass panel's leading edge.
-    ///
-    /// Lighter than [`Self::RULE`], because it is read against a page rather
-    /// than against another panel, and a rule that works on grey disappears on
-    /// white.
-    pub fn glass_edge() -> Color32 {
-        palette().step(8)
     }
     /// The pasteboard behind the page.
     pub fn canvas_bg() -> Color32 {

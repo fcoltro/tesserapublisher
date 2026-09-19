@@ -976,10 +976,9 @@ fn ramp_preview(ui: &mut Ui, stops: &[tessera_document::paint::Stop]) {
         Vec2::new(ui.available_width().max(60.0), HEIGHT),
         Sense::hover(),
     );
-    // Opaque behind the whole strip, before any band is drawn. A ramp is judged
-    // by eye, and stops carrying alpha would otherwise be judged against a page
-    // that moves.
-    crate::view::glass::opaque_well(ui, rect, 2.0);
+    // Opaque behind the whole strip, before any band is drawn: a ramp is
+    // judged by eye, and a stop carrying alpha needs a known ground under it.
+    ui.painter().rect_filled(rect, 2.0, Theme::panel_bg_solid());
 
     let painter = ui.painter();
     let width = rect.width() / BANDS as f32;

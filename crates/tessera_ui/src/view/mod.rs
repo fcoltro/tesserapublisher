@@ -5,7 +5,6 @@
 //! attaching to a `Context`. That matches eframe 0.35 handing the app a root
 //! `Ui`, so the whole window is one tree.
 
-pub mod ambient;
 pub mod anchors;
 pub mod book;
 pub mod canvas_toolbar;
@@ -17,7 +16,6 @@ pub mod document_tabs;
 pub mod export_dialog;
 pub mod find;
 pub mod footnote_options;
-pub mod glass;
 pub mod glyph;
 pub mod glyphs;
 pub mod hyperlink;
@@ -48,6 +46,15 @@ pub mod vello_host;
 pub mod viewport;
 
 use egui::{Panel, Ui};
+
+/// The frame every panel is built with: the theme's own ground, opaque.
+///
+/// Asked for explicitly rather than left to egui's default, so a panel's
+/// ground is one decision made here and not a style setting read in five
+/// places.
+pub fn panel_frame() -> egui::Frame {
+    egui::Frame::side_top_panel(&egui::Style::default()).fill(Theme::panel_bg_solid())
+}
 
 use crate::app::TesseraApp;
 use crate::theme::Theme;
@@ -95,29 +102,6 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // takes effect on the frame it was changed in rather than the one after.
     crate::theme::follow(ui.ctx(), state.prefs.theme);
     crate::theme::follow_density(ui.ctx(), state.prefs.density);
-
-    // The interface’s own ground, painted under everything. The document is drawn
-    // over the middle of it and is opaque; what shows through the chrome is
-    // this, which is what the glass frosts.
-    let window = ui.max_rect();
-    state.ground = state
-        .prefs
-        .panel_surface
-        .is_glass()
-        .then(|| {
-            state
-                .ambient
-                .textures(ui.ctx(), window.size(), &state.prefs)
-        })
-        .flatten();
-    if let Some((sharp, _)) = state.ground {
-        ui.painter().image(
-            sharp,
-            window,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            egui::Color32::WHITE,
-        );
-    }
 
     // Before any panel says where it is. A spot kept from the previous frame is
     // a spot the tour still believes in after the panel has closed.
@@ -172,14 +156,12 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
         .mark(crate::tour::Spot::Status, status.response.rect);
 
     // The tools, beside the page. **Not over it.** Chrome that floats over the
-    // document is chrome that covers the thing being worked on, and the glass is
-    // for showing the interface’s own ground through — not the page.
+    // document is chrome that covers the thing being worked on.
     let tools = Panel::left("tools")
         .exact_size(Theme::TOOL_SIZE + Theme::space_4())
-        .frame(glass::panel_frame(state))
+        .frame(panel_frame())
         .resizable(false)
         .show(ui, |ui| {
-            glass::behind(ui, state, glass::Edge::Right);
             panels::tool_strip(ui, state);
         });
     state
@@ -190,10 +172,6 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // a strip of icons rather than nothing at all: a panel you cannot see should
     // still be somewhere you can find.
     //
-    // Solid or glass decides whether it takes room from the canvas or sits over
-    // it, and that is the same question in both places — which is why it is
-    // asked once, of `glass::floating`. Two places deciding independently is how
-    // a rail ends up floating while the canvas still leaves a gap for it.
     // Every panel, on either side, in whatever stacks somebody has arranged.
     // The single fixed column this replaced is `docking::Docking::default()`.
     if state.rail_open {
@@ -204,9 +182,8 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
         let strip = Panel::right("rail-strip")
             .exact_size(rail::STRIP)
             .resizable(false)
-            .frame(glass::panel_frame(state))
+            .frame(panel_frame())
             .show(ui, |ui| {
-                glass::behind(ui, state, glass::Edge::Left);
                 rail::strip(ui, state);
             });
         // Collapsed is still where the panels are, so the tour points at the
@@ -343,12 +320,6 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
                     rulers::resolve_zero_drag(ui, state, canvas);
                 }
             }
-
-            // The rail over the page, when it is glass. Inside the central
-            // panel, so it is bounded by the same rectangle the canvas is and
-            // cannot stray over the rulers or the status bar; and *after* the
-            // viewport, so the backdrop it paints was rendered this frame rather
-            // than last.
         });
 
     // Last, because every spot it can point at has now said where it is. Earlier

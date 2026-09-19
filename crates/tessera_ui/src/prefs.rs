@@ -66,68 +66,8 @@ impl Density {
     }
 }
 
-/// How much the panels let the document show through.
-///
-/// A setting rather than a decision, and for three reasons that are all real
-/// rather than defensive. Translucency over a page is a **judgement call** in a
-/// tool where colour is judged; it costs a second render, which is nothing on a
-/// discrete card and not nothing on an old laptop; and some people simply cannot
-/// read text over a moving background. Any one of those is enough to make it
-/// switchable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum PanelSurface {
-    /// Panels sit beside the canvas and are opaque. The canvas is narrower and
-    /// nothing shows through.
-    ///
-    /// **The default.** Glass needs something worth seeing through it, and the
-    /// decorative ground that used to supply that is gone.
-    #[default]
-    Solid,
-    /// Panels float over the canvas, which extends beneath them, and the
-    /// document shows through blurred.
-    Glass,
-}
-
-impl PanelSurface {
-    pub fn label(self) -> &'static str {
-        match self {
-            PanelSurface::Solid => "Solid",
-            PanelSurface::Glass => "Glass",
-        }
-    }
-
-    pub fn purpose(self) -> &'static str {
-        match self {
-            PanelSurface::Solid => "Panels beside the page. Nothing shows through.",
-            PanelSurface::Glass => "Panels over the page, blurred behind them.",
-        }
-    }
-
-    pub fn is_glass(self) -> bool {
-        matches!(self, PanelSurface::Glass)
-    }
-}
-
-/// How strongly the backdrop behind a glass panel is blurred.
-///
-/// Expressed as **how much the backdrop is reduced before it is stretched back
-/// up**, because that is what the implementation actually does and a number that
-/// means something is better than one that has to be calibrated. Six is a soft
-/// frost; two is barely a smear; sixteen is opaque fog and costs the least of
-/// all, which is a pleasant inversion.
-pub const BLUR_LEAST: u32 = 2;
-pub const BLUR_MOST: u32 = 16;
-
 fn default_minimum_ppi() -> f64 {
     300.0
-}
-
-fn default_blur() -> u32 {
-    6
-}
-
-fn default_panel_opacity() -> f32 {
-    0.82
 }
 
 /// Where the console's model is and how to be let in.
@@ -178,23 +118,6 @@ pub struct Preferences {
     /// Hard-coding 300 would cry wolf at every newspaper.
     #[serde(default = "default_minimum_ppi")]
     pub minimum_ppi: f64,
-
-    /// Whether panels float over the page or sit beside it.
-    #[serde(default)]
-    pub panel_surface: PanelSurface,
-
-    /// How much the backdrop is reduced before being stretched back up.
-    #[serde(default = "default_blur")]
-    pub blur: u32,
-
-    /// How opaque a glass panel is over its backdrop.
-    ///
-    /// Separate from the blur, because they trade against each other: a heavy
-    /// blur reads well at low opacity, and a light one needs more tint to stay
-    /// legible. Tying them together would take away the adjustment that actually
-    /// makes text readable on a given screen.
-    #[serde(default = "default_panel_opacity")]
-    pub panel_opacity: f32,
 
     /// Whether the canvas snaps objects to guides and to other objects.
     ///
@@ -327,9 +250,6 @@ impl Default for Preferences {
             theme: ThemeChoice::default(),
             density: Density::default(),
             minimum_ppi: default_minimum_ppi(),
-            panel_surface: PanelSurface::default(),
-            blur: default_blur(),
-            panel_opacity: default_panel_opacity(),
             snapping: yes(),
             typographers_quotes: yes(),
             dynamic_spelling: yes(),
@@ -350,25 +270,6 @@ impl Default for Preferences {
 }
 
 impl Preferences {
-    /// The blur divisor, held to what can be rendered.
-    ///
-    /// Clamped on the way out rather than on the way in, as everything else in
-    /// this codebase is: a preferences file carrying a stray value draws
-    /// sensibly instead of being quietly rewritten, and the file still says what
-    /// it said.
-    pub fn blur_divisor(&self) -> u32 {
-        self.blur.clamp(BLUR_LEAST, BLUR_MOST)
-    }
-
-    /// How opaque a glass panel is, held to a range that stays legible.
-    ///
-    /// The floor is not zero. A panel at no opacity is an invisible panel with
-    /// live controls in it, which is not a look — it is a fault somebody would
-    /// have to work out how to undo.
-    pub fn glass_opacity(&self) -> f32 {
-        self.panel_opacity.clamp(0.35, 1.0)
-    }
-
     /// How often a recovery copy is written.
     ///
     /// Clamped on the way out, as everything else here is, so a file carrying a
@@ -547,9 +448,6 @@ mod tests {
             theme: ThemeChoice::Light,
             density: Density::Comfortable,
             minimum_ppi: 150.0,
-            panel_surface: PanelSurface::Solid,
-            blur: 11,
-            panel_opacity: 0.5,
             snapping: false,
             typographers_quotes: false,
             dynamic_spelling: false,
@@ -594,26 +492,9 @@ mod tests {
             Density::default(),
             "a file written before the density existed reads as somebody who never chose"
         );
-        assert_eq!(read.panel_surface, PanelSurface::default());
-        assert_eq!(read.blur, default_blur());
         assert!(read.snapping, "snapping defaults on, as it always was");
 
         let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn a_stray_blur_draws_sensibly_without_the_file_being_rewritten() {
-        let wild = Preferences {
-            blur: 9_999,
-            panel_opacity: -3.0,
-            ..Preferences::default()
-        };
-        assert_eq!(wild.blur_divisor(), BLUR_MOST);
-        assert_eq!(wild.blur, 9_999, "the stored value is untouched");
-        assert!(
-            wild.glass_opacity() >= 0.35,
-            "a panel at no opacity is a fault, not a look"
-        );
     }
 
     #[test]

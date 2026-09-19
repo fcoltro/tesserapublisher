@@ -4,8 +4,7 @@
 //! with Apply and Cancel is asking somebody to imagine what a setting does and
 //! then commit to the guess. Every setting here shows its effect on the document
 //! behind the window the moment it moves, which is the only reliable way to
-//! choose a blur strength or a panel opacity — those are judged by eye or not at
-//! all.
+//! choose a theme or a density — those are judged by eye or not at all.
 //!
 //! The cost of that is there is no Cancel, so there is a **Restore defaults**
 //! instead. It is a different promise and an honest one: not "forget what I just
@@ -17,14 +16,14 @@
 use egui::Ui;
 
 use crate::app::TesseraApp;
-use crate::prefs::{BLUR_LEAST, BLUR_MOST, Density, PanelSurface, Preferences, ThemeChoice};
+use crate::prefs::{Density, Preferences, ThemeChoice};
 use crate::theme::Theme;
 
 /// Which page of the window is showing.
 ///
 /// Pages rather than one long scroll: the settings divide cleanly by *when* a
 /// person goes looking for them, and a list that mixes "which units" with "how
-/// blurred" makes both harder to find.
+/// dense" makes both harder to find.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Page {
     #[default]
@@ -131,6 +130,21 @@ fn save(state: &mut TesseraApp) {
 }
 
 fn body(ui: &mut Ui, state: &mut TesseraApp) {
+    // The footer first, as a panel at the window's bottom, and the pages in
+    // what is left. Laid out top to bottom instead — a scroll area that
+    // takes all the room it is offered, with the buttons under it — the
+    // window grew by the footer's height every frame until the screen
+    // stopped it, and could not be made shorter.
+    egui::Panel::bottom("preferences-footer")
+        .frame(egui::Frame::NONE)
+        .show_separator_line(true)
+        .show(ui, |ui| footer(ui, state));
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE)
+        .show(ui, |ui| pages(ui, state));
+}
+
+fn pages(ui: &mut Ui, state: &mut TesseraApp) {
     ui.horizontal_top(|ui| {
         // The pages, down the side. A row of tabs across the top would wrap the
         // moment a fifth page arrived.
@@ -178,8 +192,10 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
                 });
         });
     });
+}
 
-    ui.separator();
+fn footer(ui: &mut Ui, state: &mut TesseraApp) {
+    ui.add_space(ui.spacing().item_spacing.y);
     ui.horizontal(|ui| {
         if ui
             .button("Restore defaults")
@@ -200,8 +216,8 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
 
 /// Put the showing page back to its defaults, and only that page.
 ///
-/// Per page rather than everything, because a person who wants their blur back
-/// to normal is not asking to lose their units.
+/// Per page rather than everything, because a person who wants their density
+/// back to normal is not asking to lose their units.
 fn restore(state: &mut TesseraApp) {
     let fresh = Preferences::default();
     match state.settings.page {
@@ -216,9 +232,6 @@ fn restore(state: &mut TesseraApp) {
         Page::Appearance => {
             state.prefs.theme = fresh.theme;
             state.prefs.density = fresh.density;
-            state.prefs.panel_surface = fresh.panel_surface;
-            state.prefs.blur = fresh.blur;
-            state.prefs.panel_opacity = fresh.panel_opacity;
         }
         Page::Workspaces => {
             // The arrangements Tessera ships with, and nothing anybody saved.
@@ -386,57 +399,7 @@ fn appearance(ui: &mut Ui, state: &mut TesseraApp) {
     state.prefs.density = density;
     note(
         ui,
-        "Moves the spacing and the height of every row. Type size stays where          it is: a density that scaled the text would be a zoom.",
-    );
-
-    heading(ui, "Panels");
-    let mut surface = state.prefs.panel_surface;
-    for choice in [PanelSurface::Solid, PanelSurface::Glass] {
-        if ui
-            .selectable_label(surface == choice, choice.label())
-            .on_hover_text(choice.purpose())
-            .clicked()
-        {
-            surface = choice;
-        }
-    }
-    state.prefs.panel_surface = surface;
-    note(ui, surface.purpose());
-
-    if !surface.is_glass() {
-        // The blur controls are not greyed out; they are gone. A disabled
-        // control is a thing to wonder about, and there is nothing to wonder
-        // about here — solid panels have no backdrop.
-        return;
-    }
-
-    heading(ui, "Glass");
-    let mut blur = state.prefs.blur.clamp(BLUR_LEAST, BLUR_MOST);
-    crate::view::panels::slider_field(ui, "Blur", |ui| {
-        ui.add(egui::Slider::new(&mut blur, BLUR_LEAST..=BLUR_MOST).show_value(false));
-    });
-    state.prefs.blur = blur;
-
-    let mut opacity = state.prefs.glass_opacity() * 100.0;
-    crate::view::panels::slider_field(ui, "Opacity", |ui| {
-        ui.add(
-            egui::Slider::new(&mut opacity, 35.0..=100.0)
-                .suffix("%")
-                .fixed_decimals(0),
-        );
-    });
-    state.prefs.panel_opacity = opacity / 100.0;
-
-    note(
-        ui,
-        "Blur and opacity trade against each other: a heavy blur reads well at \
-         low opacity, and a light one needs more tint to keep text legible. \
-         Judge them against the page behind this window.",
-    );
-    note(
-        ui,
-        "A stronger blur costs less to draw, not more \u{2014} the backdrop is \
-         rendered smaller.",
+        "Moves the spacing and the height of every row. Type size stays where it is: \n         a density that scaled the text would be a zoom.",
     );
 }
 
@@ -797,6 +760,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_window_keeps_the_height_it_was_given_rather_than_growing_to_the_screen() {
+        // A scroll area that takes all the room it is offered, with a footer
+        // under it, is a window that grows by the footer's height every
+        // frame until the screen stops it — which is what happened: the
+        // window opened as tall as the screen and could not be made shorter.
+        let mut state = TesseraApp::headless();
+        state.settings.open = true;
+        let ctx = egui::Context::default();
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1600.0, 1200.0),
+            )),
+            ..Default::default()
+        };
+        for _ in 0..30 {
+            let _ = ctx.run_ui(input(), |ui| show(&ui.ctx().clone(), &mut state));
+        }
+        // The window's area, found by name: egui's own id for it is not
+        // `Id::new(title)`, and the rect is what the test is about.
+        let rect = ctx
+            .memory(|m| {
+                m.areas()
+                    .visible_layer_ids()
+                    .into_iter()
+                    .find(|l| format!("{:?}", l.id).contains("Preferences"))
+                    .and_then(|l| m.area_rect(l.id))
+            })
+            .expect("the window is open");
+        assert!(
+            rect.height() < 600.0,
+            "the window grew to {} of a 1200 screen",
+            rect.height()
+        );
+        assert!(
+            rect.height() > 300.0,
+            "and did not collapse: {}",
+            rect.height()
+        );
+    }
+
+    #[test]
     fn every_page_has_a_name_and_an_icon() {
         // A column of icons with no names is a puzzle; names with no icons is a
         // list you have to read every time.
@@ -814,16 +819,21 @@ mod tests {
 
     #[test]
     fn restoring_defaults_touches_only_the_page_being_looked_at() {
-        // Somebody who wants their blur back is not asking to lose their units.
+        // Somebody who wants their density back is not asking to lose their
+        // units.
         let mut state = TesseraApp::headless();
         state.prefs.unit = tessera_geometry::Unit::Picas;
-        state.prefs.blur = 15;
+        state.prefs.density = Density::Compact;
         state.prefs.minimum_ppi = 72.0;
 
         state.settings.page = Page::Appearance;
         restore(&mut state);
 
-        assert_eq!(state.prefs.blur, Preferences::default().blur, "restored");
+        assert_eq!(
+            state.prefs.density,
+            Preferences::default().density,
+            "restored"
+        );
         assert_eq!(
             state.prefs.unit,
             tessera_geometry::Unit::Picas,
@@ -852,9 +862,6 @@ mod tests {
             theme: ThemeChoice::Light,
             density: Density::Compact,
             minimum_ppi: 72.0,
-            panel_surface: PanelSurface::Solid,
-            blur: 15,
-            panel_opacity: 0.4,
             snapping: false,
             typographers_quotes: false,
             dynamic_spelling: false,

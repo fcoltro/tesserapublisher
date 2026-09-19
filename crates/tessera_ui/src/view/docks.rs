@@ -89,17 +89,8 @@ fn side(ui: &mut Ui, state: &mut TesseraApp, region: Region) {
     let showing_panel = panel
         .default_size(WIDTH + tab_strip_width())
         .min_size(NARROWEST + tab_strip_width())
-        .frame(crate::view::glass::panel_frame(state))
+        .frame(crate::view::panel_frame())
         .show(ui, |ui| {
-            crate::view::glass::behind(
-                ui,
-                state,
-                match region {
-                    Region::Left => crate::view::glass::Edge::Right,
-                    Region::Right => crate::view::glass::Edge::Left,
-                },
-            );
-
             // **Below the stacks, not above them.** The strip appears only
             // while something is being dragged, so drawing it first meant it
             // pushed everything down by its own height the moment a drag

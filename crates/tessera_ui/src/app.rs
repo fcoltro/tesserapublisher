@@ -307,20 +307,6 @@ pub struct TesseraApp {
     /// window cannot be opened from inside the tab that raised it.
     pub closing: Option<DocumentKey>,
 
-    /// The interface's own ground, and the frosted copy the glass shows.
-    ///
-    /// **Not the document.** Panels frost the ground Tessera draws behind its
-    /// own chrome; the page stays opaque and is never seen through, because
-    /// colour is judged against it.
-    pub ambient: crate::view::ambient::Ambient,
-
-    /// The two ambient textures for this frame, once they exist.
-    ///
-    /// `None` before the first frame, and a panel that finds `None` paints
-    /// itself solid — a missing ground must give a working interface, not a
-    /// transparent one.
-    pub ground: Option<(egui::TextureId, egui::TextureId)>,
-
     /// The lines the object being dragged is currently settled on, for the
     /// indicator. Cleared when the gesture ends.
     pub snapped_to: Option<(Option<f64>, Option<f64>)>,
@@ -513,8 +499,6 @@ impl TesseraApp {
             print: crate::view::print_dialog::PrintWindow::default(),
             closing: None,
             naming_workspace: None,
-            ambient: crate::view::ambient::Ambient::default(),
-            ground: None,
             snapped_to: None,
             loading_thread: None,
             picked_anchor: None,
