@@ -856,31 +856,53 @@ pub fn paint_rotated(
     degrees: f32,
     weight: f32,
 ) {
+    painter.extend(rotated_shapes(
+        rect,
+        icon,
+        color,
+        degrees,
+        weight,
+        painter.ctx().pixels_per_point(),
+    ));
+}
+
+/// The shapes [`paint_rotated`] paints, as a list — for a caller that draws
+/// them some other way than through a painter, such as the pointer, which
+/// is tessellated and drawn through a blend egui does not have.
+pub fn rotated_shapes(
+    rect: Rect,
+    icon: Icon,
+    color: Color32,
+    degrees: f32,
+    weight: f32,
+    pixels_per_point: f32,
+) -> Vec<Shape> {
     let side = rect.width().min(rect.height());
     let scale = side / GRID;
     let origin = rect.center() - egui::vec2(side / 2.0, side / 2.0);
     let stroke = Stroke::new(STROKE * scale * weight, color);
     let (sin, cos) = degrees.to_radians().sin_cos();
     let pivot = rect.center();
+    let mut shapes = Vec::new();
 
     // Flatten in grid units, then scale — so the tolerance means the same
     // thing regardless of how large the icon is drawn.
-    let tolerance = 0.1 / f64::from((scale * painter.ctx().pixels_per_point()).max(f32::EPSILON));
+    let tolerance = 0.1 / f64::from((scale * pixels_per_point).max(f32::EPSILON));
 
     for path in icon.geometry() {
         let mut run: Vec<Pos2> = Vec::new();
-        let flush = |run: &mut Vec<Pos2>, closed: bool| {
+        let flush = |shapes: &mut Vec<Shape>, run: &mut Vec<Pos2>, closed: bool| {
             if run.len() > 1 {
                 if closed {
-                    painter.add(Shape::closed_line(std::mem::take(run), stroke));
+                    shapes.push(Shape::closed_line(std::mem::take(run), stroke));
                 } else {
                     let first = run[0];
                     let last = *run.last().unwrap();
-                    painter.add(Shape::line(std::mem::take(run), stroke));
+                    shapes.push(Shape::line(std::mem::take(run), stroke));
                     // egui paths have butt caps; add the round caps the icon
                     // geometry was designed for, using the same coverage AA.
-                    painter.circle_filled(first, stroke.width / 2.0, color);
-                    painter.circle_filled(last, stroke.width / 2.0, color);
+                    shapes.push(Shape::circle_filled(first, stroke.width / 2.0, color));
+                    shapes.push(Shape::circle_filled(last, stroke.width / 2.0, color));
                 }
             } else {
                 run.clear();
@@ -895,7 +917,7 @@ pub fn paint_rotated(
             };
             match el {
                 PathEl::MoveTo(p) => {
-                    flush(&mut run, false);
+                    flush(&mut shapes, &mut run, false);
                     run.push(at(p));
                 }
                 PathEl::LineTo(p) => run.push(at(p)),
@@ -903,14 +925,15 @@ pub fn paint_rotated(
                     if run.first() == run.last() {
                         run.pop();
                     }
-                    flush(&mut run, true);
+                    flush(&mut shapes, &mut run, true);
                 }
                 // `flatten` emits only MoveTo, LineTo and ClosePath.
                 PathEl::QuadTo(..) | PathEl::CurveTo(..) => {}
             }
         });
-        flush(&mut run, false);
+        flush(&mut shapes, &mut run, false);
     }
+    shapes
 }
 
 /// Every icon, for exhaustive tests and for building a palette.

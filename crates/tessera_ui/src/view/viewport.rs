@@ -1966,15 +1966,19 @@ fn show_cursor(ui: &Ui, response: &egui::Response, rect: Rect, state: &TesseraAp
 
     ui.ctx().set_cursor_icon(egui::CursorIcon::None);
     let cursor = canvas_cursor(ui, rect, state, pos);
-    // Inverted against the background: a page is white, the pasteboard is not,
-    // and those are the only two things the cursor is ever drawn on. **Any**
-    // page — asking only the first was right while there was only one, and
-    // turned the cursor white on the white page of every spread below it.
-    let on_light = state
-        .active()
-        .document()
-        .on_a_page(doc_pos(state, rect, pos));
-    crate::cursor::paint(&ui.painter_at(rect), pos, cursor, on_light);
+    // The opposite of what is under it, pixel by pixel: the mesh goes through
+    // a blend that inverts the screen, so it is black on the page, white on
+    // the pasteboard, and the other colour over anything drawn on either.
+    // Added after every overlay, so it is over the handles, not under them.
+    let mesh = crate::cursor::mesh(pos, cursor, ui.ctx().pixels_per_point());
+    ui.painter_at(rect)
+        .add(egui_wgpu::Callback::new_paint_callback(
+            rect,
+            crate::view::invert_host::InvertCallback {
+                mesh,
+                viewport: rect,
+            },
+        ));
 }
 
 /// The cursor for a grip: the scale arrow turned along the handle's own
@@ -3319,23 +3323,31 @@ fn draw_overlays(
             ));
         }
 
-        // Against whatever is actually behind it: the frame's own fill over the
-        // page. A text frame's fill is clear by default, so the usual answer is
-        // the white page — and a caret in a black box has to be the other one,
-        // which is the case this exists for.
+        // The opposite of whatever is actually under it: the frame's own fill
+        // over every filled object beneath, over the page. A text frame's
+        // fill is clear by default, so on a white page the caret is black; in
+        // a black box it is white; over a red box it is cyan. The first cut
+        // looked at the frame's fill alone and drew a black caret in a text
+        // frame sitting over a black rectangle.
         //
         // Worked out once, because the composition's underline has to be
         // readable on the same ground the caret does.
         let readable = {
-            let [r, g, b, a] = frame.fill.representative().to_rgb_f32();
-            crate::theme::readable_on(crate::theme::composite(
-                egui::Color32::from_rgba_unmultiplied(
-                    (r * 255.0) as u8,
-                    (g * 255.0) as u8,
-                    (b * 255.0) as u8,
-                    (a * 255.0) as u8,
-                ),
-                egui::Color32::WHITE,
+            let (x, y) = geometry
+                .caret
+                .as_ref()
+                .map_or((bounds.width / 2.0, bounds.height / 2.0), |c| {
+                    ((c.x0 + c.x1) / 2.0, (c.y0 + c.y1) / 2.0)
+                });
+            let at = frame.transform.apply(DocPoint {
+                x: bounds.x + x,
+                y: bounds.y + y,
+            });
+            let [r, g, b] = state.active().document().colour_beneath(caret.frame, at);
+            crate::theme::opposite_of(Color32::from_rgb(
+                (r * 255.0).round() as u8,
+                (g * 255.0).round() as u8,
+                (b * 255.0).round() as u8,
             ))
         };
 

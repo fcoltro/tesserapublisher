@@ -2731,6 +2731,48 @@ impl Document {
         })
     }
 
+    /// What is painted at `point`, looking down from `frame`: the frame's
+    /// own fill, over every filled frame beneath it in paint order that the
+    /// point lands on, over white paper. Opaque, as red, green and blue in
+    /// 0..1.
+    ///
+    /// For the caret, which is drawn over this and has to be the other
+    /// colour. The frame's own fill comes first because the caret is inside
+    /// it; what is above the frame is not under the caret.
+    pub fn colour_beneath(&self, frame: FrameId, point: DocPoint) -> [f32; 3] {
+        let order = self.paint_order();
+        let top = order
+            .iter()
+            .position(|id| *id == frame)
+            .map_or(order.len(), |i| i + 1);
+        // Top down, stopping at the first opaque fill: nothing under it shows.
+        let mut seen: Vec<[f32; 4]> = Vec::new();
+        for id in order[..top].iter().rev() {
+            let Some(f) = self.frames.get(*id) else {
+                continue;
+            };
+            if !is_filled(&f.kind) || !hits(f, point, 0.0) {
+                continue;
+            }
+            let [r, g, b, a] = self.resolve_colour(&f.fill.representative()).to_rgb_f32();
+            if a <= 0.0 {
+                continue;
+            }
+            seen.push([r, g, b, a]);
+            if a >= 1.0 {
+                break;
+            }
+        }
+        // Then composited bottom up, from the paper.
+        let mut out = [1.0f32; 3];
+        for [r, g, b, a] in seen.into_iter().rev() {
+            for (o, c) in out.iter_mut().zip([r, g, b]) {
+                *o = c * a + *o * (1.0 - a);
+            }
+        }
+        out
+    }
+
     /// The frontmost frame `point` lands on, or `None`.
     ///
     /// `tolerance`, in document units, is how far outside a shape's edge still
@@ -3468,6 +3510,73 @@ mod tests {
         let before = doc.revision();
         doc.add_frame(layer, rect_frame());
         assert!(doc.revision() > before);
+    }
+
+    #[test]
+    fn the_colour_beneath_a_frame_is_its_fill_over_what_is_under_it_over_paper() {
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("default layer");
+        let inside = DocPoint { x: 50.0, y: 40.0 };
+        let outside = DocPoint { x: 500.0, y: 400.0 };
+
+        // A clear text frame alone: the paper.
+        let story = doc.add_story(Story::default());
+        let clear = Frame {
+            kind: FrameKind::text(story),
+            fill: Paint::Solid(Color::Rgb {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 0.0,
+            }),
+            ..rect_frame()
+        };
+        let text = doc.add_frame(layer, clear.clone());
+        assert_eq!(doc.colour_beneath(text, inside), [1.0, 1.0, 1.0]);
+
+        // A red box under it: red shows through the clear fill.
+        let red = Frame {
+            fill: Paint::Solid(Color::Rgb {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            }),
+            ..rect_frame()
+        };
+        let box_id = doc.add_frame(layer, red);
+        {
+            // The box was added on top; put the text frame back over it.
+            let frames = &mut doc.layers.get_mut(layer).expect("layer").frames;
+            frames.retain(|f| *f != text);
+            frames.push(text);
+        }
+        assert_eq!(doc.colour_beneath(text, inside), [1.0, 0.0, 0.0]);
+        assert_eq!(
+            doc.colour_beneath(text, outside),
+            [1.0, 1.0, 1.0],
+            "off the box, the paper"
+        );
+
+        // A black box *over* the text frame is not under the caret.
+        let black = doc.add_frame(layer, rect_frame());
+        assert_eq!(doc.colour_beneath(text, inside), [1.0, 0.0, 0.0]);
+        assert_eq!(
+            doc.colour_beneath(black, inside),
+            [0.0, 0.0, 0.0],
+            "looking down from the black box, it is black"
+        );
+
+        // The frame's own half-clear fill is composited over the box.
+        let frame = doc.frames.get_mut(text).expect("text frame");
+        frame.fill = Paint::Solid(Color::Rgb {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: 0.5,
+        });
+        let _ = box_id;
+        assert_eq!(doc.colour_beneath(text, inside), [1.0, 0.5, 0.5]);
     }
 
     #[test]

@@ -71,6 +71,7 @@ fn main() -> eframe::Result<()> {
                 .as_ref()
                 .ok_or("Tessera needs the wgpu backend, which failed to start")?;
             tessera_ui::view::vello_host::install(render_state)?;
+            tessera_ui::view::invert_host::install(render_state)?;
 
             let mut app = TesseraApp::headless();
             app.load_preferences();

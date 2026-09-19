@@ -247,6 +247,19 @@ pub fn readable_on(behind: Color32) -> Color32 {
     }
 }
 
+/// The colour a caret takes over `ground`: its opposite, so that it is the
+/// one thing on the page that cannot be the colour of what it is on. A mid
+/// grey's opposite is a mid grey, so when the inverse has no contrast the
+/// caret falls back to black or white, whichever reads.
+pub fn opposite_of(ground: Color32) -> Color32 {
+    let inverse = Color32::from_rgb(255 - ground.r(), 255 - ground.g(), 255 - ground.b());
+    if contrast_ratio(inverse, ground) >= 3.0 {
+        inverse
+    } else {
+        readable_on(ground)
+    }
+}
+
 /// `over` composited onto `under`, which is how to find out what is really
 /// behind something drawn on a page.
 ///
@@ -1027,6 +1040,31 @@ mod tests {
     #[test]
     fn a_caret_on_a_black_box_is_light() {
         assert_eq!(readable_on(Color32::BLACK), Theme::CURSOR_ON_DARK);
+    }
+
+    #[test]
+    fn the_caret_is_the_opposite_of_what_it_is_on() {
+        assert_eq!(opposite_of(Color32::WHITE), Color32::BLACK);
+        assert_eq!(opposite_of(Color32::BLACK), Color32::WHITE);
+        assert_eq!(
+            opposite_of(Color32::from_rgb(255, 0, 0)),
+            Color32::from_rgb(0, 255, 255),
+            "red's opposite is cyan"
+        );
+        // A mid grey's inverse is a mid grey: the caret would vanish, so it
+        // takes whichever of black and white reads instead.
+        let grey = Color32::from_rgb(0x80, 0x80, 0x80);
+        assert_eq!(opposite_of(grey), readable_on(grey));
+        for ground in [
+            Color32::WHITE,
+            Color32::BLACK,
+            grey,
+            Color32::from_rgb(0x70, 0x90, 0x80),
+            Theme::accent(),
+        ] {
+            let ratio = contrast_ratio(opposite_of(ground), ground);
+            assert!(ratio >= 3.0, "{ground:?} got a ratio of only {ratio:.2}");
+        }
     }
 
     #[test]

@@ -10,8 +10,14 @@
 //! canvas. That buys a cursor that says exactly what a drag will do, turns to
 //! follow a rotated frame's handles, and cannot silently change meaning on
 //! another operating system.
+//!
+//! And it is drawn in the **opposite of whatever it is over**: the mesh goes
+//! through [`crate::view::invert_host`], a blend that makes every pixel one
+//! minus what was there. A first cut chose black on the page and white on the
+//! pasteboard, and vanished over a black rectangle on the page.
 
-use egui::{Painter, Pos2, Rect};
+use egui::epaint::{Mesh, TessellationOptions, Tessellator};
+use egui::{Color32, Pos2, Rect};
 
 use crate::icons::{self, Icon};
 use crate::theme::Theme;
@@ -58,26 +64,31 @@ fn placement(at: Pos2, cursor: Cursor) -> Rect {
     Rect::from_center_size(at - turned, egui::vec2(side, side))
 }
 
-/// Paint `cursor` with its hotspot on `at`, in Lucide's own line weight.
+/// `cursor` with its hotspot on `at`, in Lucide's own line weight, as the
+/// mesh the inverting pass draws.
 ///
-/// `on_light` inverts it. The canvas has exactly two backgrounds — the white
-/// page and the dark pasteboard — so the contrast that a casing stroke used to
-/// buy is had by choosing a colour instead, and the cursor stays the same
-/// single-weight line drawing as the icon in the toolbar.
-pub fn paint(painter: &Painter, at: Pos2, cursor: Cursor, on_light: bool) {
-    let color = if on_light {
-        Theme::CURSOR_ON_LIGHT
-    } else {
-        Theme::CURSOR_ON_DARK
-    };
-    icons::paint_rotated(
-        painter,
+/// White at full coverage: through the blend, white *is* "the opposite", and
+/// the feathered edge's alpha is how much of the pixel turns over.
+pub fn mesh(at: Pos2, cursor: Cursor, pixels_per_point: f32) -> Mesh {
+    let shapes = icons::rotated_shapes(
         placement(at, cursor),
         cursor.icon,
-        color,
+        Color32::WHITE,
         cursor.rotation,
         1.0,
+        pixels_per_point,
     );
+    let mut tessellator = Tessellator::new(
+        pixels_per_point,
+        TessellationOptions::default(),
+        [1, 1],
+        Vec::new(),
+    );
+    let mut mesh = Mesh::default();
+    for shape in shapes {
+        tessellator.tessellate_shape(shape, &mut mesh);
+    }
+    mesh
 }
 
 #[cfg(test)]
@@ -100,6 +111,25 @@ mod tests {
                 offset.x * cos - offset.y * sin,
                 offset.x * sin + offset.y * cos,
             )
+    }
+
+    #[test]
+    fn the_mesh_is_white_triangles_around_the_pointer() {
+        // What the inverting pass needs: white so the blend makes the
+        // opposite, and triangles where the pointer is.
+        let at = Pos2::new(100.0, 50.0);
+        let mesh = mesh(at, Cursor::new(Icon::Select), 1.0);
+        assert!(!mesh.is_empty());
+        assert_eq!(mesh.indices.len() % 3, 0);
+        assert!(
+            mesh.vertices
+                .iter()
+                .all(|v| v.color == Color32::WHITE || v.color.a() < 255),
+            "solid vertices are white; only the feathered edge fades"
+        );
+        let bounds = mesh.calc_bounds();
+        assert!(bounds.contains(at), "the hotspot is inside the drawing");
+        assert!(bounds.width() <= Theme::CURSOR_SIZE * 1.5);
     }
 
     #[test]
