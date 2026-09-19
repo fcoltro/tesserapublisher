@@ -68,6 +68,12 @@ impl Console {
         self.scroll_to_end = true;
     }
 
+    /// The last line grew — a model's words arriving — so the transcript
+    /// keeps its end in view.
+    pub fn touched(&mut self) {
+        self.scroll_to_end = true;
+    }
+
     /// A prompt the person sent, for the driver to take.
     pub fn take_prompt(&mut self) -> Option<String> {
         if self.outbox.is_empty() {

@@ -1,4 +1,5 @@
-//! The console's way to a model: one POST, with the answer read back whole.
+//! The console's way to a model: one POST, with the answer read back as it
+//! arrives — or whole, for a caller that asks for that.
 //!
 //! Here rather than in a library for the reason `releases.rs` is: the
 //! decisions about what to send and what the answer means live in
@@ -40,5 +41,41 @@ impl Transport for Http {
             .limit(MOST)
             .read_to_string()
             .map_err(|e| format!("could not read the model's reply: {e}"))
+    }
+
+    fn post_streaming(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: &str,
+        chunk: &mut dyn FnMut(&[u8]),
+    ) -> Result<bool, String> {
+        use std::io::Read as _;
+        let agent = ureq::Agent::new_with_config(
+            ureq::Agent::config_builder()
+                .timeout_global(Some(PATIENCE))
+                .http_status_as_error(false)
+                .build(),
+        );
+        let mut request = agent.post(url).header("User-Agent", "Tessera-Publisher");
+        for (name, value) in headers {
+            request = request.header(name.as_str(), value.as_str());
+        }
+        let response = request
+            .send(body)
+            .map_err(|e| format!("could not reach {url}: {e}"))?;
+        let mut body = response.into_body();
+        let mut reader = body.with_config().limit(MOST).reader();
+        let mut buffer = [0u8; 4096];
+        loop {
+            let read = reader
+                .read(&mut buffer)
+                .map_err(|e| format!("could not read the model's reply: {e}"))?;
+            if read == 0 {
+                break;
+            }
+            chunk(&buffer[..read]);
+        }
+        Ok(true)
     }
 }

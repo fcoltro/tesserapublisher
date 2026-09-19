@@ -31,6 +31,7 @@ pub mod dialogs;
 pub mod live;
 pub mod more;
 pub mod shapes;
+pub mod streaming;
 pub mod tools;
 
 /// The protocol revision this speaks. A client offering another is answered

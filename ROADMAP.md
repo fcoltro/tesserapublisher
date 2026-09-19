@@ -2827,9 +2827,27 @@ system prompt is set once and the selection is not.
   local model on this machine. The loop is proved against canned replies
   in both wire shapes; the first real turn is owed, and every session of
   real use has found something.
-- [ ] Not built: streaming (a reply appears whole), the key in the OS
-  keychain, a picture of the page sent to a vision model rather than a
-  path it must read, a transcript that survives a restart.
+- [x] **Built 2026-09-19, the four that were owed.** *Streaming*:
+  `tessera_bridge::streaming` reads server-sent events from pieces of any
+  size (a chunk may end mid-line) and builds the same `Step` the
+  whole-body path does — text deltas joined, a tool call's arguments
+  assembled from JSON fragments — for both wire shapes; `Transport` gained
+  `post_streaming`, which the ureq transport implements and a canned one
+  declines, so the session posts whole when it cannot stream and reads a
+  one-JSON-body answer to a stream request (an error, or a server that
+  ignores the flag) as a whole reply. The transcript's last line grows as
+  the model talks (`Event::Saying`) and is replaced by the whole when it
+  has finished. *The key in the keychain*: `tessera_ui::keychain` puts it
+  in Windows' Credential Manager or macOS's Keychain through the `keyring`
+  crate and the preferences file stops carrying it once the keychain has
+  taken it; Linux keeps the file, since its persistent store is a D-Bus
+  daemon a headless box may not run. *The page to a vision model*: a
+  tool result may carry an `Image`; `render_page`'s PNG (up to four
+  megabytes) rides inside Anthropic's tool result as an image block and
+  follows as the user showing it in the chat-completions shape. *The
+  transcript*: saved beside the preferences at quit, its last 400 lines,
+  read back at launch with a note that the model starts afresh. All by
+  test; **the acceptance sentence is still unperformed** — no key here.
 
 ---
 

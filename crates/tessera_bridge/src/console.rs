@@ -75,6 +75,9 @@ struct Running {
     happened: Receiver<Happened>,
     pending: Receiver<Pending>,
     cancel: Arc<AtomicBool>,
+    /// The transcript line the model's words are arriving into, while
+    /// they are.
+    saying: Option<usize>,
 }
 
 pub struct Driver {
@@ -147,7 +150,31 @@ impl Driver {
             let mut finished = None;
             while let Ok(happened) = running.happened.try_recv() {
                 match happened {
-                    Happened::Event(Event::Said(text)) => state.console.heard(Line::Model(text)),
+                    // Words as they come go into a line that grows; the
+                    // whole, when it comes, replaces it exactly.
+                    Happened::Event(Event::Saying(piece)) => match running.saying {
+                        Some(index) => {
+                            if let Some(Line::Model(text)) = state.console.transcript.get_mut(index)
+                            {
+                                text.push_str(&piece);
+                                state.console.touched();
+                            }
+                        }
+                        None => {
+                            state.console.heard(Line::Model(piece));
+                            running.saying = Some(state.console.transcript.len() - 1);
+                        }
+                    },
+                    Happened::Event(Event::Said(text)) => match running.saying.take() {
+                        Some(index) => {
+                            if let Some(Line::Model(shown)) =
+                                state.console.transcript.get_mut(index)
+                            {
+                                *shown = text;
+                            }
+                        }
+                        None => state.console.heard(Line::Model(text)),
+                    },
                     Happened::Event(Event::Ran {
                         call,
                         result,
@@ -242,6 +269,7 @@ impl Driver {
             happened,
             pending,
             cancel,
+            saying: None,
         });
         state.console.busy = true;
     }

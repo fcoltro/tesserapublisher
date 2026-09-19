@@ -17,9 +17,25 @@
 
 use serde_json::{Value, json};
 
-/// Something that can POST a JSON body and return the JSON reply.
+/// Something that can POST a JSON body and return the JSON reply — and,
+/// when it can, hand the reply over as it arrives.
 pub trait Transport: Send {
     fn post(&self, url: &str, headers: &[(String, String)], body: &str) -> Result<String, String>;
+
+    /// POST and hand every piece of the response body to `chunk` as it
+    /// comes, for a reply sent as server-sent events. `Ok(false)` says
+    /// this transport cannot stream, and the session posts whole instead.
+    /// The default is exactly that, so a transport of canned replies need
+    /// not pretend.
+    fn post_streaming(
+        &self,
+        _url: &str,
+        _headers: &[(String, String)],
+        _body: &str,
+        _chunk: &mut dyn FnMut(&[u8]),
+    ) -> Result<bool, String> {
+        Ok(false)
+    }
 }
 
 /// Where the model is, and how to be let in.
@@ -239,12 +255,58 @@ impl Session {
     }
 
     /// One round trip: send everything so far, read the reply, remember it.
-    pub fn step(&mut self) -> Result<Step, String> {
-        let (url, headers, body) = match &self.provider {
+    /// The words are handed to `said` as they arrive when the transport
+    /// streams; whole, at the end, when it does not.
+    pub fn step(&mut self, said: &mut dyn FnMut(&str)) -> Result<Step, String> {
+        let (url, headers, mut body) = match &self.provider {
             Provider::Anthropic { .. } => anthropic::request(self),
             Provider::OpenAiCompatible { .. } => openai::request(self),
         };
-        let reply = self.transport.post(&url, &headers, &body.to_string())?;
+        // First as a stream, if the wire can: the same step, built from
+        // the pieces, and the transcript filling while the model talks.
+        body["stream"] = Value::Bool(true);
+        let mut sse = crate::streaming::Sse::default();
+        let mut accumulate: Box<dyn crate::streaming::Accumulate> = match &self.provider {
+            Provider::Anthropic { .. } => Box::new(crate::streaming::Anthropic::default()),
+            Provider::OpenAiCompatible { .. } => Box::new(crate::streaming::OpenAi::default()),
+        };
+        let mut failed: Option<String> = None;
+        let mut events = 0usize;
+        let mut whole = Vec::new();
+        let streamed =
+            self.transport
+                .post_streaming(&url, &headers, &body.to_string(), &mut |chunk| {
+                    whole.extend_from_slice(chunk);
+                    if failed.is_some() {
+                        return;
+                    }
+                    for data in sse.push(chunk) {
+                        events += 1;
+                        if let Err(e) = accumulate.feed(&data, said) {
+                            failed = Some(e);
+                            break;
+                        }
+                    }
+                })?;
+        let reply: String = if streamed {
+            if events > 0 && failed.is_none() {
+                let step = accumulate.finish()?;
+                self.remember(&step);
+                return Ok(step);
+            }
+            // Not a stream of events after all: a provider that answers a
+            // stream request with one JSON body — an error, usually, or a
+            // server that ignores the flag — says what it has to say in
+            // it, and it is read as a whole reply.
+            match (failed, String::from_utf8(whole)) {
+                (_, Ok(text)) if serde_json::from_str::<Value>(&text).is_ok() => text,
+                (Some(e), _) => return Err(e),
+                (None, _) => return Err("the model's reply was empty".into()),
+            }
+        } else {
+            body["stream"] = Value::Bool(false);
+            self.transport.post(&url, &headers, &body.to_string())?
+        };
         let reply: Value = serde_json::from_str(&reply)
             .map_err(|e| format!("the model's reply was not JSON: {e}: {}", excerpt(&reply)))?;
         if let Some(error) = reply.get("error") {
@@ -258,7 +320,19 @@ impl Session {
             Provider::Anthropic { .. } => anthropic::reply(&reply)?,
             Provider::OpenAiCompatible { .. } => openai::reply(&reply)?,
         };
-        match &step {
+        let text = match &step {
+            Step::Reply(text) | Step::Calls { text, .. } => text.clone(),
+        };
+        if !text.is_empty() {
+            said(&text);
+        }
+        self.remember(&step);
+        Ok(step)
+    }
+
+    /// What the model said, into the conversation.
+    fn remember(&mut self, step: &Step) {
+        match step {
             Step::Reply(text) => self.messages.push(Message::Assistant {
                 text: text.clone(),
                 calls: Vec::new(),
@@ -268,7 +342,6 @@ impl Session {
                 calls: calls.clone(),
             }),
         }
-        Ok(step)
     }
 
     /// Run a whole turn: ask, then step and run tools until the model has
@@ -286,7 +359,8 @@ impl Session {
             if self.cancelled() {
                 return Err("stopped".into());
             }
-            match self.step()? {
+            let step = self.step(&mut |piece| heard(&Event::Saying(piece.to_owned())))?;
+            match step {
                 Step::Reply(reply) => {
                     if self.cancelled() {
                         return Err("stopped".into());
@@ -328,6 +402,9 @@ impl Session {
 /// Something that happened during a turn, for whoever is watching.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
+    /// A piece of what the model is saying, as it arrives; the whole of
+    /// it follows as [`Event::Said`] when the model has finished.
+    Saying(String),
     Said(String),
     Ran {
         call: ToolCall,
@@ -644,6 +721,159 @@ mod tests {
         crate::tools::list()
     }
 
+    /// A transport that streams canned SSE bodies, three bytes at a time,
+    /// and refuses to post whole — so a test proves the stream path alone.
+    struct Streamed {
+        bodies: Mutex<Vec<String>>,
+        asked: Arc<Mutex<Vec<Asked>>>,
+    }
+
+    impl Transport for Streamed {
+        fn post(&self, _: &str, _: &[(String, String)], _: &str) -> Result<String, String> {
+            Err("this transport only streams".into())
+        }
+
+        fn post_streaming(
+            &self,
+            url: &str,
+            headers: &[(String, String)],
+            body: &str,
+            chunk: &mut dyn FnMut(&[u8]),
+        ) -> Result<bool, String> {
+            self.asked.lock().unwrap().push((
+                url.to_owned(),
+                headers.to_vec(),
+                serde_json::from_str(body).unwrap(),
+            ));
+            let mut bodies = self.bodies.lock().unwrap();
+            if bodies.is_empty() {
+                return Err("no more canned streams".into());
+            }
+            let body = bodies.remove(0);
+            for piece in body.as_bytes().chunks(3) {
+                chunk(piece);
+            }
+            Ok(true)
+        }
+    }
+
+    fn sse(events: &[&str]) -> String {
+        events
+            .iter()
+            .map(|e| format!("data: {e}\n\n"))
+            .collect::<String>()
+    }
+
+    #[test]
+    fn a_streamed_turn_says_its_words_as_they_come_and_runs_the_tools_at_the_end() {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let transport = Box::new(Streamed {
+            bodies: Mutex::new(vec![
+                sse(&[
+                    r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+                    r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Adding "}}"#,
+                    r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"it."}}"#,
+                    r#"{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"add_rectangle","input":{}}}"#,
+                    r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"x\":0,\"y\":0,\"width\":10,\"height\":10}"}}"#,
+                    r#"{"type":"message_stop"}"#,
+                ]),
+                sse(&[
+                    r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Done: "}}"#,
+                    r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"one rectangle."}}"#,
+                    r#"{"type":"message_stop"}"#,
+                ]),
+            ]),
+            asked: asked.clone(),
+        });
+        let provider = Provider::from_settings("anthropic", "sk-test", "claude-x", "").unwrap();
+        let mut session = Session::new(provider, "sys".into(), tools(), transport);
+        let state = RefCell::new(tessera_ui::TesseraApp::headless());
+        let events = RefCell::new(Vec::new());
+        let reply = session
+            .turn(
+                "Add a rectangle",
+                |call| {
+                    let mut state = state.borrow_mut();
+                    match crate::tools::call(&mut state, &call.name, &call.arguments) {
+                        Ok(v) => Outcome::text(v.to_string(), false),
+                        Err(crate::Failure::Refused(m)) => Outcome::text(m, true),
+                        Err(crate::Failure::NoSuchTool) => Outcome::text("no such tool", true),
+                    }
+                },
+                |e| events.borrow_mut().push(e.clone()),
+            )
+            .unwrap();
+        assert_eq!(reply, "Done: one rectangle.");
+        assert_eq!(
+            state.borrow().active().document().frames.len(),
+            1,
+            "the tool ran"
+        );
+        let events = events.borrow();
+        // The pieces came before the whole, in order, and the whole is
+        // their sum.
+        let pieces: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Saying(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pieces, vec!["Adding ", "it.", "Done: ", "one rectangle."]);
+        assert!(
+            matches!(events[0], Event::Saying(_)),
+            "words before anything else"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Said(s) if s == "Adding it."))
+        );
+        assert!(events.iter().any(|e| matches!(e, Event::Ran { .. })));
+        assert!(matches!(events.last(), Some(Event::Said(s)) if s == "Done: one rectangle."));
+        // And the request asked for a stream.
+        assert_eq!(asked.lock().unwrap()[0].2["stream"], Value::Bool(true));
+    }
+
+    #[test]
+    fn a_stream_answered_with_one_error_body_is_the_error() {
+        let transport = Box::new(Streamed {
+            bodies: Mutex::new(vec![
+                r#"{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#.into(),
+            ]),
+            asked: Arc::new(Mutex::new(Vec::new())),
+        });
+        let provider = Provider::from_settings("anthropic", "sk-bad", "claude-x", "").unwrap();
+        let mut session = Session::new(provider, "sys".into(), tools(), transport);
+        let err = session
+            .turn("hi", |_| Outcome::text("", false), |_| {})
+            .unwrap_err();
+        assert!(err.contains("invalid x-api-key"), "{err}");
+    }
+
+    #[test]
+    fn a_transport_that_cannot_stream_is_posted_whole_and_still_says_its_words() {
+        let (transport, asked) = canned(&[
+            json!({ "content": [{ "type": "text", "text": "Whole." }], "stop_reason": "end_turn" }),
+        ]);
+        let provider = Provider::from_settings("anthropic", "sk-test", "claude-x", "").unwrap();
+        let mut session = Session::new(provider, "sys".into(), tools(), transport);
+        let events = RefCell::new(Vec::new());
+        session
+            .turn(
+                "hi",
+                |_| Outcome::text("", false),
+                |e| events.borrow_mut().push(e.clone()),
+            )
+            .unwrap();
+        assert_eq!(
+            *events.borrow(),
+            vec![Event::Saying("Whole.".into()), Event::Said("Whole.".into())],
+            "the words arrive once, whole, then are said"
+        );
+        assert_eq!(asked.lock().unwrap()[0].2["stream"], Value::Bool(false));
+    }
+
     #[test]
     fn base64_matches_the_standard_vectors() {
         assert_eq!(base64(b""), "");
@@ -751,7 +981,14 @@ mod tests {
             .unwrap();
         assert_eq!(reply, "Done: one rectangle.");
         assert_eq!(state.borrow().active().document().frames.len(), 1);
-        let events = events.borrow();
+        // The words, whole, then the tool; the pieces that precede each
+        // whole are the stream's business and tested with it.
+        let events: Vec<Event> = events
+            .borrow()
+            .iter()
+            .filter(|e| !matches!(e, Event::Saying(_)))
+            .cloned()
+            .collect();
         assert!(matches!(&events[0], Event::Said(t) if t == "Adding it."));
         assert!(
             matches!(&events[1], Event::Ran { call, is_error: false, .. } if call.name == "add_rectangle")
