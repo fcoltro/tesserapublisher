@@ -89,7 +89,9 @@ mod profile_bytes {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
         let hex = String::deserialize(deserializer)?;
-        if hex.len() % 2 != 0 {
+        // `is_ascii` first: the byte slices below land inside a character
+        // otherwise, and a corrupt document must be refused, not a crash.
+        if !hex.is_ascii() || hex.len() % 2 != 0 {
             return Err(serde::de::Error::custom(
                 "an ICC profile must be an even number of hex digits",
             ));
@@ -107,6 +109,20 @@ mod profile_bytes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_profile_that_is_not_hex_is_refused_rather_than_crashing() {
+        // Even-length but not ASCII: the byte slices used to land inside a
+        // character and panic while opening the document.
+        for text in ["aéa", "éé", "zz", "abc"] {
+            let json =
+                format!(r#"{{"description":"x","profile":"{text}","rendering":"Perceptual"}}"#);
+            assert!(
+                serde_json::from_str::<OutputIntent>(&json).is_err(),
+                "{text}"
+            );
+        }
+    }
 
     #[test]
     fn an_output_intent_carries_its_profile_rather_than_a_path_to_one() {

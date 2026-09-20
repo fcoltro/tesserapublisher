@@ -1097,9 +1097,11 @@ fn percent_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
+        // `get`, not a slice: a `%` followed by a multi-byte character would
+        // put the range inside it, and a link path is not worth a crash.
         if bytes[i] == b'%'
-            && i + 2 < bytes.len()
-            && let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16)
+            && let Some(digits) = s.get(i + 1..i + 3)
+            && let Ok(v) = u8::from_str_radix(digits, 16)
         {
             out.push(v);
             i += 3;
@@ -1125,6 +1127,15 @@ mod tests {
             path_from_uri("file:///Users/x/a.jpg"),
             PathBuf::from("/Users/x/a.jpg")
         );
+    }
+
+    #[test]
+    fn a_percent_before_an_accented_letter_is_kept_rather_than_crashing() {
+        // "%é": the two bytes after the percent sign are one character, and
+        // slicing them as hex digits used to panic inside it.
+        assert_eq!(percent_decode("caf%é"), "caf%é");
+        assert_eq!(percent_decode("a%2é"), "a%2é");
+        assert_eq!(percent_decode("100%"), "100%");
     }
 
     #[test]

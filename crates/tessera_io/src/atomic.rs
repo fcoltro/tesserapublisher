@@ -34,13 +34,30 @@ fn temp_path_for(path: &Path) -> PathBuf {
 /// an interrupted save leaves the previous file untouched rather than a
 /// half-written one. **A failed save must never destroy the user's work**, and
 /// that is what the tests below pin.
+///
+/// The bytes are flushed to the disk before the rename, not just to the
+/// operating system's cache. Without that the rename can reach the disk
+/// first, and a power cut in the seconds between leaves the document's name
+/// pointing at an empty file — the previous save gone, the new one never
+/// written. A rename is only atomic over what has already landed.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), IoError> {
     let temp = temp_path_for(path);
 
-    std::fs::write(&temp, bytes).map_err(|source| IoError::Write {
-        path: temp.clone(),
-        source,
-    })?;
+    let written = std::fs::File::create(&temp)
+        .and_then(|mut file| {
+            std::io::Write::write_all(&mut file, bytes)?;
+            file.sync_all()
+        })
+        .map_err(|source| IoError::Write {
+            path: temp.clone(),
+            source,
+        });
+    if let Err(error) = written {
+        // A half-written sibling is litter, and one that fills the disk keeps
+        // every later save from succeeding too.
+        let _ = std::fs::remove_file(&temp);
+        return Err(error);
+    }
 
     std::fs::rename(&temp, path).map_err(|source| {
         // Best effort: do not leave litter behind after a failed rename.

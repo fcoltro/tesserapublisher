@@ -256,7 +256,9 @@ pub fn reference_at_caret(state: &TesseraApp) -> Option<(tessera_document::ids::
     let at = buffer.cursor().position;
     let width = Marker::CrossReference.character().len_utf8();
     let before = at.checked_sub(width)?;
-    if Marker::of(story.text[before..].chars().next()?) == Some(Marker::CrossReference) {
+    // `get`, not a slice: three bytes back from a caret after two accented
+    // letters is inside the first of them.
+    if Marker::of(story.text.get(before..)?.chars().next()?) == Some(Marker::CrossReference) {
         Some((story_id, story.cross_reference_at(before)))
     } else {
         None
@@ -329,6 +331,17 @@ mod tests {
         assert_eq!(targets(&state), vec!["ch2".to_string()]);
         // The caret sits after the reference, which is what to offer to edit.
         assert_eq!(reference_at_caret(&state), Some((story, 0)));
+    }
+
+    #[test]
+    fn a_caret_after_accented_letters_offers_nothing_rather_than_crashing() {
+        // Three bytes back from the caret after "éé" is inside the first é;
+        // slicing there used to panic.
+        let (mut state, _) = editing("éé");
+        if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+            buffer.set_cursor(4);
+        }
+        assert_eq!(reference_at_caret(&state), None);
     }
 
     #[test]
