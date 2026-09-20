@@ -306,11 +306,19 @@ pub fn composite(over: Color32, under: Color32) -> Color32 {
 pub struct Theme;
 
 impl Theme {
+    // --- surfaces ------------------------------------------------------
+    //
+    // Three values, and only three: panel, raised and canvas. Depth is
+    // carried by value rather than by line: a border drawn between every
+    // pair of regions is a border nowhere, and it was why the window read as
+    // one undifferentiated field.
+
     /// Panels: the rail, the tool strip, the status bar. Step 2.
     pub fn panel_bg() -> Color32 {
         palette().step(2)
     }
-    /// Raised: the control bar and section headings. Step 3.
+    /// Raised: the control bar and section headings — the only surface
+    /// above panel. Step 3.
     pub fn panel_bg_alt() -> Color32 {
         palette().step(3)
     }
@@ -323,7 +331,8 @@ impl Theme {
     pub fn panel_bg_solid() -> Color32 {
         palette().step(2)
     }
-    /// The pasteboard behind the page.
+    /// The pasteboard: a neutral grey behind the page, darker than the
+    /// panels in a dark theme and lighter than paper in a light one.
     pub fn canvas_bg() -> Color32 {
         palette().canvas_bg
     }
@@ -414,26 +423,6 @@ impl Theme {
     /// A state that needs nothing done to it.
     pub fn ok() -> Color32 {
         palette().ok
-    }
-
-    // --- surfaces ------------------------------------------------------
-    //
-    // Three values, and only three. Depth is carried by value rather than by
-    // line: a border drawn between every pair of regions is a border nowhere,
-    // and it was why the window read as one undifferentiated field.
-
-    /// The pasteboard: a neutral grey behind the page, darker than the
-    /// panels in a dark theme and lighter than paper in a light one.
-    pub fn surface_canvas() -> Color32 {
-        palette().canvas_bg
-    }
-    /// Rail, tool strip, status bar.
-    pub fn surface_panel() -> Color32 {
-        palette().step(2)
-    }
-    /// Control bar and section headings — the only surface above panel.
-    pub fn surface_raised() -> Color32 {
-        palette().step(3)
     }
 
     // --- spacing -------------------------------------------------------

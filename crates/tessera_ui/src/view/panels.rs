@@ -385,25 +385,14 @@ fn glyph_button(ui: &mut Ui, icon: crate::icons::Icon, tip: &str) -> egui::Respo
     crate::icons::named(response, tip)
 }
 
-/// How big the proxy is where there is room for it.
-///
-/// Bigger than InDesign's, which is a grid of targets a few pixels across —
-/// small enough that hitting the wrong one is easy and noticing that you did is
-/// not.
-pub const PROXY: f32 = 45.0;
-
-/// The nine-point reference proxy, at [`PROXY`].
-pub fn reference_proxy(ui: &mut Ui, anchor: &mut Anchor) -> bool {
-    reference_proxy_sized(ui, anchor, PROXY)
-}
-
 /// The nine-point reference proxy, at a size the caller has room for.
 ///
-/// **The size is asked for rather than assumed**, because the one caller
-/// without room for the full proxy is the control bar, and a widget that draws
+/// **The size is asked for rather than assumed.** It was assumed once, at 45,
+/// and the control bar holding it was shorter than that; a widget that draws
 /// past the panel holding it does not overflow visibly — it is clipped. The
 /// bottom row of points simply was not there, which reads as the proxy being
-/// stuck rather than as the proxy being cut.
+/// stuck rather than as the proxy being cut. The bar now derives its height
+/// from the size it asks for (`control::HEIGHT`).
 ///
 /// Returns whether the anchor changed.
 pub fn reference_proxy_sized(ui: &mut Ui, anchor: &mut Anchor, side: f32) -> bool {
@@ -809,20 +798,6 @@ fn percent_bare(ui: &mut Ui, value: &mut f64) -> bool {
             .suffix("%"),
     )
     .changed()
-}
-
-/// A percentage field.
-#[allow(dead_code)]
-fn percent(ui: &mut Ui, label: &str, value: &mut f64) -> bool {
-    field(ui, label, |ui| {
-        ui.add(
-            egui::DragValue::new(value)
-                .speed(0.5)
-                .fixed_decimals(1)
-                .suffix("%"),
-        )
-        .changed()
-    })
 }
 
 /// An angle field, in degrees.

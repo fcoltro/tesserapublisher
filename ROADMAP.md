@@ -2438,7 +2438,7 @@ line of copy. The renderer and the PDF writer draw them without knowing.
   hand check is owed.** Format **23**, no step.
 - [x] **Footnote layout**: `tessera_text::shape::flow_with_notes`, and
   `compose_frame` shapes each note at the column's measure with
-  `Variables::for_footnote(n)`. A rule a third of the measure above the first
+  `Variables::for_footnote_labelled(n, label)`. A rule a third of the measure above the first
   note; the vertical-justify slack stops above the notes.
 - [x] **Index entries**: `Marker::IndexEntry` reads as nothing;
   `Story::index_entries[n].topic`. Type ▸ Insert index entry… files the

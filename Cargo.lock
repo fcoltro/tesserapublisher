@@ -3965,7 +3965,6 @@ name = "tessera_color"
 version = "0.1.0"
 dependencies = [
  "lcms2",
- "proptest",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -4017,8 +4016,6 @@ name = "tessera_io"
 version = "0.1.0"
 dependencies = [
  "image",
- "proptest",
- "serde_json",
  "thiserror 2.0.20",
 ]
 
@@ -4027,8 +4024,6 @@ name = "tessera_layout"
 version = "0.1.0"
 dependencies = [
  "kurbo",
- "proptest",
- "serde_json",
  "tessera_color",
  "tessera_document",
  "tessera_geometry",
@@ -4043,9 +4038,7 @@ dependencies = [
  "image",
  "kurbo",
  "pdf-writer",
- "proptest",
  "serde",
- "serde_json",
  "subsetter",
  "tessera_color",
  "tessera_document",
@@ -4073,7 +4066,6 @@ version = "0.1.0"
 dependencies = [
  "image",
  "pollster",
- "proptest",
  "resvg",
  "tessera_color",
  "tessera_document",
@@ -4094,7 +4086,6 @@ dependencies = [
  "parley",
  "proptest",
  "serde",
- "serde_json",
  "skrifa 0.44.0",
  "slotmap",
  "tessera_color",
@@ -4111,7 +4102,6 @@ dependencies = [
  "image",
  "keyring",
  "kurbo",
- "proptest",
  "rfd",
  "serde",
  "serde_json",

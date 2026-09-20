@@ -60,8 +60,12 @@ exists inside CI can only be debugged by pushing.
 
 Documents are `.tsrdf`. The extension is declared once in Rust
 (`tessera_ui::file_ops::EXTENSION`) and once per platform above, and a test in
-`file_ops` holds the four together. Both icons come from the PNGs in `assets/`
-at build time — nothing checked in is a second copy of the artwork.
+`file_ops` holds the four together. Both icons, and the window icon on every
+platform, come from the PNGs in `assets/` at build time — nothing checked in
+is a second copy of the artwork. The PNGs must be cropped to the artwork:
+`build.rs` refuses one with a transparent margin, because every icon made
+from it would be smaller by that margin at every size, and `build.sh` has no
+tool to trim with.
 
 Two things on that table are easy to get half right:
 

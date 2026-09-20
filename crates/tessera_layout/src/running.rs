@@ -208,11 +208,6 @@ impl Running {
         self.anchors.get(name)
     }
 
-    /// Whether any anchor has been found — false before the first pass.
-    pub fn has_anchors(&self) -> bool {
-        !self.anchors.is_empty()
-    }
-
     pub fn header(&self, page: PageId, style: ParagraphStyleId, which: Which) -> Option<String> {
         self.headers
             .get(&(page, style))

@@ -27,7 +27,8 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
 
-    let mut viewport = egui::ViewportBuilder::default()
+    let viewport = egui::ViewportBuilder::default()
+        .with_icon(icon::load())
         .with_inner_size([1280.0, 840.0])
         .with_min_inner_size([720.0, 480.0])
         .with_title("Tessera Publisher")
@@ -39,13 +40,6 @@ fn main() -> eframe::Result<()> {
         // Creating already maximized lets that size request shrink the window
         // while Windows still reports it as maximized.
         .with_maximized(false);
-
-    // Only when there is one. An empty `IconData` is not "no icon", it is a
-    // zero-by-zero icon, and the window manager is entitled to make a mess
-    // of it.
-    if let Some(mark) = icon::load() {
-        viewport = viewport.with_icon(mark);
-    }
 
     let options = eframe::NativeOptions {
         viewport,

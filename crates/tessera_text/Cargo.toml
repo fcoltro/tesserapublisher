@@ -21,4 +21,3 @@ skrifa = "0.44"
 
 [dev-dependencies]
 proptest.workspace = true
-serde_json.workspace = true

@@ -181,15 +181,6 @@ impl Variables {
 }
 
 impl Variables {
-    /// Ready to shape footnote `number`'s own text.
-    pub fn for_footnote(number: u32) -> Self {
-        Self {
-            footnote_number: Some(number),
-            footnote_text: Some(number.to_string()),
-            ..Default::default()
-        }
-    }
-
     /// Ready to shape a footnote's own text, numbered as `label` says.
     pub fn for_footnote_labelled(number: u32, label: impl Into<String>) -> Self {
         Self {

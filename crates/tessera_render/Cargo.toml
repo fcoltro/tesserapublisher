@@ -23,7 +23,6 @@ pollster.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-proptest.workspace = true
 # Integration tests link only against dev-dependencies.
 tessera_geometry.workspace = true
 tessera_color.workspace = true

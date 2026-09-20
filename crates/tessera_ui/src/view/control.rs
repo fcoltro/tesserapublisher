@@ -17,8 +17,10 @@ use crate::theme::Theme;
 
 /// The reference proxy, at the size this bar has room for.
 ///
-/// Smaller than the one in a panel. The bar is a row, and the full proxy is
-/// taller than a row.
+/// Bigger than InDesign's, which is a grid of targets a few pixels across —
+/// small enough that hitting the wrong one is easy and noticing that you did
+/// is not. Not bigger than a row: making the bar tall enough for more would
+/// put a band of chrome across the window.
 pub const PROXY: f32 = 30.0;
 
 /// The padding above and below the row's tallest thing.
@@ -40,10 +42,6 @@ pub const HEIGHT: f32 = PROXY + PADDING * 2.0;
 // points was clipped away entirely, which reads as a proxy that will not change
 // rather than as one that is cut off.
 const _: () = assert!(HEIGHT >= PROXY);
-
-// The bar is a row, and the panel proxy is taller than a row. Making the bar
-// tall enough for the full one would put a band of chrome across the window.
-const _: () = assert!(PROXY < crate::view::panels::PROXY);
 
 /// How many sides the next polygon has, and how deep a star it is.
 ///

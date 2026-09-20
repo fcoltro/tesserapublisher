@@ -806,11 +806,6 @@ impl Document {
         self.page_number(page).map(|n| n.label)
     }
 
-    /// The section `page` is in, if it is a stored one.
-    pub fn section_of(&self, page: PageId) -> Option<usize> {
-        self.page_number(page).and_then(|n| n.section)
-    }
-
     /// Resize every page. Per-page sizes are milestone 3.
     pub fn set_page_size(&mut self, width: f64, height: f64) {
         let ids: Vec<_> = self.pages.keys().collect();

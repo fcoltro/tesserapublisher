@@ -26,7 +26,6 @@ thiserror.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
-proptest.workspace = true
 # Integration tests link only against dev-dependencies.
 tessera_geometry.workspace = true
 kurbo.workspace = true
@@ -34,4 +33,3 @@ tessera_color.workspace = true
 tessera_document.workspace = true
 tessera_layout.workspace = true
 tessera_text.workspace = true
-serde_json.workspace = true

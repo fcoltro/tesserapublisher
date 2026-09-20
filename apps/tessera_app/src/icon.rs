@@ -1,35 +1,31 @@
 //! The application's window icon.
 //!
-//! Built from `assets/tessera-publisher-logotype.png`, which is **embedded**
-//! rather than read from disk. A window icon loaded from a path beside the
-//! executable is an icon that goes missing the moment the binary is copied
-//! somewhere else, and the failure is silent.
+//! Rendered by `build.rs` from `assets/tessera-publisher-logotype.png` and
+//! **embedded** rather than read from disk. A window icon loaded from a path
+//! beside the executable is an icon that goes missing the moment the binary
+//! is copied somewhere else, and the failure is silent.
 
-/// How wide the icon is handed to the window manager.
-///
-/// The artwork is 1654 square, which is a sensible size for a master and a
-/// wasteful one for a title bar: decoding it as-is means two and a half
-/// million pixels, ten megabytes, held for the life of the process. 256 is the
-/// largest size Windows asks for.
+/// How wide the icon is handed to the window manager: the same number
+/// `build.rs` scales to, and the largest size Windows asks for.
 const SIZE: u32 = 256;
 
-const ARTWORK: &[u8] = include_bytes!("../../../assets/tessera-publisher-logotype.png");
+/// The icon's pixels, four bytes each, which is what a window manager is
+/// handed. Scaled once at build time rather than at every start-up: the
+/// artwork is one and three-quarter million pixels, and decoding it to
+/// throw all but sixty-five thousand away was a tenth of a second on the
+/// way to the first frame.
+const RGBA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/window-icon.rgba"));
 
-/// The icon, or `None` if the artwork could not be decoded.
-///
-/// `None` rather than a panic: an undecodable icon is a cosmetic fault, and
-/// refusing to start a layout application over its title bar would be a
-/// worse one.
-pub fn load() -> Option<egui::IconData> {
-    let decoded = image::load_from_memory(ARTWORK).ok()?;
-    let scaled = decoded.resize_exact(SIZE, SIZE, image::imageops::FilterType::Lanczos3);
-    let rgba = scaled.to_rgba8();
+// The two statements of the size agree, or this does not compile.
+const _: () = assert!(RGBA.len() == (SIZE * SIZE * 4) as usize);
 
-    Some(egui::IconData {
-        rgba: rgba.into_raw(),
+/// The icon, ready for `egui::ViewportBuilder::with_icon`.
+pub fn load() -> egui::IconData {
+    egui::IconData {
+        rgba: RGBA.to_vec(),
         width: SIZE,
         height: SIZE,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -37,22 +33,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_icon_decodes() {
-        let icon = load().expect("the embedded artwork must decode");
-        assert_eq!(icon.width, SIZE);
-        assert_eq!(icon.height, SIZE);
-        assert_eq!(
-            icon.rgba.len(),
-            (SIZE * SIZE * 4) as usize,
-            "four bytes a pixel, which is what a window manager is handed"
-        );
-    }
-
-    #[test]
     fn the_icon_is_not_blank() {
-        // A file that decoded to nothing would pass every assertion above and
+        // Pixels of the right count would pass the size assertion above and
         // show an empty square.
-        let icon = load().expect("decode");
+        let icon = load();
         assert!(
             icon.rgba.chunks(4).any(|p| p[3] > 0),
             "something in it is opaque"
@@ -61,15 +45,39 @@ mod tests {
 
     #[test]
     fn the_mark_is_the_red_it_is_drawn_in() {
-        // The logotype's field is #c3282d. Sampling the centre catches an
-        // artwork swapped for the wrong file, which the two tests above would
-        // not notice.
-        let icon = load().expect("decode");
+        // The logotype's field is #dc1414. Sampling the centre catches an
+        // artwork swapped for the wrong file, which the test above would not
+        // notice.
+        let icon = load();
         let middle = ((SIZE / 2 * SIZE + SIZE / 2) * 4) as usize;
         let pixel = &icon.rgba[middle..middle + 3];
         assert!(
             pixel[0] > pixel[1] + 40 && pixel[0] > pixel[2] + 40,
             "the centre of the mark is red, not {pixel:?}"
+        );
+    }
+
+    #[test]
+    fn the_mark_is_padded_to_a_square_rather_than_stretched_to_one() {
+        // The artwork is wider than it is tall, so a square made by padding
+        // has clear rows above and below the mark, and one made by
+        // stretching has none. The top-left pixel tells them apart.
+        let icon = load();
+        assert_eq!(icon.rgba[3], 0, "the corner is clear, not stretched into");
+        // And the padding is symmetric: the first opaque row from the top
+        // and from the bottom sit the same distance in.
+        let row_is_clear = |y: u32| {
+            let start = (y * SIZE * 4) as usize;
+            icon.rgba[start..start + (SIZE * 4) as usize]
+                .chunks(4)
+                .all(|p| p[3] == 0)
+        };
+        let from_top = (0..SIZE).take_while(|&y| row_is_clear(y)).count();
+        let from_bottom = (0..SIZE).rev().take_while(|&y| row_is_clear(y)).count();
+        assert!(from_top > 0, "there is padding above");
+        assert!(
+            from_top.abs_diff(from_bottom) <= 1,
+            "centred: {from_top} clear rows above, {from_bottom} below"
         );
     }
 }

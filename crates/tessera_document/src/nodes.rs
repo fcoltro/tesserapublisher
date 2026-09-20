@@ -594,11 +594,6 @@ impl Insets {
             right: all,
         }
     }
-
-    /// Whether this inset moves anything at all.
-    pub fn is_zero(self) -> bool {
-        self.top == 0.0 && self.bottom == 0.0 && self.left == 0.0 && self.right == 0.0
-    }
 }
 
 /// Which side of a spread a page sits on.
