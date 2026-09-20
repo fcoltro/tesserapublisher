@@ -142,6 +142,40 @@ fn tangent_of(seg: &PathSeg, t: f64) -> Vec2 {
     }
 }
 
+/// The point a fraction of the way along `path`, by arc length, and the
+/// unit tangent there. Where the brackets that mark a text's start and end
+/// are drawn. `None` for a path with no length.
+pub fn point_at_fraction(path: &BezPath, fraction: f64) -> Option<(Point, Vec2)> {
+    let walk = Walk::new(path);
+    if walk.length <= 0.0 {
+        return None;
+    }
+    walk.at(walk.length * fraction.clamp(0.0, 1.0))
+}
+
+/// How far along `path`, as a fraction of its length, the point of the path
+/// nearest `to` lies. What a dragged bracket becomes: the pointer is beside
+/// the curve, and the bracket goes to the place on it that is nearest.
+/// Nearness is across the path; the answer is along it.
+pub fn fraction_nearest(path: &BezPath, to: Point) -> f64 {
+    use kurbo::ParamCurveNearest as _;
+    let walk = Walk::new(path);
+    if walk.length <= 0.0 {
+        return 0.0;
+    }
+    let mut best: Option<(f64, f64)> = None; // (distance squared, arc length)
+    let mut before = 0.0;
+    for (seg, len) in &walk.segments {
+        let near = seg.nearest(to, ACCURACY);
+        let along = before + seg.subsegment(0.0..near.t).arclen(ACCURACY);
+        if best.is_none_or(|(d, _)| near.distance_sq < d) {
+            best = Some((near.distance_sq, along));
+        }
+        before += len;
+    }
+    best.map_or(0.0, |(_, along)| (along / walk.length).clamp(0.0, 1.0))
+}
+
 /// The length of `path`, for a caller choosing a measure.
 pub fn length_of(path: &BezPath) -> f64 {
     Walk::new(path).length
@@ -240,6 +274,40 @@ mod tests {
 
     fn shaped(text: &str, width: f64) -> ShapedText {
         Shaper::new().shape(&Story::new(text), &NoStyles::default(), width)
+    }
+
+    #[test]
+    fn a_fraction_lands_where_the_arc_length_says() {
+        // Two lines: right 100, then up 100. Half way by length is the
+        // corner; three quarters is half way up the second line, where the
+        // tangent points up.
+        let mut path = BezPath::new();
+        path.move_to((0.0, 0.0));
+        path.line_to((100.0, 0.0));
+        path.line_to((100.0, -100.0));
+        let (p, _) = point_at_fraction(&path, 0.5).expect("on the path");
+        assert!((p.x - 100.0).abs() < 1e-6 && p.y.abs() < 1e-6, "{p:?}");
+        let (p, tangent) = point_at_fraction(&path, 0.75).expect("on the path");
+        assert!(
+            (p.x - 100.0).abs() < 1e-6 && (p.y + 50.0).abs() < 1e-6,
+            "{p:?}"
+        );
+        assert!(tangent.y < -0.99, "{tangent:?}");
+    }
+
+    #[test]
+    fn the_nearest_fraction_is_measured_along_the_path_not_across_it() {
+        // A point beside the second line is nearest to it, and its fraction
+        // counts the whole first line before it.
+        let mut path = BezPath::new();
+        path.move_to((0.0, 0.0));
+        path.line_to((100.0, 0.0));
+        path.line_to((100.0, -100.0));
+        let f = fraction_nearest(&path, Point::new(120.0, -25.0));
+        assert!((f - 0.625).abs() < 1e-3, "{f}");
+        // Past an end clamps to it.
+        assert!((fraction_nearest(&path, Point::new(-50.0, 30.0)) - 0.0).abs() < 1e-9);
+        assert!((fraction_nearest(&path, Point::new(100.0, -300.0)) - 1.0).abs() < 1e-9);
     }
 
     fn whole() -> Placement {

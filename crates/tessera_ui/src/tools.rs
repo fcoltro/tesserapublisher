@@ -153,6 +153,12 @@ pub enum DragKind {
     },
     /// Rubber-band selection over empty canvas.
     Marquee,
+    /// Sliding one end of type on a path along the path. Carries the
+    /// placement the drag began from, put back before the one command.
+    PathTextEnd {
+        end: crate::view::path_text_handles::End,
+        held: tessera_document::path_text::PathText,
+    },
     /// Moving the selection.
     ///
     /// Carries each frame's **placement** at the moment the drag began, so the

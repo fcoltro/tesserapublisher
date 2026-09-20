@@ -2121,7 +2121,10 @@ fn canvas_cursor(
             DragKind::PageEdge { edge, .. } => return page_edge_cursor(*edge),
             // An anchor drag keeps the crosshair it started with; a draw or a
             // marquee has no cursor of its own.
-            DragKind::Anchor { .. } | DragKind::Draw | DragKind::Marquee => {}
+            DragKind::Anchor { .. }
+            | DragKind::PathTextEnd { .. }
+            | DragKind::Draw
+            | DragKind::Marquee => {}
         }
     }
 
@@ -2321,8 +2324,12 @@ fn zoom_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
 fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
     let extend = ui.input(|i| i.modifiers.shift);
 
-    // A handle wins over the frame beneath it, so a handle sitting on top of
-    // another object still resizes rather than selecting.
+    // A bracket on type on a path, then a handle, win over the frame beneath
+    // them, so a control sitting on top of another object still does what it
+    // says rather than selecting.
+    if super::path_text_handles::gesture(response, rect, state, |s, p| doc_pos(s, rect, p)) {
+        return;
+    }
     if transform_gesture(ui, response, rect, state) {
         return;
     }
@@ -2499,7 +2506,8 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
             DragKind::Scale { .. }
             | DragKind::Rotate { .. }
             | DragKind::Draw
-            | DragKind::Anchor { .. } => {}
+            | DragKind::Anchor { .. }
+            | DragKind::PathTextEnd { .. } => {}
         }
     }
 
@@ -3124,6 +3132,7 @@ fn draw_overlays(
     if state.active_tool == Tool::DirectSelect {
         super::anchors::draw(state, rect, &painter);
     }
+    super::path_text_handles::draw(state, rect, &painter);
     super::ports::draw_loading(ui, state, rect);
     snap_indicator(state, rect, &painter);
     thread_connectors(state, rect, &painter);
@@ -3344,7 +3353,8 @@ fn draw_overlays(
             | DragKind::Scale { .. }
             | DragKind::Rotate { .. }
             | DragKind::PageEdge { .. }
-            | DragKind::Anchor { .. } => {}
+            | DragKind::Anchor { .. }
+            | DragKind::PathTextEnd { .. } => {}
         }
     }
 

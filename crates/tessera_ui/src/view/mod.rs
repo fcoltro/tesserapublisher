@@ -29,6 +29,7 @@ pub mod pages;
 pub mod palette;
 pub mod panel_ui;
 pub mod panels;
+pub mod path_text_handles;
 pub mod ports;
 pub mod preflight_panel;
 pub mod print_dialog;
