@@ -85,6 +85,20 @@ impl Dock {
         }
     }
 
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Properties => "Layout, appearance and typography",
+            Self::Pages => "Navigate and arrange your document",
+            Self::Layers => "Organize objects and visibility",
+            Self::Styles => "Reusable text and object formatting",
+            Self::Swatches => "Your document's colour palette",
+            Self::Preflight => "Check your document before export",
+            Self::Console => "Work with your AI assistant",
+            Self::Glyphs => "Find and insert special characters",
+            Self::Book => "Assemble documents into a book",
+        }
+    }
+
     /// Whether this section is open.
     ///
     /// Properties has no flag of its own: it is what the rail is for when

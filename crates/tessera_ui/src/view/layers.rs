@@ -25,13 +25,12 @@ use crate::app::TesseraApp;
 use crate::command::{Command, apply};
 use crate::icons::Icon;
 use crate::theme::Theme;
-use crate::view::panels::icon_button;
 
 /// How tall one layer's row is, in screen points.
-const ROW: f32 = 24.0;
+const ROW: f32 = 32.0;
 
 /// How wide the eye and the padlock are.
-const SWITCH: f32 = 20.0;
+const SWITCH: f32 = 24.0;
 
 /// Room kept at the right for the object count.
 const COUNT: f32 = 62.0;
@@ -45,6 +44,8 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
 }
 
 fn body(ui: &mut Ui, state: &mut TesseraApp) {
+    actions(ui, state);
+    ui.add_space(Theme::space_2());
     let order = state.active().document().layer_order.clone();
     let active = state.active().document().active_layer;
 
@@ -130,38 +131,55 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
     }
 
     ui.spacing_mut().item_spacing.y = Theme::space_1();
-    ui.separator();
+    ui.add_space(Theme::space_2());
+    super::panel_ui::hint(
+        ui,
+        "Draw on the highlighted layer. Double-click its name to rename; drag to reorder.",
+    );
+}
+
+fn actions(ui: &mut Ui, state: &mut TesseraApp) {
     ui.horizontal(|ui| {
-        if icon_button(ui, Icon::Plus, "New layer", false) {
+        if super::panel_ui::action(ui, Icon::Plus, "New layer").clicked() {
             apply(state, Command::AddLayer);
         }
-
-        // Only when there is somewhere for the selection to go. A button that
-        // cannot do anything is a question the user has to answer.
-        if !state.active().selection.is_empty()
-            && state.active().document().layer_order.len() > 1
-            && icon_button(ui, Icon::Layers, "Move selection to this layer", false)
-            && let Some(to) = state.active().document().active_layer
-        {
-            apply(state, Command::MoveSelectionToLayer(to));
-        }
-
-        // The last layer cannot go — the document would have nowhere to draw.
-        // Refused by the document either way; the button says so first.
-        if state.active().document().layer_order.len() > 1
-            && icon_button(ui, Icon::Trash, "Delete layer", false)
-            && let Some(id) = state.active().document().active_layer
-        {
-            // Straight through when it is empty. Nothing is lost, so there is
-            // nothing to ask, and a dialogue over an empty layer teaches the
-            // user to dismiss the one that matters without reading it.
-            if objects_on(state, id) == 0 {
-                apply(state, Command::RemoveLayer { id });
-            } else {
-                state.layers_window.confirm_removal = Some(id);
+        ui.menu_button("Layer actions", |ui| {
+            // Only when there is somewhere for the selection to go. A button that
+            // cannot do anything is a question the user has to answer.
+            if !state.active().selection.is_empty()
+                && state.active().document().layer_order.len() > 1
+                && ui.button("Move selection to this layer").clicked()
+                && let Some(to) = state.active().document().active_layer
+            {
+                apply(state, Command::MoveSelectionToLayer(to));
+                ui.close();
             }
-        }
+
+            // The last layer cannot go — the document would have nowhere to draw.
+            // Refused by the document either way; the button says so first.
+            if state.active().document().layer_order.len() > 1
+                && ui.button("Delete active layer").clicked()
+                && let Some(id) = state.active().document().active_layer
+            {
+                // Straight through when it is empty. Nothing is lost, so there is
+                // nothing to ask, and a dialogue over an empty layer teaches the
+                // user to dismiss the one that matters without reading it.
+                if objects_on(state, id) == 0 {
+                    apply(state, Command::RemoveLayer { id });
+                } else {
+                    state.layers_window.confirm_removal = Some(id);
+                }
+                ui.close();
+            }
+            if order_is_single(state) {
+                super::panel_ui::hint(ui, "Keep at least one layer in the document.");
+            }
+        });
     });
+}
+
+fn order_is_single(state: &TesseraApp) -> bool {
+    state.active().document().layer_order.len() <= 1
 }
 
 /// How many objects a layer holds.
@@ -255,7 +273,7 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
     // The active layer is the one being drawn on, so it is marked the way a
     // chosen tool is.
     if active {
-        painter.rect_filled(rect, 3.0, Theme::hover_bg());
+        painter.rect_filled(rect, 3.0, Theme::accent_soft());
     } else if response.hovered() {
         painter.rect_filled(rect, 3.0, Theme::panel_bg_alt());
     }
@@ -321,7 +339,7 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
     }
 
     if !renaming {
-        painter.text(
+        painter.with_clip_rect(text).text(
             egui::pos2(text.left(), text.center().y),
             egui::Align2::LEFT_CENTER,
             &name,

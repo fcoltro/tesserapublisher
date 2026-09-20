@@ -26,6 +26,7 @@ pub mod long_document;
 pub mod new_document;
 pub mod pages;
 pub mod palette;
+pub mod panel_ui;
 pub mod panels;
 pub mod ports;
 pub mod preflight_panel;
@@ -163,7 +164,11 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
         .frame(panel_frame())
         .resizable(false)
         .show(ui, |ui| {
-            panels::tool_strip(ui, state);
+            egui::ScrollArea::vertical()
+                .id_salt("tools-scroll")
+                .auto_shrink([false, false])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| panels::tool_strip(ui, state));
         });
     state
         .tour

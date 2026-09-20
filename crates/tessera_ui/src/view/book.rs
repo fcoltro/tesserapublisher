@@ -51,77 +51,89 @@ fn name_of(path: &Path) -> String {
 }
 
 pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
-    // The file: which book, and the making or opening of one.
-    ui.horizontal(|ui| {
-        match &state.book.path {
-            Some(path) => {
-                ui.colored_label(Theme::text_muted(), name_of(path));
-                if state.book.dirty {
-                    ui.colored_label(Theme::text_muted(), "\u{2022}");
-                }
-            }
-            None => {
-                ui.colored_label(Theme::text_muted(), "No book");
+    ui.horizontal_wrapped(|ui| {
+        if super::panel_ui::action(ui, crate::icons::Icon::Plus, "New book").clicked() {
+            new_book(state);
+        }
+        if ui.button("Open book...").clicked() {
+            open_book(state);
+        }
+        if state.book.path.is_some() && state.book.dirty && ui.button("Save").clicked() {
+            if let Err(e) = state.book.save() {
+                state.status = Some(Status::error(format!("could not save the book: {e}")));
             }
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.small_button("Open\u{2026}").clicked() {
-                open_book(state);
-            }
-            if ui.small_button("New\u{2026}").clicked() {
-                new_book(state);
-            }
-            if state.book.path.is_some() && state.book.dirty && ui.small_button("Save").clicked() {
-                let result = state.book.save();
-                if let Err(e) = result {
-                    state.status = Some(Status::error(format!("could not save the book: {e}")));
-                }
-            }
-        });
     });
-    if state.book.path.is_none() {
-        ui.colored_label(
-            Theme::text_muted(),
-            "A book lists documents that are one publication: numbered on from \
-             chapter to chapter, listed in one contents, exported as one PDF.",
+    ui.add_space(Theme::space_2());
+    let Some(path) = &state.book.path else {
+        super::panel_ui::empty(
+            ui,
+            "Bring your chapters together",
+            "Create or open a book to combine documents, continue page numbers and export one PDF.",
         );
         return;
+    };
+    ui.add(egui::Label::new(egui::RichText::new(name_of(path)).strong()).wrap())
+        .on_hover_text(path.display().to_string());
+    if state.book.dirty {
+        super::panel_ui::hint(ui, "Unsaved book changes");
     }
-
+    ui.separator();
+    if state.book.book.documents.is_empty() {
+        super::panel_ui::empty(
+            ui,
+            "No chapters yet",
+            "Add a saved document to begin your book.",
+        );
+    }
     // The chapters, each with its place and a way out.
     let mut shift: Option<(usize, bool)> = None;
     let mut remove: Option<usize> = None;
     let mut open_chapter: Option<PathBuf> = None;
     let chapters = state.book.chapters();
     for (index, path) in chapters.iter().enumerate() {
-        ui.horizontal(|ui| {
-            let missing = !path.exists();
-            let label = if missing {
-                egui::RichText::new(name_of(path)).color(Theme::error())
-            } else {
-                egui::RichText::new(name_of(path))
-            };
-            let response = ui.add(egui::Label::new(label).sense(egui::Sense::click()));
-            if missing {
-                response
-                    .clone()
-                    .on_hover_text("This file is not where the book says it is.");
-            } else if response.double_clicked() {
-                open_chapter = Some(path.clone());
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .small_button("\u{2715}")
-                    .on_hover_text("Take out of the book")
-                    .clicked()
-                {
-                    remove = Some(index);
-                }
-                if ui.small_button("\u{2193}").clicked() {
-                    shift = Some((index, true));
-                }
-                if ui.small_button("\u{2191}").clicked() {
-                    shift = Some((index, false));
+        ui.push_id(index, |ui| {
+            ui.horizontal(|ui| {
+                let missing = !path.exists();
+                ui.menu_button("Actions", |ui| {
+                    if ui
+                        .add_enabled(!missing, egui::Button::new("Open chapter"))
+                        .clicked()
+                    {
+                        open_chapter = Some(path.clone());
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(index > 0, egui::Button::new("Move earlier"))
+                        .clicked()
+                    {
+                        shift = Some((index, false));
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(index + 1 < chapters.len(), egui::Button::new("Move later"))
+                        .clicked()
+                    {
+                        shift = Some((index, true));
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("Remove from book").clicked() {
+                        remove = Some(index);
+                        ui.close();
+                    }
+                })
+                .response
+                .on_hover_text("Chapter actions");
+                let label = if missing {
+                    format!("{}. {} (missing)", index + 1, name_of(path))
+                } else {
+                    format!("{}. {}", index + 1, name_of(path))
+                };
+                let response = super::panel_ui::entry(ui, false, &label)
+                    .on_hover_text(path.display().to_string());
+                if !missing && response.double_clicked() {
+                    open_chapter = Some(path.clone());
                 }
             });
         });
@@ -147,13 +159,13 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
         }
     }
 
-    ui.horizontal(|ui| {
-        if ui.small_button("Add document\u{2026}").clicked() {
+    ui.horizontal_wrapped(|ui| {
+        if super::panel_ui::action(ui, crate::icons::Icon::Plus, "Add chapter...").clicked() {
             add_document(state);
         }
         if let Some(current) = state.active().current_path.clone()
             && !chapters.iter().any(|c| c == &current)
-            && ui.small_button("Add the open document").clicked()
+            && ui.small_button("Add current document").clicked()
             && let Some(book_path) = state.book.path.clone()
         {
             state.book.book.add(&book_path, &current);
@@ -164,16 +176,15 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
     ui.add_space(Theme::space_2());
     let mut numbering = state.book.book.continue_numbering;
     if ui
-        .checkbox(
-            &mut numbering,
-            "Number the pages on from chapter to chapter",
-        )
+        .checkbox(&mut numbering, "Continue page numbering")
         .changed()
     {
         state.book.book.continue_numbering = numbering;
         state.book.dirty = true;
     }
 
+    ui.separator();
+    super::panels::group_label_pub(ui, "Publish book");
     // What a book is for.
     let chapters = state.book.chapters();
     let any = !chapters.is_empty();

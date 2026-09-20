@@ -147,9 +147,32 @@ pub struct PagesWindow {
 ///
 /// Shut rather than open, so that a section added later appears rather than
 /// hiding until somebody finds it.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Sections {
     shut: std::collections::HashSet<&'static str>,
+}
+
+impl Default for Sections {
+    fn default() -> Self {
+        Self {
+            shut: [
+                "Object style",
+                "Corners",
+                "Effects",
+                "Text wrap",
+                "Type on a path",
+                "Layout guides",
+                "Print production",
+                "Colour management",
+                "Advanced character",
+                "Advanced paragraph",
+                "Text frame layout",
+                "Text styles",
+            ]
+            .into_iter()
+            .collect(),
+        }
+    }
 }
 
 impl Sections {

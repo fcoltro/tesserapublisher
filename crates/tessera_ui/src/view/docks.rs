@@ -24,7 +24,7 @@ use crate::theme::Theme;
 use crate::view::rail::Dock;
 
 /// Default content width, excluding the vertical tab strip.
-pub const WIDTH: f32 = 292.0;
+pub const WIDTH: f32 = 312.0;
 
 /// The narrowest a side may be dragged.
 ///
@@ -143,6 +143,21 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
         return;
     };
 
+    // Closing the selected panel must reveal another open panel, rather than
+    // leave a dead "closed" message in a stack that still contains work.
+    if !stack
+        .showing()
+        .is_some_and(|title| open_by_title(state, title))
+        && let Some(slot) = stack
+            .panels
+            .iter()
+            .position(|title| open_by_title(state, title))
+        && let Some(current) = stack_mut(state, region, at)
+    {
+        current.active = slot;
+    }
+    let active = state.prefs.docking.stacks(region)[at].active;
+
     let mut chose = None;
     let mut dropped: Option<(String, usize)> = None;
 
@@ -169,7 +184,7 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
                             // disappeared would mean reopening it from the Window menu
                             // and finding it somewhere else.
                             let open = open_by_title(state, title);
-                            let showing = slot == stack.active && open;
+                            let showing = slot == active && open;
 
                             let Some(dock) = dock_by_title(title) else {
                                 continue;
@@ -271,9 +286,17 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
     };
 
     egui::Frame::NONE
-        .inner_margin(Theme::space_2())
+        .inner_margin(Theme::space_3())
         .show(ui, |ui| {
-            ui.strong(&title);
+            ui.heading(&title);
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(dock.description())
+                        .small()
+                        .color(Theme::text_muted()),
+                )
+                .wrap(),
+            );
         });
     ui.separator();
 
@@ -285,8 +308,8 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
                 ui.spacing_mut().item_spacing.y = Theme::space_1();
                 egui::Frame::NONE
                     .inner_margin(egui::Margin::symmetric(
-                        Theme::space_2() as i8,
-                        Theme::space_2() as i8,
+                        Theme::space_3() as i8,
+                        Theme::space_3() as i8,
                     ))
                     .show(ui, |ui| crate::view::rail::body(ui, state, dock));
             });
@@ -420,5 +443,28 @@ mod tests {
 
         let (region, at, _) = state.prefs.docking.find("Pages").expect("placed");
         assert!(stack_has_an_open_panel(&state, region, at));
+    }
+
+    #[test]
+    fn closing_the_active_panel_reveals_an_open_sibling() {
+        let mut state = TesseraApp::headless();
+        state.prefs.docking.reconcile();
+        let (region, at, _) = state.prefs.docking.find("Pages").expect("placed");
+        state.prefs.docking.place("Properties", region, at, 0);
+        let (_, _, slot) = state
+            .prefs
+            .docking
+            .find("Pages")
+            .expect("Pages stays in the stack");
+        stack_mut(&mut state, region, at).unwrap().active = slot;
+        Dock::Pages.set_open(&mut state, false);
+        Dock::Properties.set_open(&mut state, true);
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| show(ui, &mut state));
+        let active = state.prefs.docking.stacks(region)[at].showing().unwrap();
+        assert!(
+            open_by_title(&state, active),
+            "closed panel remained active"
+        );
     }
 }

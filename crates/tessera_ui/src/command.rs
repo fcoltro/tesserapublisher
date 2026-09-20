@@ -482,6 +482,11 @@ pub enum Command {
 
     /// Define a named colour, or change the one of that name.
     SetSwatch(tessera_document::nodes::Swatch),
+    /// Edit and rename one global colour without detaching its uses.
+    EditSwatch {
+        old: String,
+        swatch: tessera_document::nodes::Swatch,
+    },
     /// Remove a named colour. Objects using it keep the reference.
     RemoveSwatch {
         name: String,
@@ -1752,6 +1757,10 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::SetSwatch(swatch) => {
             state.active_mut().document_mut().set_swatch(swatch);
+        }
+
+        Command::EditSwatch { old, swatch } => {
+            state.active_mut().document_mut().edit_swatch(&old, swatch);
         }
 
         Command::RemoveSwatch { name } => {

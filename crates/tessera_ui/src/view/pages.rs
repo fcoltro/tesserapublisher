@@ -44,6 +44,8 @@ const LIST: f32 = 260.0;
 /// above them can grow without the strip growing with it — the waste the
 /// floating panel was reported for.
 pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
+    actions(ui, state);
+    ui.add_space(Theme::space_2());
     masters(ui, state);
 
     // The list scrolls inside a bounded height rather than growing without
@@ -55,8 +57,7 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
         .auto_shrink([false, true])
         .show(ui, |ui| body(ui, state));
 
-    ui.add_space(Theme::space_2());
-    actions(ui, state);
+    super::panel_ui::hint(ui, "Click a page to navigate. Drag pages to reorder.");
 }
 
 /// The parent pages, listed above the document's own.
@@ -444,26 +445,20 @@ fn actions(ui: &mut Ui, state: &mut TesseraApp) {
     // is what left a void the size of the rail under these four buttons and
     // pushed Layers and Styles to the bottom of the panel.
     ui.horizontal(|ui| {
-        if crate::view::panels::icon_button(ui, crate::icons::Icon::Plus, "Add page", false) {
+        if super::panel_ui::action(ui, crate::icons::Icon::Plus, "Add page").clicked() {
             apply(state, Command::AddPage);
         }
         if let Some(page) = crate::view::panels::current_page(state) {
-            if crate::view::panels::icon_button(
-                ui,
-                crate::icons::Icon::Duplicate,
-                "Duplicate this page",
-                false,
-            ) {
-                apply(state, Command::DuplicatePage { id: page });
-            }
-            if crate::view::panels::icon_button(
-                ui,
-                crate::icons::Icon::Trash,
-                "Delete this page",
-                false,
-            ) {
-                apply(state, Command::RemovePage { id: page });
-            }
+            ui.menu_button("Page actions", |ui| {
+                if ui.button("Duplicate page").clicked() {
+                    apply(state, Command::DuplicatePage { id: page });
+                    ui.close();
+                }
+                if ui.button("Delete page").clicked() {
+                    apply(state, Command::RemovePage { id: page });
+                    ui.close();
+                }
+            });
         }
     });
 }

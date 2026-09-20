@@ -98,7 +98,7 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp, selection: Rect, viewport: Rect
     ];
 
     const BUTTON: f32 = 24.0;
-    let size = Vec2::new(BUTTONS.len() as f32 * (BUTTON + 2.0) + 12.0, BUTTON + 10.0);
+    let size = Vec2::new(244.0, BUTTON + 10.0);
     let at = place(selection, size, viewport);
 
     let mut chosen = None;
@@ -110,10 +110,17 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp, selection: Rect, viewport: Rect
                 .fill(Theme::panel_bg())
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        for (icon, tip, verb) in BUTTONS {
-                            if icon_button(ui, *icon, tip).clicked() {
-                                chosen = Some(*verb);
-                            }
+                        for (label, range) in
+                            [("Align", 0..6), ("Distribute", 6..8), ("Transform", 8..12)]
+                        {
+                            ui.menu_button(label, |ui| {
+                                for (icon, label, verb) in &BUTTONS[range] {
+                                    if super::panel_ui::action(ui, *icon, label).clicked() {
+                                        chosen = Some(*verb);
+                                        ui.close();
+                                    }
+                                }
+                            });
                         }
                     });
                 });
@@ -164,19 +171,6 @@ enum Verb {
     FlipV,
     RotateCw,
     RotateCcw,
-}
-
-/// One toolbar button: a Lucide glyph that lights on hover.
-fn icon_button(ui: &mut Ui, icon: Icon, tip: &str) -> egui::Response {
-    const BUTTON: f32 = 24.0;
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(BUTTON), egui::Sense::click());
-    if response.hovered() {
-        ui.painter()
-            .rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
-    }
-    // Inset so the 24-unit grid does not touch the button's edge.
-    crate::icons::paint(ui.painter(), rect, icon, Theme::text_primary());
-    crate::icons::named(response, tip)
 }
 
 #[cfg(test)]

@@ -23,13 +23,12 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
     // acting on a row needs it mutably.
     let report = crate::preflight::Preflight::report(state).clone();
 
-    ui.horizontal(|ui| {
+    ui.vertical(|ui| {
         let (errors, warnings) = (report.errors(), report.warnings());
         ui.colored_label(colour_for(errors, warnings), report.summary());
 
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .small_button("Check again")
+        ui.horizontal(|ui| {
+            if super::panel_ui::action(ui, crate::icons::Icon::RotateCw, "Check again")
                 .on_hover_text(
                     "Re-read the linked files. Everything else is checked as the \
                      document changes.",
@@ -43,14 +42,16 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
 
     if report.problems.is_empty() {
         ui.add_space(Theme::space_2());
-        ui.colored_label(
-            Theme::text_muted(),
-            "Nothing to fix. Links were checked when this last ran.",
+        super::panel_ui::empty(
+            ui,
+            "Ready for the next step",
+            "No issues found. Check again after changing linked files.",
         );
         return;
     }
 
     ui.separator();
+    super::panel_ui::hint(ui, "Click an issue to locate its object on the page.");
 
     // Grouped by rule, because ten low-resolution images are one decision about
     // resolution rather than ten separate discoveries. Errors first, which the

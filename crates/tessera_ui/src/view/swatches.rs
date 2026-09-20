@@ -30,22 +30,14 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
 fn body(ui: &mut Ui, state: &mut TesseraApp) {
     let swatches = state.active().document().swatches.clone();
 
-    if swatches.is_empty() {
-        ui.colored_label(Theme::text_muted(), "No named colours yet.");
-    }
-
-    for swatch in &swatches {
-        row(ui, state, swatch);
-    }
-
-    ui.add_space(Theme::space_2());
     ui.horizontal(|ui| {
-        if ui
-            .button("New swatch")
+        if super::panel_ui::action(ui, crate::icons::Icon::Plus, "New swatch")
             .on_hover_text("Name the selected object's fill, or a plain black")
             .clicked()
         {
-            apply(state, Command::SetSwatch(fresh(state)));
+            let swatch = fresh(state);
+            state.swatches_window.chosen = Some(swatch.name.clone());
+            apply(state, Command::SetSwatch(swatch));
         }
 
         // Only offered with something selected, because "apply" needs something
@@ -68,6 +60,17 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
             );
         }
     });
+    ui.add_space(Theme::space_2());
+    if swatches.is_empty() {
+        super::panel_ui::empty(
+            ui,
+            "No named colours yet",
+            "Create a swatch from the selected object's fill, then reuse it throughout your document.",
+        );
+    }
+    for swatch in &swatches {
+        ui.push_id(&swatch.name, |ui| row(ui, state, swatch));
+    }
 }
 
 /// One swatch: its colour, its name, whether it is a spot, and what removing it
@@ -125,66 +128,39 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, swatch: &Swatch) {
             state.swatches_window.chosen = Some(swatch.name.clone());
         }
 
-        // The name, editable in place. Renaming a swatch is renaming the
-        // definition every object points at, so it is one edit here rather than
-        // a delete and a redefine.
-        let mut name = edited.name.clone();
-        let width = (ui.available_width() - 96.0).max(60.0);
-        if ui
-            .add_sized(
-                egui::Vec2::new(width, ui.spacing().interact_size.y),
-                egui::TextEdit::singleline(&mut name),
-            )
-            .changed()
-        {
-            edited.name = name;
-            changed = true;
-        }
-
-        // A spot ink is a plate of its own, and that is a fact about the colour
-        // rather than a way of viewing it.
-        if ui
-            .selectable_label(edited.spot, "Spot")
-            .on_hover_text("A separate ink, printed on its own plate")
-            .clicked()
-        {
-            edited.spot = !edited.spot;
-            changed = true;
-        }
-
-        // What removing it costs, said before it is removed.
-        let uses = state.active().document().uses_of_swatch(&swatch.name);
-        let hint = match uses {
-            0 => "Nothing uses this".to_string(),
-            1 => "One object uses this. It will show as unresolved.".to_string(),
-            many => format!("{many} objects use this. They will show as unresolved."),
-        };
-        if ui.small_button("\u{2715}").on_hover_text(hint).clicked() {
-            removed = true;
+        let response = super::panel_ui::entry(ui, chosen, &swatch.name);
+        if response.clicked() {
+            state.swatches_window.chosen = Some(swatch.name.clone());
         }
     });
-
-    // Acted on outside the closure: a `return` in there would only leave the
-    // closure, and the edits below would still run.
-    if removed {
-        if chosen {
-            state.swatches_window.chosen = None;
-        }
-        apply(
-            state,
-            Command::RemoveSwatch {
-                name: swatch.name.clone(),
-            },
-        );
-        return;
-    }
 
     // The value, under the row, for the swatch being worked on. Every row
     // carrying a picker would be a column of pickers, and only one is being
     // edited at a time.
     if chosen {
+        super::panel_ui::hint(ui, "Swatch settings");
+        let draft_id = ui.id().with("name-draft");
+        let mut name = ui
+            .data_mut(|data| data.get_temp::<String>(draft_id))
+            .unwrap_or_else(|| swatch.name.clone());
+        let response = ui.add(egui::TextEdit::singleline(&mut name).desired_width(f32::INFINITY));
+        ui.data_mut(|data| data.insert_temp(draft_id, name.clone()));
+        let valid = !name.trim().is_empty()
+            && (name == swatch.name || swatches_name_available(state, &name));
+        if !valid {
+            super::panel_ui::hint(
+                ui,
+                "Use a non-empty name that is not already in the palette.",
+            );
+        }
+        if response.lost_focus() && valid && name != swatch.name {
+            edited.name = name;
+            changed = true;
+        }
+        ui.checkbox(&mut edited.spot, "Spot colour (separate ink plate)");
+        changed |= edited.spot != swatch.spot;
         ui.horizontal(|ui| {
-            ui.add_space(BLOCK + Theme::space_2());
+            super::panel_ui::hint(ui, "Colour");
             let [r, g, b, a] = swatch.colour.to_rgb_f32();
             let mut rgba = [r, g, b, a];
             if crate::view::panels::swatch_picker(ui, &mut rgba) {
@@ -201,20 +177,52 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, swatch: &Swatch) {
         });
     }
 
-    if changed {
-        // Renaming is a remove and a set, because a swatch *is* its name: the
-        // objects pointing at the old one keep pointing at a name that has gone,
-        // which is honest — nothing silently rewrote their reference.
-        if edited.name != swatch.name {
-            apply(
-                state,
-                Command::RemoveSwatch {
-                    name: swatch.name.clone(),
-                },
+    if chosen {
+        let uses = state.active().document().uses_of_swatch(&swatch.name);
+        ui.menu_button("Swatch actions", |ui| {
+            super::panel_ui::hint(
+                ui,
+                &format!(
+                    "{uses} objects use this swatch. Removing it leaves their colour unresolved."
+                ),
             );
-        }
-        apply(state, Command::SetSwatch(edited));
+            if ui.button("Delete swatch").clicked() {
+                removed = true;
+                ui.close();
+            }
+        });
+        ui.add_space(Theme::space_2());
     }
+    if removed {
+        state.swatches_window.chosen = None;
+        apply(
+            state,
+            Command::RemoveSwatch {
+                name: swatch.name.clone(),
+            },
+        );
+        return;
+    }
+
+    if changed {
+        state.swatches_window.chosen = Some(edited.name.clone());
+        apply(
+            state,
+            Command::EditSwatch {
+                old: swatch.name.clone(),
+                swatch: edited,
+            },
+        );
+    }
+}
+
+fn swatches_name_available(state: &TesseraApp, name: &str) -> bool {
+    !state
+        .active()
+        .document()
+        .swatches
+        .iter()
+        .any(|swatch| swatch.name == name)
 }
 
 /// A new swatch, named so as not to collide.
@@ -320,5 +328,53 @@ mod tests {
         unique.sort();
         unique.dedup();
         assert_eq!(unique.len(), 3, "a name was reused: {names:?}");
+    }
+
+    #[test]
+    fn renaming_a_swatch_keeps_object_references_and_undoes_in_one_step() {
+        let mut state = TesseraApp::headless();
+        apply(
+            &mut state,
+            Command::SetSwatch(Swatch::new("Brand", Color::BLACK)),
+        );
+        apply(
+            &mut state,
+            Command::AddRectangle(tessera_geometry::DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 10.0,
+            }),
+        );
+        let id = state.active().selection.single().unwrap();
+        let reference = |name: &str| {
+            tessera_document::paint::Paint::Solid(Color::Swatch {
+                name: name.into(),
+                tint: 0.6,
+            })
+        };
+        apply(
+            &mut state,
+            Command::SetFill {
+                id,
+                paint: reference("Brand"),
+            },
+        );
+        apply(
+            &mut state,
+            Command::EditSwatch {
+                old: "Brand".into(),
+                swatch: Swatch::new("Ink", Color::BLACK),
+            },
+        );
+        assert_eq!(state.active().document().frames[id].fill, reference("Ink"));
+        assert!(state.active().document().swatch("Brand").is_none());
+        apply(&mut state, Command::Undo);
+        assert_eq!(
+            state.active().document().frames[id].fill,
+            reference("Brand")
+        );
+        assert!(state.active().document().swatch("Brand").is_some());
+        assert!(state.active().document().swatch("Ink").is_none());
     }
 }

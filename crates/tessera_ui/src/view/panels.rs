@@ -22,6 +22,14 @@ pub fn tool_strip(ui: &mut Ui, state: &mut TesseraApp) {
     ui.vertical(|ui| {
         ui.add_space(Theme::space_1());
         for tool in Tool::ALL {
+            if matches!(
+                tool,
+                Tool::Rectangle | Tool::Text | Tool::Scissors | Tool::Hand
+            ) {
+                ui.add_space(Theme::space_1());
+                ui.separator();
+                ui.add_space(Theme::space_1());
+            }
             let shortcut = crate::actions::all()
                 .iter()
                 .find(|a| a.run == crate::actions::Run::PickTool(tool))
@@ -46,7 +54,7 @@ fn tool_button(ui: &mut Ui, tool: Tool, active: bool, name: String) -> egui::Res
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
 
     let bg = if active {
-        Theme::selected_bg()
+        Theme::accent_soft()
     } else if response.hovered() {
         Theme::hover_bg()
     } else {
@@ -79,11 +87,9 @@ fn tool_button(ui: &mut Ui, tool: Tool, active: bool, name: String) -> egui::Res
 
 /// The inspector's sections, in the order they are drawn.
 ///
-/// The order is the whole design. Hiding a section moves everything below it,
-/// so the sections that apply to every frame come first and the ones that can
-/// be absent come last — hiding one then never moves a control the user
-/// reaches for often. A control that relocates by context is one the hand
-/// cannot find without the eye.
+/// Content-specific controls come first: selecting text should expose type,
+/// and selecting artwork should expose fitting. Shared appearance follows
+/// in a consistent order, with occasional adjustments collapsed initially.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     Transform,
@@ -101,26 +107,17 @@ pub enum Section {
 }
 
 impl Section {
-    /// Display order. Universal sections first; see the type's note.
+    /// Display order, from the selected content to its appearance.
     pub const ALL: [Section; 11] = [
+        Section::Text,
+        Section::Graphic,
         Section::Transform,
-        // Above Fill and Stroke, because it decides what those *start* as: an
-        // object’s style is read before its own adjustments, and the panel reads
-        // in the same order.
-        Section::Style,
         Section::Fill,
         Section::Stroke,
+        Section::Style,
         Section::Corners,
-        // Every object composites, so this belongs with the always-present
-        // sections — and it reads under Fill and Stroke because it is about
-        // what happens to them once they are painted.
         Section::Effects,
-        // Wrap applies to every object, so it belongs with the sections that
-        // are always there. The ones that can be absent come last, or hiding
-        // one would move a section above it.
         Section::Wrap,
-        Section::Graphic,
-        Section::Text,
         Section::Frame,
         Section::PathText,
     ];
@@ -194,6 +191,11 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
     // No heading: the rail draws one, and printing a second underneath it was
     // the word "Properties" twice in a column 292 points wide.
     if state.active().selection.is_empty() {
+        context_card(
+            ui,
+            "Document setup",
+            "Page size, margins and output settings",
+        );
         document_setup(ui, state);
         return;
     }
@@ -202,9 +204,10 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
     // value to show, and silently editing only the first would be worse than
     // saying so.
     let Some(id) = state.active().selection.single() else {
-        ui.colored_label(
-            Theme::text_muted(),
-            format!("{} objects selected", state.active().selection.len()),
+        context_card(
+            ui,
+            &format!("{} objects selected", state.active().selection.len()),
+            "Select one object to edit its properties. Use the Object menu to align or group this selection.",
         );
         return;
     };
@@ -213,7 +216,29 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
         return;
     };
 
-    fill_stroke_proxy(ui, state, id, &frame);
+    use tessera_document::nodes::FrameKind;
+    let kind = match &frame.kind {
+        FrameKind::Rectangle => "Rectangle",
+        FrameKind::Ellipse => "Ellipse",
+        FrameKind::Text { .. } => "Text frame",
+        FrameKind::Graphic { .. } => "Picture frame",
+        FrameKind::Path(_) => "Path",
+        FrameKind::Table(_) => "Table",
+        FrameKind::Group(_) => "Group",
+    };
+    context_card(
+        ui,
+        kind,
+        "Position and size are in the toolbar above the page.",
+    );
+    ui.horizontal(|ui| {
+        fill_stroke_proxy(ui, state, id, &frame);
+        ui.label(
+            egui::RichText::new("Fill & stroke")
+                .small()
+                .color(Theme::text_muted()),
+        );
+    });
 
     for section in Section::ALL {
         if !section.applies_to(&frame) {
@@ -232,8 +257,8 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
             ui.add_space(Theme::space_1());
             egui::Frame::NONE
                 .inner_margin(egui::Margin {
-                    left: Theme::space_3() as i8,
-                    right: 0,
+                    left: Theme::space_2() as i8,
+                    right: Theme::space_2() as i8,
                     top: 0,
                     bottom: Theme::space_1() as i8,
                 })
@@ -254,6 +279,26 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
     }
 }
 
+fn context_card(ui: &mut Ui, title: &str, description: &str) {
+    egui::Frame::NONE
+        .fill(Theme::panel_bg_alt())
+        .corner_radius(Theme::RADIUS)
+        .inner_margin(Theme::space_3())
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.strong(title);
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(description)
+                        .small()
+                        .color(Theme::text_muted()),
+                )
+                .wrap(),
+            );
+        });
+    ui.add_space(Theme::space_2());
+}
+
 /// The fill and stroke proxy: two overlapping swatches with their three keys.
 ///
 /// The arrangement every drawing tool since MacDraw has used, and the one
@@ -268,10 +313,7 @@ fn fill_stroke_proxy(
     const SWATCH: f32 = 26.0;
     const OFFSET: f32 = 10.0;
 
-    let (rect, _) = ui.allocate_exact_size(
-        Vec2::new(SWATCH + OFFSET + 60.0, SWATCH + OFFSET),
-        Sense::hover(),
-    );
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(SWATCH + OFFSET), Sense::hover());
     let painter = ui.painter();
 
     let to_colour = |c: &Color| {
@@ -294,6 +336,7 @@ fn fill_stroke_proxy(
         .stroke
         .as_ref()
         .map_or(Theme::panel_bg(), |s| to_colour(&s.color));
+    painter.rect_filled(stroke_rect, 2.0, Theme::panel_bg_solid());
     painter.rect_filled(stroke_rect, 2.0, stroke_colour);
     painter.rect_filled(stroke_rect.shrink(6.0), 1.0, Theme::panel_bg());
     painter.rect_stroke(
@@ -307,7 +350,6 @@ fn fill_stroke_proxy(
     // ramp, where there is room for it.
     // Opaque behind both swatches: a fill with alpha is judged against a known
     // ground, not against whatever the page happens to be showing.
-    painter.rect_filled(stroke_rect, 2.0, Theme::panel_bg_solid());
     painter.rect_filled(fill_rect, 2.0, Theme::panel_bg_solid());
     painter.rect_filled(fill_rect, 2.0, to_colour(&frame.fill.representative()));
     painter.rect_stroke(
@@ -521,8 +563,8 @@ fn transform_section(
     let (mut sx, mut sy) = (d.scale_x * 100.0, d.scale_y * 100.0);
     let (a, b) = pair(
         ui,
-        ("Scale", |ui: &mut Ui| percent_bare(ui, &mut sx)),
-        ("by", |ui: &mut Ui| percent_bare(ui, &mut sy)),
+        ("Scale X", |ui: &mut Ui| percent_bare(ui, &mut sx)),
+        ("Scale Y", |ui: &mut Ui| percent_bare(ui, &mut sy)),
     );
     let scaled = a || b;
     if scaled && d.scale_x != 0.0 && d.scale_y != 0.0 {
@@ -611,6 +653,12 @@ pub fn type_row(ui: &mut Ui, state: &mut TesseraApp) {
         .story(story)
         .map(|s| s.common_format(target.clone(), state.active().document()))
         .unwrap_or_default();
+    let common = match &state.active().editing {
+        Some((editing, buffer)) if *editing == id && target.is_empty() => {
+            buffer.pending().over(&common)
+        }
+        _ => common,
+    };
 
     if let Some(family) = family_picker(ui, state, common.family.as_deref(), &[]) {
         set_character(
@@ -630,7 +678,12 @@ pub fn type_row(ui: &mut Ui, state: &mut TesseraApp) {
     let mut size = common.size.unwrap_or(12.0) as f64;
     crate::view::control::label(ui, "Size");
     if ui
-        .add(egui::DragValue::new(&mut size).speed(0.25).suffix(" pt"))
+        .add(
+            egui::DragValue::new(&mut size)
+                .speed(0.25)
+                .range(0.1..=2000.0)
+                .suffix(" pt"),
+        )
         .changed()
     {
         set_character(
@@ -2677,17 +2730,15 @@ fn text_frame_controls(
 /// difference in weight is what says one is a level above the other.
 fn group_label(ui: &mut Ui, text: &str) {
     ui.add_space(Theme::space_2());
-    ui.add(egui::Label::new(caps(text)).selectable(false));
+    ui.add(egui::Label::new(group_text(text)).selectable(false));
 }
 
-/// A group's name as the inspector sets it: small capitals, muted. One
-/// level below a section's band and one above a field's label, and told
-/// apart from both by the case alone — the rows have none, the bands have
-/// the heavier face.
-fn caps(text: &str) -> egui::RichText {
-    egui::RichText::new(text.to_uppercase())
-        .size(Theme::TYPE_SM - 1.0)
-        .color(Theme::text_muted())
+/// A readable sentence-case label for a subgroup of controls.
+fn group_text(text: &str) -> egui::RichText {
+    egui::RichText::new(text)
+        .size(Theme::TYPE_SM)
+        .strong()
+        .color(Theme::text_primary())
 }
 
 /// Linking is UI state, scoped to this document/object and group. Toggling it
@@ -2696,7 +2747,7 @@ fn linked_group_heading(ui: &mut Ui, id: egui::Id, title: &str, default: bool) -
     let mut linked = ui.ctx().data_mut(|data| *data.get_temp_mut_or(id, default));
     ui.add_space(Theme::space_2());
     ui.horizontal(|ui| {
-        ui.add(egui::Label::new(caps(title)).selectable(false));
+        ui.add(egui::Label::new(group_text(title)).selectable(false));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let (rect, response) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), Sense::click());
             if response.clicked() {
@@ -2792,16 +2843,33 @@ fn subheading(ui: &mut Ui, icon: crate::icons::Icon, label: &str) {
         let size = Vec2::splat(Theme::ICON_SIZE);
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
         crate::icons::paint(ui.painter(), rect, icon, Theme::text_muted());
-        ui.add(egui::Label::new(caps(label)).selectable(false));
+        ui.add(egui::Label::new(group_text(label)).selectable(false));
     });
 }
 
 /// A row of mutually exclusive choices, the shape a three-way property wants.
 fn segmented<T: PartialEq + Copy>(ui: &mut Ui, label: &str, value: &mut T, options: &[(&str, T)]) {
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::text_muted(), label);
-        for (text, candidate) in options {
-            if ui.selectable_label(*value == *candidate, *text).clicked() {
+    ui.label(
+        egui::RichText::new(label)
+            .small()
+            .color(Theme::text_muted()),
+    );
+    ui.columns(options.len(), |columns| {
+        for (column, (text, candidate)) in columns.iter_mut().zip(options) {
+            let selected = *value == *candidate;
+            if column
+                .add_sized(
+                    [column.available_width(), Theme::control_height()],
+                    egui::Button::new(*text)
+                        .selected(selected)
+                        .fill(if selected {
+                            Theme::accent_soft()
+                        } else {
+                            Theme::field_bg()
+                        }),
+                )
+                .clicked()
+            {
                 *value = *candidate;
             }
         }
@@ -2934,13 +3002,16 @@ fn labelled<R>(
 ) -> R {
     ui.horizontal(|ui| {
         let height = ui.spacing().interact_size.y;
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
-        ui.painter().text(
-            egui::pos2(rect.left(), rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            label,
-            egui::TextStyle::Body.resolve(ui.style()),
-            Theme::text_muted(),
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, height),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_width(width);
+                ui.add(
+                    egui::Label::new(egui::RichText::new(label).color(Theme::text_muted())).wrap(),
+                )
+                .on_hover_text(label);
+            },
         );
         // Clamped, and **not** fed back into a minimum. `available_width` in a
         // resizable window is however wide the window currently is, so a row
@@ -2973,38 +3044,28 @@ fn labelled<R>(
     .inner
 }
 
-/// Two labelled controls in one row.
-///
-/// **X and Y are one fact, not two.** So are a width and a height, an inside
-/// and an outside margin, a space before and a space after. Stacking them
-/// makes a panel twice as tall as it needs to be and hides the relationship
-/// that makes them easy to read; side by side, the pair is one line and the
-/// eye compares them without moving.
+/// Two equal-width fields with labels above their values. Keeping the labels
+/// out of the value row leaves room for units even in a narrow dock.
 pub(crate) fn pair<A, B>(
     ui: &mut Ui,
     first: (&str, impl FnOnce(&mut Ui) -> A),
     second: (&str, impl FnOnce(&mut Ui) -> B),
 ) -> (A, B) {
-    // A shorter label column inside a pair: each half has half the room, and
-    // the full column would leave nothing for the control.
-    const NARROW: f32 = 52.0;
-
-    let mut out = (None, None);
-    ui.horizontal(|ui| {
-        let half = (ui.available_width() - Theme::space_2()) / 2.0;
-        ui.scope(|ui| {
-            ui.set_max_width(half);
-            out.0 = Some(labelled(ui, first.0, NARROW, false, first.1));
-        });
-        ui.scope(|ui| {
-            ui.set_max_width(half);
-            out.1 = Some(labelled(ui, second.0, NARROW, false, second.1));
-        });
-    });
-    (
-        out.0.expect("the first half drew"),
-        out.1.expect("the second half drew"),
-    )
+    fn cell<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+        ui.label(
+            egui::RichText::new(label)
+                .small()
+                .color(Theme::text_muted()),
+        );
+        ui.spacing_mut().interact_size.x = ui.available_width().min(WIDEST_ROW);
+        add(ui)
+    }
+    ui.columns(2, |columns| {
+        (
+            cell(&mut columns[0], first.0, first.1),
+            cell(&mut columns[1], second.0, second.1),
+        )
+    })
 }
 
 /// A section heading that opens and shuts, remembering which it was.
@@ -3045,18 +3106,30 @@ pub(crate) fn section_heading_with(
     );
     let painter = ui.painter_at(rect);
 
-    // On the raised surface, always — not only under the pointer. A heading
-    // that looks like the rows under it is one more row, and a column of
-    // sections read as one heap; the user's word. The band is what says
-    // where one section ends and the next begins, and the heavier face is
-    // what says this line names the rows rather than being one of them.
-    painter.rect_filled(rect, Theme::RADIUS, Theme::panel_bg_alt());
+    // A quiet divider and a semibold title establish the group without
+    // making every heading look like another input field.
+    painter.hline(
+        rect.x_range(),
+        rect.top(),
+        egui::Stroke::new(1.0, Theme::rule()),
+    );
     if response.hovered() {
         painter.rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
     }
+    if response.has_focus() {
+        painter.rect_stroke(
+            rect,
+            Theme::RADIUS,
+            egui::Stroke::new(1.0, Theme::focus()),
+            egui::StrokeKind::Inside,
+        );
+    }
 
     let caret = egui::Rect::from_min_size(
-        egui::pos2(rect.left() + Theme::space_1(), rect.center().y - 5.0),
+        egui::pos2(
+            rect.right() - Theme::space_2() - 10.0,
+            rect.center().y - 5.0,
+        ),
         Vec2::splat(10.0),
     );
     crate::icons::paint_rotated(
@@ -3070,7 +3143,7 @@ pub(crate) fn section_heading_with(
 
     let glyph = egui::Rect::from_min_size(
         egui::pos2(
-            caret.right() + Theme::space_1(),
+            rect.left() + Theme::space_1(),
             rect.center().y - Theme::ICON_SIZE / 2.0,
         ),
         Vec2::splat(Theme::ICON_SIZE),
@@ -3258,303 +3331,57 @@ fn text_section(
         }
     };
 
-    subheading(ui, crate::icons::Icon::CaseSensitive, "Character");
-
-    // Family, size and leading are **not** here. They are the three a person
-    // changes while typing, so they live in the control bar, and a control
-    // that appears in two places is two places to read a different answer
-    // from. What is left is what the bar has no room for.
-    //
-    // The families a story asks for and the system does not have are still
-    // reported here, because that is a fault to be seen rather than a control
-    // to be used.
+    // These controls also work on a selected frame, before entering its text.
+    // The same target and pending format as the other controls keep both
+    // entry points in sync with the toolbar while typing.
+    if let Some(family) = family_picker(ui, state, shown.family.as_deref(), &[]) {
+        set_character(
+            state,
+            story,
+            target.clone(),
+            CharacterFormat {
+                family: Some(family),
+                ..CharacterFormat::default()
+            },
+        );
+    }
+    let mut size = f64::from(shown.size.unwrap_or(12.0));
+    let mut leading = f64::from(shown.line_height.unwrap_or(1.2));
+    let (size_changed, leading_changed) = pair(
+        ui,
+        ("Size", |ui: &mut Ui| {
+            ui.add(
+                egui::DragValue::new(&mut size)
+                    .speed(0.25)
+                    .range(0.1..=2000.0)
+                    .suffix(" pt"),
+            )
+            .changed()
+        }),
+        ("Line spacing", |ui: &mut Ui| {
+            ui.add(
+                egui::DragValue::new(&mut leading)
+                    .speed(0.02)
+                    .range(0.5..=4.0)
+                    .suffix(" ×"),
+            )
+            .changed()
+        }),
+    );
+    if size_changed || leading_changed {
+        set_character(
+            state,
+            story,
+            target.clone(),
+            CharacterFormat {
+                size: size_changed.then_some(size as f32),
+                line_height: leading_changed.then_some(leading as f32),
+                ..CharacterFormat::default()
+            },
+        );
+    }
     if !missing.is_empty() {
         ui.colored_label(Theme::error(), format!("Missing: {}", missing.join(", ")));
-    }
-
-    // Tracking in thousandths of an em, the unit every type specimen uses.
-    if let Some(tracking) = optional_number(
-        ui,
-        "Tracking",
-        Some(shown.tracking.unwrap_or(0.0)),
-        1.0,
-        -200.0..=800.0,
-        "/1000 em",
-    ) {
-        set_character(
-            state,
-            story,
-            target.clone(),
-            CharacterFormat {
-                tracking: Some(tracking),
-                ..CharacterFormat::default()
-            },
-        );
-    }
-
-    // Kerning: the font's table, or every pair judged from the glyphs'
-    // shapes. Stated either way, so a style that says optical can be
-    // overridden back to metrics on a range.
-    ui.horizontal(|ui| {
-        use tessera_text::story::Kerning;
-        ui.colored_label(Theme::text_muted(), "Kerning");
-        let current = shown.kerning.unwrap_or(Kerning::Metrics);
-        for (label, kerning, hint) in [
-            (
-                "Metrics",
-                Kerning::Metrics,
-                "The pairs the font's designer set",
-            ),
-            (
-                "Optical",
-                Kerning::Optical,
-                "Every pair judged from the shapes of its letters",
-            ),
-        ] {
-            if ui
-                .selectable_label(current == kerning, label)
-                .on_hover_text(hint)
-                .clicked()
-                && current != kerning
-            {
-                set_character(
-                    state,
-                    story,
-                    target.clone(),
-                    CharacterFormat {
-                        kerning: Some(kerning),
-                        ..CharacterFormat::default()
-                    },
-                );
-            }
-        }
-    });
-
-    // Case. A display transform, not an edit: the story keeps what was typed,
-    // so turning All Caps off gives back the original capitals rather than a
-    // sentence that has forgotten where they were.
-    let mut case_change = None;
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::text_muted(), "Case");
-        for (label, case, hint) in [
-            ("aa", Case::Normal, "As typed"),
-            ("AA", Case::Upper, "All capitals"),
-            ("Aa", Case::SmallCaps, "Small capitals"),
-            ("aa\u{0332}", Case::Lower, "All lower case"),
-        ] {
-            if ui
-                .selectable_label(shown.case == Some(case), label)
-                .on_hover_text(hint)
-                .clicked()
-            {
-                case_change = Some(case);
-            }
-        }
-    });
-    if let Some(case) = case_change {
-        set_character(
-            state,
-            story,
-            target.clone(),
-            CharacterFormat {
-                case: Some(case),
-                ..CharacterFormat::default()
-            },
-        );
-    }
-
-    // The kern at the caret: between the character before it and the one
-    // after. Only with a caret and not a selection, because a kern is about
-    // one pair — a range has many, and tracking is the control for a range.
-    if target.is_empty()
-        && let Some(kern) = state
-            .active()
-            .editing
-            .as_ref()
-            .and_then(|(_, buffer)| buffer.kern_at_cursor())
-        && let Some(edited) = optional_number(ui, "Kern", Some(kern), 1.0, -1000.0..=1000.0, "")
-        && let Some((_, buffer)) = state.active_mut().editing.as_mut()
-    {
-        // undo-bracketed: written the way a keystroke is, straight into the
-        // story, inside the entry the editing session opened.
-        buffer.kern_by(edited - kern);
-        let updated = buffer.story().clone();
-        if let Some(s) = state.active_mut().document_mut().story_mut(story) {
-            *s = updated;
-        }
-        state.active_mut().dirty = true;
-    }
-
-    // The language: what the hyphenation patterns are chosen by, and what
-    // the font is told. A choice, not a toggle, so it states `Some` always;
-    // the document default is English.
-    field(ui, "Language", |ui| {
-        use tessera_text::story::LANGUAGES;
-        let current = shown.language.as_deref().unwrap_or("en");
-        let name = LANGUAGES
-            .iter()
-            .find(|(code, _)| *code == current)
-            .map_or(current, |(_, name)| *name);
-        let mut chosen = None;
-        egui::ComboBox::from_id_salt("text-language")
-            .selected_text(name)
-            .show_ui(ui, |ui| {
-                for (code, name) in LANGUAGES {
-                    if ui.selectable_label(current == *code, *name).clicked() && current != *code {
-                        chosen = Some((*code).to_string());
-                    }
-                }
-            });
-        if let Some(code) = chosen {
-            set_character(
-                state,
-                story,
-                target.clone(),
-                CharacterFormat {
-                    language: Some(code),
-                    ..CharacterFormat::default()
-                },
-            );
-        }
-    });
-
-    // OpenType features. Each row states `Some(..)` either way, for the
-    // reason italic does: `None` would inherit, and off has to mean off.
-    // What a font lacks it ignores, so a control here can never make text
-    // disappear — it can only fail to change it.
-    group_label(ui, "Features");
-    let mut feature_change: Option<CharacterFormat> = None;
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::text_muted(), "Ligatures");
-        let common = shown.ligatures != Some(false);
-        if ui
-            .selectable_label(common, "Common")
-            .on_hover_text("fi, fl and the others the font sets by default")
-            .clicked()
-        {
-            feature_change = Some(CharacterFormat {
-                ligatures: Some(!common),
-                ..CharacterFormat::default()
-            });
-        }
-        let discretionary = shown.discretionary_ligatures == Some(true);
-        if ui
-            .selectable_label(discretionary, "Discretionary")
-            .on_hover_text("The decorative ones: st, ct, Th")
-            .clicked()
-        {
-            feature_change = Some(CharacterFormat {
-                discretionary_ligatures: Some(!discretionary),
-                ..CharacterFormat::default()
-            });
-        }
-    });
-    ui.horizontal(|ui| {
-        use tessera_text::story::{FigureCase, FigureWidth};
-        ui.colored_label(Theme::text_muted(), "Figures");
-        for (label, case, hint) in [
-            ("Lining", FigureCase::Lining, "As tall as capitals"),
-            (
-                "Old-style",
-                FigureCase::OldStyle,
-                "With ascenders and descenders",
-            ),
-        ] {
-            if ui
-                .selectable_label(shown.figure_case == Some(case), label)
-                .on_hover_text(hint)
-                .clicked()
-            {
-                feature_change = Some(CharacterFormat {
-                    figure_case: Some(case),
-                    ..CharacterFormat::default()
-                });
-            }
-        }
-        ui.separator();
-        for (label, width, hint) in [
-            (
-                "Proportional",
-                FigureWidth::Proportional,
-                "Each its own width",
-            ),
-            (
-                "Tabular",
-                FigureWidth::Tabular,
-                "All one width, for columns",
-            ),
-        ] {
-            if ui
-                .selectable_label(shown.figure_width == Some(width), label)
-                .on_hover_text(hint)
-                .clicked()
-            {
-                feature_change = Some(CharacterFormat {
-                    figure_width: Some(width),
-                    ..CharacterFormat::default()
-                });
-            }
-        }
-    });
-    ui.horizontal(|ui| {
-        let fractions = shown.fractions == Some(true);
-        if ui
-            .selectable_label(fractions, "Fractions")
-            .on_hover_text("1/2 set as a fraction, where the font can")
-            .clicked()
-        {
-            feature_change = Some(CharacterFormat {
-                fractions: Some(!fractions),
-                ..CharacterFormat::default()
-            });
-        }
-        ui.colored_label(Theme::text_muted(), "Sets");
-        let mut sets = shown
-            .stylistic_sets
-            .as_ref()
-            .map(|s| s.iter().map(u8::to_string).collect::<Vec<_>>().join(" "))
-            .unwrap_or_default();
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut sets)
-                .desired_width(60.0)
-                .hint_text("1 3 7"),
-        );
-        crate::icons::named(response.clone(), "Stylistic sets, by number");
-        // Written when the field is left, not on every keystroke: half a
-        // number is not a set.
-        if response.lost_focus() {
-            let parsed = parse_sets(&sets);
-            if Some(&parsed) != shown.stylistic_sets.as_ref() {
-                feature_change = Some(CharacterFormat {
-                    stylistic_sets: Some(parsed),
-                    ..CharacterFormat::default()
-                });
-            }
-        }
-    });
-    if let Some(format) = feature_change {
-        set_character(state, story, target.clone(), format);
-    }
-
-    // Baseline shift: a superscript sits above the line it belongs to without
-    // making that line taller.
-    if let Some(shift) = optional_number(
-        ui,
-        "Baseline",
-        Some(shown.baseline_shift.unwrap_or(0.0)),
-        0.25,
-        -200.0..=200.0,
-        " pt",
-    ) {
-        set_character(
-            state,
-            story,
-            target.clone(),
-            CharacterFormat {
-                baseline_shift: Some(shift),
-                ..CharacterFormat::default()
-            },
-        );
     }
 
     // Text colour. Distinct from the frame's fill, which is the box behind the
@@ -3563,7 +3390,7 @@ fn text_section(
     let shown_colour = shown.colour.clone().unwrap_or(Color::BLACK);
     let [r, g, b, a] = shown_colour.to_rgb_f32();
     let mut rgba = [r, g, b, a];
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         let (spot, _) = ui.allocate_exact_size(Vec2::splat(Theme::ICON_SIZE), Sense::hover());
         crate::icons::paint(
             ui.painter(),
@@ -3595,8 +3422,8 @@ fn text_section(
     // the faces that have them, but the pair a person reaches for constantly
     // should be one click and recognisable without reading.
     let mut weight_change = None;
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::text_muted(), "Weight");
+    ui.horizontal_wrapped(|ui| {
+        ui.colored_label(Theme::text_muted(), "Style");
         let bold = shown.weight.is_some_and(|w| w >= 600);
         if icon_button(ui, crate::icons::Icon::Bold, "Bold", bold) {
             // Off returns to 400 rather than to inherit: a toggle that cleared
@@ -3642,21 +3469,38 @@ fn text_section(
                 set_character(state, story, target.clone(), format);
             }
         }
-        ui.separator();
-        for (label, weight) in [("300", 300u16), ("400", 400), ("500", 500), ("700", 700)] {
-            if ui
-                .selectable_label(shown.weight == Some(weight), label)
-                .on_hover_text(match weight {
+    });
+    field(ui, "Weight", |ui| {
+        let current = shown.weight.unwrap_or(400);
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt("text-weight")
+                .width(ui.available_width())
+                .selected_text(match current {
                     300 => "Light",
                     400 => "Regular",
                     500 => "Medium",
-                    _ => "Bold",
+                    600 => "Semibold",
+                    700 => "Bold",
+                    _ => "Custom",
                 })
-                .clicked()
-            {
-                weight_change = Some(weight);
-            }
-        }
+                .show_ui(ui, |ui| {
+                    for (label, weight) in [
+                        ("Light", 300),
+                        ("Regular", 400),
+                        ("Medium", 500),
+                        ("Semibold", 600),
+                        ("Bold", 700),
+                    ] {
+                        if ui.selectable_label(current == weight, label).clicked() {
+                            weight_change = Some(weight);
+                        }
+                    }
+                })
+                .response,
+            "Font weight",
+            egui::WidgetType::ComboBox,
+            None,
+        );
     });
     if let Some(weight) = weight_change {
         set_character(
@@ -3672,12 +3516,10 @@ fn text_section(
 
     // --- the paragraph half
 
-    text_frame_controls(ui, state, id, frame);
-
     subheading(ui, crate::icons::Icon::Pilcrow, "Paragraph");
 
     let mut alignment_change = None;
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.colored_label(Theme::text_muted(), "Align");
         for (icon, name, alignment) in [
             (crate::icons::Icon::TextAlignLeft, "Left", Alignment::Left),
@@ -3714,306 +3556,611 @@ fn text_section(
         );
     }
 
-    // Drop cap. Zero lines is no drop cap, which is why the row reads as a
-    // count rather than as a switch with a count beside it.
-    if let Some(lines) = optional_number(
+    if section_heading(
         ui,
-        "Drop cap lines",
-        Some(f32::from(paragraph.drop_cap_lines.unwrap_or(0))),
-        1.0,
-        0.0..=10.0,
-        "",
+        state,
+        crate::icons::Icon::CaseSensitive,
+        "Advanced character",
     ) {
-        set_paragraph(
-            state,
-            story,
-            target.clone(),
-            ParagraphFormat {
-                drop_cap_lines: Some(lines.round().clamp(0.0, 10.0) as u8),
-                ..ParagraphFormat::default()
-            },
-        );
-    }
-    if paragraph.drop_cap_lines.unwrap_or(0) > 0
-        && let Some(chars) = optional_number(
+        // Tracking in thousandths of an em, the unit every type specimen uses.
+        if let Some(tracking) = optional_number(
             ui,
-            "Drop cap letters",
-            Some(f32::from(paragraph.drop_cap_characters.unwrap_or(1))),
+            "Tracking",
+            Some(shown.tracking.unwrap_or(0.0)),
             1.0,
-            1.0..=10.0,
-            "",
-        )
-    {
-        set_paragraph(
-            state,
-            story,
-            target.clone(),
-            ParagraphFormat {
-                drop_cap_characters: Some(chars.round().clamp(1.0, 10.0) as u8),
-                ..ParagraphFormat::default()
-            },
-        );
+            -200.0..=800.0,
+            "/1000 em",
+        ) {
+            set_character(
+                state,
+                story,
+                target.clone(),
+                CharacterFormat {
+                    tracking: Some(tracking),
+                    ..CharacterFormat::default()
+                },
+            );
+        }
+
+        // Kerning: the font's table, or every pair judged from the glyphs'
+        // shapes. Stated either way, so a style that says optical can be
+        // overridden back to metrics on a range.
+        ui.horizontal_wrapped(|ui| {
+            use tessera_text::story::Kerning;
+            ui.colored_label(Theme::text_muted(), "Kerning");
+            let current = shown.kerning.unwrap_or(Kerning::Metrics);
+            for (label, kerning, hint) in [
+                (
+                    "Metrics",
+                    Kerning::Metrics,
+                    "The pairs the font's designer set",
+                ),
+                (
+                    "Optical",
+                    Kerning::Optical,
+                    "Every pair judged from the shapes of its letters",
+                ),
+            ] {
+                if ui
+                    .selectable_label(current == kerning, label)
+                    .on_hover_text(hint)
+                    .clicked()
+                    && current != kerning
+                {
+                    set_character(
+                        state,
+                        story,
+                        target.clone(),
+                        CharacterFormat {
+                            kerning: Some(kerning),
+                            ..CharacterFormat::default()
+                        },
+                    );
+                }
+            }
+        });
+
+        // Case. A display transform, not an edit: the story keeps what was typed,
+        // so turning All Caps off gives back the original capitals rather than a
+        // sentence that has forgotten where they were.
+        let mut case_change = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.colored_label(Theme::text_muted(), "Case");
+            for (label, case, hint) in [
+                ("aa", Case::Normal, "As typed"),
+                ("AA", Case::Upper, "All capitals"),
+                ("Aa", Case::SmallCaps, "Small capitals"),
+                ("aa\u{0332}", Case::Lower, "All lower case"),
+            ] {
+                if ui
+                    .selectable_label(shown.case == Some(case), label)
+                    .on_hover_text(hint)
+                    .clicked()
+                {
+                    case_change = Some(case);
+                }
+            }
+        });
+        if let Some(case) = case_change {
+            set_character(
+                state,
+                story,
+                target.clone(),
+                CharacterFormat {
+                    case: Some(case),
+                    ..CharacterFormat::default()
+                },
+            );
+        }
+
+        // The kern at the caret: between the character before it and the one
+        // after. Only with a caret and not a selection, because a kern is about
+        // one pair — a range has many, and tracking is the control for a range.
+        if target.is_empty()
+            && let Some(kern) = state
+                .active()
+                .editing
+                .as_ref()
+                .and_then(|(_, buffer)| buffer.kern_at_cursor())
+            && let Some(edited) = optional_number(ui, "Kern", Some(kern), 1.0, -1000.0..=1000.0, "")
+            && let Some((_, buffer)) = state.active_mut().editing.as_mut()
+        {
+            // undo-bracketed: written the way a keystroke is, straight into the
+            // story, inside the entry the editing session opened.
+            buffer.kern_by(edited - kern);
+            let updated = buffer.story().clone();
+            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
+                *s = updated;
+            }
+            state.active_mut().dirty = true;
+        }
+
+        // The language: what the hyphenation patterns are chosen by, and what
+        // the font is told. A choice, not a toggle, so it states `Some` always;
+        // the document default is English.
+        field(ui, "Language", |ui| {
+            use tessera_text::story::LANGUAGES;
+            let current = shown.language.as_deref().unwrap_or("en");
+            let name = LANGUAGES
+                .iter()
+                .find(|(code, _)| *code == current)
+                .map_or(current, |(_, name)| *name);
+            let mut chosen = None;
+            egui::ComboBox::from_id_salt("text-language")
+                .selected_text(name)
+                .show_ui(ui, |ui| {
+                    for (code, name) in LANGUAGES {
+                        if ui.selectable_label(current == *code, *name).clicked()
+                            && current != *code
+                        {
+                            chosen = Some((*code).to_string());
+                        }
+                    }
+                });
+            if let Some(code) = chosen {
+                set_character(
+                    state,
+                    story,
+                    target.clone(),
+                    CharacterFormat {
+                        language: Some(code),
+                        ..CharacterFormat::default()
+                    },
+                );
+            }
+        });
+
+        // OpenType features. Each row states `Some(..)` either way, for the
+        // reason italic does: `None` would inherit, and off has to mean off.
+        // What a font lacks it ignores, so a control here can never make text
+        // disappear — it can only fail to change it.
+        group_label(ui, "Features");
+        let mut feature_change: Option<CharacterFormat> = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.colored_label(Theme::text_muted(), "Ligatures");
+            let common = shown.ligatures != Some(false);
+            if ui
+                .selectable_label(common, "Common")
+                .on_hover_text("fi, fl and the others the font sets by default")
+                .clicked()
+            {
+                feature_change = Some(CharacterFormat {
+                    ligatures: Some(!common),
+                    ..CharacterFormat::default()
+                });
+            }
+            let discretionary = shown.discretionary_ligatures == Some(true);
+            if ui
+                .selectable_label(discretionary, "Discretionary")
+                .on_hover_text("The decorative ones: st, ct, Th")
+                .clicked()
+            {
+                feature_change = Some(CharacterFormat {
+                    discretionary_ligatures: Some(!discretionary),
+                    ..CharacterFormat::default()
+                });
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
+            use tessera_text::story::{FigureCase, FigureWidth};
+            ui.colored_label(Theme::text_muted(), "Figures");
+            for (label, case, hint) in [
+                ("Lining", FigureCase::Lining, "As tall as capitals"),
+                (
+                    "Old-style",
+                    FigureCase::OldStyle,
+                    "With ascenders and descenders",
+                ),
+            ] {
+                if ui
+                    .selectable_label(shown.figure_case == Some(case), label)
+                    .on_hover_text(hint)
+                    .clicked()
+                {
+                    feature_change = Some(CharacterFormat {
+                        figure_case: Some(case),
+                        ..CharacterFormat::default()
+                    });
+                }
+            }
+            ui.separator();
+            for (label, width, hint) in [
+                (
+                    "Proportional",
+                    FigureWidth::Proportional,
+                    "Each its own width",
+                ),
+                (
+                    "Tabular",
+                    FigureWidth::Tabular,
+                    "All one width, for columns",
+                ),
+            ] {
+                if ui
+                    .selectable_label(shown.figure_width == Some(width), label)
+                    .on_hover_text(hint)
+                    .clicked()
+                {
+                    feature_change = Some(CharacterFormat {
+                        figure_width: Some(width),
+                        ..CharacterFormat::default()
+                    });
+                }
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
+            let fractions = shown.fractions == Some(true);
+            if ui
+                .selectable_label(fractions, "Fractions")
+                .on_hover_text("1/2 set as a fraction, where the font can")
+                .clicked()
+            {
+                feature_change = Some(CharacterFormat {
+                    fractions: Some(!fractions),
+                    ..CharacterFormat::default()
+                });
+            }
+            ui.colored_label(Theme::text_muted(), "Sets");
+            let mut sets = shown
+                .stylistic_sets
+                .as_ref()
+                .map(|s| s.iter().map(u8::to_string).collect::<Vec<_>>().join(" "))
+                .unwrap_or_default();
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut sets)
+                    .desired_width(60.0)
+                    .hint_text("1 3 7"),
+            );
+            crate::icons::named(response.clone(), "Stylistic sets, by number");
+            // Written when the field is left, not on every keystroke: half a
+            // number is not a set.
+            if response.lost_focus() {
+                let parsed = parse_sets(&sets);
+                if Some(&parsed) != shown.stylistic_sets.as_ref() {
+                    feature_change = Some(CharacterFormat {
+                        stylistic_sets: Some(parsed),
+                        ..CharacterFormat::default()
+                    });
+                }
+            }
+        });
+        if let Some(format) = feature_change {
+            set_character(state, story, target.clone(), format);
+        }
+
+        // Baseline shift: a superscript sits above the line it belongs to without
+        // making that line taller.
+        if let Some(shift) = optional_number(
+            ui,
+            "Baseline",
+            Some(shown.baseline_shift.unwrap_or(0.0)),
+            0.25,
+            -200.0..=200.0,
+            " pt",
+        ) {
+            set_character(
+                state,
+                story,
+                target.clone(),
+                CharacterFormat {
+                    baseline_shift: Some(shift),
+                    ..CharacterFormat::default()
+                },
+            );
+        }
     }
 
-    // Hyphenation. English only for now: `hypher` holds its patterns per
-    // language and a story has no language to pick one with.
-    let hyphenating = paragraph.hyphenate == Some(true);
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::text_muted(), "Hyphenate");
-        if ui
-            .selectable_label(hyphenating, "Break words")
-            .on_hover_text("English patterns")
-            .clicked()
+    if section_heading(ui, state, crate::icons::Icon::Pilcrow, "Advanced paragraph") {
+        // Drop cap. Zero lines is no drop cap, which is why the row reads as a
+        // count rather than as a switch with a count beside it.
+        if let Some(lines) = optional_number(
+            ui,
+            "Drop cap lines",
+            Some(f32::from(paragraph.drop_cap_lines.unwrap_or(0))),
+            1.0,
+            0.0..=10.0,
+            "",
+        ) {
+            set_paragraph(
+                state,
+                story,
+                target.clone(),
+                ParagraphFormat {
+                    drop_cap_lines: Some(lines.round().clamp(0.0, 10.0) as u8),
+                    ..ParagraphFormat::default()
+                },
+            );
+        }
+        if paragraph.drop_cap_lines.unwrap_or(0) > 0
+            && let Some(chars) = optional_number(
+                ui,
+                "Drop cap letters",
+                Some(f32::from(paragraph.drop_cap_characters.unwrap_or(1))),
+                1.0,
+                1.0..=10.0,
+                "",
+            )
         {
             set_paragraph(
                 state,
                 story,
                 target.clone(),
                 ParagraphFormat {
-                    // `Some(false)`, not `None`: `None` means inherit, and a
-                    // toggle built on it could never turn anything off.
-                    hyphenate: Some(!hyphenating),
+                    drop_cap_characters: Some(chars.round().clamp(1.0, 10.0) as u8),
                     ..ParagraphFormat::default()
                 },
             );
         }
-    });
 
-    // The composer: which breaker chooses the lines.
-    {
-        use tessera_text::story::Composer;
-        let current = paragraph.composer.unwrap_or_default();
-        ui.horizontal(|ui| {
-            ui.colored_label(Theme::text_muted(), "Composer");
-            for (choice, label, hint) in [
-                (
-                    Composer::SingleLine,
-                    "Single-line",
-                    "Each line as far as it fits",
-                ),
-                (
-                    Composer::Paragraph,
-                    "Paragraph",
-                    "The whole paragraph's breaks weighed together, for the evenest spacing",
-                ),
-            ] {
-                if ui
-                    .selectable_label(current == choice, label)
-                    .on_hover_text(hint)
-                    .clicked()
-                    && current != choice
-                {
-                    set_paragraph(
-                        state,
-                        story,
-                        target.clone(),
-                        ParagraphFormat {
-                            composer: Some(choice),
-                            ..ParagraphFormat::default()
-                        },
-                    );
-                }
+        // Hyphenation. English only for now: `hypher` holds its patterns per
+        // language and a story has no language to pick one with.
+        let hyphenating = paragraph.hyphenate == Some(true);
+        ui.horizontal_wrapped(|ui| {
+            ui.colored_label(Theme::text_muted(), "Hyphenate");
+            if ui
+                .selectable_label(hyphenating, "Break words")
+                .on_hover_text("English patterns")
+                .clicked()
+            {
+                set_paragraph(
+                    state,
+                    story,
+                    target.clone(),
+                    ParagraphFormat {
+                        // `Some(false)`, not `None`: `None` means inherit, and a
+                        // toggle built on it could never turn anything off.
+                        hyphenate: Some(!hyphenating),
+                        ..ParagraphFormat::default()
+                    },
+                );
             }
         });
-    }
 
-    // Tab stops. Edited as a whole: the list is one value in the cascade,
-    // so a change to any stop writes the whole list back.
-    let mut stops = paragraph.tab_stops.clone();
-    if tab_stops_editor(ui, &mut stops, false) {
-        set_paragraph(
-            state,
-            story,
-            target.clone(),
-            ParagraphFormat {
-                // An empty list, never `None`: `None` would mean "leave it",
-                // and removing the last stop has to mean "no stops".
-                tab_stops: Some(stops.unwrap_or_default()),
-                ..ParagraphFormat::default()
-            },
-        );
-    }
-
-    // Paragraph rules. Each is one value in the cascade, written whole.
-    for (label, above) in [("Rule above", true), ("Rule below", false)] {
-        let mut rule = if above {
-            paragraph.rule_above.clone()
-        } else {
-            paragraph.rule_below.clone()
-        };
-        if paragraph_rule_editor(ui, label, &mut rule, false) {
-            let mut format = ParagraphFormat::default();
-            // Switched off is `Some` with `on: false`, never `None`: `None`
-            // would mean "leave it", and off has to mean off.
-            let rule = Some(rule.unwrap_or(ParagraphRule {
-                on: false,
-                ..ParagraphRule::default()
-            }));
-            if above {
-                format.rule_above = rule;
-            } else {
-                format.rule_below = rule;
-            }
-            set_paragraph(state, story, target.clone(), format);
+        // The composer: which breaker chooses the lines.
+        {
+            use tessera_text::story::Composer;
+            let current = paragraph.composer.unwrap_or_default();
+            ui.horizontal_wrapped(|ui| {
+                ui.colored_label(Theme::text_muted(), "Composer");
+                for (choice, label, hint) in [
+                    (
+                        Composer::SingleLine,
+                        "Single-line",
+                        "Each line as far as it fits",
+                    ),
+                    (
+                        Composer::Paragraph,
+                        "Paragraph",
+                        "The whole paragraph's breaks weighed together, for the evenest spacing",
+                    ),
+                ] {
+                    if ui
+                        .selectable_label(current == choice, label)
+                        .on_hover_text(hint)
+                        .clicked()
+                        && current != choice
+                    {
+                        set_paragraph(
+                            state,
+                            story,
+                            target.clone(),
+                            ParagraphFormat {
+                                composer: Some(choice),
+                                ..ParagraphFormat::default()
+                            },
+                        );
+                    }
+                }
+            });
         }
-    }
 
-    // List: one value, written whole. "Hang" is a convenience over the
-    // indents below — an item whose turnover lines up under its text is what
-    // nearly every list wants, and setting two indents by hand to get it is
-    // the kind of chore a control exists to spare.
-    let mut list = paragraph.list.clone();
-    let (changed, hang) = list_editor(ui, &mut list, false);
-    if changed {
-        set_paragraph(
-            state,
-            story,
-            target.clone(),
-            ParagraphFormat {
-                list: Some(list.unwrap_or(ListFormat {
-                    kind: ListKind::None,
-                    ..ListFormat::default()
-                })),
-                ..ParagraphFormat::default()
-            },
-        );
-    }
-    if hang {
-        set_paragraph(
-            state,
-            story,
-            target.clone(),
-            ParagraphFormat {
-                indent_left: Some(18.0),
-                indent_first: Some(-18.0),
-                tab_stops: Some(vec![tessera_text::story::TabStop::at(18.0)]),
-                ..ParagraphFormat::default()
-            },
-        );
-    }
-
-    // Justification and hyphenation settings: each one value, written whole.
-    let mut justification = paragraph.justification;
-    if justification_editor(ui, &mut justification, false) {
-        set_paragraph(
-            state,
-            story,
-            target.clone(),
-            ParagraphFormat {
-                justification: Some(justification.unwrap_or_default()),
-                ..ParagraphFormat::default()
-            },
-        );
-    }
-    if paragraph.hyphenate == Some(true) {
-        let mut hyphenation = paragraph.hyphenation;
-        if hyphenation_editor(ui, &mut hyphenation, false) {
+        // Tab stops. Edited as a whole: the list is one value in the cascade,
+        // so a change to any stop writes the whole list back.
+        let mut stops = paragraph.tab_stops.clone();
+        if tab_stops_editor(ui, &mut stops, false) {
             set_paragraph(
                 state,
                 story,
                 target.clone(),
                 ParagraphFormat {
-                    hyphenation: Some(hyphenation.unwrap_or_default()),
+                    // An empty list, never `None`: `None` would mean "leave it",
+                    // and removing the last stop has to mean "no stops".
+                    tab_stops: Some(stops.unwrap_or_default()),
                     ..ParagraphFormat::default()
                 },
             );
         }
-    }
 
-    // Keep options: one value, written whole.
-    let mut keep = paragraph.keep;
-    if keep_options_editor(ui, &mut keep, false) {
-        set_paragraph(
-            state,
-            story,
-            target.clone(),
-            ParagraphFormat {
-                // Stated, never `None`: everything switched off has to mean
-                // "keep nothing", whatever the style says.
-                keep: Some(keep.unwrap_or_default()),
-                ..ParagraphFormat::default()
-            },
-        );
-    }
-
-    /// Which field of a `ParagraphFormat` a row writes.
-    type Set = fn(&mut ParagraphFormat, f32);
-
-    // Paired by meaning: an indent against the opposite indent, a space
-    // before against the space after. Five rows in a column said nothing about
-    // which of them belong together.
-    group_label(ui, "Indents");
-    /// Two paragraph measurements shown side by side: their labels, what they
-    /// currently read, and where each writes back to.
-    struct Paired(
-        &'static str,
-        &'static str,
-        Option<f32>,
-        Option<f32>,
-        Set,
-        Set,
-    );
-
-    let indents = [
-        Paired(
-            "Left",
-            "Right",
-            paragraph.indent_left,
-            paragraph.indent_right,
-            |f: &mut ParagraphFormat, v| f.indent_left = Some(v),
-            |f: &mut ParagraphFormat, v| f.indent_right = Some(v),
-        ),
-        Paired(
-            "First",
-            "Before",
-            paragraph.indent_first,
-            paragraph.space_before,
-            |f: &mut ParagraphFormat, v| f.indent_first = Some(v),
-            |f: &mut ParagraphFormat, v| f.space_before = Some(v),
-        ),
-    ];
-    for Paired(la, lb, ra, rb, sa, sb) in indents {
-        let (a, b) = pair(
-            ui,
-            (la, |ui: &mut Ui| {
-                optional_number_bare(ui, Some(ra.unwrap_or(0.0)), 0.25, 0.0..=1440.0, " pt")
-            }),
-            (lb, |ui: &mut Ui| {
-                optional_number_bare(ui, Some(rb.unwrap_or(0.0)), 0.25, 0.0..=1440.0, " pt")
-            }),
-        );
-        for (value, set) in [(a, sa), (b, sb)] {
-            if let Some(value) = value {
+        // Paragraph rules. Each is one value in the cascade, written whole.
+        for (label, above) in [("Rule above", true), ("Rule below", false)] {
+            let mut rule = if above {
+                paragraph.rule_above.clone()
+            } else {
+                paragraph.rule_below.clone()
+            };
+            if paragraph_rule_editor(ui, label, &mut rule, false) {
                 let mut format = ParagraphFormat::default();
-                set(&mut format, value);
+                // Switched off is `Some` with `on: false`, never `None`: `None`
+                // would mean "leave it", and off has to mean off.
+                let rule = Some(rule.unwrap_or(ParagraphRule {
+                    on: false,
+                    ..ParagraphRule::default()
+                }));
+                if above {
+                    format.rule_above = rule;
+                } else {
+                    format.rule_below = rule;
+                }
                 set_paragraph(state, story, target.clone(), format);
             }
         }
-    }
 
-    for (label, read, set) in [(
-        "Space after",
-        paragraph.space_after,
-        (|f: &mut ParagraphFormat, v| f.space_after = Some(v)) as Set,
-    )] {
-        // Shown as 0 rather than blank: an indent nobody has set is not
-        // ambiguous, it is zero.
-        let Some(value) = optional_number(
-            ui,
-            label,
-            Some(read.unwrap_or(0.0)),
-            0.25,
-            -720.0..=720.0,
-            " pt",
-        ) else {
-            continue;
-        };
-        let mut format = ParagraphFormat::default();
-        set(&mut format, value);
-        set_paragraph(state, story, target.clone(), format);
-    }
+        // List: one value, written whole. "Hang" is a convenience over the
+        // indents below — an item whose turnover lines up under its text is what
+        // nearly every list wants, and setting two indents by hand to get it is
+        // the kind of chore a control exists to spare.
+        let mut list = paragraph.list.clone();
+        let (changed, hang) = list_editor(ui, &mut list, false);
+        if changed {
+            set_paragraph(
+                state,
+                story,
+                target.clone(),
+                ParagraphFormat {
+                    list: Some(list.unwrap_or(ListFormat {
+                        kind: ListKind::None,
+                        ..ListFormat::default()
+                    })),
+                    ..ParagraphFormat::default()
+                },
+            );
+        }
+        if hang {
+            set_paragraph(
+                state,
+                story,
+                target.clone(),
+                ParagraphFormat {
+                    indent_left: Some(18.0),
+                    indent_first: Some(-18.0),
+                    tab_stops: Some(vec![tessera_text::story::TabStop::at(18.0)]),
+                    ..ParagraphFormat::default()
+                },
+            );
+        }
 
-    style_rows(ui, state, story, target);
+        // Justification and hyphenation settings: each one value, written whole.
+        let mut justification = paragraph.justification;
+        if justification_editor(ui, &mut justification, false) {
+            set_paragraph(
+                state,
+                story,
+                target.clone(),
+                ParagraphFormat {
+                    justification: Some(justification.unwrap_or_default()),
+                    ..ParagraphFormat::default()
+                },
+            );
+        }
+        if paragraph.hyphenate == Some(true) {
+            let mut hyphenation = paragraph.hyphenation;
+            if hyphenation_editor(ui, &mut hyphenation, false) {
+                set_paragraph(
+                    state,
+                    story,
+                    target.clone(),
+                    ParagraphFormat {
+                        hyphenation: Some(hyphenation.unwrap_or_default()),
+                        ..ParagraphFormat::default()
+                    },
+                );
+            }
+        }
+
+        // Keep options: one value, written whole.
+        let mut keep = paragraph.keep;
+        if keep_options_editor(ui, &mut keep, false) {
+            set_paragraph(
+                state,
+                story,
+                target.clone(),
+                ParagraphFormat {
+                    // Stated, never `None`: everything switched off has to mean
+                    // "keep nothing", whatever the style says.
+                    keep: Some(keep.unwrap_or_default()),
+                    ..ParagraphFormat::default()
+                },
+            );
+        }
+
+        /// Which field of a `ParagraphFormat` a row writes.
+        type Set = fn(&mut ParagraphFormat, f32);
+
+        // Paired by meaning: an indent against the opposite indent, a space
+        // before against the space after. Five rows in a column said nothing about
+        // which of them belong together.
+        group_label(ui, "Indents");
+        /// Two paragraph measurements shown side by side: their labels, what they
+        /// currently read, and where each writes back to.
+        struct Paired(
+            &'static str,
+            &'static str,
+            Option<f32>,
+            Option<f32>,
+            Set,
+            Set,
+        );
+
+        let indents = [
+            Paired(
+                "Left",
+                "Right",
+                paragraph.indent_left,
+                paragraph.indent_right,
+                |f: &mut ParagraphFormat, v| f.indent_left = Some(v),
+                |f: &mut ParagraphFormat, v| f.indent_right = Some(v),
+            ),
+            Paired(
+                "First",
+                "Before",
+                paragraph.indent_first,
+                paragraph.space_before,
+                |f: &mut ParagraphFormat, v| f.indent_first = Some(v),
+                |f: &mut ParagraphFormat, v| f.space_before = Some(v),
+            ),
+        ];
+        for Paired(la, lb, ra, rb, sa, sb) in indents {
+            let (a, b) = pair(
+                ui,
+                (la, |ui: &mut Ui| {
+                    optional_number_bare(ui, Some(ra.unwrap_or(0.0)), 0.25, 0.0..=1440.0, " pt")
+                }),
+                (lb, |ui: &mut Ui| {
+                    optional_number_bare(ui, Some(rb.unwrap_or(0.0)), 0.25, 0.0..=1440.0, " pt")
+                }),
+            );
+            for (value, set) in [(a, sa), (b, sb)] {
+                if let Some(value) = value {
+                    let mut format = ParagraphFormat::default();
+                    set(&mut format, value);
+                    set_paragraph(state, story, target.clone(), format);
+                }
+            }
+        }
+
+        for (label, read, set) in [(
+            "Space after",
+            paragraph.space_after,
+            (|f: &mut ParagraphFormat, v| f.space_after = Some(v)) as Set,
+        )] {
+            // Shown as 0 rather than blank: an indent nobody has set is not
+            // ambiguous, it is zero.
+            let Some(value) = optional_number(
+                ui,
+                label,
+                Some(read.unwrap_or(0.0)),
+                0.25,
+                -720.0..=720.0,
+                " pt",
+            ) else {
+                continue;
+            };
+            let mut format = ParagraphFormat::default();
+            set(&mut format, value);
+            set_paragraph(state, story, target.clone(), format);
+        }
+    }
+    if section_heading(
+        ui,
+        state,
+        crate::icons::Icon::TextFrame,
+        "Text frame layout",
+    ) {
+        text_frame_controls(ui, state, id, frame);
+    }
+    if section_heading(ui, state, crate::icons::Icon::Styles, "Text styles") {
+        style_rows(ui, state, story, target);
+    }
 }
 
 /// The font menu, with the faces this machine lacks marked.
@@ -4032,6 +4179,7 @@ fn family_picker(
         let label = shown.unwrap_or("Mixed");
         crate::icons::reads_as(
             egui::ComboBox::from_id_salt("family")
+                .width(ui.available_width().min(220.0))
                 .selected_text(label)
                 .show_ui(ui, |ui| {
                     for family in state.shaper.families() {
@@ -4097,84 +4245,88 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
     let page = state.first_page_bounds();
     let (mut width, mut height) = (page.width, page.height);
 
-    ui.label("Page");
-
-    // The preset names a pair of numbers the user recognises; the model still
-    // stores only a width and a height. "Custom" is not a value — it is what
-    // no preset matching looks like.
-    let current = PagePreset::matching(width, height);
-    let mut wanted = None;
-    crate::icons::reads_as(
-        egui::ComboBox::from_id_salt("page-preset")
-            .selected_text(current.map_or("Custom", PagePreset::name))
-            .show_ui(ui, |ui| {
-                for preset in PagePreset::ALL {
-                    if ui
-                        .selectable_label(current == Some(preset), preset.name())
-                        .clicked()
-                    {
-                        wanted = Some(preset);
+    if section_heading(ui, state, crate::icons::Icon::Pages, "Page format") {
+        // The preset names a pair of numbers the user recognises; the model still
+        // stores only a width and a height. "Custom" is not a value — it is what
+        // no preset matching looks like.
+        let current = PagePreset::matching(width, height);
+        let mut wanted = None;
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt("page-preset")
+                .width(ui.available_width())
+                .selected_text(current.map_or("Custom", PagePreset::name))
+                .show_ui(ui, |ui| {
+                    for preset in PagePreset::ALL {
+                        if ui
+                            .selectable_label(current == Some(preset), preset.name())
+                            .clicked()
+                        {
+                            wanted = Some(preset);
+                        }
                     }
-                }
-            })
-            .response,
-        "Page size",
-        egui::WidgetType::ComboBox,
-        None,
-    );
-    if let Some(preset) = wanted {
-        // Applied in the orientation the page already has, so choosing A4 for
-        // a landscape document does not silently turn it upright.
-        let (w, h) = preset.size();
-        let (w, h) = Orientation::of(width, height).apply(w, h);
-        apply(
-            state,
-            Command::SetPageSize {
-                width: w,
-                height: h,
-            },
+                })
+                .response,
+            "Page size",
+            egui::WidgetType::ComboBox,
+            None,
         );
-        return;
-    }
-
-    let orientation = Orientation::of(width, height);
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::text_muted(), "Orientation");
-        for (label, which) in [
-            ("Portrait", Orientation::Portrait),
-            ("Landscape", Orientation::Landscape),
-        ] {
-            if ui.selectable_label(orientation == which, label).clicked() && orientation != which {
-                let (w, h) = which.apply(width, height);
-                wanted = None;
-                apply(
-                    state,
-                    Command::SetPageSize {
-                        width: w,
-                        height: h,
-                    },
-                );
-            }
+        if let Some(preset) = wanted {
+            // Applied in the orientation the page already has, so choosing A4 for
+            // a landscape document does not silently turn it upright.
+            let (w, h) = preset.size();
+            let (w, h) = Orientation::of(width, height).apply(w, h);
+            apply(
+                state,
+                Command::SetPageSize {
+                    width: w,
+                    height: h,
+                },
+            );
+            return;
         }
-    });
 
-    let mut resized = false;
-    egui::Grid::new("page-size").num_columns(2).show(ui, |ui| {
-        resized |= measure(ui, "W", &mut width, unit);
-        resized |= measure(ui, "H", &mut height, unit);
-        ui.end_row();
-    });
-    if resized {
-        apply(state, Command::SetPageSize { width, height });
-        return;
+        let orientation = Orientation::of(width, height);
+        let mut desired_orientation = orientation;
+        segmented(
+            ui,
+            "Orientation",
+            &mut desired_orientation,
+            &[
+                ("Portrait", Orientation::Portrait),
+                ("Landscape", Orientation::Landscape),
+            ],
+        );
+        if desired_orientation != orientation {
+            let (width, height) = desired_orientation.apply(width, height);
+            apply(state, Command::SetPageSize { width, height });
+            return;
+        }
+
+        let (w_changed, h_changed) = pair(
+            ui,
+            ("Width", |ui: &mut Ui| measure_bare(ui, &mut width, unit)),
+            ("Height", |ui: &mut Ui| measure_bare(ui, &mut height, unit)),
+        );
+        if w_changed || h_changed {
+            apply(state, Command::SetPageSize { width, height });
+            return;
+        }
     }
 
     let mut changed = false;
 
-    ui.add_space(Theme::space_1());
-    changed |= ui
-        .checkbox(&mut setup.facing_pages, "Facing pages")
-        .changed();
+    ui.add_space(Theme::space_3());
+    let margins_open = section_heading(
+        ui,
+        state,
+        crate::icons::Icon::TextFrame,
+        "Margins & columns",
+    );
+    if margins_open {
+        changed |= ui
+            .checkbox(&mut setup.facing_pages, "Facing pages")
+            .changed();
+    }
 
     // The labels change with the binding, because the fields themselves mean
     // something different: with facing pages on, the wide margin is the one
@@ -4188,14 +4340,14 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
 
     // Four edges are two pairs, not four rows: top against bottom and one
     // side against the other are the comparisons a person actually makes.
+    let document_key = state.active;
     let edges = |ui: &mut Ui,
                  title: &str,
                  v: (&mut f64, &mut f64),
                  h: ((&str, &mut f64), (&str, &mut f64))| {
-        ui.add_space(Theme::space_3());
         linked_edges(
             ui,
-            egui::Id::new(("page-edge-link", state.active, title)),
+            egui::Id::new(("page-edge-link", document_key, title)),
             title,
             ["Top", "Bottom", h.0.0, h.1.0],
             [v.0, v.1, h.0.1, h.1.1],
@@ -4203,88 +4355,106 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
         )
     };
 
-    changed |= edges(
-        ui,
-        "Margins",
-        (&mut setup.margins.top, &mut setup.margins.bottom),
-        (
-            (near, &mut setup.margins.inside),
-            (far, &mut setup.margins.outside),
-        ),
-    );
-    changed |= edges(
-        ui,
-        "Bleed",
-        (&mut setup.bleed.top, &mut setup.bleed.bottom),
-        (
-            ("Left", &mut setup.bleed.left),
-            ("Right", &mut setup.bleed.right),
-        ),
-    );
-    // Column guides, next to the margins they subdivide.
-    ui.add_space(Theme::space_3());
-    group_label(ui, "Columns");
-    let mut count = f64::from(setup.columns.max(1));
-    let (i, j) = pair(
-        ui,
-        ("Count", |ui: &mut Ui| {
-            ui.add(
-                egui::DragValue::new(&mut count)
-                    .speed(0.1)
-                    .range(1.0..=20.0),
-            )
-            .changed()
-        }),
-        ("Gutter", |ui: &mut Ui| {
-            measure_bare(ui, &mut setup.column_gutter, unit)
-        }),
-    );
-    if i {
-        setup.columns = count.round().clamp(1.0, 20.0) as u8;
+    if margins_open {
+        changed |= edges(
+            ui,
+            "Margins",
+            (&mut setup.margins.top, &mut setup.margins.bottom),
+            (
+                (near, &mut setup.margins.inside),
+                (far, &mut setup.margins.outside),
+            ),
+        );
+        // Column guides, next to the margins they subdivide.
+        ui.add_space(Theme::space_3());
+        group_label(ui, "Columns");
+        let mut count = f64::from(setup.columns.max(1));
+        let (i, j) = pair(
+            ui,
+            ("Count", |ui: &mut Ui| {
+                ui.add(
+                    egui::DragValue::new(&mut count)
+                        .speed(0.1)
+                        .range(1.0..=20.0),
+                )
+                .changed()
+            }),
+            ("Gutter", |ui: &mut Ui| {
+                measure_bare(ui, &mut setup.column_gutter, unit)
+            }),
+        );
+        if i {
+            setup.columns = count.round().clamp(1.0, 20.0) as u8;
+        }
+        changed |= i || j;
     }
-    changed |= i || j;
 
     // The baseline grid, with the document's other page-wide rhythms.
     ui.add_space(Theme::space_3());
-    group_label(ui, "Baseline grid");
-    let mut on = setup.baseline_grid.is_some();
-    if ui.checkbox(&mut on, "Use a baseline grid").changed() {
-        setup.baseline_grid = on.then_some(tessera_document::nodes::BaselineGrid {
-            start: 0.0,
-            // Twelve on twelve: a grid that matches the default leading, so
-            // turning it on changes nothing until something is set against it.
-            step: 12.0,
-        });
-        changed = true;
-    }
-    if let Some(mut grid) = setup.baseline_grid {
-        let (g, h) = pair(
-            ui,
-            ("Start", |ui: &mut Ui| {
-                measure_bare(ui, &mut grid.start, unit)
-            }),
-            ("Every", |ui: &mut Ui| {
-                measure_bare(ui, &mut grid.step, unit)
-            }),
+    if section_heading(ui, state, crate::icons::Icon::AlignJustify, "Layout guides") {
+        ui.label(
+            egui::RichText::new("Keep text aligned across columns.")
+                .small()
+                .color(Theme::text_muted()),
         );
-        if g || h {
-            // A step of zero is a grid with every line in one place, which no
-            // caller can use and the flow would have to guard against.
-            grid.step = grid.step.max(0.1);
-            setup.baseline_grid = Some(grid);
+        let mut on = setup.baseline_grid.is_some();
+        if ui.checkbox(&mut on, "Use a baseline grid").changed() {
+            setup.baseline_grid = on.then_some(tessera_document::nodes::BaselineGrid {
+                start: 0.0,
+                // Twelve on twelve: a grid that matches the default leading, so
+                // turning it on changes nothing until something is set against it.
+                step: 12.0,
+            });
             changed = true;
+        }
+        if let Some(mut grid) = setup.baseline_grid {
+            let (g, h) = pair(
+                ui,
+                ("Start", |ui: &mut Ui| {
+                    measure_bare(ui, &mut grid.start, unit)
+                }),
+                ("Every", |ui: &mut Ui| {
+                    measure_bare(ui, &mut grid.step, unit)
+                }),
+            );
+            if g || h {
+                // A step of zero is a grid with every line in one place, which no
+                // caller can use and the flow would have to guard against.
+                grid.step = grid.step.max(0.1);
+                setup.baseline_grid = Some(grid);
+                changed = true;
+            }
         }
     }
 
-    changed |= edges(
-        ui,
-        "Slug",
-        (&mut setup.slug.top, &mut setup.slug.bottom),
-        (
-            ("Left", &mut setup.slug.left),
-            ("Right", &mut setup.slug.right),
-        ),
-    );
+    ui.add_space(Theme::space_3());
+    if section_heading(ui, state, crate::icons::Icon::Preflight, "Print production") {
+        ui.label(
+            egui::RichText::new(
+                "Bleed extends artwork beyond the trim. Slug adds space for production notes.",
+            )
+            .small()
+            .color(Theme::text_muted()),
+        );
+        changed |= edges(
+            ui,
+            "Bleed",
+            (&mut setup.bleed.top, &mut setup.bleed.bottom),
+            (
+                ("Left", &mut setup.bleed.left),
+                ("Right", &mut setup.bleed.right),
+            ),
+        );
+        changed |= edges(
+            ui,
+            "Slug",
+            (&mut setup.slug.top, &mut setup.slug.bottom),
+            (
+                ("Left", &mut setup.slug.left),
+                ("Right", &mut setup.slug.right),
+            ),
+        );
+    }
 
     if changed {
         // One command for the whole struct: a page-setup edit is one undo
@@ -4292,7 +4462,10 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
         apply(state, Command::SetDocumentSetup(setup));
     }
 
-    output_intent_controls(ui, state);
+    ui.add_space(Theme::space_3());
+    if section_heading(ui, state, crate::icons::Icon::Palette, "Colour management") {
+        output_intent_controls(ui, state);
+    }
 
     ui.add_space(Theme::space_4());
     ui.colored_label(
@@ -5285,20 +5458,34 @@ mod tests {
     }
 
     #[test]
-    fn the_sections_that_can_be_absent_come_last() {
-        // This is what makes D1 true. Hiding a section moves everything below
-        // it, so the ones that apply to every frame must sit above the ones
-        // that do not — then hiding never moves anything reached for often.
-        let frame = rect_frame();
-        let last_present = Section::ALL
-            .iter()
-            .rposition(|s| s.applies_to(&frame))
-            .expect("some section applies");
-        if let Some(first_absent) = Section::ALL.iter().position(|s| !s.applies_to(&frame)) {
-            assert!(
-                first_absent > last_present,
-                "an absent section sits above a present one, so hiding it                  would move the present one"
-            );
+    fn selecting_a_text_frame_exposes_its_font_without_entering_text_editing() {
+        let (mut state, _, _) = a_text_frame("A heading");
+        assert!(state.active().editing.is_none());
+        let tree = accessibility_tree(|ui| inspector(ui, &mut state));
+        assert!(
+            tree.iter()
+                .any(|(role, label)| role == "ComboBox" && label.as_deref() == Some("Family")),
+            "a selected text frame must expose its font picker: {tree:?}"
+        );
+    }
+
+    #[test]
+    fn inspector_content_fits_a_narrow_dock() {
+        for width in [208.0, 288.0] {
+            let ctx = egui::Context::default();
+            crate::theme::apply(&ctx);
+            for mut state in [TesseraApp::headless(), a_text_frame("A heading").0] {
+                let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    ui.set_width(width);
+                    let left = ui.cursor().left();
+                    inspector(ui, &mut state);
+                    assert!(
+                        ui.min_rect().right() <= left + width + 1.0,
+                        "inspector grew beyond {width} points: {:?}",
+                        ui.min_rect()
+                    );
+                });
+            }
         }
     }
 

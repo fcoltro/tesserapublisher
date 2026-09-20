@@ -30,6 +30,7 @@ pub mod path_text;
 pub mod polygon;
 pub mod sections;
 pub mod shadow;
+mod swatch_edit;
 pub mod table;
 mod transfer;
 pub mod variables;

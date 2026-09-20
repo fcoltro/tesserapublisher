@@ -1,7 +1,7 @@
 //! Icons, as geometry rather than assets.
 //!
 //! The shapes are [Lucide](https://lucide.dev) — drawn on a 24×24 grid with a
-//! a light round-capped stroke — stored here as SVG path data, parsed by `kurbo`
+//! round-capped stroke — stored here as SVG path data, parsed by `kurbo`
 //! (already a dependency), and painted through `egui::Painter`.
 //!
 //! No image files, no SVG renderer, no icon font. The icons stay crisp at any
@@ -19,8 +19,8 @@ use kurbo::{BezPath, PathEl};
 
 /// The grid Lucide draws on.
 const GRID: f32 = 24.0;
-/// Interface stroke width in grid units, lighter than Lucide's default 2.
-const STROKE: f32 = 1.5;
+/// Lucide's native stroke weight, legible at the interface's 18-point size.
+const STROKE: f32 = 2.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Icon {
@@ -775,7 +775,7 @@ pub fn tab_button(
             rect,
             Theme::RADIUS,
             if selected {
-                Theme::selected_bg()
+                Theme::accent_soft()
             } else {
                 Theme::hover_bg()
             },

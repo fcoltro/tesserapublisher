@@ -92,40 +92,17 @@ fn body(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
         return;
     }
 
-    egui::ScrollArea::horizontal()
-        .id_salt("style-kind-tabs")
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                for (icon, label, kind) in [
-                    (
-                        crate::icons::Icon::Pilcrow,
-                        "Paragraph",
-                        StyleKind::Paragraph,
-                    ),
-                    (
-                        crate::icons::Icon::CaseSensitive,
-                        "Character",
-                        StyleKind::Character,
-                    ),
-                    (crate::icons::Icon::Rectangle, "Object", StyleKind::Object),
-                ] {
-                    let selected = state.styles_window.kind == kind;
-                    if crate::icons::tab_button(
-                        ui,
-                        icon,
-                        label,
-                        selected,
-                        true,
-                        egui::Sense::click(),
-                    )
-                    .clicked()
-                    {
-                        state.styles_window.kind = kind;
-                    }
-                }
-            });
-        });
+    ui.columns(3, |columns| {
+        for (ui, (label, kind)) in columns.iter_mut().zip([
+            ("Paragraph", StyleKind::Paragraph),
+            ("Character", StyleKind::Character),
+            ("Object", StyleKind::Object),
+        ]) {
+            if super::panel_ui::entry(ui, state.styles_window.kind == kind, label).clicked() {
+                state.styles_window.kind = kind;
+            }
+        }
+    });
     ui.separator();
 
     match state.styles_window.kind {
@@ -162,14 +139,17 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
 
     if show.list() {
         if listed.is_empty() {
-            ui.colored_label(Theme::text_muted(), "No object styles yet.");
+            super::panel_ui::empty(
+                ui,
+                "No object styles yet",
+                "Create a style to reuse consistent formatting.",
+            );
         }
         for (id, name) in &listed {
             let chosen = state.styles_window.object == Some(*id);
             ui.horizontal(|ui| {
-                let row = ui
-                    .selectable_label(chosen, name)
-                    .on_hover_text("Double-click to edit");
+                let row =
+                    super::panel_ui::entry(ui, chosen, name).on_hover_text("Double-click to edit");
                 if row.clicked() {
                     state.styles_window.object = Some(*id);
                 }
@@ -182,8 +162,8 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
                 }
                 // How many objects follow it, so removing one is not a guess.
                 let following = state.active().document().frames_following_object_style(*id);
-                ui.colored_label(Theme::text_muted(), format!("{following}"))
-                    .on_hover_text("Objects following this style");
+                ui.response()
+                    .on_hover_text(format!("{following} objects follow this style"));
             });
         }
 
@@ -192,16 +172,24 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
         // style that has gone.
         let mut remove = None;
         ui.horizontal(|ui| {
-            if ui.button("New").clicked() {
+            if super::panel_ui::action(ui, crate::icons::Icon::Plus, "New style").clicked() {
                 apply(state, Command::AddObjectStyle);
             }
-            if let Some(id) = state.styles_window.object
-                && ui
-                    .button("Remove")
-                    .on_hover_text("The objects that followed it keep their appearance")
-                    .clicked()
-            {
-                remove = Some(id);
+            if let Some(id) = state.styles_window.object {
+                ui.menu_button("Style actions", |ui| {
+                    if ui.button("Edit style...").clicked() {
+                        state.styles_window.editing = true;
+                        ui.close();
+                    }
+                    if ui
+                        .button("Delete style")
+                        .on_hover_text("Objects keep their appearance")
+                        .clicked()
+                    {
+                        remove = Some(id);
+                        ui.close();
+                    }
+                });
             }
         });
         if let Some(id) = remove {
@@ -404,14 +392,17 @@ fn paragraph_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
     // Tessera already had a floor with exactly those properties, so showing it
     // here is naming what exists rather than adding a second root that could
     // disagree with the first.
-    ui.label("[Basic Paragraph] is the document default, at the foot of every style.");
+    super::panel_ui::hint(
+        ui,
+        "Paragraph styles format whole paragraphs. Double-click a style to edit.",
+    );
 
     let selected = state.styles_window.paragraph;
 
     ui.horizontal_top(|ui| {
         if show.list() {
             ui.vertical(|ui| {
-                ui.set_min_width(150.0);
+                ui.set_width(ui.available_width());
                 for (id, name) in &styles {
                     let overridden = uses_with_overrides(state, Some(*id), None);
                     let label = if overridden {
@@ -419,8 +410,7 @@ fn paragraph_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
                     } else {
                         name.clone()
                     };
-                    let row = ui
-                        .selectable_label(selected == Some(*id), label)
+                    let row = super::panel_ui::entry(ui, selected == Some(*id), &label)
                         .on_hover_text("Double-click to edit");
                     if row.clicked() {
                         state.styles_window.paragraph = Some(*id);
@@ -431,17 +421,17 @@ fn paragraph_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
                     }
                 }
                 if styles.is_empty() {
-                    ui.colored_label(Theme::text_muted(), "No paragraph styles yet.");
+                    super::panel_ui::empty(
+                        ui,
+                        "No paragraph styles yet",
+                        "Create a style to reuse consistent formatting.",
+                    );
                 }
 
                 ui.add_space(Theme::space_1());
                 ui.horizontal(|ui| {
-                    if crate::view::panels::icon_button(
-                        ui,
-                        crate::icons::Icon::Plus,
-                        "New style, stating nothing",
-                        false,
-                    ) {
+                    if super::panel_ui::action(ui, crate::icons::Icon::Plus, "New style").clicked()
+                    {
                         apply(
                             state,
                             Command::DefineParagraphStyle(ParagraphStyle {
@@ -458,33 +448,35 @@ fn paragraph_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
                             state.active().document().paragraph_styles.keys().last();
                     }
                     if let Some(id) = selected {
-                        if crate::view::panels::icon_button(
-                            ui,
-                            crate::icons::Icon::Duplicate,
-                            "Duplicate this style",
-                            false,
-                        ) && let Some(existing) =
-                            state.active().document().paragraph_styles.get(id).cloned()
-                        {
-                            apply(
-                                state,
-                                Command::DefineParagraphStyle(ParagraphStyle {
-                                    name: format!("{} copy", existing.name),
-                                    ..existing
-                                }),
-                            );
-                            state.styles_window.paragraph =
-                                state.active().document().paragraph_styles.keys().last();
-                        }
-                        if crate::view::panels::icon_button(
-                            ui,
-                            crate::icons::Icon::Trash,
-                            "Delete — the text keeps how it looks",
-                            false,
-                        ) {
-                            apply(state, Command::DeleteParagraphStyle { id });
-                            state.styles_window.paragraph = None;
-                        }
+                        ui.menu_button("Style actions", |ui| {
+                            if ui.button("Edit style...").clicked() {
+                                state.styles_window.editing = true;
+                                ui.close();
+                            }
+                            if ui.button("Duplicate style").clicked()
+                                && let Some(existing) =
+                                    state.active().document().paragraph_styles.get(id).cloned()
+                            {
+                                apply(
+                                    state,
+                                    Command::DefineParagraphStyle(ParagraphStyle {
+                                        name: format!("{} copy", existing.name),
+                                        ..existing
+                                    }),
+                                );
+                                state.styles_window.paragraph =
+                                    state.active().document().paragraph_styles.keys().last();
+                            }
+                            if ui
+                                .button("Delete style")
+                                .on_hover_text("The text keeps its appearance")
+                                .clicked()
+                            {
+                                apply(state, Command::DeleteParagraphStyle { id });
+                                state.styles_window.paragraph = None;
+                                ui.close();
+                            }
+                        });
                     }
                 });
             });
@@ -637,14 +629,17 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
         .map(|(id, s)| (id, s.name.clone()))
         .collect();
 
-    ui.label("[None] is no character style, which is what most text wants.");
+    super::panel_ui::hint(
+        ui,
+        "Character styles format selected text. Double-click a style to edit.",
+    );
 
     let selected = state.styles_window.character;
 
     ui.horizontal_top(|ui| {
         if show.list() {
             ui.vertical(|ui| {
-                ui.set_min_width(150.0);
+                ui.set_width(ui.available_width());
                 for (id, name) in &styles {
                     let overridden = uses_with_overrides(state, None, Some(*id));
                     let label = if overridden {
@@ -652,8 +647,7 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
                     } else {
                         name.clone()
                     };
-                    let row = ui
-                        .selectable_label(selected == Some(*id), label)
+                    let row = super::panel_ui::entry(ui, selected == Some(*id), &label)
                         .on_hover_text("Double-click to edit");
                     if row.clicked() {
                         state.styles_window.character = Some(*id);
@@ -664,17 +658,17 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
                     }
                 }
                 if styles.is_empty() {
-                    ui.colored_label(Theme::text_muted(), "No character styles yet.");
+                    super::panel_ui::empty(
+                        ui,
+                        "No character styles yet",
+                        "Create a style to reuse consistent formatting.",
+                    );
                 }
 
                 ui.add_space(Theme::space_1());
                 ui.horizontal(|ui| {
-                    if crate::view::panels::icon_button(
-                        ui,
-                        crate::icons::Icon::Plus,
-                        "New style, stating nothing",
-                        false,
-                    ) {
+                    if super::panel_ui::action(ui, crate::icons::Icon::Plus, "New style").clicked()
+                    {
                         apply(
                             state,
                             Command::DefineCharacterStyle(CharacterStyle {
@@ -687,33 +681,35 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
                             state.active().document().character_styles.keys().last();
                     }
                     if let Some(id) = selected {
-                        if crate::view::panels::icon_button(
-                            ui,
-                            crate::icons::Icon::Duplicate,
-                            "Duplicate this style",
-                            false,
-                        ) && let Some(existing) =
-                            state.active().document().character_styles.get(id).cloned()
-                        {
-                            apply(
-                                state,
-                                Command::DefineCharacterStyle(CharacterStyle {
-                                    name: format!("{} copy", existing.name),
-                                    ..existing
-                                }),
-                            );
-                            state.styles_window.character =
-                                state.active().document().character_styles.keys().last();
-                        }
-                        if crate::view::panels::icon_button(
-                            ui,
-                            crate::icons::Icon::Trash,
-                            "Delete — the text keeps how it looks",
-                            false,
-                        ) {
-                            apply(state, Command::DeleteCharacterStyle { id });
-                            state.styles_window.character = None;
-                        }
+                        ui.menu_button("Style actions", |ui| {
+                            if ui.button("Edit style...").clicked() {
+                                state.styles_window.editing = true;
+                                ui.close();
+                            }
+                            if ui.button("Duplicate style").clicked()
+                                && let Some(existing) =
+                                    state.active().document().character_styles.get(id).cloned()
+                            {
+                                apply(
+                                    state,
+                                    Command::DefineCharacterStyle(CharacterStyle {
+                                        name: format!("{} copy", existing.name),
+                                        ..existing
+                                    }),
+                                );
+                                state.styles_window.character =
+                                    state.active().document().character_styles.keys().last();
+                            }
+                            if ui
+                                .button("Delete style")
+                                .on_hover_text("The text keeps its appearance")
+                                .clicked()
+                            {
+                                apply(state, Command::DeleteCharacterStyle { id });
+                                state.styles_window.character = None;
+                                ui.close();
+                            }
+                        });
                     }
                 });
             });

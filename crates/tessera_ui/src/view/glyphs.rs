@@ -213,17 +213,17 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
     }
     let families = state.glyphs.families.clone();
     let mut chosen = state.glyphs.family.clone();
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::text_muted(), "Face");
+    ui.vertical(|ui| {
+        super::panel_ui::hint(ui, "Font family");
         let label = chosen
             .clone()
             .or_else(|| caret.clone())
             .unwrap_or_else(|| "Default".to_string());
         egui::ComboBox::from_id_salt("glyphs-family")
             .selected_text(label)
-            .width(150.0)
+            .width(ui.available_width())
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut chosen, None, "The caret's");
+                ui.selectable_value(&mut chosen, None, "Follow text cursor");
                 for family in &families {
                     ui.selectable_value(&mut chosen, Some(family.clone()), family);
                 }
@@ -241,21 +241,31 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
         return;
     };
 
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::text_muted(), "Find");
+    ui.vertical(|ui| {
+        super::panel_ui::hint(ui, "Find by Unicode code");
         ui.add(
             egui::TextEdit::singleline(&mut state.glyphs.filter)
                 .hint_text("U+2026, or 20")
-                .desired_width(110.0),
+                .desired_width(f32::INFINITY),
         );
         if !typing {
-            ui.colored_label(Theme::text_muted(), "Put the caret in some text first.");
+            super::panel_ui::hint(
+                ui,
+                "Place the text cursor in a text frame to insert a character.",
+            );
         }
     });
 
     // What is shown: everything, or the characters whose code point
     // contains what was typed — `20` finds U+2026 and U+2020 alike.
     let shown: Vec<char> = shown(&mut state.glyphs).to_vec();
+    if shown.is_empty() {
+        super::panel_ui::empty(
+            ui,
+            "No matching characters",
+            "Try a shorter code, or choose another font.",
+        );
+    }
     ui.horizontal(|ui| {
         ui.colored_label(Theme::text_muted(), format!("{} characters", shown.len()));
         if let Some(c) = state.glyphs.hovered {

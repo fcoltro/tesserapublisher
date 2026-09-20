@@ -147,7 +147,7 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
         && (state.prefs.assistant.provider != "anthropic"
             || !state.prefs.assistant.api_key.trim().is_empty());
 
-    ui.horizontal(|ui| {
+    ui.vertical(|ui| {
         ui.colored_label(
             Theme::text_muted(),
             if configured {
@@ -157,10 +157,10 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
                     state.prefs.assistant.model.trim()
                 )
             } else {
-                "No model set — Preferences › General › Assistant".to_owned()
+                "Assistant not configured".to_owned()
             },
         );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.horizontal(|ui| {
             if state.console.busy {
                 if ui.small_button("Stop").clicked() {
                     state.console.stop_requested = true;
@@ -171,6 +171,23 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
         });
     });
 
+    if !configured {
+        super::panel_ui::empty(
+            ui,
+            "Set up your assistant",
+            "Choose a provider and model in Preferences > General > Assistant.",
+        );
+        if ui.button("Open preferences").clicked() {
+            state.settings.open = true;
+            state.settings.page = super::settings::Page::General;
+        }
+    } else if state.console.transcript.is_empty() {
+        super::panel_ui::empty(
+            ui,
+            "What would you like to make?",
+            "Ask for help arranging objects, formatting text or building a page.",
+        );
+    }
     // A fixed height for the transcript, not "what is left": the rail hands
     // a panel as much height as it asks for, so what is left is endless and
     // the input line would sit below the window. Twenty-odd lines, then it
@@ -232,7 +249,14 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
                 "Set a model in Preferences first"
             }),
     );
-    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+    let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    let send = ui
+        .add_enabled(
+            !state.console.busy && configured && !state.console.input.trim().is_empty(),
+            egui::Button::new("Send prompt"),
+        )
+        .clicked();
+    if !state.console.busy && configured && (enter || send) {
         state.console.send();
         response.request_focus();
     }
