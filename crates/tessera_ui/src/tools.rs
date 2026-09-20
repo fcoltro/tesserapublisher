@@ -147,7 +147,10 @@ pub enum DragKind {
     ///
     /// Carries the path and box the drag began from, so every step is
     /// measured from the origin and the whole drag is one undo entry.
-    Anchor { held: crate::view::anchors::Held },
+    Anchor {
+        held: crate::view::anchors::Held,
+        grip: crate::view::anchors::Grip,
+    },
     /// Rubber-band selection over empty canvas.
     Marquee,
     /// Moving the selection.

@@ -2123,12 +2123,12 @@ fn direct_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
     if response.drag_started()
         && let Some(pos) = response.interact_pointer_pos()
     {
-        match super::anchors::at(state, rect, pos) {
-            Some(picked) if let Some(held) = super::anchors::Held::of(state, picked.0) => {
-                state.picked_anchor = Some(picked);
+        match super::anchors::grip_at(state, rect, pos) {
+            Some((id, at, grip)) if let Some(held) = super::anchors::Held::of(state, id) => {
+                state.picked_anchor = Some((id, at));
                 state.drag = Some(Drag::new(
                     doc_pos(state, rect, pos),
-                    DragKind::Anchor { held },
+                    DragKind::Anchor { held, grip },
                 ));
             }
             Some(_) => {}
@@ -2163,7 +2163,7 @@ fn direct_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
     if response.dragged()
         && let Some(Drag {
             start,
-            kind: DragKind::Anchor { held },
+            kind: DragKind::Anchor { held, grip },
             ..
         }) = state.drag.clone().as_ref()
         && let Some((id, at)) = state.picked_anchor
@@ -2173,16 +2173,16 @@ fn direct_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
         if let Some(drag) = state.drag.as_mut() {
             drag.current = now;
         }
-        super::anchors::preview(state, id, at, held, now.x - start.x, now.y - start.y);
+        super::anchors::preview(state, id, at, *grip, held, now.x - start.x, now.y - start.y);
     }
 
     if response.drag_stopped()
         && let Some(drag) = state.drag.take()
         && let Some((id, at)) = state.picked_anchor
         && let (dx, dy) = drag.delta()
-        && let DragKind::Anchor { held } = drag.kind
+        && let DragKind::Anchor { held, grip } = drag.kind
     {
-        super::anchors::commit(state, id, at, &held, dx, dy);
+        super::anchors::commit(state, id, at, grip, &held, dx, dy);
     }
 
     // A click that hit nothing clears the picked anchor, so the next Delete
@@ -2190,7 +2190,9 @@ fn direct_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
     if response.clicked()
         && let Some(pos) = response.interact_pointer_pos()
     {
-        state.picked_anchor = super::anchors::at(state, rect, pos);
+        // A click on the picked anchor's handle keeps that anchor: the
+        // handle is part of it, not empty canvas beside it.
+        state.picked_anchor = super::anchors::grip_at(state, rect, pos).map(|(id, at, _)| (id, at));
         match state.picked_anchor {
             // Alt on an anchor turns a corner into a smooth point and back,
             // which is where every drawing tool puts it.

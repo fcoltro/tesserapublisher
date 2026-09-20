@@ -9,6 +9,7 @@ use egui::Rect;
 
 use crate::app::TesseraApp;
 use crate::theme::Theme;
+pub use tessera_document::anchors::Side;
 use tessera_document::anchors::{Anchor, Kind};
 use tessera_document::ids::FrameId;
 use tessera_document::nodes::FrameKind;
@@ -99,8 +100,82 @@ pub fn at(state: &TesseraApp, canvas: Rect, pos: egui::Pos2) -> Option<(FrameId,
         .map(|(id, at, _)| (id, at))
 }
 
-/// Draw the anchors of every selected path.
+/// What a direct-select drag has hold of: the point, or one of its handles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Grip {
+    Anchor,
+    Handle(Side),
+}
+
+/// The picked anchor's handles, placed on screen.
+///
+/// Only the picked anchor's: every handle of every anchor is a thicket, and
+/// the one somebody wants is beside the point they just chose.
+fn handles_onscreen(state: &TesseraApp, canvas: Rect) -> Vec<(Side, egui::Pos2)> {
+    let Some((id, at)) = state.picked_anchor else {
+        return Vec::new();
+    };
+    let Some(path) = path_of(state, id) else {
+        return Vec::new();
+    };
+    let Some(frame) = state.active().document().frame(id) else {
+        return Vec::new();
+    };
+    let place = |p: kurbo::Point| {
+        let local = DocPoint {
+            x: frame.bounds.x + p.x,
+            y: frame.bounds.y + p.y,
+        };
+        let s = state
+            .active()
+            .view
+            .doc_to_screen(frame.transform.apply(local));
+        egui::pos2(canvas.min.x + s.x, canvas.min.y + s.y)
+    };
+    let h = tessera_document::anchors::handles(&path, at);
+    [
+        h.incoming.map(|p| (Side::Incoming, place(p))),
+        h.outgoing.map(|p| (Side::Outgoing, place(p))),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+/// What is under the pointer: the picked anchor's handle first, then any
+/// anchor. The handle first because it is drawn on top, and because a
+/// handle dragged in to sit on its anchor has to be draggable out again.
+pub fn grip_at(
+    state: &TesseraApp,
+    canvas: Rect,
+    pos: egui::Pos2,
+) -> Option<(FrameId, usize, Grip)> {
+    if let Some((id, at)) = state.picked_anchor
+        && let Some((side, _)) = handles_onscreen(state, canvas)
+            .into_iter()
+            .filter(|(_, p)| p.distance(pos) <= REACH)
+            .min_by(|a, b| a.1.distance(pos).total_cmp(&b.1.distance(pos)))
+    {
+        return Some((id, at, Grip::Handle(side)));
+    }
+    at(state, canvas, pos).map(|(id, at)| (id, at, Grip::Anchor))
+}
+
+/// Draw the anchors of every selected path, and the picked one's handles.
 pub fn draw(state: &TesseraApp, canvas: Rect, painter: &egui::Painter) {
+    // The handles first, under the anchor squares.
+    if let Some((id, at)) = state.picked_anchor
+        && let Some(centre) = onscreen(state, canvas)
+            .into_iter()
+            .find(|(f, on)| *f == id && on.anchor.at == at)
+            .map(|(_, on)| on.at)
+    {
+        for (_, p) in handles_onscreen(state, canvas) {
+            painter.line_segment([centre, p], egui::Stroke::new(1.0, Theme::text_muted()));
+            painter.circle_filled(p, SIZE * 0.4, Theme::panel_bg_solid());
+            painter.circle_stroke(p, SIZE * 0.4, egui::Stroke::new(1.0, Theme::accent()));
+        }
+    }
     for (id, on) in onscreen(state, canvas) {
         let picked = state.picked_anchor == Some((id, on.anchor.at));
         let box_ = Rect::from_center_size(on.at, egui::vec2(SIZE, SIZE));
@@ -147,13 +222,22 @@ pub fn draw(state: &TesseraApp, canvas: Rect, painter: &egui::Painter) {
     }
 }
 
-/// Move the picked anchor by a document-space delta, as one undo entry.
-pub fn nudge(state: &mut TesseraApp, id: FrameId, at: usize, dx: f64, dy: f64) {
+/// The path with one grip of anchor `at` moved by `dx, dy`.
+fn moved(path: &kurbo::BezPath, at: usize, grip: Grip, dx: f64, dy: f64) -> kurbo::BezPath {
+    match grip {
+        Grip::Anchor => tessera_document::anchors::move_anchor(path, at, dx, dy),
+        Grip::Handle(side) => tessera_document::anchors::move_handle(path, at, side, dx, dy),
+    }
+}
+
+/// Move the picked anchor, or one of its handles, by a document-space
+/// delta, as one undo entry.
+pub fn nudge(state: &mut TesseraApp, id: FrameId, at: usize, grip: Grip, dx: f64, dy: f64) {
     let Some(path) = path_of(state, id) else {
         return;
     };
-    let moved = tessera_document::anchors::move_anchor(&path, at, dx, dy);
-    crate::command::apply(state, crate::command::Command::SetPath { id, path: moved });
+    let path = moved(&path, at, grip, dx, dy);
+    crate::command::apply(state, crate::command::Command::SetPath { id, path });
 }
 
 /// A path frame as it was when a drag began: what every step of the drag is
@@ -181,8 +265,16 @@ impl Held {
 ///
 /// undo-bracketed: preview only. `commit` puts `held` back and writes the same
 /// result through the command, so the drag reaches the undo stack once.
-pub fn preview(state: &mut TesseraApp, id: FrameId, at: usize, held: &Held, dx: f64, dy: f64) {
-    let moved = tessera_document::anchors::move_anchor(&held.path, at, dx, dy);
+pub fn preview(
+    state: &mut TesseraApp,
+    id: FrameId,
+    at: usize,
+    grip: Grip,
+    held: &Held,
+    dx: f64,
+    dy: f64,
+) {
+    let moved = moved(&held.path, at, grip, dx, dy);
     let (bounds, path) = tessera_document::path::normalised(&moved, held.bounds);
     if let Some(frame) = state.active_mut().document_mut().frame_mut(id)
         && matches!(frame.kind, FrameKind::Path(_))
@@ -193,7 +285,15 @@ pub fn preview(state: &mut TesseraApp, id: FrameId, at: usize, held: &Held, dx: 
 }
 
 /// End the drag: restore what it began from, then make the move for real.
-pub fn commit(state: &mut TesseraApp, id: FrameId, at: usize, held: &Held, dx: f64, dy: f64) {
+pub fn commit(
+    state: &mut TesseraApp,
+    id: FrameId,
+    at: usize,
+    grip: Grip,
+    held: &Held,
+    dx: f64,
+    dy: f64,
+) {
     // undo-bracketed: the preview is put back before the one real command
     // below writes the same result on top of it.
     if let Some(frame) = state.active_mut().document_mut().frame_mut(id)
@@ -205,7 +305,7 @@ pub fn commit(state: &mut TesseraApp, id: FrameId, at: usize, held: &Held, dx: f
     if dx == 0.0 && dy == 0.0 {
         return; // a click on an anchor picks it and changes nothing
     }
-    nudge(state, id, at, dx, dy);
+    nudge(state, id, at, grip, dx, dy);
 }
 
 /// The point on a selected path nearest a screen position.
@@ -450,7 +550,7 @@ mod tests {
         let id = with_path(&mut state);
         let before = tessera_document::anchors::anchors(&path_of(&state, id).expect("path"));
 
-        nudge(&mut state, id, 1, 10.0, 0.0);
+        nudge(&mut state, id, 1, Grip::Anchor, 10.0, 0.0);
         let after = tessera_document::anchors::anchors(&path_of(&state, id).expect("path"));
 
         assert_eq!(after[0].point, before[0].point, "another anchor moved");
@@ -467,7 +567,7 @@ mod tests {
         let mut state = TesseraApp::headless();
         let id = with_path(&mut state);
 
-        nudge(&mut state, id, 1, 30.0, -10.0); // the (100, 0) corner, up and out
+        nudge(&mut state, id, 1, Grip::Anchor, 30.0, -10.0); // the (100, 0) corner, up and out
 
         let frame = state.active().document().frame(id).expect("frame").clone();
         let path = path_of(&state, id).expect("path");
@@ -503,9 +603,9 @@ mod tests {
         let held = Held::of(&state, id).expect("a path frame");
 
         // Three frames of pointer travel, each measured from the origin.
-        preview(&mut state, id, 1, &held, 10.0, 0.0);
-        preview(&mut state, id, 1, &held, 20.0, 0.0);
-        preview(&mut state, id, 1, &held, 30.0, -10.0);
+        preview(&mut state, id, 1, Grip::Anchor, &held, 10.0, 0.0);
+        preview(&mut state, id, 1, Grip::Anchor, &held, 20.0, 0.0);
+        preview(&mut state, id, 1, Grip::Anchor, &held, 30.0, -10.0);
         assert_eq!(
             state.active().history.undo_depth(),
             depth,
@@ -520,7 +620,7 @@ mod tests {
             "the last preview, not the sum of them"
         );
 
-        commit(&mut state, id, 1, &held, 30.0, -10.0);
+        commit(&mut state, id, 1, Grip::Anchor, &held, 30.0, -10.0);
         assert_eq!(state.active().history.undo_depth(), depth + 1, "one entry");
         let frame = state.active().document().frame(id).expect("frame");
         assert_eq!(frame.bounds.x + frame.bounds.width, 150.0);
@@ -531,6 +631,95 @@ mod tests {
             back.bounds, held.bounds,
             "one undo puts the whole drag back"
         );
+    }
+
+    /// Two curves meeting smoothly at (100, 0), in a frame at (20, 30).
+    fn with_curves(state: &mut TesseraApp) -> FrameId {
+        let mut path = kurbo::BezPath::new();
+        path.move_to((0.0, 40.0));
+        path.curve_to((30.0, 40.0), (70.0, 0.0), (100.0, 0.0));
+        path.curve_to((130.0, 0.0), (170.0, 40.0), (200.0, 40.0));
+        crate::command::apply(
+            state,
+            crate::command::Command::AddPath(
+                tessera_geometry::DocRect {
+                    x: 20.0,
+                    y: 30.0,
+                    width: 200.0,
+                    height: 40.0,
+                },
+                path,
+            ),
+        );
+        state.active().selection.as_slice()[0]
+    }
+
+    #[test]
+    fn the_picked_anchors_handles_are_grips_and_nothing_elses_are() {
+        let mut state = TesseraApp::headless();
+        let id = with_curves(&mut state);
+        let outgoing_of_middle = to_screen(&state, id, 130.0, 0.0);
+
+        // Nothing picked: a handle's place is just canvas.
+        assert_eq!(grip_at(&state, canvas(), outgoing_of_middle), None);
+
+        state.picked_anchor = Some((id, 1));
+        assert_eq!(
+            grip_at(&state, canvas(), outgoing_of_middle),
+            Some((id, 1, Grip::Handle(Side::Outgoing)))
+        );
+        // The anchor itself still answers as an anchor.
+        assert_eq!(
+            grip_at(&state, canvas(), to_screen(&state, id, 100.0, 0.0)),
+            Some((id, 1, Grip::Anchor))
+        );
+    }
+
+    #[test]
+    fn dragging_a_handle_reshapes_the_curve_and_keeps_the_box_true() {
+        let mut state = TesseraApp::headless();
+        let id = with_curves(&mut state);
+        state.picked_anchor = Some((id, 1));
+        let held = Held::of(&state, id).expect("held");
+
+        commit(
+            &mut state,
+            id,
+            1,
+            Grip::Handle(Side::Outgoing),
+            &held,
+            0.0,
+            -60.0,
+        );
+
+        let path = path_of(&state, id).expect("path");
+        let frame = state.active().document().frame(id).expect("frame");
+        let h = tessera_document::anchors::handles(&path, 1);
+        // The handle went up 60 in document space; the box grew upward to
+        // hold the curve it now pulls, so in the frame's space the anchor
+        // sits lower than it did.
+        let anchor = tessera_document::anchors::anchors(&path)[1].point;
+        let out = h.outgoing.expect("outgoing");
+        assert!(
+            (out.y - (anchor.y - 60.0)).abs() < 1e-9,
+            "{out:?} vs {anchor:?}"
+        );
+        assert_eq!(
+            tessera_document::path::fit_to_bounds(&path, frame.bounds),
+            path
+        );
+    }
+
+    fn to_screen(state: &TesseraApp, id: FrameId, x: f64, y: f64) -> egui::Pos2 {
+        let frame = state.active().document().frame(id).expect("frame");
+        let at = state
+            .active()
+            .view
+            .doc_to_screen(frame.transform.apply(DocPoint {
+                x: frame.bounds.x + x,
+                y: frame.bounds.y + y,
+            }));
+        egui::pos2(canvas().min.x + at.x, canvas().min.y + at.y)
     }
 
     #[test]
@@ -721,7 +910,7 @@ mod tests {
         let id = with_path(&mut state);
         let before = path_of(&state, id).expect("path");
 
-        nudge(&mut state, id, 1, 25.0, 25.0);
+        nudge(&mut state, id, 1, Grip::Anchor, 25.0, 25.0);
         assert_ne!(path_of(&state, id).expect("path"), before);
 
         crate::command::apply(&mut state, crate::command::Command::Undo);

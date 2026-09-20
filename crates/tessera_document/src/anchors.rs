@@ -137,6 +137,127 @@ pub fn move_anchor(path: &BezPath, at: usize, dx: f64, dy: f64) -> BezPath {
     BezPath::from_vec(elements)
 }
 
+/// The control points either side of an anchor: what the direct-select tool
+/// draws as its handles.
+///
+/// `None` on a side whose segment is a straight line, or that is not there
+/// at all — an end point has one neighbour.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Handles {
+    /// The control point of the segment arriving at the anchor.
+    pub incoming: Option<Point>,
+    /// The control point of the segment leaving it.
+    pub outgoing: Option<Point>,
+}
+
+/// Which of an anchor's two handles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Incoming,
+    Outgoing,
+}
+
+/// Where the segment arriving at anchor `at` keeps its control point: the
+/// element itself, or, for a closed path's first anchor, the curve that
+/// closes back onto it.
+fn incoming_slot(elements: &[PathEl], at: usize) -> Option<usize> {
+    match elements.get(at)? {
+        PathEl::CurveTo(..) | PathEl::QuadTo(..) => Some(at),
+        PathEl::MoveTo(_) if at == 0 && is_closed(elements) => {
+            let last = elements.len().checked_sub(2)?;
+            matches!(
+                elements.get(last)?,
+                PathEl::CurveTo(..) | PathEl::QuadTo(..)
+            )
+            .then_some(last)
+        }
+        _ => None,
+    }
+}
+
+fn outgoing_slot(elements: &[PathEl], at: usize) -> Option<usize> {
+    matches!(
+        elements.get(at + 1)?,
+        PathEl::CurveTo(..) | PathEl::QuadTo(..)
+    )
+    .then_some(at + 1)
+}
+
+pub fn handles(path: &BezPath, at: usize) -> Handles {
+    let elements = path.elements();
+    let incoming = incoming_slot(elements, at).and_then(|slot| match elements[slot] {
+        PathEl::CurveTo(_, b, _) => Some(b),
+        PathEl::QuadTo(a, _) => Some(a),
+        _ => None,
+    });
+    let outgoing = outgoing_slot(elements, at).and_then(|slot| match elements[slot] {
+        PathEl::CurveTo(a, _, _) | PathEl::QuadTo(a, _) => Some(a),
+        _ => None,
+    });
+    Handles { incoming, outgoing }
+}
+
+/// Move one of an anchor's handles by `dx, dy`.
+///
+/// On a smooth point the other handle turns to stay on the same line through
+/// the anchor, keeping its own length — that is the whole meaning of a smooth
+/// point, and a curve that could be kinked by dragging a handle would not
+/// have one. On a corner the two are independent. A handle that is not there
+/// leaves the path as it was.
+pub fn move_handle(path: &BezPath, at: usize, side: Side, dx: f64, dy: f64) -> BezPath {
+    let mut elements: Vec<PathEl> = path.elements().to_vec();
+    let smooth = kind_at(&elements, at) == Kind::Smooth;
+    let Some(anchor) = anchors(path).into_iter().find(|a| a.at == at) else {
+        return path.clone();
+    };
+    let (moved_slot, other_slot) = match side {
+        Side::Incoming => (incoming_slot(&elements, at), outgoing_slot(&elements, at)),
+        Side::Outgoing => (outgoing_slot(&elements, at), incoming_slot(&elements, at)),
+    };
+    let Some(moved_slot) = moved_slot else {
+        return path.clone();
+    };
+
+    let shift = |p: Point| Point::new(p.x + dx, p.y + dy);
+    let set = |el: PathEl, side: Side, to: Point| match (el, side) {
+        (PathEl::CurveTo(a, _, p), Side::Incoming) => PathEl::CurveTo(a, to, p),
+        (PathEl::CurveTo(_, b, p), Side::Outgoing) => PathEl::CurveTo(to, b, p),
+        (PathEl::QuadTo(_, p), _) => PathEl::QuadTo(to, p),
+        (other, _) => other,
+    };
+    let get = |el: PathEl, side: Side| match (el, side) {
+        (PathEl::CurveTo(_, b, _), Side::Incoming) => Some(b),
+        (PathEl::CurveTo(a, _, _), Side::Outgoing) => Some(a),
+        (PathEl::QuadTo(a, _), _) => Some(a),
+        _ => None,
+    };
+
+    let Some(was) = get(elements[moved_slot], side) else {
+        return path.clone();
+    };
+    let now = shift(was);
+    elements[moved_slot] = set(elements[moved_slot], side, now);
+
+    if smooth && let Some(other_slot) = other_slot {
+        let other_side = match side {
+            Side::Incoming => Side::Outgoing,
+            Side::Outgoing => Side::Incoming,
+        };
+        if let Some(other) = get(elements[other_slot], other_side) {
+            let length = (other.x - anchor.point.x).hypot(other.y - anchor.point.y);
+            let reach = (now.x - anchor.point.x).hypot(now.y - anchor.point.y);
+            if reach > 0.0 {
+                let turned = Point::new(
+                    anchor.point.x - (now.x - anchor.point.x) / reach * length,
+                    anchor.point.y - (now.y - anchor.point.y) / reach * length,
+                );
+                elements[other_slot] = set(elements[other_slot], other_side, turned);
+            }
+        }
+    }
+    BezPath::from_vec(elements)
+}
+
 fn is_closed(elements: &[PathEl]) -> bool {
     matches!(elements.last(), Some(PathEl::ClosePath))
 }
@@ -415,6 +536,81 @@ mod tests {
             Point::new(200.0, 0.0),
         );
         path
+    }
+
+    #[test]
+    fn an_anchor_between_two_curves_has_a_handle_on_each_side() {
+        let h = handles(&smooth_pair(), 1);
+        assert_eq!(h.incoming, Some(Point::new(70.0, 0.0)));
+        assert_eq!(h.outgoing, Some(Point::new(130.0, 0.0)));
+        // The ends have one each; a straight segment gives none.
+        assert_eq!(handles(&smooth_pair(), 0).incoming, None);
+        assert_eq!(
+            handles(&smooth_pair(), 0).outgoing,
+            Some(Point::new(30.0, 0.0))
+        );
+        assert_eq!(handles(&triangle(), 1), Handles::default());
+    }
+
+    #[test]
+    fn a_closed_paths_first_anchor_takes_its_incoming_handle_from_the_seam() {
+        let mut path = BezPath::new();
+        path.move_to(Point::new(0.0, 0.0));
+        path.curve_to((10.0, 0.0), (90.0, 0.0), (100.0, 0.0));
+        path.curve_to((100.0, 50.0), (50.0, 50.0), (0.0, 0.0));
+        path.close_path();
+        assert_eq!(handles(&path, 0).incoming, Some(Point::new(50.0, 50.0)));
+        assert_eq!(handles(&path, 0).outgoing, Some(Point::new(10.0, 0.0)));
+    }
+
+    #[test]
+    fn dragging_a_smooth_points_handle_turns_the_other_and_keeps_its_length() {
+        // The whole meaning of a smooth point: the curve runs through it,
+        // so the handles stay on one line. The other side keeps its own
+        // length, which is what lets a curve be tightened on one side only.
+        let moved = move_handle(&smooth_pair(), 1, Side::Outgoing, 0.0, 30.0);
+        let h = handles(&moved, 1);
+        assert_eq!(h.outgoing, Some(Point::new(130.0, 30.0)));
+        let incoming = h.incoming.expect("still there");
+        // Opposite direction from the anchor, at the old length of 30.
+        let dx = incoming.x - 100.0;
+        let dy = incoming.y;
+        assert!(
+            (dx.hypot(dy) - 30.0).abs() < 1e-9,
+            "length kept: {incoming:?}"
+        );
+        assert!(
+            dx < 0.0 && dy < 0.0,
+            "opposite the dragged handle: {incoming:?}"
+        );
+        assert!(
+            ((dy / dx) - (30.0 / 30.0)).abs() < 1e-9,
+            "colinear: {incoming:?}"
+        );
+        assert_eq!(anchors(&moved)[1].kind, Kind::Smooth);
+    }
+
+    #[test]
+    fn dragging_a_corners_handle_leaves_the_other_alone() {
+        // Two curves meeting at an angle at (100, 0).
+        let mut path = BezPath::new();
+        path.move_to(Point::new(0.0, 0.0));
+        path.curve_to((30.0, 0.0), (70.0, -40.0), (100.0, 0.0));
+        path.curve_to((130.0, 0.0), (170.0, 0.0), (200.0, 0.0));
+        assert_eq!(anchors(&path)[1].kind, Kind::Corner);
+        let before = handles(&path, 1).incoming;
+
+        let moved = move_handle(&path, 1, Side::Outgoing, 0.0, 30.0);
+        assert_eq!(handles(&moved, 1).outgoing, Some(Point::new(130.0, 30.0)));
+        assert_eq!(handles(&moved, 1).incoming, before);
+    }
+
+    #[test]
+    fn a_handle_that_is_not_there_cannot_be_moved() {
+        assert_eq!(
+            move_handle(&triangle(), 1, Side::Incoming, 5.0, 5.0),
+            triangle()
+        );
     }
 
     #[test]
