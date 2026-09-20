@@ -489,3 +489,93 @@ fn rotating_a_bar_moves_the_pixels_it_covers() {
         "turned: not across"
     );
 }
+
+/// A placed picture is painted **where its frame is**, inside the spread's
+/// clip as well as outside one.
+///
+/// The frame sits in the page's lower right, well away from the origin. It
+/// used to sit near the origin, and passed while the picture was being drawn
+/// at the origin — its content transform is in the frame's own space, and
+/// the frame's position was left out — because the two overlapped enough to
+/// paint. On a real page the frame is hundreds of points from the origin,
+/// the picture landed outside its own frame's clip, and nothing showed.
+#[test]
+#[ignore = "needs a GPU adapter; run with -- --ignored"]
+fn a_placed_picture_is_painted_where_its_frame_is() {
+    let art = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../assets/tessera-publisher-logotype.png");
+    let (w, h) = image::image_dimensions(&art).expect("the logotype");
+    let bounds = DocRect {
+        x: 55.0,
+        y: 55.0,
+        width: 40.0,
+        height: 40.0,
+    };
+    let natural = (f64::from(w), f64::from(h));
+    let inner = tessera_document::graphic::fit(
+        DocRect {
+            x: 0.0,
+            y: 0.0,
+            width: 40.0,
+            height: 40.0,
+        },
+        natural,
+        tessera_document::graphic::Fit::Proportionally,
+    );
+    let mut renderer = HeadlessRenderer::new(W, H).expect("renderer");
+    for spread_area in [
+        None,
+        Some(DocRect {
+            x: -100_000.0,
+            y: -18.0,
+            width: 200_000.0 + 100.0,
+            height: 136.0,
+        }),
+    ] {
+        let doc = ResolvedDocument {
+            bookmarks: Vec::new(),
+            items: vec![ResolvedItem {
+                frame: FrameId::default(),
+                on: None,
+                links: Vec::new(),
+                bounds,
+                transform: Transform::IDENTITY,
+                spread_area,
+                blend: tessera_document::blending::Blending::PLAIN,
+                shadow: None,
+                kind: ResolvedKind::Graphic {
+                    inner,
+                    source: Some(art.clone()),
+                    natural,
+                    missing: false,
+                    stroke: None,
+                },
+            }],
+            pages: vec![resolved_page()],
+        };
+        let mut images = tessera_render::images::Images::new();
+        let scene = tessera_render::scene::build_scene_with_images(
+            &doc,
+            ViewTransform::default(),
+            tessera_render::scene::SceneOptions::default(),
+            &mut images,
+        );
+        let pixels = renderer.render(&scene).expect("render");
+        let painted = |x0: usize, y0: usize, x1: usize, y1: usize| {
+            (y0..y1)
+                .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+                .filter(|&(x, y)| pixel(&pixels, x, y) != [255, 255, 255])
+                .count()
+        };
+        let inside = painted(55, 55, 95, 95);
+        let outside = painted(0, 0, 50, 50);
+        assert!(
+            inside > 100,
+            "with spread_area {spread_area:?}: {inside} pixels painted in the frame"
+        );
+        assert_eq!(
+            outside, 0,
+            "with spread_area {spread_area:?}: ink where the frame is not"
+        );
+    }
+}

@@ -527,9 +527,17 @@ fn build_inner(
                 } else {
                     Affine::IDENTITY
                 };
+                // Pixels -> the artwork's points -> the frame's own space ->
+                // the document -> the device. `inner` is in the frame's own
+                // space, so the frame's position comes between it and the
+                // document: without that step the picture was drawn at the
+                // document's origin and cut away by its own frame's clip.
                 scene.draw_image(
                     &vello::peniko::ImageBrush::from(image),
-                    transform * inner.to_affine() * to_points,
+                    transform
+                        * Affine::translate((rect.x0, rect.y0))
+                        * inner.to_affine()
+                        * to_points,
                 );
                 scene.pop_layer();
 
