@@ -147,13 +147,65 @@ pub fn draw(state: &TesseraApp, canvas: Rect, painter: &egui::Painter) {
     }
 }
 
-/// Move the picked anchor by a document-space delta.
+/// Move the picked anchor by a document-space delta, as one undo entry.
 pub fn nudge(state: &mut TesseraApp, id: FrameId, at: usize, dx: f64, dy: f64) {
     let Some(path) = path_of(state, id) else {
         return;
     };
     let moved = tessera_document::anchors::move_anchor(&path, at, dx, dy);
     crate::command::apply(state, crate::command::Command::SetPath { id, path: moved });
+}
+
+/// A path frame as it was when a drag began: what every step of the drag is
+/// measured from, and what the commit puts back before it writes.
+///
+/// Measured from the origin rather than accumulated, like every other
+/// gesture: a step computed from the previous step compounds its rounding,
+/// and cannot be undone as one entry because it was never one change.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Held {
+    pub path: kurbo::BezPath,
+    pub bounds: tessera_geometry::DocRect,
+}
+
+impl Held {
+    pub fn of(state: &TesseraApp, id: FrameId) -> Option<Self> {
+        Some(Self {
+            path: path_of(state, id)?,
+            bounds: state.active().document().frame(id)?.bounds,
+        })
+    }
+}
+
+/// Show the anchor `dx, dy` from where the drag began, without recording it.
+///
+/// undo-bracketed: preview only. `commit` puts `held` back and writes the same
+/// result through the command, so the drag reaches the undo stack once.
+pub fn preview(state: &mut TesseraApp, id: FrameId, at: usize, held: &Held, dx: f64, dy: f64) {
+    let moved = tessera_document::anchors::move_anchor(&held.path, at, dx, dy);
+    let (bounds, path) = tessera_document::path::normalised(&moved, held.bounds);
+    if let Some(frame) = state.active_mut().document_mut().frame_mut(id)
+        && matches!(frame.kind, FrameKind::Path(_))
+    {
+        frame.bounds = bounds;
+        frame.kind = FrameKind::Path(path);
+    }
+}
+
+/// End the drag: restore what it began from, then make the move for real.
+pub fn commit(state: &mut TesseraApp, id: FrameId, at: usize, held: &Held, dx: f64, dy: f64) {
+    // undo-bracketed: the preview is put back before the one real command
+    // below writes the same result on top of it.
+    if let Some(frame) = state.active_mut().document_mut().frame_mut(id)
+        && matches!(frame.kind, FrameKind::Path(_))
+    {
+        frame.bounds = held.bounds;
+        frame.kind = FrameKind::Path(held.path.clone());
+    }
+    if dx == 0.0 && dy == 0.0 {
+        return; // a click on an anchor picks it and changes nothing
+    }
+    nudge(state, id, at, dx, dy);
 }
 
 /// The point on a selected path nearest a screen position.
@@ -404,6 +456,81 @@ mod tests {
         assert_eq!(after[0].point, before[0].point, "another anchor moved");
         assert_eq!(after[1].point.x, before[1].point.x + 10.0);
         assert_eq!(after[2].point, before[2].point, "another anchor moved");
+    }
+
+    #[test]
+    fn nudging_an_anchor_past_the_box_takes_the_box_with_it() {
+        // The renderer fits the stored path's box onto the frame's. With the
+        // box left behind, an anchor dragged outward was drawn squeezed back
+        // inside it, apart from its own handle, and the shape distorted with
+        // every move of the pointer.
+        let mut state = TesseraApp::headless();
+        let id = with_path(&mut state);
+
+        nudge(&mut state, id, 1, 30.0, -10.0); // the (100, 0) corner, up and out
+
+        let frame = state.active().document().frame(id).expect("frame").clone();
+        let path = path_of(&state, id).expect("path");
+        assert_eq!(
+            frame.bounds,
+            tessera_geometry::DocRect {
+                x: 20.0,
+                y: 20.0,
+                width: 130.0,
+                height: 70.0
+            }
+        );
+        assert_eq!(
+            tessera_document::path::fit_to_bounds(&path, frame.bounds),
+            path,
+            "what is drawn is what is stored"
+        );
+        // And the anchor is where the pointer left it, in document space.
+        let moved = tessera_document::anchors::anchors(&path)[1].point;
+        assert_eq!(
+            (frame.bounds.x + moved.x, frame.bounds.y + moved.y),
+            (150.0, 20.0)
+        );
+    }
+
+    #[test]
+    fn a_drag_previews_from_its_origin_and_commits_once() {
+        // Every pointer move used to go through `apply`, so one drag left an
+        // undo entry per frame and Undo afterwards stepped back a pixel.
+        let mut state = TesseraApp::headless();
+        let id = with_path(&mut state);
+        let depth = state.active().history.undo_depth();
+        let held = Held::of(&state, id).expect("a path frame");
+
+        // Three frames of pointer travel, each measured from the origin.
+        preview(&mut state, id, 1, &held, 10.0, 0.0);
+        preview(&mut state, id, 1, &held, 20.0, 0.0);
+        preview(&mut state, id, 1, &held, 30.0, -10.0);
+        assert_eq!(
+            state.active().history.undo_depth(),
+            depth,
+            "a preview is not an undo entry"
+        );
+        let shown =
+            tessera_document::anchors::anchors(&path_of(&state, id).expect("path"))[1].point;
+        let frame = state.active().document().frame(id).expect("frame");
+        assert_eq!(
+            (frame.bounds.x + shown.x, frame.bounds.y + shown.y),
+            (150.0, 20.0),
+            "the last preview, not the sum of them"
+        );
+
+        commit(&mut state, id, 1, &held, 30.0, -10.0);
+        assert_eq!(state.active().history.undo_depth(), depth + 1, "one entry");
+        let frame = state.active().document().frame(id).expect("frame");
+        assert_eq!(frame.bounds.x + frame.bounds.width, 150.0);
+
+        crate::command::apply(&mut state, crate::command::Command::Undo);
+        let back = state.active().document().frame(id).expect("frame");
+        assert_eq!(
+            back.bounds, held.bounds,
+            "one undo puts the whole drag back"
+        );
     }
 
     #[test]

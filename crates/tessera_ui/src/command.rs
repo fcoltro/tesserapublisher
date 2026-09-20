@@ -1629,6 +1629,11 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             if let Some(frame) = state.active_mut().document_mut().frame_mut(id)
                 && matches!(frame.kind, FrameKind::Path(_))
             {
+                // The box follows the shape. The renderer fits the stored
+                // path's box onto the frame's, so a path edited past its box
+                // and left there is drawn squeezed back into it.
+                let (bounds, path) = tessera_document::path::normalised(&path, frame.bounds);
+                frame.bounds = bounds;
                 frame.kind = FrameKind::Path(path);
             }
         }

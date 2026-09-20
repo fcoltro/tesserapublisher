@@ -2076,7 +2076,7 @@ fn canvas_cursor(
             DragKind::PageEdge { edge, .. } => return page_edge_cursor(*edge),
             // An anchor drag keeps the crosshair it started with; a draw or a
             // marquee has no cursor of its own.
-            DragKind::Anchor | DragKind::Draw | DragKind::Marquee => {}
+            DragKind::Anchor { .. } | DragKind::Draw | DragKind::Marquee => {}
         }
     }
 
@@ -2124,10 +2124,14 @@ fn direct_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
         && let Some(pos) = response.interact_pointer_pos()
     {
         match super::anchors::at(state, rect, pos) {
-            Some(picked) => {
+            Some(picked) if let Some(held) = super::anchors::Held::of(state, picked.0) => {
                 state.picked_anchor = Some(picked);
-                state.drag = Some(Drag::new(doc_pos(state, rect, pos), DragKind::Anchor));
+                state.drag = Some(Drag::new(
+                    doc_pos(state, rect, pos),
+                    DragKind::Anchor { held },
+                ));
             }
+            Some(_) => {}
             // No anchor under the pointer: the gesture belongs to whatever the
             // select tool would have done with it.
             None => {
@@ -2138,27 +2142,47 @@ fn direct_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
         }
     }
 
+    // A drag that began on something other than an anchor is the select
+    // tool's, for every frame of it — not only the first. Handing over the
+    // start and keeping the rest left the frame's move previewed by nobody
+    // and committed by nobody.
+    if state
+        .drag
+        .as_ref()
+        .is_some_and(|d| !matches!(d.kind, DragKind::Anchor { .. }))
+    {
+        select_gesture(ui, response, rect, state);
+        return;
+    }
+
+    // From the drag's origin, every frame, against the path as it was when
+    // the drag began — the same arithmetic as a move or a scale, and for the
+    // same reasons: a step measured from the previous step compounds its
+    // rounding, and a drag made of many small commands cannot be undone as
+    // one. undo-bracketed: preview only, until the pointer is released.
     if response.dragged()
-        && matches!(state.drag.as_ref().map(|d| &d.kind), Some(DragKind::Anchor))
+        && let Some(Drag {
+            start,
+            kind: DragKind::Anchor { held },
+            ..
+        }) = state.drag.clone().as_ref()
         && let Some((id, at)) = state.picked_anchor
         && let Some(pos) = response.interact_pointer_pos()
     {
-        // Against the *previous* pointer position rather than the drag's
-        // origin, because each frame applies its own delta to a path that has
-        // already moved. Measuring from the start would apply the whole
-        // displacement again every frame.
         let now = doc_pos(state, rect, pos);
         if let Some(drag) = state.drag.as_mut() {
-            let (dx, dy) = (now.x - drag.current.x, now.y - drag.current.y);
             drag.current = now;
-            if dx != 0.0 || dy != 0.0 {
-                super::anchors::nudge(state, id, at, dx, dy);
-            }
         }
+        super::anchors::preview(state, id, at, held, now.x - start.x, now.y - start.y);
     }
 
-    if response.drag_stopped() {
-        state.drag = None;
+    if response.drag_stopped()
+        && let Some(drag) = state.drag.take()
+        && let Some((id, at)) = state.picked_anchor
+        && let (dx, dy) = drag.delta()
+        && let DragKind::Anchor { held } = drag.kind
+    {
+        super::anchors::commit(state, id, at, &held, dx, dy);
     }
 
     // A click that hit nothing clears the picked anchor, so the next Delete
@@ -2428,7 +2452,7 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
             DragKind::Scale { .. }
             | DragKind::Rotate { .. }
             | DragKind::Draw
-            | DragKind::Anchor => {}
+            | DragKind::Anchor { .. } => {}
         }
     }
 
@@ -2965,26 +2989,6 @@ pub(crate) fn start_editing_cell(
 
 // --- overlays ---------------------------------------------------------------
 
-/// An ellipse as a screen-space polyline.
-///
-/// egui's painter has no ellipse, and a circle would be wrong for any frame
-/// that is not square — so the preview must match what Vello will actually
-/// draw.
-fn ellipse_points(b: DocRect, to_screen: &impl Fn(DocPoint) -> egui::Pos2) -> Vec<egui::Pos2> {
-    const STEPS: usize = 48;
-    let c = b.center();
-    let (rx, ry) = (b.width / 2.0, b.height / 2.0);
-    (0..=STEPS)
-        .map(|i| {
-            let a = i as f64 / STEPS as f64 * std::f64::consts::TAU;
-            to_screen(DocPoint {
-                x: c.x + rx * a.cos(),
-                y: c.y + ry * a.sin(),
-            })
-        })
-        .collect()
-}
-
 /// The selection's box on screen, or `None` when nothing is selected.
 fn selection_screen_rect(state: &TesseraApp, rect: Rect) -> Option<Rect> {
     let doc = state.active().document();
@@ -3251,23 +3255,29 @@ fn draw_overlays(
             // A box tells you where an ellipse will land but not what it will
             // look like, and for a line it is actively misleading.
             DragKind::Draw => {
-                let stroke = Stroke::new(1.0, Theme::accent());
-                match state.active_tool {
-                    Tool::Ellipse => painter.add(egui::Shape::line(
-                        ellipse_points(drag.rect(), &to_screen),
-                        stroke,
-                    )),
-                    Tool::Line => painter.add(egui::Shape::line(
-                        vec![to_screen(drag.start), to_screen(drag.current)],
-                        stroke,
-                    )),
-                    _ => painter.add(egui::Shape::rect_stroke(
-                        doc_rect_to_screen(drag.rect()),
-                        0.0,
-                        stroke,
-                        egui::StrokeKind::Middle,
-                    )),
-                };
+                let path = drag.preview(
+                    state.active_tool,
+                    state.prefs.polygon_sides,
+                    state.prefs.polygon_inset,
+                );
+                let tolerance = 0.25 / state.active().view.zoom.max(f64::EPSILON);
+                let mut run: Vec<egui::Pos2> = Vec::new();
+                kurbo::flatten(path.iter(), tolerance, |el| match el {
+                    kurbo::PathEl::MoveTo(q) => {
+                        run.clear();
+                        run.push(to_screen(DocPoint { x: q.x, y: q.y }));
+                    }
+                    kurbo::PathEl::LineTo(q) => run.push(to_screen(DocPoint { x: q.x, y: q.y })),
+                    kurbo::PathEl::ClosePath => {
+                        if let Some(first) = run.first().copied() {
+                            run.push(first);
+                        }
+                    }
+                    _ => {}
+                });
+                if run.len() > 1 {
+                    painter.add(egui::Shape::line(run, Stroke::new(1.0, Theme::accent())));
+                }
             }
             DragKind::Marquee => {
                 let r = doc_rect_to_screen(drag.rect());
@@ -3285,7 +3295,7 @@ fn draw_overlays(
             | DragKind::Scale { .. }
             | DragKind::Rotate { .. }
             | DragKind::PageEdge { .. }
-            | DragKind::Anchor => {}
+            | DragKind::Anchor { .. } => {}
         }
     }
 

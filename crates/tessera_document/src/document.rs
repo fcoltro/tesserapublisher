@@ -42,6 +42,13 @@ pub enum ZMove {
 /// separated is the outermost thing drawn, not the page.
 const SPREAD_GAP: f64 = 36.0;
 
+/// How far the pasteboard reaches to either side of a spread, in points.
+///
+/// Finite only because a clip has to be a rectangle. Wide enough that nothing
+/// anybody parks beside a page is cut off, and no wider, so the arithmetic
+/// downstream stays in a range a float is precise in.
+const PASTEBOARD: f64 = 100_000.0;
+
 const DEFAULT_PAGE: DocRect = DocRect {
     x: 0.0,
     y: 0.0,
@@ -615,27 +622,23 @@ impl Document {
         Some(outset_each(bounds, s.top, s.bottom, left, right))
     }
 
-    /// The area a spread owns: its pages, everything that bleeds off them, and
-    /// half the gap to its neighbours.
+    /// The area a spread owns: its pages, the pasteboard beside them as far
+    /// as it goes, and half the gap to its neighbours above and below.
     ///
     /// A frame may hang off a page — that is what a pasteboard is for — but it
     /// may not reach into the *next* spread, which is a different sheet of
     /// paper. Content that appeared to run from one spread onto another was
-    /// reading as though it had flowed there.
+    /// reading as though it had flowed there. Spreads stack, so the next one
+    /// is only ever below; **sideways the sheet is open**. It was once cut at
+    /// the bleed there, and a shape drawn on the pasteboard vanished at the
+    /// page's edge as if nothing had been drawn.
     pub fn spread_area(&self, spread: SpreadId) -> Option<DocRect> {
         let pages = self.pages_of(spread);
         let first = self.pages.get(*pages.first()?)?.bounds;
         let last = self.pages.get(*pages.last()?)?.bounds;
 
         let clearance = SPREAD_GAP / 2.0;
-        let outward = self
-            .setup
-            .bleed
-            .left
-            .max(self.setup.bleed.right)
-            .max(self.setup.slug.left)
-            .max(self.setup.slug.right)
-            .max(clearance);
+        let outward = PASTEBOARD;
         let down = self.vertical_clearance() + clearance;
 
         // As tall as the tallest page: a gatefold beside an ordinary page
@@ -4847,6 +4850,30 @@ mod tests {
         );
         let page = doc.pages[doc.page_ids().next().expect("a page")].bounds;
         assert!(a.y < page.y && a.x < page.x, "and it reaches past the page");
+    }
+
+    #[test]
+    fn the_pasteboard_beside_a_spread_is_part_of_it() {
+        // The clip exists to keep a spread off the *next* one, which is below
+        // it. Sideways there is no neighbour, only pasteboard — and a shape
+        // drawn there and cut off at the bleed looked like nothing was drawn.
+        let doc = Document::new();
+        let spread = doc.spread_order[0];
+        let area = doc.spread_area(spread).expect("an area");
+        let page = doc.pages[doc.page_ids().next().expect("a page")].bounds;
+        let far = DocPoint {
+            x: page.x - 1000.0,
+            y: page.y + page.height / 2.0,
+        };
+        assert!(
+            area.contains(far),
+            "the pasteboard to the left is on the sheet"
+        );
+        let far = DocPoint {
+            x: page.x + page.width + 1000.0,
+            y: far.y,
+        };
+        assert!(area.contains(far), "and to the right");
     }
 
     #[test]

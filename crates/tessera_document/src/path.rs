@@ -47,6 +47,37 @@ pub fn fit_to_bounds(path: &kurbo::BezPath, bounds: DocRect) -> kurbo::BezPath {
     out
 }
 
+/// The box an edited path now needs, and the path re-based into it.
+///
+/// The inverse of [`fit_to_bounds`], and what keeps it honest. That function
+/// stretches the stored path's box onto the frame's at render time, which is
+/// right when the *frame* changed size — and wrong when the *path* did.
+/// Drag one anchor out past the box and the renderer squeezes the whole shape
+/// back into it, while the anchor handles, drawn from the stored path, stay
+/// where the pointer put them. So an edit to the path moves the box to fit:
+/// the frame's origin shifts by however far the shape's extent moved, and the
+/// path is re-based so its box starts at the frame's corner again, which
+/// makes the render-time fit an identity.
+///
+/// `bounds` is the frame's current box, in the frame's own space.
+pub fn normalised(path: &kurbo::BezPath, bounds: DocRect) -> (DocRect, kurbo::BezPath) {
+    use kurbo::Shape as _;
+
+    let b = path.bounding_box();
+    if b.width() <= f64::EPSILON && b.height() <= f64::EPSILON {
+        return (bounds, path.clone());
+    }
+    let fitted = DocRect {
+        x: bounds.x + b.x0,
+        y: bounds.y + b.y0,
+        width: b.width(),
+        height: b.height(),
+    };
+    let mut rebased = path.clone();
+    rebased.apply_affine(kurbo::Affine::translate((-b.x0, -b.y0)));
+    (fitted, rebased)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,6 +88,65 @@ mod tests {
         p.move_to((0.0, 0.0));
         p.line_to((10.0, 10.0));
         p
+    }
+
+    #[test]
+    fn an_edited_path_keeps_its_box_true_to_its_shape() {
+        // `fit_to_bounds` stretches the stored path's box onto the frame's at
+        // render time. Move one anchor without moving the box, and the
+        // renderer stretches the edited shape back into the old box: the
+        // anchor squares, drawn from the stored path, no longer sit on the
+        // curve, and every drag distorts the whole shape. So an edit that
+        // changes the path's extent must move the box with it.
+        let mut path = kurbo::BezPath::new();
+        path.move_to((0.0, 0.0));
+        path.line_to((130.0, -10.0)); // this anchor was dragged up and out
+        path.line_to((50.0, 60.0));
+        let (bounds, stored) = normalised(
+            &path,
+            DocRect {
+                x: 20.0,
+                y: 30.0,
+                width: 100.0,
+                height: 60.0,
+            },
+        );
+        assert_eq!(
+            bounds,
+            DocRect {
+                x: 20.0,
+                y: 20.0,
+                width: 130.0,
+                height: 70.0
+            }
+        );
+        // Re-based so the box and the path agree, and rendering is identity.
+        let b = stored.bounding_box();
+        assert!(b.x0.abs() < 1e-9 && b.y0.abs() < 1e-9);
+        assert_eq!(fit_to_bounds(&stored, bounds), stored);
+    }
+
+    #[test]
+    fn a_path_that_still_fills_its_box_is_left_alone() {
+        let (bounds, stored) = normalised(
+            &diagonal(),
+            DocRect {
+                x: 5.0,
+                y: 6.0,
+                width: 10.0,
+                height: 10.0,
+            },
+        );
+        assert_eq!(
+            bounds,
+            DocRect {
+                x: 5.0,
+                y: 6.0,
+                width: 10.0,
+                height: 10.0
+            }
+        );
+        assert_eq!(stored, diagonal());
     }
 
     #[test]

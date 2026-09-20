@@ -144,7 +144,10 @@ pub enum DragKind {
     /// Drawing a new frame.
     Draw,
     /// Moving one anchor point of a path.
-    Anchor,
+    ///
+    /// Carries the path and box the drag began from, so every step is
+    /// measured from the origin and the whole drag is one undo entry.
+    Anchor { held: crate::view::anchors::Held },
     /// Rubber-band selection over empty canvas.
     Marquee,
     /// Moving the selection.
@@ -257,6 +260,43 @@ impl Drag {
     pub fn delta(&self) -> (f64, f64) {
         (self.current.x - self.start.x, self.current.y - self.start.y)
     }
+
+    /// The shape this drag would make with `tool`, in document space.
+    ///
+    /// **The preview is the shape, not its box.** A box says where an ellipse
+    /// will land and nothing about what it will look like, and for a line it
+    /// is the wrong diagonal half the time. The polygon is the very path the
+    /// commit makes, so the two cannot drift apart; the ellipse is kurbo's, as
+    /// the renderer draws it.
+    pub fn preview(&self, tool: Tool, sides: u32, inset: f64) -> kurbo::BezPath {
+        use kurbo::Shape as _;
+        let r = self.rect();
+        let bounds = kurbo::Rect::new(r.x, r.y, r.x + r.width, r.y + r.height);
+        match tool {
+            Tool::Ellipse => kurbo::Ellipse::from_rect(bounds).to_path(0.1),
+            Tool::Line => {
+                let mut path = kurbo::BezPath::new();
+                path.move_to((self.start.x, self.start.y));
+                path.line_to((self.current.x, self.current.y));
+                path
+            }
+            Tool::Polygon => {
+                let mut path = tessera_document::polygon::path(
+                    DocRect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: r.width,
+                        height: r.height,
+                    },
+                    sides,
+                    inset,
+                );
+                path.apply_affine(kurbo::Affine::translate((r.x, r.y)));
+                path
+            }
+            _ => bounds.to_path(0.1),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -291,6 +331,80 @@ mod tests {
                 height: 40.0
             }
         );
+    }
+
+    fn drawn(tool: Tool, sides: u32, inset: f64) -> kurbo::BezPath {
+        let mut d = Drag::new(DocPoint { x: 10.0, y: 20.0 }, DragKind::Draw);
+        d.current = DocPoint { x: 70.0, y: 60.0 };
+        d.preview(tool, sides, inset)
+    }
+
+    fn corners(path: &kurbo::BezPath) -> Vec<kurbo::Point> {
+        path.elements()
+            .iter()
+            .filter_map(|el| match el {
+                kurbo::PathEl::MoveTo(p) | kurbo::PathEl::LineTo(p) => Some(*p),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_polygon_previews_as_the_polygon_it_will_be() {
+        // It previewed as its bounding box, which said where a hexagon would
+        // land and nothing about its shape. Now the preview is the very path
+        // the commit makes, placed where the drag is.
+        let preview = drawn(Tool::Polygon, 6, 0.0);
+        let committed = tessera_document::polygon::path(
+            DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 60.0,
+                height: 40.0,
+            },
+            6,
+            0.0,
+        );
+        let expected: Vec<kurbo::Point> = corners(&committed)
+            .into_iter()
+            .map(|p| kurbo::Point::new(p.x + 10.0, p.y + 20.0))
+            .collect();
+        assert_eq!(corners(&preview), expected);
+    }
+
+    #[test]
+    fn a_line_previews_from_where_it_started_to_where_it_is() {
+        // Not from the box's corner: a line dragged bottom-left to top-right
+        // is the other diagonal of the same box.
+        let mut d = Drag::new(DocPoint { x: 70.0, y: 60.0 }, DragKind::Draw);
+        d.current = DocPoint { x: 10.0, y: 20.0 };
+        assert_eq!(
+            corners(&d.preview(Tool::Line, 6, 0.0)),
+            vec![kurbo::Point::new(70.0, 60.0), kurbo::Point::new(10.0, 20.0)]
+        );
+    }
+
+    #[test]
+    fn an_ellipse_previews_as_a_curve_inside_its_box() {
+        let path = drawn(Tool::Ellipse, 6, 0.0);
+        assert!(
+            path.elements()
+                .iter()
+                .any(|el| matches!(el, kurbo::PathEl::CurveTo(..))),
+            "an ellipse is curves, not a box"
+        );
+        let bbox = kurbo::Shape::bounding_box(&path);
+        assert!((bbox.x0 - 10.0).abs() < 1e-6 && (bbox.x1 - 70.0).abs() < 1e-6);
+        assert!((bbox.y0 - 20.0).abs() < 1e-6 && (bbox.y1 - 60.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn everything_else_previews_as_its_box() {
+        for tool in [Tool::Rectangle, Tool::Text, Tool::Graphic] {
+            let path = drawn(tool, 6, 0.0);
+            let bbox = kurbo::Shape::bounding_box(&path);
+            assert_eq!(bbox, kurbo::Rect::new(10.0, 20.0, 70.0, 60.0), "{tool:?}");
+        }
     }
 
     #[test]
