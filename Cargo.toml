@@ -161,7 +161,13 @@ resvg      = { version = "0.48", default-features = false }
 usvg       = { version = "0.48", default-features = false }
 tiny-skia  = "0.12"
 pdf-writer = "0.15"
-subsetter  = "0.2"
+# `variable-fonts` is off. It exists to instance a variable font at chosen
+# axis coordinates, and the PDF writer never asks for that — it calls
+# `subset`, which passes no coordinates and refuses CFF2 either way, so the
+# feature's code is unreachable from here. What it costs when on: a second
+# skrifa, read-fonts and font-types beside the ones parley, vello and epaint
+# share, plus write-fonts, all compiled for nothing.
+subsetter  = { version = "0.2", default-features = false }
 rfd        = "0.17"
 
 # Colour management. Little CMS, vendored and built from source by `lcms2-sys`
