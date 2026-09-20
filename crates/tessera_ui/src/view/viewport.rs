@@ -1034,6 +1034,22 @@ fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
         }
     }
     let smart_quotes = state.prefs.typographers_quotes;
+    // Before the events are applied, so the entry holds the text as it was
+    // before this word's boundary — what an undo puts back.
+    let boundary = ui.input(|i| {
+        i.events.iter().any(|e| match e {
+            egui::Event::Text(t) => t.chars().any(char::is_whitespace),
+            egui::Event::Key {
+                key: egui::Key::Enter | egui::Key::Tab,
+                pressed: true,
+                ..
+            } => true,
+            _ => false,
+        })
+    });
+    if boundary {
+        close_word(state);
+    }
     let Some((id, buffer)) = state.active_mut().editing.as_mut() else {
         return;
     };
@@ -1048,8 +1064,8 @@ fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
 
     if let Some(story) = story {
         // undo-bracketed: live update without an entry per keystroke. The
-        // whole editing session became one undo step when it began, in
-        // `begin_editing`.
+        // editing session opened an entry when it began, in `begin_editing`,
+        // and `close_word` opens another at each word boundary.
         let cell = state.active().editing_cell;
         if let Some(target) = editing_story(state, id, cell) {
             // undo-bracketed: same session.
@@ -1059,6 +1075,11 @@ fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
                 .replace_story_from_edit(target, story);
         }
         state.active_mut().dirty = true;
+        // Whitespace on its own arms nothing: the boundary it makes is only
+        // worth an entry once there is a word before it.
+        if !boundary {
+            state.active_mut().typed_since_entry = true;
+        }
     }
 
     if escaped {
@@ -1174,6 +1195,12 @@ pub fn finish_editing(state: &mut TesseraApp) {
 /// opened. Nothing happens when nothing is being edited. Returns whether it
 /// was typed.
 pub(crate) fn type_text(state: &mut TesseraApp, text: &str) -> bool {
+    if state.active().editing.is_none() {
+        return false;
+    }
+    if text.chars().any(char::is_whitespace) {
+        close_word(state);
+    }
     let Some((id, buffer)) = state.active_mut().editing.as_mut() else {
         return false;
     };
@@ -1189,7 +1216,25 @@ pub(crate) fn type_text(state: &mut TesseraApp, text: &str) -> bool {
             .replace_story_from_edit(target, story);
     }
     state.active_mut().dirty = true;
+    if text.chars().any(|c| !c.is_whitespace()) {
+        state.active_mut().typed_since_entry = true;
+    }
     true
+}
+
+/// A word boundary was typed: if a word was typed before it, the entry
+/// holding the session so far is closed and a new one begins.
+///
+/// One entry for the whole session meant that after an hour of typing, one
+/// Ctrl+Z took the hour. Every text editor breaks the bracket at a word, so
+/// undo takes the last word back, then the one before it. Only when there
+/// is a word to close: two spaces in a row are one thing typed.
+fn close_word(state: &mut TesseraApp) {
+    if !state.active().typed_since_entry {
+        return;
+    }
+    state.active_mut().record_history();
+    state.active_mut().typed_since_entry = false;
 }
 
 pub(crate) fn editing_story(
@@ -2983,8 +3028,10 @@ pub(crate) fn start_editing_cell(
     let end = content.text.len();
     let mut buffer = EditBuffer::new(content);
     buffer.set_cursor(end);
-    // One undo entry covers the whole editing session, recorded up front.
+    // The editing session opens an undo entry up front; `close_word` opens
+    // another at each word boundary.
     state.active_mut().record_history();
+    state.active_mut().typed_since_entry = false;
     state.active_mut().editing = Some((id, buffer));
     state.active_mut().editing_cell = cell;
 }
@@ -4333,6 +4380,58 @@ mod tests {
         finish_editing(&mut state);
         assert!(state.active().editing.is_none());
         assert!(state.active().editing_cell.is_none());
+    }
+
+    #[test]
+    fn undo_takes_typing_back_a_word_at_a_time() {
+        // One entry for the whole session meant that after an hour of
+        // typing, one Ctrl+Z took the hour. Every text editor breaks the
+        // bracket at a word: undo takes the last word back, then the one
+        // before it, and the session's opening entry is what remains.
+        use crate::command::{Command, apply};
+        let (mut state, id) = a_text_frame(200.0, "");
+        start_editing(&mut state, id);
+        let depth = state.active().history.undo_depth();
+
+        assert!(type_text(&mut state, "hello"));
+        assert!(type_text(&mut state, " "));
+        assert!(type_text(&mut state, "there"));
+        assert!(type_text(&mut state, " "));
+        assert!(type_text(&mut state, "world"));
+        finish_editing(&mut state);
+
+        let text = |state: &TesseraApp| {
+            let story = editing_story(state, id, None).expect("a story");
+            state
+                .active()
+                .document()
+                .story(story)
+                .map(|s| s.text.clone())
+                .unwrap_or_default()
+        };
+        assert_eq!(text(&state), "hello there world");
+        assert_eq!(
+            state.active().history.undo_depth(),
+            depth + 2,
+            "two words completed, two more entries; the third word is still open"
+        );
+        apply(&mut state, Command::Undo);
+        assert_eq!(text(&state), "hello there");
+        apply(&mut state, Command::Undo);
+        assert_eq!(text(&state), "hello");
+        apply(&mut state, Command::Undo);
+        assert_eq!(text(&state), "");
+    }
+
+    #[test]
+    fn a_space_with_nothing_typed_before_it_opens_no_entry() {
+        // Two spaces in a row are one thing typed, not two undo steps.
+        let (mut state, id) = a_text_frame(200.0, "");
+        start_editing(&mut state, id);
+        let depth = state.active().history.undo_depth();
+        assert!(type_text(&mut state, " "));
+        assert!(type_text(&mut state, " "));
+        assert_eq!(state.active().history.undo_depth(), depth);
     }
 
     #[test]

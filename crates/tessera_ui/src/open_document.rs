@@ -59,6 +59,10 @@ pub struct OpenDocument {
     /// Folding the cell into the pair would have rewritten every one of the
     /// several dozen places that read `editing.0` to learn the frame.
     pub editing_cell: Option<(usize, usize)>,
+    /// Whether anything has been typed since the editing session's last undo
+    /// entry. A word boundary opens a new entry only when there is a word to
+    /// close: two spaces in a row are one thing typed, not two undo steps.
+    pub typed_since_entry: bool,
 
     pub current_path: Option<PathBuf>,
     pub dirty: bool,
@@ -86,6 +90,7 @@ impl OpenDocument {
             current_spread: 0,
             editing: None,
             editing_cell: None,
+            typed_since_entry: false,
             current_path: None,
             dirty: false,
             recovery: crate::recovery::Recovery::new(u64::MAX),
