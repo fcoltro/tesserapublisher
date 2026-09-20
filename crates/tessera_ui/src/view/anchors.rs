@@ -276,6 +276,7 @@ pub fn preview(
 ) {
     let moved = moved(&held.path, at, grip, dx, dy);
     let (bounds, path) = tessera_document::path::normalised(&moved, held.bounds);
+    // undo-bracketed: preview only, see above.
     if let Some(frame) = state.active_mut().document_mut().frame_mut(id)
         && matches!(frame.kind, FrameKind::Path(_))
     {
