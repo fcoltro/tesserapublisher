@@ -35,6 +35,14 @@ thiserror.workspace = true
 # Linux is not listed: its persistent store needs a D-Bus secret service,
 # which is a runtime dependency a headless box may not have, so there the
 # key stays in the file as before.
+#
+# **Held at 3.** keyring 4 is a facade over per-store crates, and its `v1`
+# module — the only one with `Entry` — is behind a `v1` feature that lists
+# the zbus secret-service store unconditionally. Tried on 2026-09-20 with
+# default features off and only the Apple and Windows stores named: the crate
+# refuses to build without `v1` or `cli`. Taking it means every Linux build
+# carries zbus and an async runtime for a store this module chooses not to
+# use. Re-check when the `v1` feature stops naming the Linux store.
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
 
 [dev-dependencies]
