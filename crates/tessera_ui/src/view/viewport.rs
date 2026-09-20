@@ -3509,7 +3509,7 @@ mod tests {
             events,
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |ui| {
+        let _ = crate::headless_frame::frame(ctx, input, |ui| {
             let (allocated, response) = allocate_canvas(ui);
             response.request_focus();
             hold_tab(ui, &response);
@@ -3578,12 +3578,12 @@ mod tests {
         let ctx = egui::Context::default();
         let mut text = String::new();
 
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let _ = crate::headless_frame::frame(&ctx, egui::RawInput::default(), |ui| {
             let (_, canvas) = allocate_canvas(ui);
             canvas.request_focus();
             ui.text_edit_singleline(&mut text);
         });
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let _ = crate::headless_frame::frame(&ctx, egui::RawInput::default(), |ui| {
             let (_, canvas) = allocate_canvas(ui);
             assert!(canvas.has_focus(), "the canvas did not take focus");
             assert!(
@@ -3592,7 +3592,7 @@ mod tests {
             );
             ui.text_edit_singleline(&mut text).request_focus();
         });
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let _ = crate::headless_frame::frame(&ctx, egui::RawInput::default(), |ui| {
             let _ = allocate_canvas(ui);
             ui.text_edit_singleline(&mut text);
             assert!(
@@ -3641,7 +3641,7 @@ mod tests {
         canvas_pass(&ctx, &mut state, vec![tab(false)]);
 
         let input = egui::RawInput::default();
-        let output = ctx.run_ui(input, |ui| {
+        let output = crate::headless_frame::frame(&ctx, input, |ui| {
             let (_, response) = allocate_canvas(ui);
             response.request_focus();
             hold_tab(ui, &response);
@@ -3858,7 +3858,7 @@ mod tests {
         canvas_pass(&ctx, &mut state, Vec::new());
         state.active_mut().selection.set(lower);
 
-        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let output = crate::headless_frame::frame(&ctx, egui::RawInput::default(), |ui| {
             let (allocated, response) = allocate_canvas(ui);
             let open = state.active();
             let document = open.document();
@@ -4521,7 +4521,7 @@ mod tests {
     /// Run one frame of `editing_input` over a canvas, with `input` delivered.
     fn one_editing_frame(state: &mut TesseraApp, input: egui::RawInput) {
         let ctx = egui::Context::default();
-        let _ = ctx.run_ui(input, |ui| {
+        let _ = crate::headless_frame::frame(&ctx, input, |ui| {
             let (rect, response) =
                 ui.allocate_exact_size(egui::vec2(400.0, 400.0), egui::Sense::click_and_drag());
             editing_input(ui, &response, rect, state);
@@ -4607,7 +4607,7 @@ mod tests {
             ..Default::default()
         };
         let mut held = false;
-        let _ = ctx.run_ui(input, |ui| held = panning(ui, space_pans));
+        let _ = crate::headless_frame::frame(&ctx, input, |ui| held = panning(ui, space_pans));
         held
     }
 
@@ -4742,14 +4742,14 @@ mod tests {
         let before = state.active().editing.as_ref().unwrap().1.story().clone();
         let ctx = egui::Context::default();
         let mut field = String::new();
-        let _ = ctx.run_ui(Default::default(), |ui| {
+        let _ = crate::headless_frame::frame(&ctx, Default::default(), |ui| {
             ui.text_edit_singleline(&mut field).request_focus();
         });
         let input = egui::RawInput {
             events: vec![egui::Event::Text("42".into())],
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |ui| {
+        let _ = crate::headless_frame::frame(&ctx, input, |ui| {
             ui.text_edit_singleline(&mut field);
             let (rect, response) =
                 ui.allocate_exact_size(egui::vec2(400.0, 400.0), egui::Sense::click_and_drag());

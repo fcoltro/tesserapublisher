@@ -588,7 +588,8 @@ mod tests {
         state.new_document.preview = false;
         assert!(!showing_nothing(&state));
         let ctx = egui::Context::default();
-        let _ = ctx.run_ui(Default::default(), |ui| show(ui.ctx(), &mut state));
+        let _ =
+            crate::headless_frame::frame(&ctx, Default::default(), |ui| show(ui.ctx(), &mut state));
         let input = egui::RawInput {
             events: vec![egui::Event::Key {
                 key: egui::Key::Escape,
@@ -599,7 +600,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |ui| show(ui.ctx(), &mut state));
+        let _ = crate::headless_frame::frame(&ctx, input, |ui| show(ui.ctx(), &mut state));
         assert!(!state.new_document.open);
         assert_eq!(state.documents.len(), 1);
         assert_eq!(state.active().document().frames.len(), 1);

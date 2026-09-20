@@ -661,7 +661,9 @@ mod interaction_tests {
             crate::apply(&mut state, crate::Command::AddRectangle(bounds));
             open(&mut state);
             let ctx = egui::Context::default();
-            let _ = ctx.run_ui(key(egui::Key::Delete), |ui| accelerators(ui, &mut state));
+            let _ = crate::headless_frame::frame(&ctx, key(egui::Key::Delete), |ui| {
+                accelerators(ui, &mut state)
+            });
             assert_eq!(state.active().document().frames.len(), 1);
         }
     }
@@ -686,10 +688,10 @@ mod interaction_tests {
         crate::apply(&mut state, crate::Command::AddRectangle(bounds));
         let ctx = egui::Context::default();
         let mut text = String::from("12");
-        let _ = ctx.run_ui(Default::default(), |ui| {
+        let _ = crate::headless_frame::frame(&ctx, Default::default(), |ui| {
             ui.text_edit_singleline(&mut text).request_focus();
         });
-        let _ = ctx.run_ui(key(egui::Key::Delete), |ui| {
+        let _ = crate::headless_frame::frame(&ctx, key(egui::Key::Delete), |ui| {
             accelerators(ui, &mut state);
             assert!(
                 ui.input(|i| i.key_pressed(egui::Key::Delete)),
@@ -707,10 +709,14 @@ mod interaction_tests {
         crate::apply(&mut state, crate::Command::AddRectangle(bounds));
         let ctx = egui::Context::default();
         state.new_document.open = true;
-        let _ = ctx.run_ui(key(egui::Key::Delete), |ui| accelerators(ui, &mut state));
+        let _ = crate::headless_frame::frame(&ctx, key(egui::Key::Delete), |ui| {
+            accelerators(ui, &mut state)
+        });
         assert_eq!(state.active().document().frames.len(), 1);
         state.new_document.open = false;
-        let _ = ctx.run_ui(key(egui::Key::Delete), |ui| accelerators(ui, &mut state));
+        let _ = crate::headless_frame::frame(&ctx, key(egui::Key::Delete), |ui| {
+            accelerators(ui, &mut state)
+        });
         assert!(state.active().document().frames.is_empty());
     }
 
@@ -726,9 +732,13 @@ mod interaction_tests {
         }
         state.screen_mode = ScreenMode::Normal;
         let ctx = egui::Context::default();
-        let _ = ctx.run_ui(key(egui::Key::W), |ui| accelerators(ui, &mut state));
+        let _ = crate::headless_frame::frame(&ctx, key(egui::Key::W), |ui| {
+            accelerators(ui, &mut state)
+        });
         assert_eq!(state.screen_mode, ScreenMode::Preview);
-        let _ = ctx.run_ui(key(egui::Key::W), |ui| accelerators(ui, &mut state));
+        let _ = crate::headless_frame::frame(&ctx, key(egui::Key::W), |ui| {
+            accelerators(ui, &mut state)
+        });
         assert_eq!(state.screen_mode, ScreenMode::Normal);
     }
 }

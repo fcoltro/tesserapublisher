@@ -301,7 +301,9 @@ mod tests {
         state.find.open();
         let ctx = egui::Context::default();
         for _ in 0..2 {
-            let _ = ctx.run_ui(Default::default(), |ui| show(ui.ctx(), &mut state));
+            let _ = crate::headless_frame::frame(&ctx, Default::default(), |ui| {
+                show(ui.ctx(), &mut state)
+            });
         }
         for (shift, expected) in [(false, 0), (false, 1), (true, 0), (true, 2)] {
             let modifiers = egui::Modifiers {
@@ -309,17 +311,19 @@ mod tests {
                 ..Default::default()
             };
             let input = egui::RawInput {
-                modifiers,
-                events: vec![egui::Event::Key {
-                    key: egui::Key::Enter,
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers,
-                }],
+                events: vec![
+                    egui::Event::ModifiersChanged(modifiers),
+                    egui::Event::Key {
+                        key: egui::Key::Enter,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                    },
+                ],
                 ..Default::default()
             };
-            let _ = ctx.run_ui(input, |ui| show(ui.ctx(), &mut state));
+            let _ = crate::headless_frame::frame(&ctx, input, |ui| show(ui.ctx(), &mut state));
             assert_eq!(state.find.at, Some(expected));
         }
     }

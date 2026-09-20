@@ -460,7 +460,9 @@ mod tests {
         Dock::Pages.set_open(&mut state, false);
         Dock::Properties.set_open(&mut state, true);
         let ctx = egui::Context::default();
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| show(ui, &mut state));
+        let _ = crate::headless_frame::frame(&ctx, egui::RawInput::default(), |ui| {
+            show(ui, &mut state)
+        });
         let active = state.prefs.docking.stacks(region)[at].showing().unwrap();
         assert!(
             open_by_title(&state, active),

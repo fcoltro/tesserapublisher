@@ -5,7 +5,7 @@ free and genuinely cross-platform. Linux is a first-class target, not an
 afterthought — the absence of a serious DTP application on Linux is the reason
 this project exists.
 
-**Architecture:** native Rust, egui 0.35 + eframe, Vello for the document
+**Architecture:** native Rust, egui 0.36 + eframe, Vello for the document
 surface. No webview. See
 [the rebuild design](docs/superpowers/specs/2026-09-01-tessera-rebuild-design.md).
 

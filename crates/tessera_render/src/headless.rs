@@ -168,8 +168,12 @@ impl HeadlessRenderer {
             .map_err(|e| RenderError::Readback(e.to_string()))?;
 
         // Drop the padding: each row carries `unpadded_row` real bytes inside
-        // a `padded_row` stride.
-        let mapped = slice.get_mapped_range();
+        // a `padded_row` stride. Since wgpu 30 a range that is not mapped is
+        // an error rather than a panic, which is what a read-back that has
+        // already been reported as failed deserves.
+        let mapped = slice
+            .get_mapped_range()
+            .map_err(|e| RenderError::Readback(e.to_string()))?;
         let mut pixels = Vec::with_capacity((unpadded_row * self.height) as usize);
         for row in 0..self.height as usize {
             let start = row * padded_row as usize;

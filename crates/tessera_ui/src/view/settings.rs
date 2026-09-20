@@ -776,7 +776,9 @@ mod tests {
             ..Default::default()
         };
         for _ in 0..30 {
-            let _ = ctx.run_ui(input(), |ui| show(&ui.ctx().clone(), &mut state));
+            let _ = crate::headless_frame::frame(&ctx, input(), |ui| {
+                show(&ui.ctx().clone(), &mut state)
+            });
         }
         // The window's area, found by name: egui's own id for it is not
         // `Id::new(title)`, and the rect is what the test is about.

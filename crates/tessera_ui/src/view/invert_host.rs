@@ -104,11 +104,11 @@ pub fn install(state: &egui_wgpu::RenderState) -> Result<(), String> {
             module: &shader,
             entry_point: Some("vs_main"),
             compilation_options: Default::default(),
-            buffers: &[wgpu::VertexBufferLayout {
+            buffers: &[Some(wgpu::VertexBufferLayout {
                 array_stride: VERTEX_BYTES,
                 step_mode: wgpu::VertexStepMode::Vertex,
                 attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4],
-            }],
+            })],
         },
         fragment: Some(wgpu::FragmentState {
             module: &shader,

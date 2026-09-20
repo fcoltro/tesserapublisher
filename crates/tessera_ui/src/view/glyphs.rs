@@ -412,13 +412,19 @@ mod tests {
         let mut state = TesseraApp::headless();
         state.glyphs.open = true;
         let ctx = egui::Context::default();
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| docked(ui, &mut state));
+        let _ = crate::headless_frame::frame(&ctx, egui::RawInput::default(), |ui| {
+            docked(ui, &mut state)
+        });
         assert!(
             state.glyphs.installed.is_some(),
             "the first frame installed the face"
         );
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| docked(ui, &mut state));
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| docked(ui, &mut state));
+        let _ = crate::headless_frame::frame(&ctx, egui::RawInput::default(), |ui| {
+            docked(ui, &mut state)
+        });
+        let _ = crate::headless_frame::frame(&ctx, egui::RawInput::default(), |ui| {
+            docked(ui, &mut state)
+        });
         assert!(
             !state.glyphs.characters.is_empty(),
             "and the grid has characters to draw"

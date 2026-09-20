@@ -173,7 +173,7 @@ mod tests {
         let mut state = TesseraApp::headless();
         state.palette.open = true;
         let ctx = egui::Context::default();
-        let _ = ctx.run_ui(Default::default(), |ui| show(ui, &mut state));
+        let _ = crate::headless_frame::frame(&ctx, Default::default(), |ui| show(ui, &mut state));
         state.palette.highlighted = 99;
         let input = egui::RawInput {
             events: vec![
@@ -188,7 +188,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |ui| show(ui, &mut state));
+        let _ = crate::headless_frame::frame(&ctx, input, |ui| show(ui, &mut state));
         assert_eq!(state.active_tool, crate::tools::Tool::Rectangle);
         assert!(!state.palette.open);
     }

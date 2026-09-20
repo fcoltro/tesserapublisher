@@ -40,11 +40,13 @@ publish = false
 # Both of those have already bitten here, and each is written up at the
 # dependency it concerns rather than only in a commit message:
 #
-#   * `pollster` is held at 0.4 because eframe pins 0.4. Asking for 1.0 adds a
-#     second copy beside it rather than replacing it.
-#   * `egui` is held at 0.35 because 0.36 moves to wgpu 30 while vello 0.10 is
-#     on wgpu 29, and this application hands egui's `Device` to vello. That one
-#     does not compile at all.
+#   * `pollster` follows whatever eframe pins — 0.4 under eframe 0.35, 1.0
+#     under 0.36. Asking for the other one adds a second copy beside it rather
+#     than replacing it.
+#   * `egui` was held at 0.35 for a month because 0.36 moves to wgpu 30 while
+#     vello 0.10 is on wgpu 29, and this application hands egui's `Device` to
+#     vello. That one does not compile at all; see the egui note for how it
+#     was resolved.
 #   * `resvg` is on 0.48 rather than something older *because* it shares kurbo
 #     0.13 with this workspace; an earlier pick of 0.45 dragged a second kurbo
 #     into every build and had to be undone.
@@ -68,35 +70,41 @@ tessera_import   = { path = "crates/tessera_import" }
 tessera_ui       = { path = "crates/tessera_ui" }
 tessera_bridge   = { path = "crates/tessera_bridge" }
 
-# Interface. Pinned to 0.35 to match oxiDRAFT, the reference implementation —
-# and now held there by something harder than a preference.
+# Interface. Was pinned to 0.35 to match oxiDRAFT, the reference
+# implementation, and then held there by something harder than a preference:
+# egui-wgpu 0.36 wants wgpu 30, vello 0.10 wants wgpu 29, and
+# `view/vello_host.rs` hands egui's own `Device` straight to vello's
+# `Renderer::new` — that shared device is decision D2 and the reason a panel
+# and the page can be drawn in one frame. Two majors of wgpu cannot meet
+# there. Tried on 2026-09-12: five type errors, every one of them `expected
+# eframe::wgpu::Device, found vello::wgpu::Device`.
 #
-# **0.36 cannot be taken until vello ships on wgpu 30.** egui-wgpu 0.36 wants
-# wgpu 30; vello 0.10 is the newest vello and wants wgpu 29. Two majors of wgpu
-# cannot meet, and `view/vello_host.rs` hands egui's own `Device` straight to
-# vello's `Renderer::new` — that shared device is decision D2 and the reason a
-# panel and the page can be drawn in one frame. Tried on 2026-09-12: five type
-# errors, every one of them `expected eframe::wgpu::Device, found
-# vello::wgpu::Device`.
-#
-# There is a community fork (`netrender-vello`, "Vello 0.10 compatibility build
-# for wgpu 30") that exists precisely because of this. Not taken: the renderer
-# every page goes through is not a thing to run on an unofficial fork.
-#
-# Re-check when vello publishes past 0.10. Upgrading buys the font stack —
-# skrifa, read-fonts, font-types and harfrust are each in the tree twice
-# because epaint 0.35 pins older Linebender crates than parley 0.11 uses.
-egui      = "0.35"
+# Taken on 2026-09-20, because vello merged its wgpu 30 move (see the pin
+# below). What the move cost: one `get_mapped_range` became fallible, one
+# vertex buffer slot became `Option`, and two tests learned that modifiers are
+# an event now and a texture can carry several deltas. What it bought: epaint
+# 0.36 shares skrifa 0.44 with parley and vello, so skrifa, read-fonts,
+# font-types and harfrust stop being in the tree twice.
+egui      = "0.36"
 # Default features, deliberately. Turning them off drops x11, wayland,
 # default_fonts and winit/default -- which makes winit fail to compile on
 # Linux entirely ("the platform you're compiling for is not supported").
 # eframe's defaults do not include glow, so there was nothing to save.
-eframe    = "0.35"
-egui-wgpu = "0.35"
+eframe    = "0.36"
+egui-wgpu = "0.36"
 
-# Document surface. vello 0.10 and egui-wgpu 0.35 both resolve to wgpu 29.0.4 —
-# verified, and the reason the shared-device design in decision D2 works.
-vello = "0.10"
+# Document surface. Must resolve to the same wgpu as egui-wgpu — the shared
+# device in decision D2 depends on it — and it does: both are on wgpu 30.
+#
+# **A git pin, for now, and a written reason.** vello 0.10.0 is the newest
+# release and is on wgpu 29; the move to 30 was merged upstream on
+# 2026-09-15 (linebender/vello#1909) and has not been released. This is that
+# merge commit, on the project's own `main` — not a fork, which the previous
+# note refused and this one still would. **Replace with `vello = "0.11"` the
+# day it is published**; `cargo info vello` says when. The crate has also
+# moved to `research/vello_research` in that repository, with `vello_gpu`
+# named as its intended successor: a signpost, not yet a task.
+vello = { git = "https://github.com/linebender/vello", rev = "539ac99" }
 
 # Geometry and text.
 kurbo                = { version = "0.13", features = ["serde"] }
@@ -164,12 +172,13 @@ rfd        = "0.17"
 lcms2 = "6"
 
 # Blocking on async GPU calls in headless rendering.
-# **0.4, not 1.0.** eframe 0.35 pins 0.4, so asking for the newer one does not
-# replace it — it adds a second copy beside it. Sharing a version with the
-# framework that already needs one is worth more than being on the latest
-# number, and this is the whole of what pollster does for us: two `block_on`
-# calls when the headless renderer asks for a GPU adapter.
-pollster = "0.4"
+# **Whatever eframe pins.** This was held at 0.4 while eframe 0.35 pinned 0.4,
+# because asking for 1.0 then did not replace it — it added a second copy
+# beside it. eframe 0.36 moved to 1.0, so the same rule now says 1.0: sharing
+# a version with the framework that already needs one is worth more than any
+# particular number, and this is the whole of what pollster does for us —
+# two `block_on` calls when the headless renderer asks for a GPU adapter.
+pollster = "1"
 
 # Errors and testing.
 thiserror = "2"

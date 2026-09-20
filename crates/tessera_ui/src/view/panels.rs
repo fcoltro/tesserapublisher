@@ -5411,7 +5411,7 @@ mod tests {
         // `run_ui` rather than `run`: egui 0.35 hands the application a root
         // `Ui` and panels nest inside it, which is the same shape `view::show`
         // is built around.
-        let output = ctx.run_ui(egui::RawInput::default(), draw);
+        let output = crate::headless_frame::frame(&ctx, egui::RawInput::default(), draw);
         let update = output
             .platform_output
             .accesskit_update
@@ -5518,7 +5518,9 @@ mod tests {
 
         // One frame to lay the strip out — nothing is focusable before it
         // exists — then a Tab into it.
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| tool_strip(ui, &mut state));
+        let _ = crate::headless_frame::frame(&ctx, egui::RawInput::default(), |ui| {
+            tool_strip(ui, &mut state)
+        });
 
         let mut input = egui::RawInput::default();
         input.events.push(egui::Event::Key {
@@ -5528,7 +5530,7 @@ mod tests {
             repeat: false,
             modifiers: egui::Modifiers::default(),
         });
-        let _ = ctx.run_ui(input, |ui| tool_strip(ui, &mut state));
+        let _ = crate::headless_frame::frame(&ctx, input, |ui| tool_strip(ui, &mut state));
 
         assert!(
             ctx.memory(|m| m.focused()).is_some(),
@@ -5544,7 +5546,9 @@ mod tests {
         let mut state = TesseraApp::headless();
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
-        let output = ctx.run_ui(egui::RawInput::default(), |ui| tool_strip(ui, &mut state));
+        let output = crate::headless_frame::frame(&ctx, egui::RawInput::default(), |ui| {
+            tool_strip(ui, &mut state)
+        });
         let update = output.platform_output.accesskit_update.expect("a tree");
         let toggled = update
             .nodes
@@ -5657,7 +5661,7 @@ mod tests {
             let ctx = egui::Context::default();
             crate::theme::apply(&ctx);
             for mut state in [TesseraApp::headless(), a_text_frame("A heading").0] {
-                let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let _ = crate::headless_frame::frame(&ctx, egui::RawInput::default(), |ui| {
                     ui.set_width(width);
                     let left = ui.cursor().left();
                     inspector(ui, &mut state);
@@ -5709,7 +5713,7 @@ mod tests {
             );
             let frame = state.active().document().frame(id).unwrap().clone();
             for _ in 0..2 {
-                let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let _ = crate::headless_frame::frame(&ctx, egui::RawInput::default(), |ui| {
                     ui.set_width(width);
                     let left = ui.cursor().left();
                     text_section(ui, &mut state, id, &frame);
@@ -5740,7 +5744,9 @@ mod tests {
                 )),
                 ..Default::default()
             };
-            let output = ctx.run_ui(raw(), |ui| text_section(ui, &mut state, id, &frame));
+            let output = crate::headless_frame::frame(&ctx, raw(), |ui| {
+                text_section(ui, &mut state, id, &frame)
+            });
             let tree = output.platform_output.accesskit_update.unwrap();
             let bounds = tree
                 .nodes
@@ -5764,7 +5770,9 @@ mod tests {
                             modifiers: Default::default(),
                         },
                     ];
-                    let _ = ctx.run_ui(input, |ui| text_section(ui, &mut state, id, &frame));
+                    let _ = crate::headless_frame::frame(&ctx, input, |ui| {
+                        text_section(ui, &mut state, id, &frame)
+                    });
                 }
                 let doc = state.active().document();
                 let text = doc.story(story).unwrap();

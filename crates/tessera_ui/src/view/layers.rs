@@ -541,7 +541,9 @@ mod tests {
         let mut state = TesseraApp::headless();
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
-        let output = ctx.run_ui(egui::RawInput::default(), |ui| docked(ui, &mut state));
+        let output = crate::headless_frame::frame(&ctx, egui::RawInput::default(), |ui| {
+            docked(ui, &mut state)
+        });
         let update = output
             .platform_output
             .accesskit_update

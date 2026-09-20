@@ -170,29 +170,32 @@ mod tests {
                             .push("a very long chapter document name.tsrdf".into());
                     }
                     for _ in 0..3 {
-                        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
-                            ui.set_width(width);
-                            let left = ui.cursor().left();
-                            match dock {
-                                Dock::Pages => super::super::pages::docked(ui, &mut state),
-                                Dock::Layers => super::super::layers::docked(ui, &mut state),
-                                Dock::Styles => super::super::styles::docked(ui, &mut state),
-                                Dock::Swatches => super::super::swatches::docked(ui, &mut state),
-                                Dock::Glyphs => super::super::glyphs::docked(ui, &mut state),
-                                Dock::Book => super::super::book::docked(ui, &mut state),
-                                Dock::Links => super::super::links::docked(ui, &mut state),
-                                Dock::Preflight => {
-                                    super::super::preflight_panel::docked(ui, &mut state)
+                        let _ =
+                            crate::headless_frame::frame(&ctx, egui::RawInput::default(), |ui| {
+                                ui.set_width(width);
+                                let left = ui.cursor().left();
+                                match dock {
+                                    Dock::Pages => super::super::pages::docked(ui, &mut state),
+                                    Dock::Layers => super::super::layers::docked(ui, &mut state),
+                                    Dock::Styles => super::super::styles::docked(ui, &mut state),
+                                    Dock::Swatches => {
+                                        super::super::swatches::docked(ui, &mut state)
+                                    }
+                                    Dock::Glyphs => super::super::glyphs::docked(ui, &mut state),
+                                    Dock::Book => super::super::book::docked(ui, &mut state),
+                                    Dock::Links => super::super::links::docked(ui, &mut state),
+                                    Dock::Preflight => {
+                                        super::super::preflight_panel::docked(ui, &mut state)
+                                    }
+                                    Dock::Console => super::super::console::docked(ui, &mut state),
+                                    Dock::Properties => unreachable!(),
                                 }
-                                Dock::Console => super::super::console::docked(ui, &mut state),
-                                Dock::Properties => unreachable!(),
-                            }
-                            assert!(
-                                ui.min_rect().right() <= left + width + 1.0,
-                                "{dock:?} (populated={populated}) overflowed {width}: {:?}",
-                                ui.min_rect()
-                            );
-                        });
+                                assert!(
+                                    ui.min_rect().right() <= left + width + 1.0,
+                                    "{dock:?} (populated={populated}) overflowed {width}: {:?}",
+                                    ui.min_rect()
+                                );
+                            });
                     }
                 }
             }

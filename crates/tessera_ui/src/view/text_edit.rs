@@ -128,7 +128,7 @@ mod tests {
         };
         // `run_ui` hands the closure the root Ui directly, matching how
         // eframe 0.35 drives an application.
-        let _ = ctx.run_ui(input, |ui| {
+        let _ = crate::headless_frame::frame(&ctx, input, |ui| {
             handle_events(ui, buffer, false);
         });
     }

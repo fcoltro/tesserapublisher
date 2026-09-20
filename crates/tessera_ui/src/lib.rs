@@ -15,6 +15,8 @@ pub mod cursor;
 pub mod docking;
 pub mod file_ops;
 pub mod find;
+#[cfg(test)]
+pub(crate) mod headless_frame;
 pub mod icons;
 pub mod ime;
 pub mod keychain;

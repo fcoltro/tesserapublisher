@@ -430,7 +430,7 @@ mod paint_tests {
         };
         // `run_ui` hands back a root `Ui`, which is how eframe 0.35 drives
         // this application — so the arrangement under test is the real one.
-        let output = ctx.run_ui(input, |ui| {
+        let output = crate::headless_frame::frame(&ctx, input, |ui| {
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
                 .show(ui, |ui| {

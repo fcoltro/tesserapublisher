@@ -91,7 +91,9 @@ mod tests {
             let ctx = Context::default();
             install(&ctx);
             ctx.set_pixels_per_point(scale);
-            let output = ctx.run_ui(Default::default(), |ui| {
+            // `run_ui` rather than `headless_frame::frame`: this test is about
+            // the deltas, so it reads them and then clears them itself.
+            let mut output = ctx.run_ui(Default::default(), |ui| {
                 ui.label(
                     egui::RichText::new("Properties · São Paulo · Édition · 12.70 mm").size(13.0),
                 );
@@ -102,15 +104,18 @@ mod tests {
             });
             assert!(!output.textures_delta.set.is_empty());
             assert!(
-                output.textures_delta.set.iter().any(|(_, delta)| {
-                    let egui::ImageData::Color(image) = &delta.image;
-                    image.pixels.iter().any(|pixel| {
-                        let alpha = pixel.a();
-                        alpha > 0 && alpha < 255
+                output.textures_delta.set.iter().any(|(_, deltas)| {
+                    deltas.iter().any(|delta| {
+                        let egui::ImageData::Color(image) = &delta.image;
+                        image.pixels.iter().any(|pixel| {
+                            let alpha = pixel.a();
+                            alpha > 0 && alpha < 255
+                        })
                     })
                 }),
                 "glyph atlas must contain partial coverage at scale {scale}"
             );
+            output.textures_delta.clear();
             assert!(
                 !ctx.tessellate(output.shapes, output.pixels_per_point)
                     .is_empty()
@@ -124,7 +129,7 @@ mod tests {
             let ctx = Context::default();
             install(&ctx);
             ctx.set_pixels_per_point(scale);
-            let _ = ctx.run_ui(Default::default(), |_| {});
+            let _ = crate::headless_frame::frame(&ctx, Default::default(), |_| {});
             let galley = ctx.fonts_mut(|fonts| {
                 fonts.layout_no_wrap(
                     "Properties 12.70 mm".into(),
