@@ -82,6 +82,14 @@ fn pdf_clear_fill_must_change_output() {
     let b = a.first_page_bounds();
     apply(&mut a, Command::AddRectangle(rect(b.x + 50.0, b.y + 50.0)));
     let id = a.active().selection.single().unwrap();
+    // A new shape has no fill; give it one to clear.
+    apply(
+        &mut a,
+        Command::SetFill {
+            id,
+            paint: tessera_document::paint::Paint::Solid(tessera_color::Color::BLACK),
+        },
+    );
     let opaque = tessera_pdf::export(&a.resolve_uncached()).unwrap();
     apply(&mut a, Command::ClearFill(id));
     let clear = tessera_pdf::export(&a.resolve_uncached()).unwrap();

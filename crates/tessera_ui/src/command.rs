@@ -667,7 +667,7 @@ pub enum Command {
 
     /// Exchange a frame's fill colour with its stroke colour.
     SwapFillAndStroke(FrameId),
-    /// Black fill, no stroke — what a new shape starts as.
+    /// No fill, a black hairline — what a new shape starts as.
     DefaultFillAndStroke(FrameId),
     /// Make the fill transparent.
     ///
@@ -884,23 +884,18 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
     }
 
     match command {
-        Command::AddRectangle(bounds) => add(state, bounds, FrameKind::Rectangle, Color::BLACK),
+        Command::AddRectangle(bounds) => add(state, bounds, FrameKind::Rectangle, Look::Outline),
 
-        Command::AddEllipse(bounds) => add(state, bounds, FrameKind::Ellipse, Color::BLACK),
+        Command::AddEllipse(bounds) => add(state, bounds, FrameKind::Ellipse, Look::Outline),
 
-        Command::AddPath(bounds, path) => add(state, bounds, FrameKind::Path(path), Color::BLACK),
+        Command::AddPath(bounds, path) => add(state, bounds, FrameKind::Path(path), Look::Outline),
 
         Command::AddGraphicFrame(bounds) => {
             add(
                 state,
                 bounds,
                 FrameKind::Graphic { placed: None },
-                Color::Rgb {
-                    r: 0.0,
-                    g: 0.0,
-                    b: 0.0,
-                    a: 0.0,
-                },
+                Look::Bare,
             );
         }
 
@@ -971,17 +966,7 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             // impression of nothing is worse than one of a plain grid.
             let mut table = table;
             table.stroke = Some(tessera_document::nodes::Stroke::new(Color::BLACK, 0.5));
-            add(
-                state,
-                bounds,
-                FrameKind::Table(table),
-                Color::Rgb {
-                    r: 0.0,
-                    g: 0.0,
-                    b: 0.0,
-                    a: 0.0,
-                },
-            );
+            add(state, bounds, FrameKind::Table(table), Look::Bare);
         }
 
         Command::TableRow { id, at, insert } => {
@@ -1063,17 +1048,7 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             // A text frame's own fill is the box behind the glyphs, so it is
             // transparent by default rather than painting a white rectangle
             // over whatever it sits on.
-            add(
-                state,
-                bounds,
-                FrameKind::text(story),
-                Color::Rgb {
-                    r: 0.0,
-                    g: 0.0,
-                    b: 0.0,
-                    a: 0.0,
-                },
-            );
+            add(state, bounds, FrameKind::text(story), Look::Bare);
         }
 
         Command::SetBounds { id, bounds } => {
@@ -1623,7 +1598,7 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 .document()
                 .frame(from)
                 .map(|f| (f.fill.clone(), f.stroke.clone(), f.blend));
-            add(state, bounds, FrameKind::Path(path), Color::BLACK);
+            add(state, bounds, FrameKind::Path(path), Look::Outline);
             if let Some((fill, stroke, blend)) = look
                 && let Some(id) = state.active().selection.single()
                 && let Some(made) = state.active_mut().document_mut().frame_mut(id)
@@ -2235,8 +2210,8 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::DefaultFillAndStroke(id) => {
             if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
-                f.fill = Paint::Solid(Color::BLACK);
-                f.stroke = None;
+                f.fill = NO_FILL;
+                f.stroke = Some(tessera_document::nodes::Stroke::new(Color::BLACK, 1.0));
             }
         }
 
@@ -2439,17 +2414,7 @@ fn place_generated(
                 return;
             };
             let id = state.active_mut().document_mut().add_story(generated);
-            add(
-                state,
-                bounds,
-                FrameKind::text(id),
-                Color::Rgb {
-                    r: 0.0,
-                    g: 0.0,
-                    b: 0.0,
-                    a: 0.0,
-                },
-            );
+            add(state, bounds, FrameKind::text(id), Look::Bare);
             record(state.active_mut().document_mut(), id);
         }
     }
@@ -2493,7 +2458,28 @@ fn measure_link(
     Some(link)
 }
 
-fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
+/// "No fill": black at no alpha, so that turning the fill on gets black
+/// rather than nothing. The same shape `ClearFill` leaves behind.
+pub const NO_FILL: Paint = Paint::Solid(Color::Rgb {
+    r: 0.0,
+    g: 0.0,
+    b: 0.0,
+    a: 0.0,
+});
+
+/// What a new frame looks like before anybody colours it.
+#[derive(Clone, Copy)]
+enum Look {
+    /// No fill, a black hairline: a shape drawn to see where it goes is an
+    /// outline, the way every drawing tool has it. A black slab on the
+    /// pasteboard, which is nearly black itself, was a shape nobody could
+    /// find.
+    Outline,
+    /// Nothing at all: a picture box shows its picture, or its placeholder.
+    Bare,
+}
+
+fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, look: Look) {
     // The layer being worked on, wherever on the document this was drawn. A
     // layer spans every page, so which page the object is on is settled by
     // where it landed rather than by which layer it joined.
@@ -2503,8 +2489,11 @@ fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
         Frame {
             bounds,
             kind,
-            fill: Paint::Solid(fill),
-            stroke: None,
+            fill: NO_FILL,
+            stroke: match look {
+                Look::Outline => Some(tessera_document::nodes::Stroke::new(Color::BLACK, 1.0)),
+                Look::Bare => None,
+            },
             transform: Transform::IDENTITY,
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
@@ -2976,9 +2965,37 @@ mod tests {
     }
 
     #[test]
-    fn defaults_are_a_black_fill_and_no_stroke() {
+    fn a_new_shape_has_no_fill_and_a_black_hairline() {
+        // What every drawing tool's default is, and for the reason: a shape
+        // drawn to see where it will go is an outline, and a black slab on
+        // the pasteboard — which is nearly black — was a shape nobody could
+        // find. "No fill" is black at no alpha, so turning the fill on gets
+        // black rather than nothing.
+        let mut state = TesseraApp::headless();
+        for command in [
+            Command::AddRectangle(bounds()),
+            Command::AddEllipse(bounds()),
+        ] {
+            apply(&mut state, command);
+            let id = state.active().selection.single().expect("selected");
+            let frame = state.active().document().frame(id).expect("frame").clone();
+            assert_eq!(frame.fill, NO_FILL, "{:?}", frame.kind);
+            assert_eq!(frame.stroke, Some(Stroke::new(Color::BLACK, 1.0)));
+        }
+    }
+
+    #[test]
+    fn defaults_are_no_fill_and_a_black_hairline() {
+        // The same as a new shape, which is what "default" means.
         let mut state = TesseraApp::headless();
         let id = one_rect(&mut state);
+        apply(
+            &mut state,
+            Command::SetFill {
+                id,
+                paint: Paint::Solid(Color::WHITE),
+            },
+        );
         apply(
             &mut state,
             Command::SetStroke {
@@ -2990,8 +3007,8 @@ mod tests {
         apply(&mut state, Command::DefaultFillAndStroke(id));
 
         let frame = state.active().document().frame(id).expect("frame").clone();
-        assert_eq!(frame.fill, Paint::Solid(Color::BLACK));
-        assert!(frame.stroke.is_none());
+        assert_eq!(frame.fill, NO_FILL);
+        assert_eq!(frame.stroke, Some(Stroke::new(Color::BLACK, 1.0)));
     }
 
     #[test]
@@ -3342,6 +3359,7 @@ mod tests {
     fn a_stroke_can_be_given_and_taken_away() {
         let mut state = TesseraApp::headless();
         let id = one_rect(&mut state);
+        apply(&mut state, Command::SetStroke { id, stroke: None });
         assert!(
             state
                 .active()
@@ -3350,7 +3368,7 @@ mod tests {
                 .expect("frame")
                 .stroke
                 .is_none(),
-            "a shape starts with no stroke"
+            "the hairline can be taken away"
         );
 
         let stroke = Stroke {
@@ -3392,6 +3410,7 @@ mod tests {
     fn setting_a_stroke_is_one_undo_entry_covering_every_property() {
         let mut state = TesseraApp::headless();
         let id = one_rect(&mut state);
+        apply(&mut state, Command::SetStroke { id, stroke: None });
 
         apply(
             &mut state,
@@ -3894,7 +3913,7 @@ mod tests {
         );
         assert_eq!(
             state.active().document().frame(b).expect("frame").fill,
-            Paint::Solid(Color::BLACK)
+            NO_FILL
         );
     }
 
