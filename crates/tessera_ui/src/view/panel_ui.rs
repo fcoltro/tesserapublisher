@@ -103,10 +103,12 @@ pub fn named_row(ui: &mut Ui, selected: bool, label: &str, reserved: f32) -> Res
                 job.wrap.break_anywhere = true;
                 f.layout_job(job)
             });
-            // Not `add_sized`, which centres what it places: a button laid
-            // out left to right puts its text at the left.
+            // A growing atom after the text takes up the rest of the row,
+            // which is what holds the text at the left: `add_sized` centres
+            // what it places, and so does a button with nothing to grow.
             ui.add(
-                egui::Button::selectable(selected, shown).min_size(egui::vec2(width, Theme::row())),
+                egui::Button::selectable(selected, (shown, egui::Atom::grow()))
+                    .min_size(egui::vec2(width, Theme::row())),
             )
         },
     )

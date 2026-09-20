@@ -538,10 +538,14 @@ fn paragraph_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
     // Tessera already had a floor with exactly those properties, so showing it
     // here is naming what exists rather than adding a second root that could
     // disagree with the first.
-    super::panel_ui::hint(
-        ui,
-        "Paragraph styles format whole paragraphs. Double-click a style to edit.",
-    );
+    // The rail's hint, not the editor's: in a window the person has already
+    // double-clicked into, "double-click to edit" is noise.
+    if show.list() {
+        super::panel_ui::hint(
+            ui,
+            "Paragraph styles format whole paragraphs. Double-click a style to edit.",
+        );
+    }
 
     let selected = state.styles_window.paragraph;
 
@@ -810,10 +814,12 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
         .map(|(id, s)| (id, s.name.clone()))
         .collect();
 
-    super::panel_ui::hint(
-        ui,
-        "Character styles format selected text. Double-click a style to edit.",
-    );
+    if show.list() {
+        super::panel_ui::hint(
+            ui,
+            "Character styles format selected text. Double-click a style to edit.",
+        );
+    }
 
     let selected = state.styles_window.character;
 
