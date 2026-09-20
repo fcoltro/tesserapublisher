@@ -87,6 +87,16 @@ pub enum Command {
         path: std::path::PathBuf,
         fit: tessera_document::graphic::Fit,
     },
+    /// Point a link at another file. Every frame showing it follows.
+    Relink {
+        link: tessera_document::ids::LinkId,
+        path: std::path::PathBuf,
+    },
+    /// Read a link's file again: its size and its date. For a file changed
+    /// in place, which is what "modified" means.
+    UpdateLink {
+        link: tessera_document::ids::LinkId,
+    },
     /// Re-fit what is already in a frame.
     RefitArtwork {
         id: FrameId,
@@ -895,37 +905,36 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         }
 
         Command::PlaceArtwork { id, path, fit } => {
-            let path = match std::path::absolute(&path) {
-                Ok(path) => path,
-                Err(error) => {
-                    state.status = Some(crate::app::Status::error(format!(
-                        "Could not resolve artwork path: {error}"
-                    )));
-                    return;
-                }
+            let Some(link) = measure_link(state, &path) else {
+                return;
             };
-            // The file is measured **now**, once, and the size is kept. A
-            // document must open and lay out without touching the disk: a
-            // missing image cannot be allowed to stop a page from drawing.
-            // An SVG has no pixels to count: its natural size is the size it
-            // asks to be, in points, and reading it as a bitmap would find
-            // nothing at all. Vector artwork placed at zero would be a frame
-            // with invisible contents.
-            let natural = if tessera_render::images::is_svg(&path) {
-                tessera_render::images::svg_size(&path).unwrap_or((0.0, 0.0))
-            } else {
-                image::image_dimensions(&path)
-                    .map(|(w, h)| (f64::from(w), f64::from(h)))
-                    .unwrap_or((0.0, 0.0))
-            };
-            let modified = std::fs::metadata(&path)
-                .ok()
-                .and_then(|m| tessera_document::links::modified_seconds(&m));
-
-            let mut link = tessera_document::links::Link::new(path, natural);
-            link.modified = modified;
             let link = state.active_mut().document_mut().add_link(link);
             state.active_mut().document_mut().place(id, link, fit);
+        }
+
+        Command::Relink { link, path } => {
+            let Some(measured) = measure_link(state, &path) else {
+                return;
+            };
+            let now = state.active_mut().document_mut().relink(link, measured);
+            if state.links.selected == Some(link) {
+                state.links.selected = Some(now);
+            }
+        }
+
+        Command::UpdateLink { link } => {
+            let Some(path) = state
+                .active()
+                .document()
+                .links
+                .get(link)
+                .map(|l| l.path.clone())
+            else {
+                return;
+            };
+            if let Some(measured) = measure_link(state, &path) {
+                state.active_mut().document_mut().relink(link, measured);
+            }
         }
 
         Command::RefitArtwork { id, fit } => {
@@ -2446,6 +2455,44 @@ fn place_generated(
     }
 }
 
+/// What the document should know about a file: its path, made absolute, its
+/// size and its date. `None` — and a status line — when the path cannot be
+/// resolved.
+///
+/// The file is measured **now**, once, and the size is kept. A document must
+/// open and lay out without touching the disk: a missing image cannot be
+/// allowed to stop a page from drawing. An SVG has no pixels to count: its
+/// natural size is the size it asks to be, in points, and reading it as a
+/// bitmap would find nothing at all. Vector artwork placed at zero would be a
+/// frame with invisible contents.
+fn measure_link(
+    state: &mut TesseraApp,
+    path: &std::path::Path,
+) -> Option<tessera_document::links::Link> {
+    let path = match std::path::absolute(path) {
+        Ok(path) => path,
+        Err(error) => {
+            state.status = Some(crate::app::Status::error(format!(
+                "Could not resolve artwork path: {error}"
+            )));
+            return None;
+        }
+    };
+    let natural = if tessera_render::images::is_svg(&path) {
+        tessera_render::images::svg_size(&path).unwrap_or((0.0, 0.0))
+    } else {
+        image::image_dimensions(&path)
+            .map(|(w, h)| (f64::from(w), f64::from(h)))
+            .unwrap_or((0.0, 0.0))
+    };
+    let modified = std::fs::metadata(&path)
+        .ok()
+        .and_then(|m| tessera_document::links::modified_seconds(&m));
+    let mut link = tessera_document::links::Link::new(path, natural);
+    link.modified = modified;
+    Some(link)
+}
+
 fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, fill: Color) {
     // The layer being worked on, wherever on the document this was drawn. A
     // layer spans every page, so which page the object is on is settled by
@@ -2510,6 +2557,95 @@ const DUPLICATE_OFFSET: f64 = 12.0;
 
 #[cfg(test)]
 mod tests {
+    /// A PNG `w` by `h` on disk, in a temp file of its own.
+    fn a_png(name: &str, w: u32, h: u32) -> std::path::PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("tessera-cmd-{}-{name}.png", std::process::id()));
+        image::RgbaImage::from_pixel(w, h, image::Rgba([0, 0, 0, 255]))
+            .save(&path)
+            .expect("write a png");
+        path
+    }
+
+    /// A picture box with `path` placed in it, and the link it made.
+    fn placed_picture(
+        state: &mut TesseraApp,
+        path: &std::path::Path,
+    ) -> (FrameId, tessera_document::ids::LinkId) {
+        let mut b = state.first_page_bounds();
+        b.width = 100.0;
+        b.height = 100.0;
+        apply(state, Command::AddGraphicFrame(b));
+        let id = state.active().selection.single().expect("selected");
+        apply(
+            state,
+            Command::PlaceArtwork {
+                id,
+                path: path.to_path_buf(),
+                fit: tessera_document::graphic::Fit::Proportionally,
+            },
+        );
+        let link = match &state.active().document().frame(id).expect("frame").kind {
+            FrameKind::Graphic { placed: Some(p) } => p.link,
+            _ => panic!("nothing placed"),
+        };
+        (id, link)
+    }
+
+    #[test]
+    fn relinking_measures_the_new_file_and_undoes_as_one() {
+        let old = a_png("old", 40, 20);
+        let new = a_png("new", 80, 10);
+        let mut state = TesseraApp::headless();
+        let (id, link) = placed_picture(&mut state, &old);
+
+        apply(
+            &mut state,
+            Command::Relink {
+                link,
+                path: new.clone(),
+            },
+        );
+        let doc = state.active().document();
+        assert_eq!(
+            doc.links[link].natural,
+            (80.0, 10.0),
+            "measured, not copied"
+        );
+        assert_eq!(doc.links[link].path, std::path::absolute(&new).unwrap());
+        assert!(doc.links[link].modified.is_some(), "and dated");
+        assert_eq!(doc.frames_using(link), vec![id]);
+
+        apply(&mut state, Command::Undo);
+        let doc = state.active().document();
+        assert_eq!(doc.links[link].natural, (40.0, 20.0));
+        let _ = std::fs::remove_file(old);
+        let _ = std::fs::remove_file(new);
+    }
+
+    #[test]
+    fn updating_a_link_reads_the_file_again() {
+        // The picture was retouched in place: same path, new pixels. Update
+        // takes the new size and time, and the frame keeps its placement.
+        let path = a_png("updated", 40, 20);
+        let mut state = TesseraApp::headless();
+        let (_, link) = placed_picture(&mut state, &path);
+        image::RgbaImage::from_pixel(60, 30, image::Rgba([0, 0, 0, 255]))
+            .save(&path)
+            .expect("overwrite");
+        state.active_mut().document_mut().links[link].modified = Some(0);
+        assert_eq!(
+            state.active().document().links[link].status(),
+            tessera_document::links::Status::Modified
+        );
+
+        apply(&mut state, Command::UpdateLink { link });
+        let refreshed = &state.active().document().links[link];
+        assert_eq!(refreshed.natural, (60.0, 30.0));
+        assert_eq!(refreshed.status(), tessera_document::links::Status::Fine);
+        let _ = std::fs::remove_file(path);
+    }
+
     #[test]
     fn flipping_twice_returns_the_selection_to_where_it_was() {
         let mut state = TesseraApp::headless();

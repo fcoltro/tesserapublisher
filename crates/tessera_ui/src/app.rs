@@ -398,6 +398,9 @@ pub struct TesseraApp {
     pub eyedropper: Option<crate::tools::Sampled>,
     /// The Book panel: the chapters of a publication, and the book file.
     pub book: crate::view::book::BookPanel,
+
+    /// The Links panel: every file the document points at.
+    pub links: crate::view::links::LinksPanel,
     /// Find and Change. Modeless, so it is not in `modal_open`.
     pub find: crate::view::find::FindWindow,
 
@@ -526,6 +529,7 @@ impl TesseraApp {
             shaper: Shaper::new(),
             active_tool: Tool::Select,
             styles_window: StylesWindow::default(),
+            links: crate::view::links::LinksPanel::default(),
             swatches_window: SwatchesWindow::default(),
             pages_window: PagesWindow::default(),
             images: tessera_render::images::Images::new(),

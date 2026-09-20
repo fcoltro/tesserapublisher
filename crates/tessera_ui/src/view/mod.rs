@@ -22,6 +22,7 @@ pub mod hyperlink;
 pub mod identity;
 pub mod invert_host;
 pub mod layers;
+pub mod links;
 pub mod long_document;
 pub mod new_document;
 pub mod pages;

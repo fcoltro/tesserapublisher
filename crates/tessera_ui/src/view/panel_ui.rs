@@ -75,6 +75,45 @@ pub fn entry(ui: &mut Ui, selected: bool, label: &str) -> Response {
     .on_hover_text(label)
 }
 
+/// A row naming a thing, read from the left, with `reserved` points kept
+/// clear on its right for whatever the caller paints there.
+///
+/// `entry` centres its label and truncates it against the whole width, which
+/// is right for a style's name and wrong for a file's: names are scanned
+/// down the left edge, and a long one would run under the marks beside it.
+pub fn named_row(ui: &mut Ui, selected: bool, label: &str, reserved: f32) -> Response {
+    let width = ui.available_width();
+    let text_width = (width - reserved - 2.0 * Theme::space_2()).max(0.0);
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, Theme::row()),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_width(width);
+            // Truncated by hand, against the room the text really has,
+            // because the button would truncate against its whole width.
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let shown = ui.fonts_mut(|f| {
+                let mut job = egui::text::LayoutJob::simple_singleline(
+                    label.to_owned(),
+                    font,
+                    ui.visuals().text_color(),
+                );
+                job.wrap.max_width = text_width;
+                job.wrap.max_rows = 1;
+                job.wrap.break_anywhere = true;
+                f.layout_job(job)
+            });
+            // Not `add_sized`, which centres what it places: a button laid
+            // out left to right puts its text at the left.
+            ui.add(
+                egui::Button::selectable(selected, shown).min_size(egui::vec2(width, Theme::row())),
+            )
+        },
+    )
+    .inner
+    .on_hover_text(label)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -139,6 +178,7 @@ mod tests {
                                 Dock::Swatches => super::super::swatches::docked(ui, &mut state),
                                 Dock::Glyphs => super::super::glyphs::docked(ui, &mut state),
                                 Dock::Book => super::super::book::docked(ui, &mut state),
+                                Dock::Links => super::super::links::docked(ui, &mut state),
                                 Dock::Preflight => {
                                     super::super::preflight_panel::docked(ui, &mut state)
                                 }

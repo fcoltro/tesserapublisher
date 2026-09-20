@@ -2162,13 +2162,25 @@ fn graphic_section(
     };
     ui.colored_label(colour, word);
 
+    // The link, not this frame: every frame showing the file follows, which
+    // is what the Links panel does too. Placing a new file into this frame
+    // alone would leave the same picture's other frames pointing at the old
+    // path, and the panel counting two files where there is one.
     if status != Status::Fine
         && ui
             .button("Relink...")
             .on_hover_text("Choose the file this should point at")
             .clicked()
+        && let Some(path) = crate::file_ops::pick_artwork()
     {
-        crate::file_ops::place(state);
+        crate::command::apply(
+            state,
+            crate::command::Command::Relink {
+                link: placement.link,
+                path,
+            },
+        );
+        state.links.recheck();
     }
 
     // The effective resolution, which is the number a printer cares about: a

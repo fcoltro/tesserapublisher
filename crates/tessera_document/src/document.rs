@@ -1209,6 +1209,52 @@ impl Document {
         true
     }
 
+    /// The frames showing a link, in paint order.
+    pub fn frames_using(&self, link: LinkId) -> Vec<FrameId> {
+        self.paint_order()
+            .into_iter()
+            .filter(|id| {
+                self.frames.get(*id).is_some_and(
+                    |f| matches!(&f.kind, FrameKind::Graphic { placed: Some(p) } if p.link == link),
+                )
+            })
+            .collect()
+    }
+
+    /// Point a link at another file, and say which link it is now.
+    ///
+    /// A fact about the link rather than about any frame: every frame showing
+    /// it follows, which is what makes a links panel worth having. Each
+    /// frame's placement is kept — the new artwork sits where the old did —
+    /// because a relink is usually the same picture, retouched.
+    ///
+    /// The same path is one link, and relinking is not a way round that: onto
+    /// a file the document already links, the frames join that link and the
+    /// old one goes.
+    pub fn relink(&mut self, link: LinkId, to: Link) -> LinkId {
+        self.revision += 1;
+        let existing = self
+            .links
+            .iter()
+            .find(|(id, l)| *id != link && l.path == to.path)
+            .map(|(id, _)| id);
+        let Some(joined) = existing else {
+            if let Some(slot) = self.links.get_mut(link) {
+                *slot = to;
+            }
+            return link;
+        };
+        for frame in self.frames_using(link) {
+            if let Some(FrameKind::Graphic { placed: Some(p) }) =
+                self.frames.get_mut(frame).map(|f| &mut f.kind)
+            {
+                p.link = joined;
+            }
+        }
+        self.links.remove(link);
+        joined
+    }
+
     /// Which links a document uses, and how many frames use each.
     ///
     /// A link nothing shows is still a link — it may be about to be placed
@@ -6726,6 +6772,45 @@ mod tests {
         let b = doc.add_link(Link::new("C:/art/photo.png", (50.0, 50.0)));
         assert_eq!(a, b);
         assert_eq!(doc.links.len(), 1);
+    }
+
+    #[test]
+    fn relinking_points_every_frame_at_the_new_file() {
+        // One link, two frames showing it. Relinking is a fact about the
+        // link, so both frames follow, and the panel still lists one file.
+        let mut doc = Document::new();
+        let (first, link) = a_picture_box(&mut doc);
+        let (second, same) = a_picture_box(&mut doc);
+        assert_eq!(link, same);
+        assert!(doc.place(first, link, Fit::Proportionally));
+        assert!(doc.place(second, link, Fit::Proportionally));
+        assert_eq!(doc.frames_using(link), vec![first, second]);
+
+        assert_eq!(
+            doc.relink(link, Link::new("C:/art/retouched.png", (80.0, 40.0))),
+            link
+        );
+        assert_eq!(doc.links.len(), 1);
+        assert_eq!(
+            doc.links[link].path,
+            std::path::PathBuf::from("C:/art/retouched.png")
+        );
+        assert_eq!(doc.links[link].natural, (80.0, 40.0));
+        assert_eq!(doc.frames_using(link), vec![first, second]);
+    }
+
+    #[test]
+    fn relinking_onto_a_file_already_linked_joins_that_link() {
+        // The same path is one link, and relinking is not a way round it.
+        let mut doc = Document::new();
+        let (frame, old) = a_picture_box(&mut doc);
+        assert!(doc.place(frame, old, Fit::Proportionally));
+        let existing = doc.add_link(Link::new("C:/art/other.png", (10.0, 10.0)));
+
+        let joined = doc.relink(old, Link::new("C:/art/other.png", (10.0, 10.0)));
+        assert_eq!(joined, existing);
+        assert!(doc.links.get(old).is_none(), "the old link is gone");
+        assert_eq!(doc.frames_using(existing), vec![frame]);
     }
 
     #[test]

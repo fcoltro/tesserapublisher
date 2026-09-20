@@ -268,6 +268,8 @@ pub enum Run {
     ToggleGlyphs,
     /// The Book panel: the chapters of a publication.
     ToggleBook,
+    /// The Links panel: the artwork files the document points at.
+    ToggleLinks,
     ToggleStyles,
     ChooseOutputIntent,
     ToggleSoftProof,
@@ -380,6 +382,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::ToggleConsole
         | Run::ToggleGlyphs
         | Run::ToggleBook
+        | Run::ToggleLinks
         | Run::ToggleStyles
         | Run::ToggleSoftProof
         | Run::ToggleSwatches
@@ -1196,6 +1199,7 @@ pub fn all() -> &'static [Action] {
         a("AI Console", Some("F9"), Group::Window, ToggleConsole),
         a("Glyphs", None, Group::Window, ToggleGlyphs),
         a("Book", None, Group::Window, ToggleBook),
+        a("Links", Some("Ctrl+Shift+D"), Group::Window, ToggleLinks),
         // Under Edit, where every application that is not macOS puts it, and
         // last in that menu because it is the one entry there that is not an
         // edit to the document.
@@ -1361,6 +1365,13 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             if state.book.open {
                 state.rail_open = true;
                 state.prefs.docking.reveal("Book");
+            }
+        }
+        Run::ToggleLinks => {
+            state.links.open = !state.links.open;
+            if state.links.open {
+                state.rail_open = true;
+                state.prefs.docking.reveal("Links");
             }
         }
         Run::ChooseOutputIntent => crate::file_ops::choose_output_intent(state),
@@ -1883,6 +1894,7 @@ mod tests {
                 | "AI Console"
                 | "Glyphs"
                 | "Book"
+                | "Links"
                 | "Paragraph and character styles"
                 | "Preview view"
                 | "Current page number"

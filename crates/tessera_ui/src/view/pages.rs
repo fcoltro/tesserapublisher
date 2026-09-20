@@ -519,7 +519,8 @@ mod tests {
                 "Preflight",
                 "AI Console",
                 "Glyphs",
-                "Book"
+                "Book",
+                "Links"
             ]
         );
         assert_eq!(Group::Window.menu(), Some("Window"));

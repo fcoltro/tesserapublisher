@@ -414,7 +414,7 @@ pub fn choose_output_intent(state: &mut crate::app::TesseraApp) {
     state.soft_proof.showing = true;
 }
 
-fn pick_artwork() -> Option<PathBuf> {
+pub(crate) fn pick_artwork() -> Option<PathBuf> {
     rfd::FileDialog::new()
         .add_filter("Images", crate::PLACEABLE)
         .pick_file()

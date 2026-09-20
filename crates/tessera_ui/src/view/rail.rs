@@ -40,13 +40,15 @@ pub enum Dock {
     Console,
     Glyphs,
     Book,
+    Links,
 }
 
 impl Dock {
-    pub const ALL: [Dock; 9] = [
+    pub const ALL: [Dock; 10] = [
         Dock::Properties,
         Dock::Pages,
         Dock::Layers,
+        Dock::Links,
         Dock::Styles,
         Dock::Swatches,
         Dock::Glyphs,
@@ -68,6 +70,7 @@ impl Dock {
             Dock::Console => "AI Console",
             Dock::Glyphs => "Glyphs",
             Dock::Book => "Book",
+            Dock::Links => "Links",
         }
     }
 
@@ -82,6 +85,7 @@ impl Dock {
             Dock::Console => Icon::SquareTerminal,
             Dock::Glyphs => Icon::Pi,
             Dock::Book => Icon::Book,
+            Dock::Links => Icon::Link2,
         }
     }
 
@@ -96,6 +100,7 @@ impl Dock {
             Self::Console => "Work with your AI assistant",
             Self::Glyphs => "Find and insert special characters",
             Self::Book => "Assemble documents into a book",
+            Self::Links => "The artwork files this document points at",
         }
     }
 
@@ -115,6 +120,7 @@ impl Dock {
             Dock::Console => state.console.open,
             Dock::Glyphs => state.glyphs.open,
             Dock::Book => state.book.open,
+            Dock::Links => state.links.open,
         }
     }
 
@@ -129,6 +135,7 @@ impl Dock {
             Dock::Console => state.console.open = open,
             Dock::Glyphs => state.glyphs.open = open,
             Dock::Book => state.book.open = open,
+            Dock::Links => state.links.open = open,
         }
     }
 }
@@ -209,6 +216,7 @@ pub(crate) fn body(ui: &mut Ui, state: &mut TesseraApp, dock: Dock) {
         Dock::Console => crate::view::console::docked(ui, state),
         Dock::Glyphs => crate::view::glyphs::docked(ui, state),
         Dock::Book => crate::view::book::docked(ui, state),
+        Dock::Links => crate::view::links::docked(ui, state),
     }
 }
 
@@ -232,6 +240,7 @@ mod tests {
             Dock::Console,
             Dock::Glyphs,
             Dock::Book,
+            Dock::Links,
         ] {
             assert!(!dock.is_open(&state), "{} starts shut", dock.title());
         }
