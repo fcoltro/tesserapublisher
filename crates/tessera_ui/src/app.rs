@@ -230,6 +230,22 @@ pub struct StylesWindow {
     /// list is what the panel is *for*: which styles exist, which one is on
     /// this text, and which have been overridden.
     pub editing: bool,
+    /// Which page of the editor is showing: the left column's choice.
+    pub page: crate::view::styles::StylePage,
+}
+
+impl StylesWindow {
+    /// The page to draw: the chosen one, or General when the kind showing
+    /// has no such page — switching from a paragraph style's Tabs to an
+    /// object style must not leave the editor on a page that draws nothing.
+    pub fn current_page(&self) -> crate::view::styles::StylePage {
+        let page = self.page;
+        if crate::view::styles::StylePage::for_kind(self.kind).contains(&page) {
+            page
+        } else {
+            crate::view::styles::StylePage::General
+        }
+    }
 }
 
 /// The Swatches panel: open or not, and which swatch is being worked on.

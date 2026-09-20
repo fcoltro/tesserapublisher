@@ -21,6 +21,7 @@ use tessera_text::story::{
 use crate::app::{StyleKind, TesseraApp};
 use crate::command::{Command, apply};
 use crate::theme::Theme;
+use tessera_document::object_style::ObjectFormat;
 
 /// Which half of the styles interface is being drawn.
 ///
@@ -43,6 +44,97 @@ impl Show {
         self == Show::Editor
     }
 }
+
+/// One page of the editor: a heading in the left column, a set of controls
+/// on the right.
+///
+/// The way InDesign's style options are laid out, and for the reason it
+/// laid them out so: a paragraph style states two dozen properties, and one
+/// column of them is a scroll nobody can find anything in. Grouped under a
+/// dozen names, each group fits on the screen at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StylePage {
+    #[default]
+    General,
+    BasicCharacter,
+    AdvancedCharacter,
+    IndentsAndSpacing,
+    Tabs,
+    ParagraphRules,
+    KeepOptions,
+    Hyphenation,
+    Justification,
+    DropCapsAndLists,
+    OpenType,
+    Decorations,
+    Fill,
+    Stroke,
+    Transparency,
+    Shadow,
+    TextWrap,
+}
+
+impl StylePage {
+    /// The pages a kind of style has, in the order the column lists them.
+    pub fn for_kind(kind: StyleKind) -> &'static [StylePage] {
+        match kind {
+            StyleKind::Paragraph => &[
+                StylePage::General,
+                StylePage::BasicCharacter,
+                StylePage::AdvancedCharacter,
+                StylePage::IndentsAndSpacing,
+                StylePage::Tabs,
+                StylePage::ParagraphRules,
+                StylePage::KeepOptions,
+                StylePage::Hyphenation,
+                StylePage::Justification,
+                StylePage::DropCapsAndLists,
+                StylePage::OpenType,
+                StylePage::Decorations,
+            ],
+            StyleKind::Character => &[
+                StylePage::General,
+                StylePage::BasicCharacter,
+                StylePage::AdvancedCharacter,
+                StylePage::OpenType,
+                StylePage::Decorations,
+            ],
+            StyleKind::Object => &[
+                StylePage::General,
+                StylePage::Fill,
+                StylePage::Stroke,
+                StylePage::Transparency,
+                StylePage::Shadow,
+                StylePage::TextWrap,
+            ],
+        }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            StylePage::General => "General",
+            StylePage::BasicCharacter => "Basic character formats",
+            StylePage::AdvancedCharacter => "Advanced character formats",
+            StylePage::IndentsAndSpacing => "Indents and spacing",
+            StylePage::Tabs => "Tabs",
+            StylePage::ParagraphRules => "Paragraph rules",
+            StylePage::KeepOptions => "Keep options",
+            StylePage::Hyphenation => "Hyphenation",
+            StylePage::Justification => "Justification",
+            StylePage::DropCapsAndLists => "Drop caps and lists",
+            StylePage::OpenType => "OpenType features",
+            StylePage::Decorations => "Underline and strikethrough",
+            StylePage::Fill => "Fill",
+            StylePage::Stroke => "Stroke",
+            StylePage::Transparency => "Transparency",
+            StylePage::Shadow => "Shadow",
+            StylePage::TextWrap => "Text wrap",
+        }
+    }
+}
+
+/// How wide the column of page names is.
+const PAGES_WIDTH: f32 = 176.0;
 
 /// The section, as it sits in the rail: the names, and nothing else.
 pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
@@ -67,12 +159,30 @@ pub fn editor(ctx: &egui::Context, state: &mut TesseraApp) {
     })
     .open(&mut open)
     .resizable(true)
-    .default_width(420.0)
+    .default_width(680.0)
     .default_height(520.0)
     .show(ctx, |ui| {
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| body(ui, state, Show::Editor));
+        // The pages down the left, the chosen one on the right: what the
+        // column is for is finding a property, and what the right side is
+        // for is changing it. One list of everything did neither well.
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                ui.set_width(PAGES_WIDTH);
+                let current = state.styles_window.current_page();
+                for page in StylePage::for_kind(state.styles_window.kind) {
+                    if super::panel_ui::entry(ui, current == *page, page.title()).clicked() {
+                        state.styles_window.page = *page;
+                    }
+                }
+            });
+            ui.separator();
+            ui.vertical(|ui| {
+                ui.set_width(ui.available_width());
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| body(ui, state, Show::Editor));
+            });
+        });
     });
     if !open {
         state.styles_window.editing = false;
@@ -213,7 +323,25 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
         return;
     };
 
-    ui.separator();
+    let page = state.styles_window.current_page();
+
+    // What it states. Each row is a switch and, when it is on, the value.
+    let mut format = style.format.clone();
+    let mut changed = false;
+
+    if page != StylePage::General {
+        object_page(ui, page, &mut format, &mut changed);
+        if changed {
+            apply(
+                state,
+                Command::RestyleObjectStyle {
+                    id,
+                    format: Box::new(format),
+                },
+            );
+        }
+        return;
+    }
 
     // The name, and what it is based on.
     let mut name = style.name.clone();
@@ -259,14 +387,40 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
                 based_on,
             },
         );
-        return;
     }
+}
 
-    // What it states. Each row is a switch and, when it is on, the value.
-    let mut format = style.format.clone();
-    let mut changed = false;
+/// One page of an object style's properties.
+fn object_page(ui: &mut Ui, page: StylePage, format: &mut ObjectFormat, changed: &mut bool) {
+    match page {
+        StylePage::Fill => object_fill(ui, format, changed),
+        StylePage::Stroke => object_stroke(ui, format, changed),
+        StylePage::Transparency => object_transparency(ui, format, changed),
+        StylePage::Shadow => object_shadow(ui, format, changed),
+        StylePage::TextWrap => {
+            *changed |= states(ui, "Text wrap", &mut format.wrap, || {
+                tessera_document::nodes::TextWrap::None
+            });
+        }
+        // Listed rather than caught by a wildcard, so a page added to the
+        // column has to say what it draws.
+        StylePage::General
+        | StylePage::BasicCharacter
+        | StylePage::AdvancedCharacter
+        | StylePage::IndentsAndSpacing
+        | StylePage::Tabs
+        | StylePage::ParagraphRules
+        | StylePage::KeepOptions
+        | StylePage::Hyphenation
+        | StylePage::Justification
+        | StylePage::DropCapsAndLists
+        | StylePage::OpenType
+        | StylePage::Decorations => {}
+    }
+}
 
-    changed |= states(ui, "Fill", &mut format.fill, || {
+fn object_fill(ui: &mut Ui, format: &mut ObjectFormat, changed: &mut bool) {
+    *changed |= states(ui, "Fill", &mut format.fill, || {
         tessera_document::paint::Paint::Solid(Color::BLACK)
     });
     if let Some(fill) = &mut format.fill {
@@ -279,14 +433,16 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
                 b: rgba[2],
                 a: rgba[3],
             });
-            changed = true;
+            *changed = true;
         }
     }
+}
 
+fn object_stroke(ui: &mut Ui, format: &mut ObjectFormat, changed: &mut bool) {
     // The nesting shows here, and it is the point: "no stroke" is a value a
     // style has to be able to state, so the switch turns the *statement* on and
     // a second control chooses between a stroke and none.
-    changed |= states(ui, "Stroke", &mut format.stroke, || None);
+    *changed |= states(ui, "Stroke", &mut format.stroke, || None);
     if let Some(stroke) = &mut format.stroke {
         let mut has = stroke.is_some();
         if ui.checkbox(&mut has, "Has a stroke").changed() {
@@ -295,10 +451,10 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
             } else {
                 None
             };
-            changed = true;
+            *changed = true;
         }
         if let Some(s) = stroke {
-            changed |= crate::view::panels::field(ui, "Width", |ui| {
+            *changed |= crate::view::panels::field(ui, "Width", |ui| {
                 ui.add(
                     egui::DragValue::new(&mut s.width)
                         .speed(0.1)
@@ -309,8 +465,10 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
             });
         }
     }
+}
 
-    changed |= states(ui, "Opacity", &mut format.blend, || {
+fn object_transparency(ui: &mut Ui, format: &mut ObjectFormat, changed: &mut bool) {
+    *changed |= states(ui, "Opacity", &mut format.blend, || {
         tessera_document::blending::Blending::PLAIN
     });
     if let Some(blend) = &mut format.blend {
@@ -324,11 +482,13 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
             .changed()
         }) {
             blend.opacity = percent / 100.0;
-            changed = true;
+            *changed = true;
         }
     }
+}
 
-    changed |= states(ui, "Shadow", &mut format.shadow, || {
+fn object_shadow(ui: &mut Ui, format: &mut ObjectFormat, changed: &mut bool) {
+    *changed |= states(ui, "Shadow", &mut format.shadow, || {
         Some(tessera_document::shadow::Shadow::TYPICAL)
     });
     if let Some(shadow) = &mut format.shadow {
@@ -339,22 +499,8 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
             } else {
                 None
             };
-            changed = true;
+            *changed = true;
         }
-    }
-
-    changed |= states(ui, "Text wrap", &mut format.wrap, || {
-        tessera_document::nodes::TextWrap::None
-    });
-
-    if changed {
-        apply(
-            state,
-            Command::RestyleObjectStyle {
-                id,
-                format: Box::new(format),
-            },
-        );
     }
 }
 
@@ -492,7 +638,8 @@ fn paragraph_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
                     state.styles_window.paragraph = None;
                     return;
                 };
-                paragraph_fields(ui, state, id, existing, &styles);
+                let page = state.styles_window.current_page();
+                paragraph_fields(ui, state, id, existing, &styles, page);
             });
         }
     });
@@ -504,8 +651,17 @@ fn paragraph_fields(
     id: ParagraphStyleId,
     existing: ParagraphStyle,
     styles: &[(ParagraphStyleId, String)],
+    page: StylePage,
 ) {
     let mut edited = existing.clone();
+
+    if page != StylePage::General {
+        paragraph_page(ui, state, page, &mut edited.format);
+        if edited != existing {
+            apply(state, Command::EditParagraphStyle { id, style: edited });
+        }
+        return;
+    }
 
     ui.horizontal(|ui| {
         ui.colored_label(Theme::text_muted(), "Name");
@@ -550,71 +706,96 @@ fn paragraph_fields(
             });
     });
 
-    ui.separator();
-    ui.colored_label(Theme::text_muted(), "Character formatting");
-    character_format_fields(ui, state, &mut edited.format.character);
-
-    ui.separator();
-    ui.colored_label(Theme::text_muted(), "Paragraph formatting");
-    optional_choice(
-        ui,
-        "Alignment",
-        &mut edited.format.alignment,
-        Alignment::Left,
-        &[
-            ("Left", Alignment::Left),
-            ("Centre", Alignment::Centre),
-            ("Right", Alignment::Right),
-            ("Justify", Alignment::Justify),
-        ],
-    );
-
-    ui.separator();
-    // Named, not hidden. These are stored and preserved by the file format, so
-    // authoring them now is not wasted — but nothing draws them yet, and a
-    // control that silently sets a value nothing honours makes the software
-    // look broken rather than unfinished.
-    for (label, field) in [
-        ("Indent left", 0usize),
-        ("Indent right", 1),
-        ("First line", 2),
-        ("Space before", 3),
-        ("Space after", 4),
-    ] {
-        let value = match field {
-            0 => &mut edited.format.indent_left,
-            1 => &mut edited.format.indent_right,
-            2 => &mut edited.format.indent_first,
-            3 => &mut edited.format.space_before,
-            _ => &mut edited.format.space_after,
-        };
-        optional_number(ui, label, value, 0.0, 0.25, -720.0..=720.0, " pt");
-    }
-    // English only: `hypher` holds patterns per language and a story has no
-    // language to choose between them yet.
-    optional_flag(ui, "Hyphenate", &mut edited.format.hyphenate);
-    optional_count(ui, "Drop cap lines", &mut edited.format.drop_cap_lines, 3);
-    optional_count(
-        ui,
-        "Drop cap letters",
-        &mut edited.format.drop_cap_characters,
-        1,
-    );
-    // The whole list is one value: `edited != existing` below sees a change
-    // to any stop, and "Inherit" puts `None` back.
-    super::panels::tab_stops_editor(ui, &mut edited.format.tab_stops, true);
-    super::panels::paragraph_rule_editor(ui, "Rule above", &mut edited.format.rule_above, true);
-    super::panels::paragraph_rule_editor(ui, "Rule below", &mut edited.format.rule_below, true);
-    super::panels::keep_options_editor(ui, &mut edited.format.keep, true);
-    super::panels::justification_editor(ui, &mut edited.format.justification, true);
-    super::panels::hyphenation_editor(ui, &mut edited.format.hyphenation, true);
-    super::panels::list_editor(ui, &mut edited.format.list, true);
-
     if let Some(based_on) = chosen_parent {
         apply(state, Command::SetParagraphStyleBasedOn { id, based_on });
     }
     if edited != existing {
         apply(state, Command::EditParagraphStyle { id, style: edited });
+    }
+}
+
+/// One page of a paragraph style's properties, General aside.
+fn paragraph_page(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    page: StylePage,
+    format: &mut ParagraphFormat,
+) {
+    match page {
+        StylePage::BasicCharacter => character_basic(ui, state, &mut format.character),
+        StylePage::AdvancedCharacter => character_advanced(ui, &mut format.character),
+        StylePage::OpenType => character_opentype(ui, &mut format.character),
+        StylePage::Decorations => character_decorations(ui, &mut format.character),
+        StylePage::IndentsAndSpacing => {
+            optional_choice(
+                ui,
+                "Alignment",
+                &mut format.alignment,
+                Alignment::Left,
+                &[
+                    ("Left", Alignment::Left),
+                    ("Centre", Alignment::Centre),
+                    ("Right", Alignment::Right),
+                    ("Justify", Alignment::Justify),
+                ],
+            );
+            ui.separator();
+            // Named, not hidden. These are stored and preserved by the file
+            // format, so authoring them now is not wasted — but nothing draws
+            // them yet, and a control that silently sets a value nothing
+            // honours makes the software look broken rather than unfinished.
+            for (label, field) in [
+                ("Indent left", 0usize),
+                ("Indent right", 1),
+                ("First line", 2),
+                ("Space before", 3),
+                ("Space after", 4),
+            ] {
+                let value = match field {
+                    0 => &mut format.indent_left,
+                    1 => &mut format.indent_right,
+                    2 => &mut format.indent_first,
+                    3 => &mut format.space_before,
+                    _ => &mut format.space_after,
+                };
+                optional_number(ui, label, value, 0.0, 0.25, -720.0..=720.0, " pt");
+            }
+        }
+        // The whole list is one value: the caller's `edited != existing`
+        // sees a change to any stop, and "Inherit" puts `None` back.
+        StylePage::Tabs => {
+            super::panels::tab_stops_editor(ui, &mut format.tab_stops, true);
+        }
+        StylePage::ParagraphRules => {
+            super::panels::paragraph_rule_editor(ui, "Rule above", &mut format.rule_above, true);
+            super::panels::paragraph_rule_editor(ui, "Rule below", &mut format.rule_below, true);
+        }
+        StylePage::KeepOptions => {
+            super::panels::keep_options_editor(ui, &mut format.keep, true);
+        }
+        StylePage::Hyphenation => {
+            // English only: `hypher` holds patterns per language and a story
+            // has no language to choose between them yet.
+            optional_flag(ui, "Hyphenate", &mut format.hyphenate);
+            super::panels::hyphenation_editor(ui, &mut format.hyphenation, true);
+        }
+        StylePage::Justification => {
+            super::panels::justification_editor(ui, &mut format.justification, true);
+        }
+        StylePage::DropCapsAndLists => {
+            optional_count(ui, "Drop cap lines", &mut format.drop_cap_lines, 3);
+            optional_count(ui, "Drop cap letters", &mut format.drop_cap_characters, 1);
+            ui.separator();
+            super::panels::list_editor(ui, &mut format.list, true);
+        }
+        // Listed rather than caught by a wildcard, so a page added to the
+        // column has to say what it draws.
+        StylePage::General
+        | StylePage::Fill
+        | StylePage::Stroke
+        | StylePage::Transparency
+        | StylePage::Shadow
+        | StylePage::TextWrap => {}
     }
 }
 
@@ -727,6 +908,25 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
                 };
                 let mut edited = existing.clone();
 
+                let page = state.styles_window.current_page();
+                if page != StylePage::General {
+                    match page {
+                        StylePage::BasicCharacter => {
+                            character_basic(ui, state, &mut edited.format);
+                        }
+                        StylePage::AdvancedCharacter => {
+                            character_advanced(ui, &mut edited.format);
+                        }
+                        StylePage::OpenType => character_opentype(ui, &mut edited.format),
+                        StylePage::Decorations => character_decorations(ui, &mut edited.format),
+                        _ => {}
+                    }
+                    if edited != existing {
+                        apply(state, Command::EditCharacterStyle { id, style: edited });
+                    }
+                    return;
+                }
+
                 ui.horizontal(|ui| {
                     ui.colored_label(Theme::text_muted(), "Name");
                     ui.text_edit_singleline(&mut edited.name);
@@ -768,9 +968,6 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
                         });
                 });
 
-                ui.separator();
-                character_format_fields(ui, state, &mut edited.format);
-
                 if let Some(based_on) = chosen_parent {
                     apply(state, Command::SetCharacterStyleBasedOn { id, based_on });
                 }
@@ -782,8 +979,8 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
     });
 }
 
-/// Every character property a style can state, each able to say nothing.
-fn character_format_fields(ui: &mut Ui, state: &mut TesseraApp, format: &mut CharacterFormat) {
+/// The face, its size and its fit: what most styles are.
+fn character_basic(ui: &mut Ui, state: &mut TesseraApp, format: &mut CharacterFormat) {
     // The family list is built inside the combo's closure, so a closed menu
     // does not pay for the font scan every frame.
     let set = format.family.is_some();
@@ -866,6 +1063,22 @@ fn character_format_fields(ui: &mut Ui, state: &mut TesseraApp, format: &mut Cha
         ],
     );
     optional_flag(ui, "Italic", &mut format.italic);
+    optional_choice(
+        ui,
+        "Case",
+        &mut format.case,
+        Case::Normal,
+        &[
+            ("Normal", Case::Normal),
+            ("UPPER", Case::Upper),
+            ("lower", Case::Lower),
+            ("Small caps", Case::SmallCaps),
+        ],
+    );
+}
+
+/// Underline and strikethrough, each with a weight, an offset and a colour.
+fn character_decorations(ui: &mut Ui, format: &mut CharacterFormat) {
     for (label, strike) in [("Underline", false), ("Strikethrough", true)] {
         let slot = if strike {
             &mut format.strikethrough
@@ -874,7 +1087,19 @@ fn character_format_fields(ui: &mut Ui, state: &mut TesseraApp, format: &mut Cha
         };
         decoration_editor(ui, label, slot);
     }
+}
 
+/// The baseline, and the language the text is read in.
+fn character_advanced(ui: &mut Ui, format: &mut CharacterFormat) {
+    optional_number(
+        ui,
+        "Baseline shift",
+        &mut format.baseline_shift,
+        0.0,
+        0.25,
+        -200.0..=200.0,
+        " pt",
+    );
     ui.horizontal(|ui| {
         let mut stated = format.language.is_some();
         if ui
@@ -902,6 +1127,10 @@ fn character_format_fields(ui: &mut Ui, state: &mut TesseraApp, format: &mut Cha
                 });
         }
     });
+}
+
+/// What the font can do beyond its glyphs, when it can.
+fn character_opentype(ui: &mut Ui, format: &mut CharacterFormat) {
     optional_flag(ui, "Ligatures", &mut format.ligatures);
     optional_flag(
         ui,
@@ -952,28 +1181,6 @@ fn character_format_fields(ui: &mut Ui, state: &mut TesseraApp, format: &mut Cha
             }
         }
     });
-
-    optional_choice(
-        ui,
-        "Case",
-        &mut format.case,
-        Case::Normal,
-        &[
-            ("Normal", Case::Normal),
-            ("UPPER", Case::Upper),
-            ("lower", Case::Lower),
-            ("Small caps", Case::SmallCaps),
-        ],
-    );
-    optional_number(
-        ui,
-        "Baseline shift",
-        &mut format.baseline_shift,
-        0.0,
-        0.25,
-        -200.0..=200.0,
-        " pt",
-    );
 }
 
 const INHERIT_HINT: &str = "Off means the style says nothing about this, and \
@@ -1219,6 +1426,38 @@ fn uses_with_overrides(
 mod tests {
     use super::*;
     use crate::actions::{self, Group, Run};
+
+    #[test]
+    fn every_kind_opens_on_general_and_lists_only_its_own_pages() {
+        // The left column of the editor. General first for every kind, since
+        // the name is the one thing every style has; and no kind offers a
+        // page it has no properties for.
+        for kind in [
+            StyleKind::Paragraph,
+            StyleKind::Character,
+            StyleKind::Object,
+        ] {
+            let pages = StylePage::for_kind(kind);
+            assert_eq!(pages.first(), Some(&StylePage::General), "{kind:?}");
+            assert!(pages.len() >= 5, "{kind:?} has {} pages", pages.len());
+        }
+        assert!(StylePage::for_kind(StyleKind::Character).contains(&StylePage::OpenType));
+        assert!(!StylePage::for_kind(StyleKind::Character).contains(&StylePage::Tabs));
+        assert!(!StylePage::for_kind(StyleKind::Object).contains(&StylePage::BasicCharacter));
+        assert!(StylePage::for_kind(StyleKind::Object).contains(&StylePage::Stroke));
+    }
+
+    #[test]
+    fn a_page_the_kind_does_not_have_falls_back_to_general() {
+        // Switching from a paragraph style on its Tabs page to an object
+        // style must not leave the editor on a page that draws nothing.
+        let mut state = TesseraApp::headless();
+        state.styles_window.kind = StyleKind::Paragraph;
+        state.styles_window.page = StylePage::Tabs;
+        assert_eq!(state.styles_window.current_page(), StylePage::Tabs);
+        state.styles_window.kind = StyleKind::Object;
+        assert_eq!(state.styles_window.current_page(), StylePage::General);
+    }
 
     #[test]
     fn the_window_starts_closed() {
