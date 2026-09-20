@@ -169,7 +169,13 @@ impl Palette {
             Color32::from_rgb(0xB2, 0xB4, 0xB8),
             Color32::from_rgb(0xED, 0xEE, 0xF0),
         ],
-        canvas_bg: Color32::from_rgb(0x11, 0x11, 0x13),
+        // Lifted off the deepest step on 2026-09-20, at the user's asking: a
+        // new shape is a black hairline now, and on a near-black ground it
+        // could not be found. Held where the accent still clears 3:1, which
+        // is the ceiling — a saturated hue sits at about the luminance of a
+        // mid grey, so a paler ground and a blue selection edge cannot both
+        // be had.
+        canvas_bg: Color32::from_rgb(0x3A, 0x3A, 0x3C),
         // Flat, recessed inputs, separated from the panel by a subtle border.
         field_bg: Color32::from_rgb(0x11, 0x11, 0x13),
         // Desaturated from the blue this used to be. A saturated blue on a
@@ -179,7 +185,9 @@ impl Palette {
         accent_hover: Color32::from_rgb(0x7A, 0xA3, 0xF4),
         error: Color32::from_rgb(0xF0, 0x8C, 0x82),
         ok: Color32::from_rgb(0x2E, 0x9E, 0x5B),
-        frame_edge: Color32::from_rgb(0x66, 0x66, 0x66),
+        // Light enough to clear 3:1 on the lifted pasteboard, and still 3:1
+        // on paper, where an empty text frame's edge is also drawn.
+        frame_edge: Color32::from_rgb(0x8C, 0x8C, 0x8C),
     };
 
     // The same scale, light, as published — but step 8, the focus ring, is
@@ -414,7 +422,8 @@ impl Theme {
     // line: a border drawn between every pair of regions is a border nowhere,
     // and it was why the window read as one undifferentiated field.
 
-    /// The pasteboard. The darkest thing in the window.
+    /// The pasteboard: a neutral grey behind the page, darker than the
+    /// panels in a dark theme and lighter than paper in a light one.
     pub fn surface_canvas() -> Color32 {
         palette().canvas_bg
     }
