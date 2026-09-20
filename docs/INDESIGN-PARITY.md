@@ -173,7 +173,7 @@ of the inspector, M1.5 B7.
 | Workspace switcher and presets | ✅ | — | done, M7 |
 | Document tab bar with dirty marker | ✅ | — | done, M7 |
 | Layers panel | ✅ | — | done, M3 |
-| Links panel | a Links section in the inspector — status, relink, update; no panel of its own | — | done, M5 |
+| Links panel | ✅ a docked panel: one row per file with status, page and use count; relink, update, go to, reveal | — | done, M5; panel 2026-09-20 |
 | Swatches panel | ✅ | — | done, M5 |
 | Stroke panel | ✅ in the inspector | — | done, M1.5 |
 | Paragraph / Character styles | ✅ | — | done, M2 |
