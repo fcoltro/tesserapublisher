@@ -913,7 +913,7 @@ mod tests {
     fn a_document_is_saved_and_opened_again() {
         let dir = std::env::temp_dir().join(format!("tessera-bridge-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("bridged.tessera");
+        let path = dir.join("bridged.tsrdf");
 
         let mut bridge = Bridge::new();
         tool(

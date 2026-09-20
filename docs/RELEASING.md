@@ -52,11 +52,16 @@ exists inside CI can only be debugged by pushing.
 
 ## What each platform carries
 
-| | Icon | Association | Profiles |
+| | Icons | Association | Profiles |
 | --- | --- | --- | --- |
-| Windows | from the executable | `ProgId` + `Extension` + `Verb` in `apps/tessera_app/wix/main.wxs` | `profiles\` beside the exe |
-| macOS | `Contents/Resources` | `CFBundleDocumentTypes` + an exported UTI | `Contents/Resources/profiles` |
-| Linux | hicolor 512×512 | `.desktop` **and** a MIME package | `profiles/` beside the binary |
+| Windows | embedded in the executable by `build.rs`: ID 1 the application, ID 2 the document | `ProgId` + `Extension` + `Verb` + `DefaultIcon` in `apps/tessera_app/wix/main.wxs` | `profiles\` beside the exe |
+| macOS | two `.icns` in `Contents/Resources`, made by `build.sh` from the PNGs | `CFBundleDocumentTypes` + an exported UTI | `Contents/Resources/profiles` |
+| Linux | hicolor `apps/` for the application, `mimetypes/` for the document | `.desktop` **and** a MIME package | `profiles/` beside the binary |
+
+Documents are `.tsrdf`. The extension is declared once in Rust
+(`tessera_ui::file_ops::EXTENSION`) and once per platform above, and a test in
+`file_ops` holds the four together. Both icons come from the PNGs in `assets/`
+at build time — nothing checked in is a second copy of the artwork.
 
 Two things on that table are easy to get half right:
 

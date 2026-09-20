@@ -476,7 +476,7 @@ fn relative_placed_image_must_survive_save_and_reopen() {
         "place_image",
         json!({"path":path,"x":630,"y":20,"width":100,"height":100}),
     );
-    let file = &scratch.0.join("relative.tessera");
+    let file = &scratch.0.join("relative.tsrdf");
     tessera_ui::file_ops::save_to_path(&mut a, file).unwrap();
     let reopened = tessera_document::format::load(file).unwrap();
     let link = reopened.links.values().next().unwrap();

@@ -12,77 +12,6 @@ struct Rename<'a> {
     new: &'a str,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn reference(name: &str) -> Color {
-        Color::Swatch {
-            name: name.into(),
-            tint: 0.7,
-        }
-    }
-
-    #[test]
-    fn rename_updates_aliases_gradients_styles_and_nested_text() {
-        let mut doc = Document::new();
-        doc.set_swatch(Swatch::new("Old", Color::BLACK));
-        doc.set_swatch(Swatch::new("Alias", reference("Old")));
-        doc.text_default.color = reference("Old");
-        let mut story = Story::new("Text");
-        story.runs[0].local.colour = Some(reference("Old"));
-        story.footnotes.push(story.clone());
-        let story_id = doc.add_story(story);
-        let style_id = doc.object_styles.insert(crate::object_style::ObjectStyle {
-            name: "Object".into(),
-            based_on: None,
-            format: crate::object_style::ObjectFormat {
-                fill: Some(Paint::Gradient(crate::paint::Gradient::new(
-                    crate::paint::Ramp::Radial,
-                    vec![
-                        crate::paint::Stop {
-                            at: 0.0,
-                            colour: reference("Old"),
-                        },
-                        crate::paint::Stop {
-                            at: 1.0,
-                            colour: Color::BLACK,
-                        },
-                    ],
-                ))),
-                ..Default::default()
-            },
-        });
-        assert!(doc.edit_swatch("Old", Swatch::new("New", Color::BLACK)));
-        assert_eq!(doc.swatches[0].name, "New");
-        assert_eq!(doc.swatches[1].colour, reference("New"));
-        assert_eq!(doc.text_default.color, reference("New"));
-        assert_eq!(
-            doc.stories[story_id].runs[0].local.colour,
-            Some(reference("New"))
-        );
-        assert_eq!(
-            doc.stories[story_id].footnotes[0].runs[0].local.colour,
-            Some(reference("New"))
-        );
-        let Some(Paint::Gradient(gradient)) = &doc.object_styles[style_id].format.fill else {
-            panic!("gradient lost")
-        };
-        assert_eq!(gradient.stops()[0].colour, reference("New"));
-    }
-
-    #[test]
-    fn invalid_names_never_overwrite_another_swatch() {
-        let mut doc = Document::new();
-        doc.set_swatch(Swatch::new("First", Color::BLACK));
-        doc.set_swatch(Swatch::new("Second", Color::WHITE));
-        let before = doc.swatches.clone();
-        for (old, new) in [("First", "Second"), ("First", "  "), ("Missing", "New")] {
-            assert!(!doc.edit_swatch(old, Swatch::new(new, Color::BLACK)));
-            assert_eq!(doc.swatches, before);
-        }
-    }
-}
 impl Rename<'_> {
     fn colour(&self, colour: &mut Color) {
         if let Color::Swatch { name, .. } = colour
@@ -206,5 +135,77 @@ impl Document {
         self.swatches[index] = edited;
         self.touch();
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reference(name: &str) -> Color {
+        Color::Swatch {
+            name: name.into(),
+            tint: 0.7,
+        }
+    }
+
+    #[test]
+    fn rename_updates_aliases_gradients_styles_and_nested_text() {
+        let mut doc = Document::new();
+        doc.set_swatch(Swatch::new("Old", Color::BLACK));
+        doc.set_swatch(Swatch::new("Alias", reference("Old")));
+        doc.text_default.color = reference("Old");
+        let mut story = Story::new("Text");
+        story.runs[0].local.colour = Some(reference("Old"));
+        story.footnotes.push(story.clone());
+        let story_id = doc.add_story(story);
+        let style_id = doc.object_styles.insert(crate::object_style::ObjectStyle {
+            name: "Object".into(),
+            based_on: None,
+            format: crate::object_style::ObjectFormat {
+                fill: Some(Paint::Gradient(crate::paint::Gradient::new(
+                    crate::paint::Ramp::Radial,
+                    vec![
+                        crate::paint::Stop {
+                            at: 0.0,
+                            colour: reference("Old"),
+                        },
+                        crate::paint::Stop {
+                            at: 1.0,
+                            colour: Color::BLACK,
+                        },
+                    ],
+                ))),
+                ..Default::default()
+            },
+        });
+        assert!(doc.edit_swatch("Old", Swatch::new("New", Color::BLACK)));
+        assert_eq!(doc.swatches[0].name, "New");
+        assert_eq!(doc.swatches[1].colour, reference("New"));
+        assert_eq!(doc.text_default.color, reference("New"));
+        assert_eq!(
+            doc.stories[story_id].runs[0].local.colour,
+            Some(reference("New"))
+        );
+        assert_eq!(
+            doc.stories[story_id].footnotes[0].runs[0].local.colour,
+            Some(reference("New"))
+        );
+        let Some(Paint::Gradient(gradient)) = &doc.object_styles[style_id].format.fill else {
+            panic!("gradient lost")
+        };
+        assert_eq!(gradient.stops()[0].colour, reference("New"));
+    }
+
+    #[test]
+    fn invalid_names_never_overwrite_another_swatch() {
+        let mut doc = Document::new();
+        doc.set_swatch(Swatch::new("First", Color::BLACK));
+        doc.set_swatch(Swatch::new("Second", Color::WHITE));
+        let before = doc.swatches.clone();
+        for (old, new) in [("First", "Second"), ("First", "  "), ("Missing", "New")] {
+            assert!(!doc.edit_swatch(old, Swatch::new(new, Color::BLACK)));
+            assert_eq!(doc.swatches, before);
+        }
     }
 }

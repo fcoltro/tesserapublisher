@@ -1,4 +1,4 @@
-//! The `.tessera` container.
+//! The `.tsrdf` container.
 //!
 //! A zip archive holding the serialized document, its metadata, and — from
 //! later milestones — a thumbnail and embedded assets:

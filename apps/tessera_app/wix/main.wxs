@@ -3,7 +3,7 @@
   The Windows installer, for cargo-wix.
 
   Two things beyond copying a binary in: the profiles travel beside it, and
-  .tessera is associated with it. Both are the difference between an
+  .tsrdf is associated with it. Both are the difference between an
   application that runs and one somebody can use.
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
@@ -52,13 +52,26 @@
                  says which binary, which an advertised verb would have taken
                  from its component and a plain one has to be told. -->
             <ProgId Id="Tessera.Document" Description="Tessera document">
-              <Extension Id="tessera" ContentType="application/x-tessera-document">
+              <Extension Id="tsrdf" ContentType="application/x-tessera-document">
                 <Verb Id="open"
                       Command="Open"
                       TargetFile="exe"
                       Argument="&quot;%1&quot;"/>
               </Extension>
             </ProgId>
+
+            <!-- The document icon, which the ProgId above does not give it.
+                 It is the executable's second icon resource, embedded by
+                 `build.rs`; a negative number after the comma names a
+                 resource by its ID rather than by its position, so it does
+                 not move if another icon is ever added ahead of it. Written
+                 as a registry value rather than through `ProgId/@Icon`,
+                 because that route copies the whole executable into the
+                 installer's icon table to get one icon out of it. -->
+            <RegistryValue Root="HKCR"
+                           Key="Tessera.Document\DefaultIcon"
+                           Type="string"
+                           Value="&quot;[#exe]&quot;,-2"/>
           </Component>
 
           <!-- The colour profiles, in the directory `bundled_directory` looks

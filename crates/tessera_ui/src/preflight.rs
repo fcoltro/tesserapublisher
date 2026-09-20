@@ -106,10 +106,10 @@ mod tests {
     #[test]
     fn switching_between_equal_revisions_does_not_reuse_another_report() {
         let mut state = TesseraApp::headless();
-        state.active_mut().current_path = Some("first.tessera".into());
+        state.active_mut().current_path = Some("first.tsrdf".into());
         let _ = Preflight::report(&mut state);
         let first = state.preflight.made_from;
-        state.add_document(Default::default(), Some("second.tessera".into()));
+        state.add_document(Default::default(), Some("second.tsrdf".into()));
         let _ = Preflight::report(&mut state);
         let second = state.preflight.made_from;
         assert_eq!(first.unwrap().1, second.unwrap().1);

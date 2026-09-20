@@ -39,6 +39,28 @@ stage_shared() {
   cp "$root/assets/profiles/LICENCES.md" "$into/profiles/" 2>/dev/null || true
 }
 
+# One `.icns` from one PNG. Padded to a square first, centred on
+# transparency: the document icon is a portrait page, and `iconutil` refuses
+# an iconset whose images are not square.
+icns() {
+  local png=$1 out=$2
+  local set; set=$(mktemp -d)/icon.iconset
+  mkdir -p "$set"
+  local side; side=$(sips -g pixelWidth -g pixelHeight "$png" \
+    | awk '/pixel/ {if ($2 > m) m = $2} END {print m}')
+  sips -s format png --padToHeightWidth "$side" "$side" "$png" \
+       --out "$set/square.png" >/dev/null
+  for size in 16 32 128 256 512; do
+    sips -z "$size" "$size" "$set/square.png" \
+         --out "$set/icon_${size}x${size}.png" >/dev/null
+    sips -z $((size * 2)) $((size * 2)) "$set/square.png" \
+         --out "$set/icon_${size}x${size}@2x.png" >/dev/null
+  done
+  rm "$set/square.png"
+  iconutil -c icns "$set" -o "$out"
+  rm -rf "$(dirname "$set")"
+}
+
 case "$kind" in
   appimage)
     app="$out/$slug.AppDir"
@@ -51,6 +73,12 @@ case "$kind" in
     cp "$root/assets/tessera-publisher-logotype.png" \
        "$app/usr/share/icons/hicolor/512x512/apps/$slug.png"
     cp "$root/assets/tessera-publisher-logotype.png" "$app/$slug.png"
+    # The document icon, under the name the MIME package asks for. Beside the
+    # application's, not in place of it: a file manager shows the first on a
+    # .tsrdf file and the second in the menu.
+    mkdir -p "$app/usr/share/icons/hicolor/512x512/mimetypes"
+    cp "$root/assets/tessera-publisher-filetype-icon.png" \
+       "$app/usr/share/icons/hicolor/512x512/mimetypes/application-x-tessera-document.png"
     printf '#!/bin/sh\nexec "$(dirname "$0")/usr/bin/%s" "$@"\n' "$slug" > "$app/AppRun"
     chmod +x "$app/AppRun"
 
@@ -88,6 +116,14 @@ case "$kind" in
       > "$app/Contents/Info.plist"
     cp "$root/assets/tessera-publisher-logotype.png" \
        "$app/Contents/Resources/$slug.png"
+    # The application and document icons, as `.icns`, which is the only form
+    # `CFBundleIconFile` and `CFBundleTypeIconFile` accept. Made here from the
+    # PNGs with `sips` and `iconutil`, which every Mac has, rather than kept as
+    # a second copy of the artwork that goes stale when the first is redrawn.
+    icns "$root/assets/tessera-publisher-logotype.png" \
+         "$app/Contents/Resources/$slug.icns"
+    icns "$root/assets/tessera-publisher-filetype-icon.png" \
+         "$app/Contents/Resources/tessera-document.icns"
 
     hdiutil create -volname "$name" -srcfolder "$app" -ov -format UDZO \
       "$out/$slug-$version.dmg"

@@ -18,7 +18,7 @@ missing by accident rather than by decision.
 
 | Kind | Meaning |
 |---|---|
-| **model** | Needs a field in `nodes.rs` — a `.tessera` format version bump and a migration test |
+| **model** | Needs a field in `nodes.rs` — a `.tsrdf` format version bump and a migration test |
 | **surface** | The model already carries it; only the UI is missing |
 | **view** | Neither — it is view state, a preference, or a pure command over existing data |
 | **—** | Recorded, unscheduled, and probably not wanted |

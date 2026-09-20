@@ -2,7 +2,7 @@
 //!
 //! > Launch Tessera. A new document opens with one spread. Draw a rectangle
 //! > and give it a fill colour. Draw a text frame, type into it on the canvas,
-//! > and see the text shaped and rendered. Save the file as `.tessera`. Quit
+//! > and see the text shaped and rendered. Save the file as `.tsrdf`. Quit
 //! > the application. Launch it again, open that file, and find the rectangle
 //! > and the text exactly as they were left. Export a PDF, and open that PDF
 //! > in Acrobat with the text selectable.
@@ -25,7 +25,7 @@ fn temp(name: &str) -> std::path::PathBuf {
 
 #[test]
 fn the_milestone_0_sentence_holds() {
-    let path = temp("acceptance.tessera");
+    let path = temp("acceptance.tsrdf");
     let pdf_path = temp("acceptance.pdf");
     let teal = Color::Cmyk {
         c: 0.8,
@@ -206,7 +206,7 @@ fn undo_reaches_back_through_the_whole_session() {
 fn a_document_saved_then_exported_twice_produces_the_same_pdf() {
     // Export must be a pure function of the document. If it is not, two
     // exports of the same file differ and nothing downstream can be trusted.
-    let path = temp("determinism.tessera");
+    let path = temp("determinism.tsrdf");
     let mut state = TesseraApp::headless();
     apply(
         &mut state,

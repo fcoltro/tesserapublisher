@@ -1937,7 +1937,7 @@ milestone the layout is fixed: a tool strip, one inspector, and the canvas.
   not verified.** The `ProgId`/`Extension`/`Verb`, the
   `CFBundleDocumentTypes` UTI and the `.desktop` plus MIME package are all in
   `packaging/`, and `desktop-file-validate` runs on the Linux one. Nothing has
-  double-clicked a `.tessera` file on any of the three, which is what the
+  double-clicked a `.tsrdf` file on any of the three, which is what the
   acceptance sentence asks for.
   **2026-09-13:** the application now opens the paths it is launched with,
   which is what a double-click delivers on Windows and Linux. macOS delivers

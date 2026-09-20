@@ -37,7 +37,7 @@ pub struct Recovery {
     pub announced_failure: bool,
     /// Held for as long as this process owns the copy.
     ///
-    /// A second Tessera — the one a file manager starts when a `.tessera` is
+    /// A second Tessera — the one a file manager starts when a `.tsrdf` is
     /// double-clicked while the first is open — reads the same directory on
     /// its way up, and a copy that is merely *present* looks exactly like a
     /// crash's leavings. What tells them apart is whether somebody still has
@@ -53,7 +53,7 @@ pub struct Recovery {
 }
 
 impl Recovery {
-    const FILE_NAME: &'static str = "recovery.tessera";
+    const FILE_NAME: &'static str = "recovery.tsrdf";
 
     pub fn new(revision: u64) -> Self {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -64,7 +64,7 @@ impl Recovery {
             .as_nanos();
         Self {
             copy_path: None,
-            file_name: format!("recovery-{}-{time}-{serial}.tessera", std::process::id()),
+            file_name: format!("recovery-{}-{time}-{serial}.tsrdf", std::process::id()),
             last_saved_revision: revision,
             last_write: Instant::now(),
             announced_failure: false,
@@ -261,7 +261,7 @@ pub fn recover_directory(state: &mut TesseraApp, directory: &Path) {
             let name = path.file_name().unwrap_or_default().to_string_lossy();
             path.is_file()
                 && (name == Recovery::FILE_NAME
-                    || (name.starts_with("recovery-") && name.ends_with(".tessera")))
+                    || (name.starts_with("recovery-") && name.ends_with(".tsrdf")))
         })
         // Still being written by a Tessera that is running: not ours to take.
         .filter(|path| !Recovery::is_owned(path))
@@ -361,7 +361,7 @@ mod tests {
         // creates it on a fresh install.
         let dir = std::env::temp_dir().join("tessera-recovery-missing-dir/deeper");
         let _ = std::fs::remove_dir_all(std::env::temp_dir().join("tessera-recovery-missing-dir"));
-        let path = dir.join("recovery.tessera");
+        let path = dir.join("recovery.tsrdf");
         assert!(!dir.exists(), "the directory must start absent");
 
         write_copy(&Document::new(), &path).expect("it should create the directory");
@@ -375,7 +375,7 @@ mod tests {
         // Handing it back with the original's path attached would let the
         // next Save overwrite that original with whatever the crash caught.
         let mut path = std::env::temp_dir();
-        path.push("tessera-recovery-test.tessera");
+        path.push("tessera-recovery-test.tsrdf");
         let _ = std::fs::remove_file(&path);
 
         let mut source = TesseraApp::headless();
@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn an_unreadable_recovery_file_is_reported_not_swallowed() {
         let mut path = std::env::temp_dir();
-        path.push("tessera-recovery-damaged.tessera");
+        path.push("tessera-recovery-damaged.tsrdf");
         std::fs::write(&path, b"not a tessera archive").unwrap();
 
         let mut app = TesseraApp::headless();
@@ -438,7 +438,7 @@ mod tests {
     fn a_copy_a_running_instance_still_owns_is_not_taken_up_by_another() {
         // **The defect this fixes.** Recovery copies became one per document
         // and the application began opening the files it is launched with.
-        // Double-clicking a second `.tessera` in a file manager starts a
+        // Double-clicking a second `.tsrdf` in a file manager starts a
         // second process, and that process swept up every copy the first one
         // was still writing and offered them as a crash's leavings — two
         // windows editing the same "recovered" work, and both autosaving to

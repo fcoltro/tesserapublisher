@@ -24,7 +24,7 @@ use crate::theme::Theme;
 ///
 /// Long enough to tell two versions of one job apart, short enough that six
 /// documents still fit. A tab that shows the whole of
-/// "Annual-Report-2026-final-v4-APPROVED.tessera" pushes the other five off.
+/// "Annual-Report-2026-final-v4-APPROVED.tsrdf" pushes the other five off.
 const MOST_CHARACTERS: usize = 22;
 
 /// Document identity and switching, inside the status bar.

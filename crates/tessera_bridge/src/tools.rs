@@ -374,13 +374,13 @@ static ALL: [Tool; 22] = [
     },
     Tool {
         name: "open",
-        description: "Open a .tessera document from a path, replacing the current one.",
+        description: "Open a .tsrdf document from a path, replacing the current one.",
         arguments: &[("path", "string", "The file's path.", true)],
         run: open,
     },
     Tool {
         name: "save",
-        description: "Save the document to a path, as .tessera.",
+        description: "Save the document to a path, as .tsrdf.",
         arguments: &[("path", "string", "The file's path.", true)],
         run: save,
     },

@@ -16,3 +16,10 @@ egui.workspace = true
 image.workspace = true
 serde_json.workspace = true
 ureq.workspace = true
+
+# Windows only in effect: `build.rs` embeds the application and document icons
+# in the executable, rendered from the PNGs in `assets/` at build time.
+[build-dependencies]
+ico = "0.5"
+image.workspace = true
+winresource = "0.1"

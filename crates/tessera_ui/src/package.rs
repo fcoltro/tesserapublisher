@@ -64,7 +64,7 @@ pub fn collect(
     std::fs::create_dir_all(&links_folder)
         .map_err(|_| PackageError::Folder(links_folder.clone()))?;
 
-    let document_path = folder.join(format!("{document_name}.tessera"));
+    let document_path = folder.join(format!("{document_name}.tsrdf"));
     let mut packaged_doc = doc.clone();
     let mut copied = Vec::new();
     let mut missing = Vec::new();
@@ -265,7 +265,7 @@ mod tests {
         let doc = Document::new();
         let packaged = collect(&doc, "Job", &folder, &Default::default()).expect("packaged");
 
-        assert!(folder.join("Job.tessera").is_file(), "no document");
+        assert!(folder.join("Job.tsrdf").is_file(), "no document");
         assert!(folder.join("Links").is_dir(), "no links folder");
         assert!(folder.join("Instructions.txt").is_file(), "no summary");
         assert_eq!(packaged.links.len(), 0);
@@ -288,7 +288,7 @@ mod tests {
         let packaged = collect(&doc, "Job", &folder, &Default::default()).expect("packaged");
         assert_eq!(packaged.missing.len(), 1);
         assert!(
-            folder.join("Job.tessera").is_file(),
+            folder.join("Job.tsrdf").is_file(),
             "the document still went"
         );
 

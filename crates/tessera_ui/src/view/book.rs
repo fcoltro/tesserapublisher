@@ -58,10 +58,12 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
         if ui.button("Open book...").clicked() {
             open_book(state);
         }
-        if state.book.path.is_some() && state.book.dirty && ui.button("Save").clicked() {
-            if let Err(e) = state.book.save() {
-                state.status = Some(Status::error(format!("could not save the book: {e}")));
-            }
+        if state.book.path.is_some()
+            && state.book.dirty
+            && ui.button("Save").clicked()
+            && let Err(e) = state.book.save()
+        {
+            state.status = Some(Status::error(format!("could not save the book: {e}")));
         }
     });
     ui.add_space(Theme::space_2());

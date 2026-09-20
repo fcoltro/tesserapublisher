@@ -12,7 +12,7 @@ use tessera_document::format::{self, FormatError};
 
 use crate::app::{Status, TesseraApp};
 
-pub const EXTENSION: &str = "tessera";
+pub const EXTENSION: &str = "tsrdf";
 const FILTER_NAME: &str = "Tessera Document";
 
 // --- testable cores ----------------------------------------------------
@@ -569,6 +569,56 @@ mod tests {
         }
     }
 
+    /// `packaging/` and the WiX source, or `None` in a checkout without them.
+    fn packaging_file(relative: &str) -> Option<String> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        std::fs::read_to_string(root.join(relative)).ok()
+    }
+
+    #[test]
+    fn the_extension_is_tsrdf() {
+        assert_eq!(EXTENSION, "tsrdf");
+    }
+
+    #[test]
+    fn every_platform_associates_the_same_extension() {
+        // Three declarations of one fact, in three languages none of which
+        // can read the constant. Checked here, where anybody changing the
+        // extension is already working, so they cannot drift apart silently.
+        let wix = "apps/tessera_app/wix/main.wxs";
+        let plist = "packaging/macos/Info.plist";
+        let mime = "packaging/linux/tessera-publisher.xml";
+        let Some(wix) = packaging_file(wix) else {
+            return; // no packaging in this checkout; nothing to prove
+        };
+        assert!(
+            wix.contains(&format!(r#"<Extension Id="{EXTENSION}""#)),
+            "main.wxs associates .{EXTENSION}"
+        );
+        assert!(
+            wix.contains(r#"Key="Tessera.Document\DefaultIcon""#),
+            "main.wxs gives the document type an icon"
+        );
+        let plist = packaging_file(plist).expect("Info.plist");
+        assert!(
+            plist.contains(&format!("<string>{EXTENSION}</string>")),
+            "Info.plist tags the UTI with .{EXTENSION}"
+        );
+        assert!(
+            plist.contains("CFBundleTypeIconFile"),
+            "Info.plist gives the document type an icon"
+        );
+        let mime = packaging_file(mime).expect("MIME package");
+        assert!(
+            mime.contains(&format!(r#"<glob pattern="*.{EXTENSION}""#)),
+            "the MIME package globs *.{EXTENSION}"
+        );
+        assert!(
+            !mime.contains("*.tessera\""),
+            "the MIME package no longer globs the old extension"
+        );
+    }
+
     /// A Word file with one heading and one body paragraph.
     fn a_docx(name: &str) -> PathBuf {
         use std::io::Write as _;
@@ -674,7 +724,7 @@ mod tests {
 
     #[test]
     fn saving_then_loading_a_path_restores_the_frames() {
-        let path = temp("roundtrip.tessera");
+        let path = temp("roundtrip.tsrdf");
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddRectangle(bounds()));
         save_to_path(&mut state, &path).expect("save");
@@ -687,7 +737,7 @@ mod tests {
 
     #[test]
     fn a_successful_save_clears_the_dirty_flag_and_records_the_path() {
-        let path = temp("dirty.tessera");
+        let path = temp("dirty.tsrdf");
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddRectangle(bounds()));
         assert!(state.active().dirty);
@@ -704,7 +754,7 @@ mod tests {
         apply(&mut state, Command::AddRectangle(bounds()));
         let before = state.active().document().frames.len();
 
-        let result = open_from_path(&mut state, Path::new("no_such_file.tessera"));
+        let result = open_from_path(&mut state, Path::new("no_such_file.tsrdf"));
 
         assert!(result.is_err());
         assert_eq!(
@@ -716,7 +766,7 @@ mod tests {
 
     #[test]
     fn opening_resets_undo_so_the_previous_document_cannot_be_undone_into() {
-        let path = temp("undo_reset.tessera");
+        let path = temp("undo_reset.tsrdf");
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddRectangle(bounds()));
         save_to_path(&mut state, &path).expect("save");
@@ -733,7 +783,7 @@ mod tests {
     fn a_new_document_is_empty_clean_and_untitled() {
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddRectangle(bounds()));
-        state.active_mut().current_path = Some(temp("x.tessera"));
+        state.active_mut().current_path = Some(temp("x.tsrdf"));
 
         new_document(&mut state);
 
@@ -744,7 +794,7 @@ mod tests {
 
     #[test]
     fn text_survives_the_whole_save_and_open_cycle() {
-        let path = temp("text_cycle.tessera");
+        let path = temp("text_cycle.tsrdf");
         let mut state = TesseraApp::headless();
         apply(&mut state, Command::AddTextFrame(bounds()));
         let id = state.active().selection.single().expect("selected");

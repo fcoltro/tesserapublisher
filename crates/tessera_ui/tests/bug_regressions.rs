@@ -407,7 +407,7 @@ fn packaging_survives_relocation_and_refreshes_colliding_assets() {
     for dir in ["a", "b"] {
         std::fs::remove_file(temp.0.join(dir).join("photo.png")).unwrap();
     }
-    let reopened = format::load(&moved.join("Job.tessera")).unwrap();
+    let reopened = format::load(&moved.join("Job.tsrdf")).unwrap();
     let mut bytes: Vec<_> = reopened
         .links
         .values()
@@ -439,7 +439,7 @@ fn equal_revision_documents_each_get_a_copy_and_saving_one_preserves_the_other()
     let b = app.documents[second].recovery.copy_path.clone().unwrap();
     assert_ne!(a, b);
     assert!(a.exists() && b.exists());
-    tessera_ui::file_ops::save_to_path(&mut app, &temp.0.join("saved.tessera")).unwrap();
+    tessera_ui::file_ops::save_to_path(&mut app, &temp.0.join("saved.tsrdf")).unwrap();
     assert!(a.exists());
     assert!(!b.exists());
 
@@ -471,13 +471,13 @@ fn startup_opens_multiple_paths_and_retains_an_error_for_an_unreadable_argument(
     let temp = Scratch::new();
     let mut source = TesseraApp::headless();
     apply(&mut source, Command::AddRectangle(bounds()));
-    let a = temp.0.join("first job.tessera");
+    let a = temp.0.join("first job.tsrdf");
     tessera_ui::file_ops::save_to_path(&mut source, &a).unwrap();
     apply(&mut source, Command::AddEllipse(bounds()));
-    let b = temp.0.join("second job.tessera");
+    let b = temp.0.join("second job.tsrdf");
     tessera_ui::file_ops::save_to_path(&mut source, &b).unwrap();
     let mut app = TesseraApp::headless();
-    tessera_ui::file_ops::open_startup_paths(&mut app, &[a, temp.0.join("missing.tessera"), b]);
+    tessera_ui::file_ops::open_startup_paths(&mut app, &[a, temp.0.join("missing.tsrdf"), b]);
     assert_eq!(app.documents.len(), 2);
     assert_eq!(app.active().document().frames.len(), 2);
     assert!(
@@ -485,7 +485,7 @@ fn startup_opens_multiple_paths_and_retains_an_error_for_an_unreadable_argument(
             .as_ref()
             .unwrap()
             .message
-            .contains("missing.tessera")
+            .contains("missing.tsrdf")
     );
 }
 

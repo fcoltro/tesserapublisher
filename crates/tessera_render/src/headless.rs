@@ -1,7 +1,7 @@
 //! Rasterizing a scene to a CPU pixel buffer, with no window.
 //!
 //! This is what makes rendering regression-testable, and it is what will
-//! produce page thumbnails for the `.tessera` container. Written from the wgpu
+//! produce page thumbnails for the `.tsrdf` container. Written from the wgpu
 //! and Vello documentation: this build is clean-room and does not consult the
 //! previous implementation.
 

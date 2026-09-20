@@ -126,7 +126,7 @@ mod tests {
                             .book
                             .book
                             .documents
-                            .push("a very long chapter document name.tessera".into());
+                            .push("a very long chapter document name.tsrdf".into());
                     }
                     for _ in 0..3 {
                         let _ = ctx.run_ui(egui::RawInput::default(), |ui| {

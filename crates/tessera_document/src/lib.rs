@@ -1,4 +1,4 @@
-//! The document model, undo/redo, and the `.tessera` file format.
+//! The document model, undo/redo, and the `.tsrdf` file format.
 //!
 //! The model is an arena of plain structs rather than an ECS (decision D1).
 //! A spread holds dozens of frames, not tens of thousands, so ECS iteration

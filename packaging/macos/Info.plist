@@ -23,6 +23,10 @@
        interface becomes two soft pixels. -->
   <key>NSHighResolutionCapable</key>
   <true/>
+  <!-- Both `.icns` files are made by `packaging/build.sh` from the PNGs in
+       `assets/`, with the tools every Mac has. -->
+  <key>CFBundleIconFile</key>
+  <string>tessera-publisher</string>
 
   <!-- The file association. `LSItemContentTypes` names the type; the type
        itself is declared below, because macOS will not associate with a type
@@ -32,6 +36,8 @@
     <dict>
       <key>CFBundleTypeName</key>
       <string>Tessera document</string>
+      <key>CFBundleTypeIconFile</key>
+      <string>tessera-document</string>
       <key>CFBundleTypeRole</key>
       <string>Editor</string>
       <key>LSHandlerRank</key>
@@ -62,7 +68,7 @@
       <dict>
         <key>public.filename-extension</key>
         <array>
-          <string>tessera</string>
+          <string>tsrdf</string>
         </array>
       </dict>
     </dict>

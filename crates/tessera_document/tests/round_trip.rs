@@ -1,4 +1,4 @@
-//! The `.tessera` format's round-trip guarantee.
+//! The `.tsrdf` format's round-trip guarantee.
 //!
 //! Non-negotiable N1: a document can be saved, closed, and reopened
 //! faithfully. The property test at the bottom is what makes that structural
@@ -23,7 +23,7 @@ fn temp_path(name: &str) -> std::path::PathBuf {
 
 #[test]
 fn an_empty_document_round_trips() {
-    let path = temp_path("empty.tessera");
+    let path = temp_path("empty.tsrdf");
     let doc = Document::new();
 
     format::save(&doc, &path).expect("save");
@@ -36,7 +36,7 @@ fn an_empty_document_round_trips() {
 
 #[test]
 fn a_document_with_a_rectangle_round_trips_exactly() {
-    let path = temp_path("rect.tessera");
+    let path = temp_path("rect.tsrdf");
     let mut doc = Document::new();
     let layer = doc.default_layer().expect("default layer");
     let id = doc.add_frame(
@@ -78,7 +78,7 @@ fn a_document_with_a_rectangle_round_trips_exactly() {
 
 #[test]
 fn the_archive_carries_a_meta_entry() {
-    let path = temp_path("meta.tessera");
+    let path = temp_path("meta.tsrdf");
     format::save(&Document::new(), &path).expect("save");
 
     let file = std::fs::File::open(&path).expect("open");
@@ -96,7 +96,7 @@ fn the_archive_carries_a_meta_entry() {
 
 #[test]
 fn a_newer_format_version_is_refused_rather_than_guessed_at() {
-    let path = temp_path("future.tessera");
+    let path = temp_path("future.tsrdf");
     format::save(&Document::new(), &path).expect("save");
     format::rewrite_version_for_test(&path, format::FORMAT_VERSION + 1).expect("rewrite");
 
@@ -111,7 +111,7 @@ fn a_newer_format_version_is_refused_rather_than_guessed_at() {
 
 #[test]
 fn a_file_that_is_not_an_archive_is_reported_not_panicked() {
-    let path = temp_path("garbage.tessera");
+    let path = temp_path("garbage.tsrdf");
     std::fs::write(&path, b"this is not a zip file").expect("write");
 
     assert!(matches!(
@@ -122,7 +122,7 @@ fn a_file_that_is_not_an_archive_is_reported_not_panicked() {
 
 #[test]
 fn a_missing_file_is_reported() {
-    let path = temp_path("definitely_absent.tessera");
+    let path = temp_path("definitely_absent.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     assert!(matches!(
@@ -187,7 +187,7 @@ proptest! {
     fn any_document_survives_a_save_and_load(
         frames in prop::collection::vec(any_frame(), 0..12)
     ) {
-        let path = temp_path("proptest.tessera");
+        let path = temp_path("proptest.tsrdf");
         let mut doc = Document::new();
         let layer = doc.default_layer().expect("default layer");
         let ids: Vec<_> = frames.into_iter().map(|f| doc.add_frame(layer, f)).collect();
@@ -208,7 +208,7 @@ fn text_survives_a_save_and_load() {
     // The bug this pins: stories once lived beside the document rather than
     // inside it, so a saved file kept the text FRAMES and silently dropped the
     // text. Everything looked right until the file was reopened.
-    let path = temp_path("text.tessera");
+    let path = temp_path("text.tsrdf");
     let mut doc = Document::new();
     let layer = doc.default_layer().expect("layer");
     let story = doc.add_story(tessera_text::story::Story::new("Hello, Tessera."));
@@ -259,7 +259,7 @@ fn a_version_1_document_still_opens() {
     // current writer.
     use std::io::Write;
 
-    let path = temp_path("legacy_v1.tessera");
+    let path = temp_path("legacy_v1.tsrdf");
 
     let mut doc = Document::new();
     let layer = doc.default_layer().expect("layer");
@@ -342,7 +342,7 @@ fn body_copy_formatting_survives_a_save_and_load() {
 
     // Every field of a stop, including the one that is an `Option<char>` —
     // a single character has more ways to serialise than a string does.
-    let path = temp_path("tab-stops.tessera");
+    let path = temp_path("tab-stops.tsrdf");
     let mut doc = Document::new();
     let mut story = Story::new("Item\t12.50");
     let stops = vec![
@@ -485,7 +485,7 @@ fn body_copy_formatting_survives_a_save_and_load() {
 
 #[test]
 fn a_placement_survives_a_save_and_load() {
-    let path = temp_path("rotated.tessera");
+    let path = temp_path("rotated.tsrdf");
     // Sheared as well as turned, so this cannot pass by carrying an angle:
     // all six coefficients have to survive the round trip.
     let placed = Transform::rotate_about(33.5, DocPoint { x: 5.0, y: 5.0 })
@@ -528,7 +528,7 @@ fn a_version_2_rotation_becomes_the_placement_that_means_the_same_thing() {
     // what this checks, rather than checking the representation.
     use std::io::Write as _;
 
-    let path = temp_path("v2-rotation.tessera");
+    let path = temp_path("v2-rotation.tsrdf");
     let bounds = DocRect {
         x: 40.0,
         y: 10.0,
@@ -621,7 +621,7 @@ fn a_version_2_rotation_becomes_the_placement_that_means_the_same_thing() {
 #[test]
 fn page_setup_and_guides_survive_a_round_trip() {
     // They are document data now, so the round-trip guarantee covers them.
-    let path = temp_path("page-setup-round-trip.tessera");
+    let path = temp_path("page-setup-round-trip.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut original = Document::new();
@@ -709,7 +709,7 @@ fn a_version_four_document_still_opens_and_gains_no_setup_it_never_had() {
     // needs no rewriting. "Needs no rewriting" is a claim; this is the test
     // that lets it fail — and it can only fail if the fixture really has no
     // setup, which is why it is built by hand.
-    let path = temp_path("v4-migration.tessera");
+    let path = temp_path("v4-migration.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut original = Document::new();
@@ -755,7 +755,7 @@ fn a_version_four_document_still_opens_and_gains_no_setup_it_never_had() {
 
 #[test]
 fn a_document_from_a_newer_build_is_refused_rather_than_guessed_at() {
-    let path = temp_path("v99-refusal.tessera");
+    let path = temp_path("v99-refusal.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     format::save(&Document::new(), &path).expect("save");
@@ -797,7 +797,7 @@ fn the_format_version_is_twenty_six() {
 #[test]
 fn type_on_a_path_survives_a_save_and_load() {
     use tessera_document::path_text::{PathText, PathTextAlign};
-    let path = temp_path("path-text.tessera");
+    let path = temp_path("path-text.tsrdf");
     let mut doc = Document::new();
     let layer = doc.default_layer().expect("layer");
     let story = doc.add_story(tessera_text::story::Story::new("Round the bend"));
@@ -858,7 +858,7 @@ fn footnote_options_survive_a_round_trip() {
         rule: false,
         ..Default::default()
     });
-    let path = std::env::temp_dir().join(format!("tessera-fnopts-{}.tessera", std::process::id()));
+    let path = std::env::temp_dir().join(format!("tessera-fnopts-{}.tsrdf", std::process::id()));
     format::save(&doc, &path).expect("save");
     let back = format::load(&path).expect("load");
     let _ = std::fs::remove_file(&path);
@@ -903,7 +903,7 @@ fn a_link_and_its_destination_survive_a_round_trip() {
         },
     );
     let id = doc.add_story(story.clone());
-    let path = std::env::temp_dir().join(format!("tessera-links-{}.tessera", std::process::id()));
+    let path = std::env::temp_dir().join(format!("tessera-links-{}.tsrdf", std::process::id()));
     format::save(&doc, &path).expect("save");
     let back = format::load(&path).expect("load");
     let _ = std::fs::remove_file(&path);
@@ -919,8 +919,7 @@ fn a_page_of_its_own_size_keeps_it_through_a_round_trip_and_a_reflow() {
     let third = doc.add_page();
     assert!(doc.set_page_size_of(second, 1000.0, 300.0), "a gatefold");
 
-    let path =
-        std::env::temp_dir().join(format!("tessera-gatefold-{}.tessera", std::process::id()));
+    let path = std::env::temp_dir().join(format!("tessera-gatefold-{}.tsrdf", std::process::id()));
     format::save(&doc, &path).expect("save");
     let mut back = format::load(&path).expect("load");
     let _ = std::fs::remove_file(&path);
@@ -975,7 +974,7 @@ fn footnotes_and_the_contents_recipe_survive_a_round_trip() {
         story: Some(id),
     });
 
-    let path = std::env::temp_dir().join(format!("tessera-notes-{}.tessera", std::process::id()));
+    let path = std::env::temp_dir().join(format!("tessera-notes-{}.tsrdf", std::process::id()));
     format::save(&doc, &path).expect("save");
     let back = format::load(&path).expect("load");
     let _ = std::fs::remove_file(&path);
@@ -1018,8 +1017,7 @@ fn sections_and_variables_survive_a_round_trip() {
     assert_eq!(doc.page_label(first).as_deref(), Some("i"));
     assert_eq!(doc.page_label(second).as_deref(), Some("1"));
 
-    let path =
-        std::env::temp_dir().join(format!("tessera-sections-{}.tessera", std::process::id()));
+    let path = std::env::temp_dir().join(format!("tessera-sections-{}.tsrdf", std::process::id()));
     format::save(&doc, &path).expect("save");
     let back = format::load(&path).expect("load");
     let _ = std::fs::remove_file(&path);
@@ -1121,7 +1119,7 @@ fn an_output_intent_travels_in_the_document_with_its_profile() {
     // expensive.
     use tessera_document::intent::{OutputIntent, Rendering};
 
-    let path = temp_path("output_intent.tessera");
+    let path = temp_path("output_intent.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let profile = tessera_color::managed::OutputProfile::screen().expect("a profile");
@@ -1149,7 +1147,7 @@ fn an_output_intent_travels_in_the_document_with_its_profile() {
 fn a_document_written_before_output_intents_has_no_press_rather_than_a_guessed_one() {
     // Inventing sRGB would show every old document proofed against a decision
     // its author never made, and the colours would be believed.
-    let path = temp_path("no_intent.tessera");
+    let path = temp_path("no_intent.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     format::save(&Document::new(), &path).expect("save");
@@ -1164,7 +1162,7 @@ fn object_styles_and_the_objects_following_them_round_trip() {
     use tessera_document::object_style::{ObjectFormat, ObjectStyle};
     use tessera_document::paint::Paint;
 
-    let path = temp_path("object_styles.tessera");
+    let path = temp_path("object_styles.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut doc = Document::new();
@@ -1237,7 +1235,7 @@ fn object_styles_and_the_objects_following_them_round_trip() {
 fn a_drop_shadow_round_trips() {
     use tessera_document::shadow::Shadow;
 
-    let path = temp_path("shadowed.tessera");
+    let path = temp_path("shadowed.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let shadow = Shadow {
@@ -1286,7 +1284,7 @@ fn a_drop_shadow_round_trips() {
 fn a_gradient_fill_round_trips() {
     use tessera_document::paint::{Gradient, Paint, Ramp, Stop};
 
-    let path = temp_path("gradient.tessera");
+    let path = temp_path("gradient.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let ramp = Gradient::new(
@@ -1356,7 +1354,7 @@ fn a_document_written_before_gradients_opens_with_its_colour_intact() {
         k: 0.0,
         a: 1.0,
     };
-    let path = temp_path("legacy_v14.tessera");
+    let path = temp_path("legacy_v14.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut doc = Document::new();
@@ -1403,7 +1401,7 @@ fn a_document_written_before_gradients_opens_with_its_colour_intact() {
 fn an_objects_opacity_and_blend_mode_round_trip() {
     use tessera_document::blending::{BlendMode, Blending};
 
-    let path = temp_path("blended.tessera");
+    let path = temp_path("blended.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut doc = Document::new();
@@ -1469,7 +1467,7 @@ fn placed_artwork_round_trips_as_a_link_rather_than_as_pixels() {
     use tessera_document::graphic::Fit;
     use tessera_document::links::Link;
 
-    let path = temp_path("placed.tessera");
+    let path = temp_path("placed.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut doc = Document::new();
@@ -1521,7 +1519,7 @@ fn placed_artwork_round_trips_as_a_link_rather_than_as_pixels() {
 
 #[test]
 fn a_version_twelve_document_opens_with_no_links() {
-    let path = temp_path("legacy_v12.tessera");
+    let path = temp_path("legacy_v12.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let doc = Document::new();
@@ -1538,7 +1536,7 @@ fn a_version_twelve_document_opens_with_no_links() {
 fn swatches_and_the_objects_naming_them_round_trip() {
     use tessera_document::nodes::Swatch;
 
-    let path = temp_path("swatches.tessera");
+    let path = temp_path("swatches.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut doc = Document::new();
@@ -1600,7 +1598,7 @@ fn swatches_and_the_objects_naming_them_round_trip() {
 
 #[test]
 fn a_version_eleven_document_opens_with_no_swatches() {
-    let path = temp_path("legacy_v11.tessera");
+    let path = temp_path("legacy_v11.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let doc = Document::new();
@@ -1617,7 +1615,7 @@ fn a_version_eleven_document_opens_with_no_swatches() {
 fn a_baseline_grid_round_trips() {
     use tessera_document::nodes::BaselineGrid;
 
-    let path = temp_path("grid.tessera");
+    let path = temp_path("grid.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut doc = Document::new();
@@ -1643,7 +1641,7 @@ fn a_baseline_grid_round_trips() {
 fn a_version_ten_document_opens_with_no_grid() {
     // `None` is the truth about a document written before grids existed, and
     // `false` about every frame in it.
-    let path = temp_path("legacy_v10.tessera");
+    let path = temp_path("legacy_v10.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let doc = Document::new();
@@ -1663,7 +1661,7 @@ fn a_version_nine_text_frame_opens_as_a_single_column() {
     // before columns existed did.
     use tessera_document::nodes::{TextLayout, VerticalJustify};
 
-    let path = temp_path("legacy_v9.tessera");
+    let path = temp_path("legacy_v9.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut doc = Document::new();
@@ -1710,7 +1708,7 @@ fn a_version_nine_text_frame_opens_as_a_single_column() {
 fn a_columned_text_frame_round_trips() {
     use tessera_document::nodes::{Insets, TextLayout, VerticalJustify};
 
-    let path = temp_path("columns.tessera");
+    let path = temp_path("columns.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut doc = Document::new();
@@ -1772,7 +1770,7 @@ fn a_version_eight_document_opens_with_no_masters_and_no_overrides() {
     // its pages is built on one, and nothing in it overrides anything. Every
     // one of those is what an empty collection means — unlike `layer_order` at
     // 7 -> 8, where empty meant a document that painted nothing.
-    let path = temp_path("legacy_v8.tessera");
+    let path = temp_path("legacy_v8.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut doc = Document::new();
@@ -1816,7 +1814,7 @@ fn a_version_eight_document_opens_with_no_masters_and_no_overrides() {
 
 #[test]
 fn a_master_and_its_overrides_survive_a_round_trip() {
-    let path = temp_path("masters.tessera");
+    let path = temp_path("masters.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut doc = Document::new();
@@ -1980,7 +1978,7 @@ fn version_7_archive(path: &std::path::Path) -> serde_json::Value {
 
 #[test]
 fn a_version_seven_documents_per_page_layers_merge_into_one() {
-    let path = temp_path("legacy_v7_layers.tessera");
+    let path = temp_path("legacy_v7_layers.tsrdf");
     let _ = std::fs::remove_file(&path);
     version_7_archive(&path);
 
@@ -2008,7 +2006,7 @@ fn a_version_seven_documents_objects_stay_on_their_own_pages() {
     // The migration must not move anything. Each frame was drawn on a
     // different page and has to still be on it — which, now that a frame's
     // page is derived from where it sits, means the geometry survived.
-    let path = temp_path("legacy_v7_pages.tessera");
+    let path = temp_path("legacy_v7_pages.tsrdf");
     let _ = std::fs::remove_file(&path);
     version_7_archive(&path);
 
@@ -2034,7 +2032,7 @@ fn a_version_seven_document_that_paints_nothing_still_gets_a_layer() {
     // so this is the case where the default is a lie.
     use std::io::Write;
 
-    let path = temp_path("legacy_v7_bare.tessera");
+    let path = temp_path("legacy_v7_bare.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut value: serde_json::Value = serde_json::to_value(Document::new()).expect("to value");
@@ -2158,7 +2156,7 @@ fn a_version_five_story_arrives_with_runs_that_describe_it() {
     // and the default is an empty list — which for a story with text in it
     // satisfies no version of the run invariant. Without the rewrite, every
     // document saved before milestone 2 would open unsound.
-    let path = temp_path("v5-story-runs.tessera");
+    let path = temp_path("v5-story-runs.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut doc = Document::new();
@@ -2184,7 +2182,7 @@ fn a_version_five_story_arrives_with_runs_that_describe_it() {
 #[test]
 fn a_migrated_run_keeps_the_formatting_the_story_already_had() {
     // The rewrite must not change how anything looks.
-    let path = temp_path("v5-story-format.tessera");
+    let path = temp_path("v5-story-format.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut doc = Document::new();
@@ -2201,7 +2199,7 @@ fn a_migrated_run_keeps_the_formatting_the_story_already_had() {
 
 #[test]
 fn an_empty_story_migrates_to_no_runs_rather_than_one_empty_run() {
-    let path = temp_path("v5-empty-story.tessera");
+    let path = temp_path("v5-empty-story.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut doc = Document::new();
@@ -2285,7 +2283,7 @@ fn a_version_six_story_folds_its_style_into_its_runs() {
     // style said 18.5pt Georgia and the run said nothing, so after the fold
     // the run has to say 18.5pt Georgia — otherwise every document written
     // before version 7 reopens in the wrong face at the wrong size.
-    let path = temp_path("v6-fold-style.tessera");
+    let path = temp_path("v6-fold-style.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut doc = Document::new();
@@ -2308,7 +2306,7 @@ fn a_run_that_already_stated_a_size_keeps_it_through_the_fold() {
     // The fold is `run.local` **over** the story style, not the other way
     // round. A run that had been given 9pt in the editor must stay 9pt, and
     // still pick up the family it never stated.
-    let path = temp_path("v6-run-wins.tessera");
+    let path = temp_path("v6-run-wins.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut doc = Document::new();
@@ -2338,8 +2336,8 @@ fn the_fold_survives_being_saved_again() {
     //
     // Asserting only that `style` is absent would prove nothing — serde drops
     // unknown keys on load, so that holds whether the migration runs or not.
-    let old = temp_path("v6-then-saved.tessera");
-    let new = temp_path("v7-after-save.tessera");
+    let old = temp_path("v6-then-saved.tsrdf");
+    let new = temp_path("v7-after-save.tsrdf");
     let _ = std::fs::remove_file(&old);
     let _ = std::fs::remove_file(&new);
 
@@ -2377,7 +2375,7 @@ fn the_fold_survives_being_saved_again() {
 fn runs_survive_a_round_trip() {
     use tessera_text::story::{CharacterFormat, Run};
 
-    let path = temp_path("runs-round-trip.tessera");
+    let path = temp_path("runs-round-trip.tsrdf");
     let _ = std::fs::remove_file(&path);
 
     let mut original = Document::new();

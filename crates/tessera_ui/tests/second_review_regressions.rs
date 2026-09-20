@@ -323,12 +323,11 @@ fn same_file_alias_must_not_open_second_independent_tab() {
     let temp = Scratch::new();
     let root = &temp.0;
     std::fs::create_dir_all(root.join("alias")).unwrap();
-    let path = root.join("alias-test.tessera");
+    let path = root.join("alias-test.tsrdf");
     tessera_document::format::save(&Document::new(), &path).unwrap();
     let mut a = TesseraApp::headless();
     tessera_ui::file_ops::open_from_path(&mut a, &path).unwrap();
-    tessera_ui::file_ops::open_from_path(&mut a, &root.join("alias/../alias-test.tessera"))
-        .unwrap();
+    tessera_ui::file_ops::open_from_path(&mut a, &root.join("alias/../alias-test.tsrdf")).unwrap();
     assert_eq!(
         a.documents.len(),
         1,
@@ -340,14 +339,14 @@ fn same_file_alias_must_not_open_second_independent_tab() {
 fn save_as_refuses_another_open_files_alias_without_overwriting_it() {
     let temp = Scratch::new();
     std::fs::create_dir_all(temp.0.join("alias")).unwrap();
-    let path = temp.0.join("saved.tessera");
+    let path = temp.0.join("saved.tsrdf");
     let mut a = TesseraApp::headless();
     apply(&mut a, Command::AddRectangle(rect(650.0, 20.0)));
     tessera_ui::file_ops::save_to_path(&mut a, &path).unwrap();
     let saved = std::fs::read(&path).unwrap();
     tessera_ui::file_ops::new_document(&mut a);
     apply(&mut a, Command::AddEllipse(rect(650.0, 20.0)));
-    let result = tessera_ui::file_ops::save_to_path(&mut a, &temp.0.join("alias/../saved.tessera"));
+    let result = tessera_ui::file_ops::save_to_path(&mut a, &temp.0.join("alias/../saved.tsrdf"));
     assert!(matches!(
         result,
         Err(tessera_document::format::FormatError::AlreadyOpen(_))
@@ -360,11 +359,11 @@ fn save_as_refuses_another_open_files_alias_without_overwriting_it() {
 #[test]
 fn different_case_does_not_open_the_file_twice() {
     let temp = Scratch::new();
-    let path = temp.0.join("MixedCase.tessera");
+    let path = temp.0.join("MixedCase.tsrdf");
     tessera_document::format::save(&Document::new(), &path).unwrap();
     let mut a = TesseraApp::headless();
     tessera_ui::file_ops::open_from_path(&mut a, &path).unwrap();
-    tessera_ui::file_ops::open_from_path(&mut a, &temp.0.join("mixedcase.TESSERA")).unwrap();
+    tessera_ui::file_ops::open_from_path(&mut a, &temp.0.join("mixedcase.TSRDF")).unwrap();
     assert_eq!(a.documents.len(), 1);
 }
 

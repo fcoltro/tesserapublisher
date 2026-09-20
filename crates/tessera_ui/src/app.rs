@@ -989,8 +989,8 @@ mod tests {
     fn a_saved_document_shows_its_file_name() {
         use std::path::PathBuf;
         let mut app = TesseraApp::headless();
-        app.active_mut().current_path = Some(PathBuf::from("/tmp/poster.tessera"));
-        assert_eq!(app.window_title(), "poster.tessera - Tessera Publisher");
+        app.active_mut().current_path = Some(PathBuf::from("/tmp/poster.tsrdf"));
+        assert_eq!(app.window_title(), "poster.tsrdf - Tessera Publisher");
     }
 
     // --- collapsible sections ------------------------------------------------

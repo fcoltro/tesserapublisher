@@ -107,9 +107,9 @@ mod tests {
         std::fs::create_dir_all(&folder).unwrap();
         let book_path = folder.join("novel.tesserabook");
         let mut book = Book::default();
-        book.add(&book_path, &folder.join("one.tessera"));
-        book.add(&book_path, &folder.join("two.tessera"));
-        book.add(&book_path, &folder.join("one.tessera"));
+        book.add(&book_path, &folder.join("one.tsrdf"));
+        book.add(&book_path, &folder.join("two.tsrdf"));
+        book.add(&book_path, &folder.join("one.tsrdf"));
         assert_eq!(book.documents.len(), 2, "listed once");
         assert!(book.documents[0].is_relative(), "kept relative to the book");
         // A chapter outside the book's folder: kept as given, absolute.
@@ -117,7 +117,7 @@ mod tests {
             .parent()
             .unwrap()
             .join("elsewhere")
-            .join("three.tessera");
+            .join("three.tsrdf");
         book.add(&book_path, &elsewhere);
         assert!(
             book.documents[2].is_absolute(),
@@ -128,7 +128,7 @@ mod tests {
         let back = Book::load(&book_path).unwrap();
         assert_eq!(back, book);
         let found = back.resolved(&book_path);
-        assert_eq!(found[0], folder.join("one.tessera"));
+        assert_eq!(found[0], folder.join("one.tsrdf"));
         assert_eq!(found[2], elsewhere);
 
         assert!(back.continue_numbering, "a book numbers on by default");

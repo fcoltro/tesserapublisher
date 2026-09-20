@@ -206,7 +206,7 @@ mod tests {
                 style: None,
             },
         );
-        let path = folder.join(format!("{name}.tessera"));
+        let path = folder.join(format!("{name}.tsrdf"));
         format::save(&doc, &path).unwrap();
         path
     }
