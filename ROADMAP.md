@@ -1942,7 +1942,16 @@ milestone the layout is fixed: a tool strip, one inspector, and the canvas.
   **2026-09-13:** the application now opens the paths it is launched with,
   which is what a double-click delivers on Windows and Linux. macOS delivers
   it as an open-file event rather than an argument, and nothing receives one,
-  so the sentence cannot be true there yet. A second instance no longer takes
+  so the sentence cannot be true there yet.
+  **2026-09-20, looked at and left:** winit 0.30.13 installs its own
+  `NSApplicationDelegate` (`platform_impl/macos/event_loop.rs`) and drives
+  its run loop through it, so the route its docs suggest — set a delegate
+  of one's own with `application:openURLs:` — would replace winit's and lose
+  `applicationWillTerminate`, which is what runs `on_exit` on Cmd+Q. The
+  clean route is `class_addMethod` on winit's delegate class from the first
+  frame, handing the paths to `file_ops::open_startup_paths` on a channel:
+  unsafe ObjC runtime work that wants a Mac to compile and press. Not
+  written blind. A second instance no longer takes
   the first one's autosave copies for a crash's leavings; see finding 21 in
   `docs/reviews/2026-09-13-deep-bug-review.md`.
 - [ ] **Linux verified interactively** — Wayland and X11, fractional scaling,
