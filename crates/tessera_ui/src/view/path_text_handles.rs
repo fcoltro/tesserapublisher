@@ -183,14 +183,19 @@ pub fn commit(state: &mut TesseraApp, id: FrameId, end: End, held: PathText, at:
 
 /// The drag, from press to release. Returns whether a bracket has the
 /// gesture, so the select tool leaves the frame beneath it alone.
+///
+/// `press` is where the button went down, not where the pointer is once
+/// egui calls it a drag: by then it has travelled the threshold, and a quick
+/// drag has left a bracket's reach before the gesture begins.
 pub fn gesture(
     response: &egui::Response,
+    press: Option<egui::Pos2>,
     canvas: Rect,
     state: &mut TesseraApp,
     doc_pos: impl Fn(&TesseraApp, egui::Pos2) -> DocPoint,
 ) -> bool {
     if response.drag_started()
-        && let Some(pos) = response.interact_pointer_pos()
+        && let Some(pos) = press.or_else(|| response.interact_pointer_pos())
         && let Some((id, end)) = bracket_at(state, canvas, pos)
         && let Some(held) = state.active().document().path_text(id).copied()
     {
@@ -219,10 +224,16 @@ pub fn gesture(
         && let Some(pos) = response.interact_pointer_pos()
     {
         let at = doc_pos(state, pos);
+        // Only when the pointer has moved: a button held still is not a
+        // change, and writing the document every frame regardless re-laid
+        // the page out sixty times a second for nothing.
+        let moved = state.drag.as_ref().is_some_and(|d| d.current != at);
         if let Some(drag) = state.drag.as_mut() {
             drag.current = at;
         }
-        preview(state, id, end, held, at);
+        if moved {
+            preview(state, id, end, held, at);
+        }
     }
 
     if response.drag_stopped()

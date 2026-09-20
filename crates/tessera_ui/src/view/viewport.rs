@@ -2327,7 +2327,9 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
     // A bracket on type on a path, then a handle, win over the frame beneath
     // them, so a control sitting on top of another object still does what it
     // says rather than selecting.
-    if super::path_text_handles::gesture(response, rect, state, |s, p| doc_pos(s, rect, p)) {
+    if super::path_text_handles::gesture(response, press_pos(ui, response), rect, state, |s, p| {
+        doc_pos(s, rect, p)
+    }) {
         return;
     }
     if transform_gesture(ui, response, rect, state) {
