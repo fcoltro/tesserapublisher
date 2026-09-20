@@ -97,6 +97,16 @@ pub enum Icon {
     CaseSensitive,
     /// Two letters at two sizes: the size control.
     TypeSize,
+    /// Tessera typography symbols, drawn on the same grid as the Lucide set.
+    LineSpacing,
+    LetterSpacing,
+    BaselineShift,
+    OpenType,
+    Indent,
+    ParagraphSpacing,
+    List,
+    TabStop,
+    DropCap,
     Plus,
     Duplicate,
     PlaceImage,
@@ -451,6 +461,36 @@ impl Icon {
                 "M3.304 13h6.392",
                 "M22 12.5 A3.5 3.5 0 1 1 15 12.5 A3.5 3.5 0 1 1 22 12.5 Z",
             ],
+            // Tessera: publishing controls in the Lucide grid and stroke style.
+            Self::LineSpacing => &[
+                "M8 5 H21 M8 12 H18 M8 19 H21",
+                "M3 4 V20 M1 6 L3 4 L5 6 M1 18 L3 20 L5 18",
+            ],
+            Self::LetterSpacing => &[
+                "M5 13 L9 3 L13 13 M7 9 H11 M17 3 V13 M15 3 H19",
+                "M3 19 H21 M6 16 L3 19 L6 22 M18 16 L21 19 L18 22",
+            ],
+            Self::BaselineShift => &[
+                "M8 15 L12 5 L16 15 M10 11 H14 M7 20 H21",
+                "M3 16 V4 M1 6 L3 4 L5 6",
+            ],
+            Self::OpenType => &["M4 3 H20 V21 H4 Z M8 7 H16 M12 7 V17 M9 17 H15"],
+            Self::Indent => &[
+                "M3 4 H21 M10 9 H21 M10 14 H18 M3 20 H21",
+                "M2 9 L5 12 L2 15 M2 12 H6",
+            ],
+            Self::ParagraphSpacing => &[
+                "M9 3 H21 M9 7 H18 M9 17 H21 M9 21 H18",
+                "M3 8 V16 M1 10 L3 8 L5 10 M1 14 L3 16 L5 14",
+            ],
+            Self::List => &[
+                "M9 5 H21 M9 12 H21 M9 19 H21",
+                "M3 4 H5 V6 H3 Z M3 11 H5 V13 H3 Z M3 18 H5 V20 H3 Z",
+            ],
+            Self::TabStop => &["M3 6 H21 M3 18 H21 M18 9 V15 M4 12 H14 M11 9 L14 12 L11 15"],
+            Self::DropCap => {
+                &["M2 18 L7 4 L12 18 M4 13 H10 M15 5 H22 M15 11 H22 M15 17 H22 M2 22 H22"]
+            }
             // lucide: a-large-small
             Self::TypeSize => &[
                 "m15 16 2.536-7.328a1.02 1.02 1 0 1 1.928 0L22 16",
@@ -608,6 +648,15 @@ impl Icon {
             | Self::Pilcrow
             | Self::CaseSensitive
             | Self::TypeSize
+            | Self::LineSpacing
+            | Self::LetterSpacing
+            | Self::BaselineShift
+            | Self::OpenType
+            | Self::Indent
+            | Self::ParagraphSpacing
+            | Self::List
+            | Self::TabStop
+            | Self::DropCap
             | Self::Plus
             | Self::Duplicate
             | Self::PlaceImage
@@ -945,7 +994,7 @@ pub fn rotated_shapes(
 /// icon rather than returning nothing, so the cost of forgetting is a slower
 /// first draw instead of an invisible button; this list is the fast path, not
 /// the only one.
-pub const ALL: [Icon; 71] = [
+pub const ALL: [Icon; 80] = [
     Icon::Sun,
     Icon::Moon,
     Icon::DirectSelect,
@@ -999,6 +1048,15 @@ pub const ALL: [Icon; 71] = [
     Icon::Pilcrow,
     Icon::CaseSensitive,
     Icon::TypeSize,
+    Icon::LineSpacing,
+    Icon::LetterSpacing,
+    Icon::BaselineShift,
+    Icon::OpenType,
+    Icon::Indent,
+    Icon::ParagraphSpacing,
+    Icon::List,
+    Icon::TabStop,
+    Icon::DropCap,
     Icon::Plus,
     Icon::Duplicate,
     Icon::Trash,
@@ -1196,7 +1254,7 @@ mod tests {
         // fails this rather than shipping an invisible button.
         assert_eq!(
             ALL.len(),
-            71,
+            80,
             "an icon was added to the enum without being added to ALL"
         );
     }
@@ -1214,6 +1272,15 @@ mod tests {
             Icon::Pilcrow,
             Icon::CaseSensitive,
             Icon::TypeSize,
+            Icon::LineSpacing,
+            Icon::LetterSpacing,
+            Icon::BaselineShift,
+            Icon::OpenType,
+            Icon::Indent,
+            Icon::ParagraphSpacing,
+            Icon::List,
+            Icon::TabStop,
+            Icon::DropCap,
             Icon::Plus,
             Icon::Duplicate,
             Icon::Trash,

@@ -1631,20 +1631,22 @@ pub(crate) fn list_editor(
         ..ListFormat::default()
     });
 
-    field(ui, "Kind", |ui| {
-        for (kind, text) in [
-            (ListKind::None, "None"),
-            (ListKind::Bullet, "Bullet"),
-            (ListKind::Number, "Number"),
-        ] {
-            if ui.selectable_label(l.kind == kind, text).clicked() && l.kind != kind {
-                l.kind = kind;
-                changed = true;
+    text_field(ui, crate::icons::Icon::List, "List type", |ui| {
+        ui.horizontal_wrapped(|ui| {
+            for (kind, text) in [
+                (ListKind::None, "None"),
+                (ListKind::Bullet, "Bullet"),
+                (ListKind::Number, "Number"),
+            ] {
+                if ui.selectable_label(l.kind == kind, text).clicked() && l.kind != kind {
+                    l.kind = kind;
+                    changed = true;
+                }
             }
-        }
-        if inheritable && stated && ui.small_button("Inherit").clicked() {
-            inherit = true;
-        }
+            if inheritable && stated && ui.small_button("Inherit").clicked() {
+                inherit = true;
+            }
+        });
     });
 
     match l.kind {
@@ -1686,12 +1688,13 @@ pub(crate) fn list_editor(
                 (Numbering::LowerRoman, "i, ii, iii"),
                 (Numbering::UpperRoman, "I, II, III"),
             ];
-            field(ui, "Numbers", |ui| {
+            text_field(ui, crate::icons::Icon::List, "Number format", |ui| {
                 let shown = numberings
                     .iter()
                     .find(|(n, _)| *n == l.numbering)
                     .map_or("1, 2, 3", |(_, label)| *label);
                 egui::ComboBox::from_id_salt("list-numbering")
+                    .width(ui.available_width())
                     .selected_text(shown)
                     .show_ui(ui, |ui| {
                         for (numbering, label) in numberings {
@@ -1705,6 +1708,8 @@ pub(crate) fn list_editor(
                             }
                         }
                     });
+            });
+            field(ui, "Suffix", |ui| {
                 let mut suffix = l.suffix.clone();
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut suffix)
@@ -1736,7 +1741,7 @@ pub(crate) fn list_editor(
     if l.kind != ListKind::None
         && !inheritable
         && ui
-            .small_button("Hang the turnover")
+            .small_button("Apply hanging indent")
             .on_hover_text("Left indent 18 pt, first line \u{2212}18 pt, a stop at 18 pt")
             .clicked()
     {
@@ -1787,33 +1792,39 @@ pub(crate) fn justification_editor(
     group_label(ui, "Justification");
     let j = value.get_or_insert_with(Default::default);
 
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::text_muted(), "");
-        ui.colored_label(Theme::text_muted(), "min");
-        ui.colored_label(Theme::text_muted(), "desired");
-        ui.colored_label(Theme::text_muted(), "max");
-        if inheritable && stated && ui.small_button("Inherit").clicked() {
-            inherit = true;
-        }
-    });
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::text_muted(), "Words");
-        changed |= percent_of(ui, &mut j.word_min, 0.0..=1000.0);
-        changed |= percent_of(ui, &mut j.word_desired, 0.0..=1000.0);
-        changed |= percent_of(ui, &mut j.word_max, 0.0..=1000.0);
-    });
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::text_muted(), "Letters");
-        changed |= percent_of(ui, &mut j.letter_min, -100.0..=500.0);
-        changed |= percent_of(ui, &mut j.letter_desired, -100.0..=500.0);
-        changed |= percent_of(ui, &mut j.letter_max, -100.0..=500.0);
-    });
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::text_muted(), "Glyphs");
-        changed |= percent_of(ui, &mut j.glyph_min, 50.0..=200.0);
-        changed |= percent_of(ui, &mut j.glyph_desired, 50.0..=200.0);
-        changed |= percent_of(ui, &mut j.glyph_max, 50.0..=200.0);
-    });
+    if inheritable && stated && ui.small_button("Inherit").clicked() {
+        inherit = true;
+    }
+    for (label, values, range) in [
+        (
+            "Word spacing",
+            [&mut j.word_min, &mut j.word_desired, &mut j.word_max],
+            0.0..=1000.0,
+        ),
+        (
+            "Letter spacing",
+            [&mut j.letter_min, &mut j.letter_desired, &mut j.letter_max],
+            -100.0..=500.0,
+        ),
+        (
+            "Glyph width",
+            [&mut j.glyph_min, &mut j.glyph_desired, &mut j.glyph_max],
+            50.0..=200.0,
+        ),
+    ] {
+        ui.label(label);
+        ui.columns(3, |columns| {
+            for ((column, value), name) in columns
+                .iter_mut()
+                .zip(values)
+                .zip(["Min", "Desired", "Max"])
+            {
+                column.label(egui::RichText::new(name).small().color(Theme::text_muted()));
+                column.spacing_mut().interact_size.x = column.available_width();
+                changed |= percent_of(column, value, range.clone());
+            }
+        });
+    }
     // Kept in order: a minimum above its maximum is not a setting anyone
     // means, and the breaker would only refuse to squeeze.
     if changed {
@@ -1926,16 +1937,11 @@ pub(crate) fn keep_options_editor(
     let k = keep.get_or_insert_with(Default::default);
 
     ui.horizontal(|ui| {
-        let response = ui.selectable_label(k.with_next, "With next");
-        if crate::icons::named_toggle(
-            response.on_hover_text("Keep the last line with the next paragraph"),
-            "Keep with next paragraph",
-            egui::WidgetType::Checkbox,
-            k.with_next,
-        )
-        .clicked()
+        if ui
+            .checkbox(&mut k.with_next, "Keep with next paragraph")
+            .on_hover_text("Keep the last line with the next paragraph")
+            .changed()
         {
-            k.with_next = !k.with_next;
             changed = true;
         }
         if inheritable && stated && ui.small_button("Inherit").clicked() {
@@ -1943,20 +1949,35 @@ pub(crate) fn keep_options_editor(
         }
     });
 
-    field(ui, "Lines", |ui| {
+    text_field(ui, crate::icons::Icon::Link2, "Keep lines together", |ui| {
         let all = matches!(k.together, KeepTogether::All);
         let ends = matches!(k.together, KeepTogether::Ends { .. });
         let choices = [
             (KeepTogether::Off, "Off", !all && !ends),
-            (KeepTogether::All, "All", all),
-            (KeepTogether::Ends { start: 2, end: 2 }, "Ends", ends),
+            (KeepTogether::All, "All lines", all),
+            (
+                KeepTogether::Ends { start: 2, end: 2 },
+                "First and last lines",
+                ends,
+            ),
         ];
-        for (choice, text, selected) in choices {
-            if ui.selectable_label(selected, text).clicked() && !selected {
-                k.together = choice;
-                changed = true;
-            }
-        }
+        egui::ComboBox::from_id_salt("keep-lines")
+            .width(ui.available_width())
+            .selected_text(if all {
+                "All lines"
+            } else if ends {
+                "First and last lines"
+            } else {
+                "Off"
+            })
+            .show_ui(ui, |ui| {
+                for (choice, text, selected) in choices {
+                    if ui.selectable_label(selected, text).clicked() && !selected {
+                        k.together = choice;
+                        changed = true;
+                    }
+                }
+            });
     });
     if let KeepTogether::Ends { start, end } = &mut k.together {
         let count = |ui: &mut Ui, value: &mut u8| {
@@ -2017,10 +2038,17 @@ pub(crate) fn tab_stops_editor(
     let list = stops.get_or_insert_with(Vec::new);
     let mut remove = None;
     for (i, stop) in list.iter_mut().enumerate() {
-        ui.horizontal(|ui| {
+        ui.push_id(i, |ui| {
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label(format!("Tab stop {}", i + 1));
+                if icon_button(ui, crate::icons::Icon::Trash, "Remove this tab stop", false) {
+                    remove = Some(i);
+                }
+            });
             let mut position = f64::from(stop.position);
-            if ui
-                .add(
+            if field(ui, "Position", |ui| {
+                ui.add(
                     egui::DragValue::new(&mut position)
                         .speed(0.25)
                         .range(0.0..=1440.0)
@@ -2028,7 +2056,7 @@ pub(crate) fn tab_stops_editor(
                 )
                 .on_hover_text("Position from the left edge of the column")
                 .changed()
-            {
+            }) {
                 stop.position = position as f32;
                 changed = true;
             }
@@ -2043,30 +2071,34 @@ pub(crate) fn tab_stops_editor(
                 .iter()
                 .find(|(a, _)| *a == stop.alignment)
                 .map_or("Left", |(_, label)| *label);
-            egui::ComboBox::from_id_salt(("tab-alignment", i))
-                .selected_text(shown)
-                .width(80.0)
-                .show_ui(ui, |ui| {
-                    for (alignment, label) in alignments {
-                        if ui
-                            .selectable_label(stop.alignment == alignment, label)
-                            .clicked()
-                            && stop.alignment != alignment
-                        {
-                            stop.alignment = alignment;
-                            changed = true;
+            field(ui, "Align", |ui| {
+                egui::ComboBox::from_id_salt(("tab-alignment", i))
+                    .selected_text(shown)
+                    .width(ui.available_width())
+                    .show_ui(ui, |ui| {
+                        for (alignment, label) in alignments {
+                            if ui
+                                .selectable_label(stop.alignment == alignment, label)
+                                .clicked()
+                                && stop.alignment != alignment
+                            {
+                                stop.alignment = alignment;
+                                changed = true;
+                            }
                         }
-                    }
-                });
+                    })
+            });
 
             // The leader is one character; the field takes the last one typed
             // so that typing over a dot with a dash needs no deleting first.
             let mut leader: String = stop.leader.map(String::from).unwrap_or_default();
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut leader)
-                    .desired_width(20.0)
-                    .hint_text("·"),
-            );
+            let response = field(ui, "Leader", |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut leader)
+                        .desired_width(20.0)
+                        .hint_text("·"),
+                )
+            });
             crate::icons::named(response.clone(), format!("Leader of tab stop {}", i + 1));
             if response.changed() {
                 let next = leader.chars().last();
@@ -2074,10 +2106,6 @@ pub(crate) fn tab_stops_editor(
                     stop.leader = next;
                     changed = true;
                 }
-            }
-
-            if icon_button(ui, crate::icons::Icon::Trash, "Remove this tab stop", false) {
-                remove = Some(i);
             }
         });
     }
@@ -2088,7 +2116,7 @@ pub(crate) fn tab_stops_editor(
 
     let mut inherit = false;
     ui.horizontal(|ui| {
-        if icon_button(ui, crate::icons::Icon::Plus, "Add a tab stop", false) {
+        if crate::view::panel_ui::action(ui, crate::icons::Icon::Plus, "Add tab stop").clicked() {
             // Half an inch past the last one, which is where the default
             // stop would have been anyway.
             let last = list.iter().map(|s| s.position).fold(0.0, f32::max);
@@ -2716,15 +2744,18 @@ fn text_frame_controls(
     // Where the text sits when it does not fill the frame. Icons rather than
     // a list: it is the same choice as horizontal alignment and reads the
     // same way, turned a quarter turn.
-    field(ui, "Vertical", |ui| {
+    text_label(ui, crate::icons::Icon::TextFrame, "Vertical alignment");
+    let button_width = text_toggle_width(ui, "Bottom");
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().interact_size.x = button_width;
         use tessera_document::nodes::VerticalJustify as V;
         for (icon, tip, which) in [
             (crate::icons::Icon::AlignTop, "Top", V::Top),
             (crate::icons::Icon::AlignMiddleV, "Centre", V::Centre),
             (crate::icons::Icon::AlignBottom, "Bottom", V::Bottom),
-            (crate::icons::Icon::AlignJustify, "Justify", V::Justify),
+            (crate::icons::Icon::DistributeV, "Justify", V::Justify),
         ] {
-            if icon_button(ui, icon, tip, wanted.vertical == which) {
+            if text_toggle(ui, icon, tip, wanted.vertical == which) {
                 wanted.vertical = which;
                 changed = true;
             }
@@ -2857,6 +2888,128 @@ fn subheading(ui: &mut Ui, icon: crate::icons::Icon, label: &str) {
         crate::icons::paint(ui.painter(), rect, icon, Theme::text_muted());
         ui.add(egui::Label::new(group_text(label)).selectable(false));
     });
+}
+
+/// A bounded group with room between controls and a visible title.
+fn text_card(ui: &mut Ui, icon: crate::icons::Icon, title: &str, add: impl FnOnce(&mut Ui)) {
+    egui::Frame::new()
+        .fill(Theme::panel_bg_alt())
+        .stroke(egui::Stroke::new(1.0, Theme::rule()))
+        .corner_radius(Theme::RADIUS)
+        .inner_margin(Theme::space_2())
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing = Vec2::splat(Theme::space_2());
+            ui.spacing_mut().interact_size.y = Theme::row();
+            text_label(ui, icon, title);
+            ui.separator();
+            add(ui);
+        });
+    ui.add_space(Theme::space_3());
+}
+
+fn text_label(ui: &mut Ui, icon: crate::icons::Icon, label: &str) {
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(Vec2::splat(Theme::ICON_SIZE), Sense::hover());
+        crate::icons::paint(ui.painter(), rect, icon, Theme::text_muted());
+        ui.add(egui::Label::new(egui::RichText::new(label).small()).wrap());
+    });
+}
+
+/// Labels above inputs stay readable even at the dock's minimum width.
+fn text_field<R>(
+    ui: &mut Ui,
+    icon: crate::icons::Icon,
+    label: &str,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = Theme::space_1();
+        text_label(ui, icon, label);
+        ui.spacing_mut().interact_size.x = ui.available_width().min(WIDEST_ROW);
+        add(ui)
+    })
+    .inner
+}
+
+/// An icon and a permanent label, sharing a clear button boundary and focus ring.
+fn text_toggle_width(ui: &Ui, longest_label: &str) -> f32 {
+    let label = ui.painter().layout_no_wrap(
+        longest_label.to_owned(),
+        egui::TextStyle::Small.resolve(ui.style()),
+        Theme::text_primary(),
+    );
+    let minimum = label.size().x + Theme::ICON_SIZE + Theme::space_1() + 2.0 * Theme::space_2();
+    let half = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+    if half >= minimum {
+        half
+    } else {
+        ui.available_width()
+    }
+}
+
+fn text_toggle(ui: &mut Ui, icon: crate::icons::Icon, label: &str, active: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(ui.spacing().interact_size.x, Theme::row()),
+        Sense::click(),
+    );
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(
+        rect,
+        Theme::RADIUS,
+        if active {
+            Theme::accent_soft()
+        } else if response.hovered() {
+            Theme::hover_bg()
+        } else {
+            Theme::field_bg()
+        },
+    );
+    painter.rect_stroke(
+        rect,
+        Theme::RADIUS,
+        egui::Stroke::new(
+            1.0,
+            if response.has_focus() {
+                Theme::focus()
+            } else if active {
+                Theme::accent()
+            } else {
+                Theme::border()
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+    let glyph = egui::Rect::from_center_size(
+        egui::pos2(
+            rect.left() + Theme::space_2() + Theme::ICON_SIZE / 2.0,
+            rect.center().y,
+        ),
+        Vec2::splat(Theme::ICON_SIZE),
+    );
+    crate::icons::paint(&painter, glyph, icon, Theme::text_primary());
+    painter.text(
+        egui::pos2(glyph.right() + Theme::space_1(), rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::TextStyle::Small.resolve(ui.style()),
+        Theme::text_primary(),
+    );
+    crate::icons::named_toggle(response, label, egui::WidgetType::Button, active).clicked()
+}
+
+fn text_disclosure(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    icon: crate::icons::Icon,
+    title: &'static str,
+) -> bool {
+    ui.add_space(Theme::space_2());
+    let open = section_heading(ui, state, icon, title);
+    if open {
+        ui.add_space(Theme::space_2());
+    }
+    open
 }
 
 /// A row of mutually exclusive choices, the shape a three-way property wants.
@@ -3173,11 +3326,18 @@ pub(crate) fn section_heading_with(
             .get(&egui::TextStyle::Heading)
             .map_or(egui::FontFamily::Proportional, |f| f.family.clone()),
     };
-    painter.text(
-        egui::pos2(glyph.right() + Theme::space_2(), rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        title,
-        font,
+    let text_left = glyph.right() + Theme::space_2();
+    let galley = ui.fonts_mut(|fonts| {
+        let mut job =
+            egui::text::LayoutJob::simple_singleline(title.to_owned(), font, Theme::text_primary());
+        job.wrap.max_width = (caret.left() - Theme::space_2() - text_left).max(0.0);
+        job.wrap.max_rows = 1;
+        job.wrap.break_anywhere = true;
+        fonts.layout_job(job)
+    });
+    painter.galley(
+        egui::pos2(text_left, rect.center().y - galley.size().y / 2.0),
+        galley,
         Theme::text_primary(),
     );
 
@@ -3186,7 +3346,7 @@ pub(crate) fn section_heading_with(
     // disclosure that reveals half the inspector announced itself as an unnamed
     // button. It says its own name and whether it is open.
     let response = crate::icons::reads_as(
-        response,
+        response.on_hover_text(title),
         title,
         egui::WidgetType::CollapsingHeader,
         Some(open),
@@ -3343,246 +3503,337 @@ fn text_section(
         }
     };
 
-    // These controls also work on a selected frame, before entering its text.
-    // The same target and pending format as the other controls keep both
-    // entry points in sync with the toolbar while typing.
-    if let Some(family) = family_picker(ui, state, shown.family.as_deref(), &[]) {
-        set_character(
-            state,
-            story,
-            target.clone(),
-            CharacterFormat {
-                family: Some(family),
-                ..CharacterFormat::default()
-            },
-        );
-    }
-    let mut size = f64::from(shown.size.unwrap_or(12.0));
-    let mut leading = f64::from(shown.line_height.unwrap_or(1.2));
-    let (size_changed, leading_changed) = pair(
+    use crate::icons::Icon;
+    ui.spacing_mut().item_spacing.y = Theme::space_2();
+    ui.spacing_mut().interact_size.y = Theme::row();
+    crate::view::panel_ui::hint(
         ui,
-        ("Size", |ui: &mut Ui| {
-            ui.add(
-                egui::DragValue::new(&mut size)
-                    .speed(0.25)
-                    .range(0.1..=2000.0)
-                    .suffix(" pt"),
-            )
-            .changed()
-        }),
-        ("Line spacing", |ui: &mut Ui| {
-            ui.add(
-                egui::DragValue::new(&mut leading)
-                    .speed(0.02)
-                    .range(0.5..=4.0)
-                    .suffix(" ×"),
-            )
-            .changed()
-        }),
+        match &state.active().editing {
+            Some((editing, _)) if *editing == id && target.is_empty() => {
+                "Character changes apply to new typing."
+            }
+            Some((editing, _)) if *editing == id => "Formatting the selected text.",
+            _ => "Formatting all text in this story.",
+        },
     );
-    if size_changed || leading_changed {
-        set_character(
-            state,
-            story,
-            target.clone(),
-            CharacterFormat {
-                size: size_changed.then_some(size as f32),
-                line_height: leading_changed.then_some(leading as f32),
-                ..CharacterFormat::default()
-            },
-        );
-    }
-    if !missing.is_empty() {
-        ui.colored_label(Theme::error(), format!("Missing: {}", missing.join(", ")));
-    }
-
-    // Text colour. Distinct from the frame's fill, which is the box behind the
-    // glyphs — setting that and expecting the letters to change is the mistake
-    // the two controls sitting apart is meant to prevent.
-    let shown_colour = shown.colour.clone().unwrap_or(Color::BLACK);
-    let [r, g, b, a] = shown_colour.to_rgb_f32();
-    let mut rgba = [r, g, b, a];
-    ui.horizontal_wrapped(|ui| {
-        let (spot, _) = ui.allocate_exact_size(Vec2::splat(Theme::ICON_SIZE), Sense::hover());
-        crate::icons::paint(
-            ui.painter(),
-            spot,
-            crate::icons::Icon::Palette,
-            Theme::text_muted(),
-        );
-        ui.colored_label(Theme::text_muted(), "Colour");
-        if fill_picker(ui, &mut rgba) {
+    ui.add_space(Theme::space_2());
+    text_card(ui, Icon::CaseSensitive, "Character", |ui| {
+        // These controls also work on a selected frame, before entering its text.
+        // The same target and pending format as the other controls keep both
+        // entry points in sync with the toolbar while typing.
+        text_label(ui, Icon::Text, "Font family");
+        if let Some(family) = family_menu(ui, state, shown.family.as_deref(), WIDEST_ROW) {
             set_character(
                 state,
                 story,
                 target.clone(),
                 CharacterFormat {
-                    colour: Some(Color::Rgb {
-                        r: rgba[0],
-                        g: rgba[1],
-                        b: rgba[2],
-                        a: rgba[3],
-                    }),
+                    family: Some(family),
                     ..CharacterFormat::default()
                 },
             );
         }
-    });
-
-    // Weight and slant on one row. Bold and Italic are toggles rather than a
-    // list, because that is how they are used: the numbered weights stay for
-    // the faces that have them, but the pair a person reaches for constantly
-    // should be one click and recognisable without reading.
-    let mut weight_change = None;
-    ui.horizontal_wrapped(|ui| {
-        ui.colored_label(Theme::text_muted(), "Style");
-        let bold = shown.weight.is_some_and(|w| w >= 600);
-        if icon_button(ui, crate::icons::Icon::Bold, "Bold", bold) {
-            // Off returns to 400 rather than to inherit: a toggle that cleared
-            // the property would leave a run bold whenever its style was.
-            weight_change = Some(if bold { 400 } else { 700 });
-        }
-        let italic = shown.italic == Some(true);
-        if icon_button(ui, crate::icons::Icon::Italic, "Italic", italic) {
+        let mut size = f64::from(shown.size.unwrap_or(12.0));
+        let mut leading = f64::from(shown.line_height.unwrap_or(1.2));
+        let (size_changed, leading_changed) = ui.columns(2, |columns| {
+            (
+                text_field(&mut columns[0], Icon::TypeSize, "Size", |ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut size)
+                            .speed(0.25)
+                            .range(0.1..=2000.0)
+                            .suffix(" pt"),
+                    )
+                    .changed()
+                }),
+                text_field(&mut columns[1], Icon::LineSpacing, "Line height", |ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut leading)
+                            .speed(0.02)
+                            .range(0.5..=4.0)
+                            .suffix(" ×"),
+                    )
+                    .changed()
+                }),
+            )
+        });
+        if size_changed || leading_changed {
             set_character(
                 state,
                 story,
                 target.clone(),
                 CharacterFormat {
-                    // `Some(false)`, not `None`: `None` means inherit and would
-                    // leave the text italic when its style says so.
-                    italic: Some(!italic),
+                    size: size_changed.then_some(size as f32),
+                    line_height: leading_changed.then_some(leading as f32),
                     ..CharacterFormat::default()
                 },
             );
         }
-        // Underline and strikethrough, the same way. Off keeps the
-        // decoration's settings and states `on: false`, for the reason
-        // italic states `Some(false)`.
-        for (icon, name, strike) in [
-            (crate::icons::Icon::Underline, "Underline", false),
-            (crate::icons::Icon::Strikethrough, "Strikethrough", true),
-        ] {
-            let current = if strike {
-                &shown.strikethrough
-            } else {
-                &shown.underline
-            };
-            let on = current.as_ref().is_some_and(|d| d.on);
-            if icon_button(ui, icon, name, on) {
-                let mut decoration = current.clone().unwrap_or_default();
-                decoration.on = !on;
-                let mut format = CharacterFormat::default();
-                if strike {
-                    format.strikethrough = Some(decoration);
+        if !missing.is_empty() {
+            ui.colored_label(Theme::error(), format!("Missing: {}", missing.join(", ")));
+        }
+
+        // Text colour. Distinct from the frame's fill, which is the box behind the
+        // glyphs — setting that and expecting the letters to change is the mistake
+        // the two controls sitting apart is meant to prevent.
+        let shown_colour = shown.colour.clone().unwrap_or(Color::BLACK);
+        let [r, g, b, a] = shown_colour.to_rgb_f32();
+        let mut rgba = [r, g, b, a];
+        ui.horizontal_wrapped(|ui| {
+            let (spot, _) = ui.allocate_exact_size(Vec2::splat(Theme::ICON_SIZE), Sense::hover());
+            crate::icons::paint(
+                ui.painter(),
+                spot,
+                crate::icons::Icon::Palette,
+                Theme::text_muted(),
+            );
+            ui.label("Text colour");
+            if fill_picker(ui, &mut rgba) {
+                set_character(
+                    state,
+                    story,
+                    target.clone(),
+                    CharacterFormat {
+                        colour: Some(Color::Rgb {
+                            r: rgba[0],
+                            g: rgba[1],
+                            b: rgba[2],
+                            a: rgba[3],
+                        }),
+                        ..CharacterFormat::default()
+                    },
+                );
+            }
+        });
+
+        // Weight and slant on one row. Bold and Italic are toggles rather than a
+        // list, because that is how they are used: the numbered weights stay for
+        // the faces that have them, but the pair a person reaches for constantly
+        // should be one click and recognisable without reading.
+        let mut weight_change = None;
+        ui.label(egui::RichText::new("Font style").small());
+        let button_width = text_toggle_width(ui, "Underline");
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().interact_size.x = button_width;
+            let bold = shown.weight.is_some_and(|w| w >= 600);
+            if text_toggle(ui, Icon::Bold, "Bold", bold) {
+                // Off returns to 400 rather than to inherit: a toggle that cleared
+                // the property would leave a run bold whenever its style was.
+                weight_change = Some(if bold { 400 } else { 700 });
+            }
+            let italic = shown.italic == Some(true);
+            if text_toggle(ui, Icon::Italic, "Italic", italic) {
+                set_character(
+                    state,
+                    story,
+                    target.clone(),
+                    CharacterFormat {
+                        // `Some(false)`, not `None`: `None` means inherit and would
+                        // leave the text italic when its style says so.
+                        italic: Some(!italic),
+                        ..CharacterFormat::default()
+                    },
+                );
+            }
+            // Underline and strikethrough, the same way. Off keeps the
+            // decoration's settings and states `on: false`, for the reason
+            // italic states `Some(false)`.
+            for (icon, name, strike) in [
+                (crate::icons::Icon::Underline, "Underline", false),
+                (crate::icons::Icon::Strikethrough, "Strike", true),
+            ] {
+                let current = if strike {
+                    &shown.strikethrough
                 } else {
-                    format.underline = Some(decoration);
-                }
-                set_character(state, story, target.clone(), format);
-            }
-        }
-    });
-    field(ui, "Weight", |ui| {
-        let current = shown.weight.unwrap_or(400);
-        crate::icons::reads_as(
-            egui::ComboBox::from_id_salt("text-weight")
-                .width(ui.available_width())
-                .selected_text(match current {
-                    300 => "Light",
-                    400 => "Regular",
-                    500 => "Medium",
-                    600 => "Semibold",
-                    700 => "Bold",
-                    _ => "Custom",
-                })
-                .show_ui(ui, |ui| {
-                    for (label, weight) in [
-                        ("Light", 300),
-                        ("Regular", 400),
-                        ("Medium", 500),
-                        ("Semibold", 600),
-                        ("Bold", 700),
-                    ] {
-                        if ui.selectable_label(current == weight, label).clicked() {
-                            weight_change = Some(weight);
-                        }
+                    &shown.underline
+                };
+                let on = current.as_ref().is_some_and(|d| d.on);
+                if text_toggle(ui, icon, name, on) {
+                    let mut decoration = current.clone().unwrap_or_default();
+                    decoration.on = !on;
+                    let mut format = CharacterFormat::default();
+                    if strike {
+                        format.strikethrough = Some(decoration);
+                    } else {
+                        format.underline = Some(decoration);
                     }
-                })
-                .response,
-            "Font weight",
-            egui::WidgetType::ComboBox,
-            None,
-        );
-    });
-    if let Some(weight) = weight_change {
-        set_character(
-            state,
-            story,
-            target.clone(),
-            CharacterFormat {
-                weight: Some(weight),
-                ..CharacterFormat::default()
-            },
-        );
-    }
-
-    // --- the paragraph half
-
-    subheading(ui, crate::icons::Icon::Pilcrow, "Paragraph");
-
-    let mut alignment_change = None;
-    ui.horizontal_wrapped(|ui| {
-        ui.colored_label(Theme::text_muted(), "Align");
-        for (icon, name, alignment) in [
-            (crate::icons::Icon::TextAlignLeft, "Left", Alignment::Left),
-            (
-                crate::icons::Icon::TextAlignCentre,
-                "Centre",
-                Alignment::Centre,
-            ),
-            (
-                crate::icons::Icon::TextAlignRight,
-                "Right",
-                Alignment::Right,
-            ),
-            (
-                crate::icons::Icon::TextAlignJustify,
-                "Justify",
-                Alignment::Justify,
-            ),
-        ] {
-            if icon_button(ui, icon, name, paragraph.alignment == Some(alignment)) {
-                alignment_change = Some(alignment);
+                    set_character(state, story, target.clone(), format);
+                }
             }
+        });
+        text_field(ui, Icon::Bold, "Font weight", |ui| {
+            let current = shown.weight.unwrap_or(400);
+            crate::icons::reads_as(
+                egui::ComboBox::from_id_salt("text-weight")
+                    .width(ui.available_width())
+                    .selected_text(match current {
+                        300 => "Light",
+                        400 => "Regular",
+                        500 => "Medium",
+                        600 => "Semibold",
+                        700 => "Bold",
+                        _ => "Custom",
+                    })
+                    .show_ui(ui, |ui| {
+                        for (label, weight) in [
+                            ("Light", 300),
+                            ("Regular", 400),
+                            ("Medium", 500),
+                            ("Semibold", 600),
+                            ("Bold", 700),
+                        ] {
+                            if ui.selectable_label(current == weight, label).clicked() {
+                                weight_change = Some(weight);
+                            }
+                        }
+                    })
+                    .response,
+                "Font weight",
+                egui::WidgetType::ComboBox,
+                None,
+            );
+        });
+        if let Some(weight) = weight_change {
+            set_character(
+                state,
+                story,
+                target.clone(),
+                CharacterFormat {
+                    weight: Some(weight),
+                    ..CharacterFormat::default()
+                },
+            );
         }
     });
-    if let Some(alignment) = alignment_change {
-        set_paragraph(
-            state,
-            story,
-            target.clone(),
-            ParagraphFormat {
-                alignment: Some(alignment),
-                ..ParagraphFormat::default()
-            },
-        );
-    }
 
-    if section_heading(
-        ui,
-        state,
-        crate::icons::Icon::CaseSensitive,
-        "Advanced character",
-    ) {
-        // Tracking in thousandths of an em, the unit every type specimen uses.
-        if let Some(tracking) = optional_number(
+    text_card(ui, Icon::Pilcrow, "Paragraph", |ui| {
+        ui.label(egui::RichText::new("Alignment").small());
+        let button_width = text_toggle_width(ui, "Centre");
+
+        let mut alignment_change = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().interact_size.x = button_width;
+            for (icon, name, alignment) in [
+                (crate::icons::Icon::TextAlignLeft, "Left", Alignment::Left),
+                (
+                    crate::icons::Icon::TextAlignCentre,
+                    "Centre",
+                    Alignment::Centre,
+                ),
+                (
+                    crate::icons::Icon::TextAlignRight,
+                    "Right",
+                    Alignment::Right,
+                ),
+                (
+                    crate::icons::Icon::TextAlignJustify,
+                    "Justify",
+                    Alignment::Justify,
+                ),
+            ] {
+                if text_toggle(ui, icon, name, paragraph.alignment == Some(alignment)) {
+                    alignment_change = Some(alignment);
+                }
+            }
+        });
+        if let Some(alignment) = alignment_change {
+            set_paragraph(
+                state,
+                story,
+                target.clone(),
+                ParagraphFormat {
+                    alignment: Some(alignment),
+                    ..ParagraphFormat::default()
+                },
+            );
+        }
+
+        subheading(ui, Icon::Indent, "Indents");
+        let (left, right) = pair(
             ui,
-            "Tracking",
-            Some(shown.tracking.unwrap_or(0.0)),
-            1.0,
-            -200.0..=800.0,
-            "/1000 em",
-        ) {
+            ("Left", |ui: &mut Ui| {
+                optional_number_bare(
+                    ui,
+                    Some(paragraph.indent_left.unwrap_or(0.0)),
+                    0.25,
+                    0.0..=1440.0,
+                    " pt",
+                )
+            }),
+            ("Right", |ui: &mut Ui| {
+                optional_number_bare(
+                    ui,
+                    Some(paragraph.indent_right.unwrap_or(0.0)),
+                    0.25,
+                    0.0..=1440.0,
+                    " pt",
+                )
+            }),
+        );
+        let first = text_field(ui, Icon::Indent, "First line", |ui| {
+            optional_number_bare(
+                ui,
+                Some(paragraph.indent_first.unwrap_or(0.0)),
+                0.25,
+                -1440.0..=1440.0,
+                " pt",
+            )
+        });
+        subheading(ui, Icon::ParagraphSpacing, "Paragraph spacing");
+        let (before, after) = pair(
+            ui,
+            ("Before", |ui: &mut Ui| {
+                optional_number_bare(
+                    ui,
+                    Some(paragraph.space_before.unwrap_or(0.0)),
+                    0.25,
+                    0.0..=1440.0,
+                    " pt",
+                )
+            }),
+            ("After", |ui: &mut Ui| {
+                optional_number_bare(
+                    ui,
+                    Some(paragraph.space_after.unwrap_or(0.0)),
+                    0.25,
+                    -720.0..=720.0,
+                    " pt",
+                )
+            }),
+        );
+        if left.is_some()
+            || right.is_some()
+            || first.is_some()
+            || before.is_some()
+            || after.is_some()
+        {
+            set_paragraph(
+                state,
+                story,
+                target.clone(),
+                ParagraphFormat {
+                    indent_left: left,
+                    indent_right: right,
+                    indent_first: first,
+                    space_before: before,
+                    space_after: after,
+                    ..ParagraphFormat::default()
+                },
+            );
+        }
+    });
+
+    if text_disclosure(ui, state, Icon::LetterSpacing, "Character options") {
+        // Tracking in thousandths of an em, the unit every type specimen uses.
+        if let Some(tracking) = text_field(ui, Icon::LetterSpacing, "Tracking", |ui| {
+            optional_number_bare(
+                ui,
+                Some(shown.tracking.unwrap_or(0.0)),
+                1.0,
+                -200.0..=800.0,
+                " /1000 em",
+            )
+        }) {
             set_character(
                 state,
                 story,
@@ -3635,35 +3886,34 @@ fn text_section(
         // Case. A display transform, not an edit: the story keeps what was typed,
         // so turning All Caps off gives back the original capitals rather than a
         // sentence that has forgotten where they were.
-        let mut case_change = None;
-        ui.horizontal_wrapped(|ui| {
-            ui.colored_label(Theme::text_muted(), "Case");
-            for (label, case, hint) in [
-                ("aa", Case::Normal, "As typed"),
-                ("AA", Case::Upper, "All capitals"),
-                ("Aa", Case::SmallCaps, "Small capitals"),
-                ("aa\u{0332}", Case::Lower, "All lower case"),
-            ] {
-                if ui
-                    .selectable_label(shown.case == Some(case), label)
-                    .on_hover_text(hint)
-                    .clicked()
-                {
-                    case_change = Some(case);
-                }
-            }
+        text_field(ui, Icon::CaseSensitive, "Letter case", |ui| {
+            let current = shown.case.unwrap_or(Case::Normal);
+            let choices = [
+                (Case::Normal, "As typed"),
+                (Case::Upper, "Uppercase"),
+                (Case::SmallCaps, "Small caps"),
+                (Case::Lower, "Lowercase"),
+            ];
+            egui::ComboBox::from_id_salt("text-case")
+                .width(ui.available_width())
+                .selected_text(choices.iter().find(|(case, _)| *case == current).unwrap().1)
+                .show_ui(ui, |ui| {
+                    for (case, label) in choices {
+                        if ui.selectable_label(current == case, label).clicked() && current != case
+                        {
+                            set_character(
+                                state,
+                                story,
+                                target.clone(),
+                                CharacterFormat {
+                                    case: Some(case),
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                    }
+                });
         });
-        if let Some(case) = case_change {
-            set_character(
-                state,
-                story,
-                target.clone(),
-                CharacterFormat {
-                    case: Some(case),
-                    ..CharacterFormat::default()
-                },
-            );
-        }
 
         // The kern at the caret: between the character before it and the one
         // after. Only with a caret and not a selection, because a kern is about
@@ -3690,7 +3940,7 @@ fn text_section(
         // The language: what the hyphenation patterns are chosen by, and what
         // the font is told. A choice, not a toggle, so it states `Some` always;
         // the document default is English.
-        field(ui, "Language", |ui| {
+        text_field(ui, Icon::Text, "Language", |ui| {
             use tessera_text::story::LANGUAGES;
             let current = shown.language.as_deref().unwrap_or("en");
             let name = LANGUAGES
@@ -3699,6 +3949,7 @@ fn text_section(
                 .map_or(current, |(_, name)| *name);
             let mut chosen = None;
             egui::ComboBox::from_id_salt("text-language")
+                .width(ui.available_width())
                 .selected_text(name)
                 .show_ui(ui, |ui| {
                     for (code, name) in LANGUAGES {
@@ -3722,40 +3973,63 @@ fn text_section(
             }
         });
 
+        // Baseline shift: a superscript sits above the line it belongs to without
+        // making that line taller.
+        if let Some(shift) = text_field(ui, Icon::BaselineShift, "Baseline shift", |ui| {
+            optional_number_bare(
+                ui,
+                Some(shown.baseline_shift.unwrap_or(0.0)),
+                0.25,
+                -200.0..=200.0,
+                " pt",
+            )
+        }) {
+            set_character(
+                state,
+                story,
+                target.clone(),
+                CharacterFormat {
+                    baseline_shift: Some(shift),
+                    ..CharacterFormat::default()
+                },
+            );
+        }
+    }
+
+    if text_disclosure(ui, state, Icon::OpenType, "OpenType features") {
         // OpenType features. Each row states `Some(..)` either way, for the
         // reason italic does: `None` would inherit, and off has to mean off.
         // What a font lacks it ignores, so a control here can never make text
         // disappear — it can only fail to change it.
-        group_label(ui, "Features");
+        crate::view::panel_ui::hint(ui, "Availability depends on the selected font.");
         let mut feature_change: Option<CharacterFormat> = None;
         ui.horizontal_wrapped(|ui| {
-            ui.colored_label(Theme::text_muted(), "Ligatures");
-            let common = shown.ligatures != Some(false);
+            let mut common = shown.ligatures != Some(false);
             if ui
-                .selectable_label(common, "Common")
+                .checkbox(&mut common, "Common ligatures")
                 .on_hover_text("fi, fl and the others the font sets by default")
                 .clicked()
             {
                 feature_change = Some(CharacterFormat {
-                    ligatures: Some(!common),
+                    ligatures: Some(common),
                     ..CharacterFormat::default()
                 });
             }
-            let discretionary = shown.discretionary_ligatures == Some(true);
+            let mut discretionary = shown.discretionary_ligatures == Some(true);
             if ui
-                .selectable_label(discretionary, "Discretionary")
+                .checkbox(&mut discretionary, "Discretionary ligatures")
                 .on_hover_text("The decorative ones: st, ct, Th")
                 .clicked()
             {
                 feature_change = Some(CharacterFormat {
-                    discretionary_ligatures: Some(!discretionary),
+                    discretionary_ligatures: Some(discretionary),
                     ..CharacterFormat::default()
                 });
             }
         });
         ui.horizontal_wrapped(|ui| {
-            use tessera_text::story::{FigureCase, FigureWidth};
-            ui.colored_label(Theme::text_muted(), "Figures");
+            use tessera_text::story::FigureCase;
+            ui.colored_label(Theme::text_muted(), "Number style");
             for (label, case, hint) in [
                 ("Lining", FigureCase::Lining, "As tall as capitals"),
                 (
@@ -3775,7 +4049,10 @@ fn text_section(
                     });
                 }
             }
-            ui.separator();
+        });
+        ui.horizontal_wrapped(|ui| {
+            use tessera_text::story::FigureWidth;
+            ui.colored_label(Theme::text_muted(), "Number width");
             for (label, width, hint) in [
                 (
                     "Proportional",
@@ -3801,18 +4078,20 @@ fn text_section(
             }
         });
         ui.horizontal_wrapped(|ui| {
-            let fractions = shown.fractions == Some(true);
+            let mut fractions = shown.fractions == Some(true);
             if ui
-                .selectable_label(fractions, "Fractions")
+                .checkbox(&mut fractions, "Fractions")
                 .on_hover_text("1/2 set as a fraction, where the font can")
                 .clicked()
             {
                 feature_change = Some(CharacterFormat {
-                    fractions: Some(!fractions),
+                    fractions: Some(fractions),
                     ..CharacterFormat::default()
                 });
             }
-            ui.colored_label(Theme::text_muted(), "Sets");
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.colored_label(Theme::text_muted(), "Stylistic sets");
             let mut sets = shown
                 .stylistic_sets
                 .as_ref()
@@ -3839,30 +4118,9 @@ fn text_section(
         if let Some(format) = feature_change {
             set_character(state, story, target.clone(), format);
         }
-
-        // Baseline shift: a superscript sits above the line it belongs to without
-        // making that line taller.
-        if let Some(shift) = optional_number(
-            ui,
-            "Baseline",
-            Some(shown.baseline_shift.unwrap_or(0.0)),
-            0.25,
-            -200.0..=200.0,
-            " pt",
-        ) {
-            set_character(
-                state,
-                story,
-                target.clone(),
-                CharacterFormat {
-                    baseline_shift: Some(shift),
-                    ..CharacterFormat::default()
-                },
-            );
-        }
     }
 
-    if section_heading(ui, state, crate::icons::Icon::Pilcrow, "Advanced paragraph") {
+    if text_disclosure(ui, state, Icon::DropCap, "Drop caps") {
         // Drop cap. Zero lines is no drop cap, which is why the row reads as a
         // count rather than as a switch with a count beside it.
         if let Some(lines) = optional_number(
@@ -3903,14 +4161,14 @@ fn text_section(
                 },
             );
         }
-
+    }
+    if text_disclosure(ui, state, Icon::LineSpacing, "Line breaking") {
         // Hyphenation. English only for now: `hypher` holds its patterns per
         // language and a story has no language to pick one with.
-        let hyphenating = paragraph.hyphenate == Some(true);
+        let mut hyphenating = paragraph.hyphenate == Some(true);
         ui.horizontal_wrapped(|ui| {
-            ui.colored_label(Theme::text_muted(), "Hyphenate");
             if ui
-                .selectable_label(hyphenating, "Break words")
+                .checkbox(&mut hyphenating, "Hyphenate words")
                 .on_hover_text("English patterns")
                 .clicked()
             {
@@ -3921,7 +4179,7 @@ fn text_section(
                     ParagraphFormat {
                         // `Some(false)`, not `None`: `None` means inherit, and a
                         // toggle built on it could never turn anything off.
-                        hyphenate: Some(!hyphenating),
+                        hyphenate: Some(hyphenating),
                         ..ParagraphFormat::default()
                     },
                 );
@@ -3965,7 +4223,22 @@ fn text_section(
                 }
             });
         }
-
+        if paragraph.hyphenate == Some(true) {
+            let mut hyphenation = paragraph.hyphenation;
+            if hyphenation_editor(ui, &mut hyphenation, false) {
+                set_paragraph(
+                    state,
+                    story,
+                    target.clone(),
+                    ParagraphFormat {
+                        hyphenation: Some(hyphenation.unwrap_or_default()),
+                        ..ParagraphFormat::default()
+                    },
+                );
+            }
+        }
+    }
+    if text_disclosure(ui, state, Icon::TabStop, "Tabs") {
         // Tab stops. Edited as a whole: the list is one value in the cascade,
         // so a change to any stop writes the whole list back.
         let mut stops = paragraph.tab_stops.clone();
@@ -3982,7 +4255,8 @@ fn text_section(
                 },
             );
         }
-
+    }
+    if text_disclosure(ui, state, Icon::Line, "Paragraph rules") {
         // Paragraph rules. Each is one value in the cascade, written whole.
         for (label, above) in [("Rule above", true), ("Rule below", false)] {
             let mut rule = if above {
@@ -4006,7 +4280,8 @@ fn text_section(
                 set_paragraph(state, story, target.clone(), format);
             }
         }
-
+    }
+    if text_disclosure(ui, state, Icon::List, "Bullets and numbering") {
         // List: one value, written whole. "Hang" is a convenience over the
         // indents below — an item whose turnover lines up under its text is what
         // nearly every list wants, and setting two indents by hand to get it is
@@ -4040,7 +4315,8 @@ fn text_section(
                 },
             );
         }
-
+    }
+    if text_disclosure(ui, state, Icon::TextAlignJustify, "Justification") {
         // Justification and hyphenation settings: each one value, written whole.
         let mut justification = paragraph.justification;
         if justification_editor(ui, &mut justification, false) {
@@ -4054,21 +4330,9 @@ fn text_section(
                 },
             );
         }
-        if paragraph.hyphenate == Some(true) {
-            let mut hyphenation = paragraph.hyphenation;
-            if hyphenation_editor(ui, &mut hyphenation, false) {
-                set_paragraph(
-                    state,
-                    story,
-                    target.clone(),
-                    ParagraphFormat {
-                        hyphenation: Some(hyphenation.unwrap_or_default()),
-                        ..ParagraphFormat::default()
-                    },
-                );
-            }
-        }
+    }
 
+    if text_disclosure(ui, state, Icon::Link2, "Keep options") {
         // Keep options: one value, written whole.
         let mut keep = paragraph.keep;
         if keep_options_editor(ui, &mut keep, false) {
@@ -4084,85 +4348,8 @@ fn text_section(
                 },
             );
         }
-
-        /// Which field of a `ParagraphFormat` a row writes.
-        type Set = fn(&mut ParagraphFormat, f32);
-
-        // Paired by meaning: an indent against the opposite indent, a space
-        // before against the space after. Five rows in a column said nothing about
-        // which of them belong together.
-        group_label(ui, "Indents");
-        /// Two paragraph measurements shown side by side: their labels, what they
-        /// currently read, and where each writes back to.
-        struct Paired(
-            &'static str,
-            &'static str,
-            Option<f32>,
-            Option<f32>,
-            Set,
-            Set,
-        );
-
-        let indents = [
-            Paired(
-                "Left",
-                "Right",
-                paragraph.indent_left,
-                paragraph.indent_right,
-                |f: &mut ParagraphFormat, v| f.indent_left = Some(v),
-                |f: &mut ParagraphFormat, v| f.indent_right = Some(v),
-            ),
-            Paired(
-                "First",
-                "Before",
-                paragraph.indent_first,
-                paragraph.space_before,
-                |f: &mut ParagraphFormat, v| f.indent_first = Some(v),
-                |f: &mut ParagraphFormat, v| f.space_before = Some(v),
-            ),
-        ];
-        for Paired(la, lb, ra, rb, sa, sb) in indents {
-            let (a, b) = pair(
-                ui,
-                (la, |ui: &mut Ui| {
-                    optional_number_bare(ui, Some(ra.unwrap_or(0.0)), 0.25, 0.0..=1440.0, " pt")
-                }),
-                (lb, |ui: &mut Ui| {
-                    optional_number_bare(ui, Some(rb.unwrap_or(0.0)), 0.25, 0.0..=1440.0, " pt")
-                }),
-            );
-            for (value, set) in [(a, sa), (b, sb)] {
-                if let Some(value) = value {
-                    let mut format = ParagraphFormat::default();
-                    set(&mut format, value);
-                    set_paragraph(state, story, target.clone(), format);
-                }
-            }
-        }
-
-        for (label, read, set) in [(
-            "Space after",
-            paragraph.space_after,
-            (|f: &mut ParagraphFormat, v| f.space_after = Some(v)) as Set,
-        )] {
-            // Shown as 0 rather than blank: an indent nobody has set is not
-            // ambiguous, it is zero.
-            let Some(value) = optional_number(
-                ui,
-                label,
-                Some(read.unwrap_or(0.0)),
-                0.25,
-                -720.0..=720.0,
-                " pt",
-            ) else {
-                continue;
-            };
-            let mut format = ParagraphFormat::default();
-            set(&mut format, value);
-            set_paragraph(state, story, target.clone(), format);
-        }
     }
-    if section_heading(
+    if text_disclosure(
         ui,
         state,
         crate::icons::Icon::TextFrame,
@@ -4170,7 +4357,7 @@ fn text_section(
     ) {
         text_frame_controls(ui, state, id, frame);
     }
-    if section_heading(ui, state, crate::icons::Icon::Styles, "Text styles") {
+    if text_disclosure(ui, state, crate::icons::Icon::Styles, "Text styles") {
         style_rows(ui, state, story, target);
     }
 }
@@ -4186,37 +4373,43 @@ fn family_picker(
     shown: Option<&str>,
     missing: &[String],
 ) -> Option<String> {
-    let mut chosen = None;
-    field(ui, "Family", |ui| {
-        let label = shown.unwrap_or("Mixed");
-        crate::icons::reads_as(
-            egui::ComboBox::from_id_salt("family")
-                .width(ui.available_width().min(220.0))
-                .selected_text(label)
-                .show_ui(ui, |ui| {
-                    for family in state.shaper.families() {
-                        if ui
-                            .selectable_label(shown == Some(family.as_str()), family)
-                            .clicked()
-                        {
-                            chosen = Some(family.clone());
-                        }
-                    }
-                })
-                .response,
-            "Family",
-            egui::WidgetType::ComboBox,
-            None,
-        );
-    });
-
+    let chosen = field(ui, "Family", |ui| family_menu(ui, state, shown, 220.0));
     for family in missing {
         ui.colored_label(
             Theme::error(),
             format!("{family} is not installed — a substitute is shown"),
         );
     }
+    chosen
+}
 
+fn family_menu(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    shown: Option<&str>,
+    max_width: f32,
+) -> Option<String> {
+    let mut chosen = None;
+    let label = shown.unwrap_or("Mixed");
+    crate::icons::reads_as(
+        egui::ComboBox::from_id_salt("family")
+            .width(ui.available_width().min(max_width))
+            .selected_text(label)
+            .show_ui(ui, |ui| {
+                for family in state.shaper.families() {
+                    if ui
+                        .selectable_label(shown == Some(family.as_str()), family)
+                        .clicked()
+                    {
+                        chosen = Some(family.clone());
+                    }
+                }
+            })
+            .response,
+        "Family",
+        egui::WidgetType::ComboBox,
+        None,
+    );
     chosen
 }
 
@@ -4851,14 +5044,15 @@ fn style_rows(ui: &mut Ui, state: &mut TesseraApp, story: StoryId, target: std::
 
     let mut attach_paragraph = None;
     let mut define_paragraph = false;
+    text_label(ui, crate::icons::Icon::Pilcrow, "Paragraph style");
     ui.horizontal(|ui| {
-        ui.colored_label(Theme::text_muted(), "Paragraph style");
         let label = paragraph_style
             .and_then(|id| paragraphs.iter().find(|(p, _)| *p == id))
             .map_or("None", |(_, name)| name.as_str())
             .to_string();
         crate::icons::reads_as(
             egui::ComboBox::from_id_salt("paragraph-style")
+                .width((ui.available_width() - 24.0 - ui.spacing().item_spacing.x).max(0.0))
                 .selected_text(label)
                 .show_ui(ui, |ui| {
                     if ui
@@ -4918,14 +5112,15 @@ fn style_rows(ui: &mut Ui, state: &mut TesseraApp, story: StoryId, target: std::
 
     let mut attach_character = None;
     let mut define_character = false;
+    text_label(ui, crate::icons::Icon::CaseSensitive, "Character style");
     ui.horizontal(|ui| {
-        ui.colored_label(Theme::text_muted(), "Character style");
         let label = character_style
             .and_then(|id| characters.iter().find(|(c, _)| *c == id))
             .map_or("None", |(_, name)| name.as_str())
             .to_string();
         crate::icons::reads_as(
             egui::ComboBox::from_id_salt("character-style")
+                .width((ui.available_width() - 24.0 - ui.spacing().item_spacing.x).max(0.0))
                 .selected_text(label)
                 .show_ui(ui, |ui| {
                     if ui
@@ -5497,6 +5692,116 @@ mod tests {
                         ui.min_rect()
                     );
                 });
+            }
+        }
+    }
+
+    #[test]
+    fn expanded_text_properties_fit_a_narrow_dock() {
+        for width in [176.0, 208.0, 256.0, 288.0] {
+            let ctx = egui::Context::default();
+            crate::theme::apply(&ctx);
+            let (mut state, id, story) = a_text_frame("A heading");
+            state.sections = crate::app::Sections::default();
+            for title in [
+                "Character options",
+                "OpenType features",
+                "Drop caps",
+                "Line breaking",
+                "Tabs",
+                "Paragraph rules",
+                "Bullets and numbering",
+                "Justification",
+                "Keep options",
+                "Text frame layout",
+                "Text styles",
+            ] {
+                state.sections.set_open(title, true);
+            }
+            set_paragraph(
+                &mut state,
+                story,
+                0..9,
+                ParagraphFormat {
+                    tab_stops: Some(vec![tessera_text::story::TabStop::at(36.0)]),
+                    hyphenate: Some(true),
+                    list: Some(ListFormat {
+                        kind: ListKind::Number,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            );
+            let frame = state.active().document().frame(id).unwrap().clone();
+            for _ in 0..2 {
+                let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    ui.set_width(width);
+                    let left = ui.cursor().left();
+                    text_section(ui, &mut state, id, &frame);
+                    assert!(
+                        ui.min_rect().right() <= left + width + 1.0,
+                        "expanded text properties overflow {width}: {:?}",
+                        ui.min_rect()
+                    );
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn labelled_text_controls_apply_and_remove_formatting() {
+        for label in ["Bold", "Common ligatures", "Hyphenate words"] {
+            let ctx = egui::Context::default();
+            crate::theme::apply(&ctx);
+            ctx.enable_accesskit();
+            let (mut state, id, story) = a_text_frame("A heading");
+            state.sections.set_open("OpenType features", true);
+            state.sections.set_open("Line breaking", true);
+            let frame = state.active().document().frame(id).unwrap().clone();
+            let raw = || egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(288.0, 5000.0),
+                )),
+                ..Default::default()
+            };
+            let output = ctx.run_ui(raw(), |ui| text_section(ui, &mut state, id, &frame));
+            let tree = output.platform_output.accesskit_update.unwrap();
+            let bounds = tree
+                .nodes
+                .iter()
+                .find(|(_, node)| node.label() == Some(label))
+                .and_then(|(_, node)| node.bounds())
+                .expect("the control has a named hit target");
+            let pos = egui::pos2(
+                ((bounds.x0 + bounds.x1) / 2.0) as f32,
+                ((bounds.y0 + bounds.y1) / 2.0) as f32,
+            );
+            for enabled in [true, false] {
+                for pressed in [true, false] {
+                    let mut input = raw();
+                    input.events = vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ];
+                    let _ = ctx.run_ui(input, |ui| text_section(ui, &mut state, id, &frame));
+                }
+                let doc = state.active().document();
+                let text = doc.story(story).unwrap();
+                let character = text.common_format(0..9, doc);
+                match label {
+                    "Bold" => assert_eq!(character.weight, Some(if enabled { 700 } else { 400 })),
+                    "Common ligatures" => assert_eq!(character.ligatures, Some(!enabled)),
+                    "Hyphenate words" => {
+                        assert_eq!(text.common_paragraph_format(0..9).hyphenate, Some(enabled))
+                    }
+                    _ => unreachable!(),
+                }
             }
         }
     }
