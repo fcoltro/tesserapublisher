@@ -491,6 +491,10 @@ impl Theme {
     pub const TOOL_SIZE: f32 = 32.0;
     /// Shared icon grid size, independent of the surrounding click target.
     pub const ICON_SIZE: f32 = 18.0;
+    /// A glyph standing in for a field's caption. Smaller than a button's
+    /// icon: it sits beside a number at the body size and must not outweigh
+    /// it.
+    pub const FIELD_GLYPH_SIZE: f32 = 14.0;
     /// Side of a selection handle.
     pub const HANDLE_SIZE: f32 = 7.0;
 

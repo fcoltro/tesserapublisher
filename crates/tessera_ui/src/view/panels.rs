@@ -2973,15 +2973,42 @@ impl<'a> From<(crate::icons::Icon, &'a str)> for FieldLabel<'a> {
 }
 
 impl FieldLabel<'_> {
-    fn show(self, ui: &mut Ui) {
+    /// Lay the label and the field out together.
+    ///
+    /// A word sits on its own line above the field, because a word beside a
+    /// field leaves the field no width. A glyph sits on the field's line at
+    /// its left, InDesign's row, and the word becomes the glyph's tooltip
+    /// and its accessible name — half the height, and the eye finds the
+    /// glyph without reading.
+    fn field<R>(self, ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
         match self {
             Self::Word(word) => {
-                ui.add(
-                    egui::Label::new(egui::RichText::new(word).small().color(Theme::text_muted()))
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = Theme::space_1();
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(word).small().color(Theme::text_muted()),
+                        )
                         .wrap(),
-                );
+                    );
+                    ui.spacing_mut().interact_size.x = ui.available_width().min(WIDEST_ROW);
+                    add(ui)
+                })
+                .inner
             }
-            Self::Glyph(icon, word) => text_label(ui, icon, word),
+            Self::Glyph(icon, word) => {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = Theme::space_1();
+                    let (rect, response) = ui
+                        .allocate_exact_size(Vec2::splat(Theme::FIELD_GLYPH_SIZE), Sense::hover());
+                    crate::icons::paint(ui.painter(), rect, icon, Theme::text_muted());
+                    crate::icons::reads_as(response, word, egui::WidgetType::Label, None)
+                        .on_hover_text(word);
+                    ui.spacing_mut().interact_size.x = ui.available_width().min(WIDEST_ROW);
+                    add(ui)
+                })
+                .inner
+            }
         }
     }
 }
@@ -2991,13 +3018,7 @@ fn property_field<'a, R>(
     label: impl Into<FieldLabel<'a>>,
     add: impl FnOnce(&mut Ui) -> R,
 ) -> R {
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = Theme::space_1();
-        label.into().show(ui);
-        ui.spacing_mut().interact_size.x = ui.available_width().min(WIDEST_ROW);
-        add(ui)
-    })
-    .inner
+    label.into().field(ui, add)
 }
 
 fn property_slider<'a, R>(
@@ -3207,7 +3228,7 @@ fn icon_choices<T: PartialEq + Copy>(
             for (column, (icon, name, hint, candidate)) in columns.iter_mut().zip(options) {
                 let selected = *value == *candidate;
                 let (rect, response) = column.allocate_exact_size(
-                    Vec2::new(column.available_width(), Theme::row() + Theme::space_1()),
+                    Vec2::new(column.available_width(), Theme::row()),
                     Sense::click(),
                 );
                 let painter = column.painter_at(rect);
@@ -3239,7 +3260,7 @@ fn icon_choices<T: PartialEq + Copy>(
                 );
                 let glyph = egui::Rect::from_center_size(
                     rect.center(),
-                    Vec2::splat(Theme::control_height().min(rect.width())),
+                    Vec2::splat(Theme::ICON_SIZE.min(rect.width())),
                 );
                 crate::icons::paint_rotated(
                     &painter,
@@ -3441,9 +3462,7 @@ pub(crate) fn pair<'a, A, B>(
     second: (impl Into<FieldLabel<'a>>, impl FnOnce(&mut Ui) -> B),
 ) -> (A, B) {
     fn cell<R>(ui: &mut Ui, label: FieldLabel<'_>, add: impl FnOnce(&mut Ui) -> R) -> R {
-        label.show(ui);
-        ui.spacing_mut().interact_size.x = ui.available_width().min(WIDEST_ROW);
-        add(ui)
+        label.field(ui, add)
     }
     ui.columns(2, |columns| {
         (
