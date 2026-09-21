@@ -117,6 +117,30 @@ pub enum Icon {
     StrokeSolid,
     StrokeDashed,
     StrokeDotted,
+    // Field glyphs: each stands beside a number and says what the number is.
+    ScaleX,
+    ScaleY,
+    Shear,
+    Angle,
+    IndentLeft,
+    IndentRight,
+    SpaceBefore,
+    SpaceAfter,
+    CornerRadius,
+    CornerTopLeft,
+    CornerTopRight,
+    CornerBottomLeft,
+    CornerBottomRight,
+    Opacity,
+    Blur,
+    PagePortrait,
+    PageLandscape,
+    Columns,
+    Gutter,
+    WrapNone,
+    WrapBounds,
+    WrapContour,
+    WrapJump,
     Plus,
     Duplicate,
     PlaceImage,
@@ -516,6 +540,70 @@ impl Icon {
                 "M15 12 A1 1 0 1 1 13 12 A1 1 0 1 1 15 12 Z",
                 "M20 12 A1 1 0 1 1 18 12 A1 1 0 1 1 20 12 Z",
             ],
+            // Tessera: field glyphs. A box with the arrow of the axis it scales
+            // on; a leaning box for shear; two rays and an arc for an angle.
+            Self::ScaleX => &[
+                "M3 5 H21 V19 H3 Z",
+                "M7 12 H17 M10 9 L7 12 L10 15 M14 9 L17 12 L14 15",
+            ],
+            Self::ScaleY => &[
+                "M3 5 H21 V19 H3 Z",
+                "M12 7 V17 M9 10 L12 7 L15 10 M9 14 L12 17 L15 14",
+            ],
+            Self::Shear => &["M8 5 H21 L16 19 H3 Z"],
+            Self::Angle => &["M4 20 H21 M4 20 L17 6", "M13 20 A9 9 0 0 0 10.1 13.4"],
+            // Lines of text with the arrow on the side that moves; the first
+            // and last lines stay put so the indent reads against them.
+            Self::IndentLeft => &[
+                "M3 4 H21 M11 9 H21 M11 14 H21 M3 19 H21",
+                "M4 12 H8 M6 10 L8 12 L6 14",
+            ],
+            Self::IndentRight => &[
+                "M3 4 H21 M3 9 H13 M3 14 H13 M3 19 H21",
+                "M20 12 H16 M18 10 L16 12 L18 14",
+            ],
+            // Lines of text with an arrow arriving from the side the space is on.
+            Self::SpaceBefore => &["M3 12 H21 M3 16 H18 M3 20 H21", "M12 3 V9 M9 6 L12 9 L15 6"],
+            Self::SpaceAfter => &[
+                "M3 4 H21 M3 8 H18 M3 12 H21",
+                "M12 21 V15 M9 18 L12 15 L15 18",
+            ],
+            Self::CornerRadius => &["M4 20 V12 A8 8 0 0 1 12 4 H20"],
+            // A square with the one corner in question rounded.
+            Self::CornerTopLeft => &["M4 20 V10 A6 6 0 0 1 10 4 H20 V20 Z"],
+            Self::CornerTopRight => &["M4 4 H14 A6 6 0 0 1 20 10 V20 H4 Z"],
+            Self::CornerBottomLeft => &["M4 4 H20 V20 H10 A6 6 0 0 1 4 14 Z"],
+            Self::CornerBottomRight => &["M4 4 H20 V14 A6 6 0 0 1 14 20 H4 Z"],
+            // A disc half solid and half hatched; a disc with a soft edge.
+            Self::Opacity => &[
+                "M12 3 A9 9 0 1 1 12 21 A9 9 0 1 1 12 3 Z",
+                "M12 3 V21",
+                "M12 8 H16.5 M12 12 H20 M12 16 H16.5",
+            ],
+            Self::Blur => &[
+                "M12 5 A7 7 0 1 1 12 19 A7 7 0 1 1 12 5 Z",
+                "M12 2 V3 M12 21 V22 M2 12 H3 M21 12 H22",
+                "M4.9 4.9 L5.6 5.6 M18.4 18.4 L19.1 19.1 M4.9 19.1 L5.6 18.4 M18.4 5.6 L19.1 4.9",
+            ],
+            Self::PagePortrait => &["M6 3 H18 V21 H6 Z"],
+            Self::PageLandscape => &["M3 6 H21 V18 H3 Z"],
+            Self::Columns => &["M3 5 H21 V19 H3 Z", "M12 5 V19"],
+            Self::Gutter => &["M3 5 H9 V19 H3 Z M15 5 H21 V19 H15 Z", "M10 12 H14"],
+            // Lines of text and the object they meet: through it, stopping at
+            // its box, stopping at its shape, or skipping the whole band.
+            Self::WrapNone => &[
+                "M3 5 H21 M3 10 H21 M3 14 H21 M3 19 H21",
+                "M8 8 H16 V16 H8 Z",
+            ],
+            Self::WrapBounds => &[
+                "M3 5 H21 M3 10 H6 M18 10 H21 M3 14 H6 M18 14 H21 M3 19 H21",
+                "M8 8 H16 V16 H8 Z",
+            ],
+            Self::WrapContour => &[
+                "M3 5 H21 M3 10 H6.5 M17.5 10 H21 M3 14 H6.5 M17.5 14 H21 M3 19 H21",
+                "M12 8 A4 4 0 1 1 12 16 A4 4 0 1 1 12 8 Z",
+            ],
+            Self::WrapJump => &["M3 5 H21 M3 19 H21", "M8 8 H16 V16 H8 Z"],
             // lucide: a-large-small
             Self::TypeSize => &[
                 "m15 16 2.536-7.328a1.02 1.02 1 0 1 1.928 0L22 16",
@@ -691,6 +779,29 @@ impl Icon {
             | Self::StrokeSolid
             | Self::StrokeDashed
             | Self::StrokeDotted
+            | Self::ScaleX
+            | Self::ScaleY
+            | Self::Shear
+            | Self::Angle
+            | Self::IndentLeft
+            | Self::IndentRight
+            | Self::SpaceBefore
+            | Self::SpaceAfter
+            | Self::CornerRadius
+            | Self::CornerTopLeft
+            | Self::CornerTopRight
+            | Self::CornerBottomLeft
+            | Self::CornerBottomRight
+            | Self::Opacity
+            | Self::Blur
+            | Self::PagePortrait
+            | Self::PageLandscape
+            | Self::Columns
+            | Self::Gutter
+            | Self::WrapNone
+            | Self::WrapBounds
+            | Self::WrapContour
+            | Self::WrapJump
             | Self::Plus
             | Self::Duplicate
             | Self::PlaceImage
@@ -1028,7 +1139,7 @@ pub fn rotated_shapes(
 /// icon rather than returning nothing, so the cost of forgetting is a slower
 /// first draw instead of an invisible button; this list is the fast path, not
 /// the only one.
-pub const ALL: [Icon; 89] = [
+pub const ALL: [Icon; 112] = [
     Icon::Sun,
     Icon::Moon,
     Icon::DirectSelect,
@@ -1100,6 +1211,29 @@ pub const ALL: [Icon; 89] = [
     Icon::StrokeSolid,
     Icon::StrokeDashed,
     Icon::StrokeDotted,
+    Icon::ScaleX,
+    Icon::ScaleY,
+    Icon::Shear,
+    Icon::Angle,
+    Icon::IndentLeft,
+    Icon::IndentRight,
+    Icon::SpaceBefore,
+    Icon::SpaceAfter,
+    Icon::CornerRadius,
+    Icon::CornerTopLeft,
+    Icon::CornerTopRight,
+    Icon::CornerBottomLeft,
+    Icon::CornerBottomRight,
+    Icon::Opacity,
+    Icon::Blur,
+    Icon::PagePortrait,
+    Icon::PageLandscape,
+    Icon::Columns,
+    Icon::Gutter,
+    Icon::WrapNone,
+    Icon::WrapBounds,
+    Icon::WrapContour,
+    Icon::WrapJump,
     Icon::Plus,
     Icon::Duplicate,
     Icon::Trash,
@@ -1297,7 +1431,7 @@ mod tests {
         // fails this rather than shipping an invisible button.
         assert_eq!(
             ALL.len(),
-            89,
+            112,
             "an icon was added to the enum without being added to ALL"
         );
     }

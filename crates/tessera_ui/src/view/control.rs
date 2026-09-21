@@ -184,6 +184,17 @@ pub fn label(ui: &mut Ui, text: &str) {
     );
 }
 
+/// A glyph naming the field after it, where the row has no room for a word.
+///
+/// The name is the tooltip and what a screen reader hears; the bar is one
+/// line high and a caption beside a glyph would be a second column of text.
+pub fn glyph(ui: &mut Ui, icon: crate::icons::Icon, name: &str) {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::Vec2::splat(Theme::ICON_SIZE), egui::Sense::hover());
+    crate::icons::paint(ui.painter(), rect, icon, Theme::text_muted());
+    crate::icons::reads_as(response, name, egui::WidgetType::Label, None).on_hover_text(name);
+}
+
 /// A hairline between groups in the row.
 pub fn separator(ui: &mut Ui) {
     let (rect, _) = ui.allocate_exact_size(

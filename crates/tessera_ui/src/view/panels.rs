@@ -526,8 +526,12 @@ fn transform_section(
     let (mut sx, mut sy) = (d.scale_x * 100.0, d.scale_y * 100.0);
     let (a, b) = pair(
         ui,
-        ("Scale X", |ui: &mut Ui| percent_bare(ui, &mut sx)),
-        ("Scale Y", |ui: &mut Ui| percent_bare(ui, &mut sy)),
+        ((crate::icons::Icon::ScaleX, "Scale X"), |ui: &mut Ui| {
+            percent_bare(ui, &mut sx)
+        }),
+        ((crate::icons::Icon::ScaleY, "Scale Y"), |ui: &mut Ui| {
+            percent_bare(ui, &mut sy)
+        }),
     );
     let scaled = a || b;
     if scaled && d.scale_x != 0.0 && d.scale_y != 0.0 {
@@ -548,7 +552,7 @@ fn transform_section(
     }
 
     let mut shear = d.shear_degrees;
-    if angle(ui, "Shear", &mut shear) {
+    if angle(ui, (crate::icons::Icon::Shear, "Shear"), &mut shear) {
         apply(
             state,
             Command::TransformAbout {
@@ -587,7 +591,7 @@ fn measure_inline(ui: &mut Ui, label: &str, points: &mut f64, unit: Unit) -> boo
 
 /// An angle in a row.
 fn angle_inline(ui: &mut Ui, degrees: &mut f64) -> bool {
-    crate::view::control::label(ui, "\u{2220}");
+    crate::view::control::glyph(ui, crate::icons::Icon::Angle, "Rotation");
     ui.add(egui::DragValue::new(degrees).speed(0.5).suffix("\u{00B0}"))
         .changed()
 }
@@ -639,7 +643,7 @@ pub fn type_row(ui: &mut Ui, state: &mut TesseraApp) {
     crate::view::control::separator(ui);
 
     let mut size = common.size.unwrap_or(12.0) as f64;
-    crate::view::control::label(ui, "Size");
+    crate::view::control::glyph(ui, crate::icons::Icon::TypeSize, "Size");
     if ui
         .add(
             egui::DragValue::new(&mut size)
@@ -662,7 +666,7 @@ pub fn type_row(ui: &mut Ui, state: &mut TesseraApp) {
     }
 
     let mut leading = common.line_height.unwrap_or(1.2) as f64;
-    crate::view::control::label(ui, "Leading");
+    crate::view::control::glyph(ui, crate::icons::Icon::LineSpacing, "Leading");
     if ui
         .add(
             egui::DragValue::new(&mut leading)
@@ -775,7 +779,7 @@ fn percent_bare(ui: &mut Ui, value: &mut f64) -> bool {
 }
 
 /// An angle field, in degrees.
-fn angle(ui: &mut Ui, label: &str, value: &mut f64) -> bool {
+fn angle<'a>(ui: &mut Ui, label: impl Into<FieldLabel<'a>>, value: &mut f64) -> bool {
     property_field(ui, label, |ui| {
         ui.add(egui::DragValue::new(value).speed(0.5).suffix("°"))
             .changed()
@@ -891,7 +895,7 @@ fn gradient_controls(
     // stopping at zero, because 350 and -10 are the same direction and a
     // control that stopped would refuse the shorter way there.
     if let Ramp::Linear { angle } = &mut ramp {
-        changed |= property_field(ui, "Angle", |ui| {
+        changed |= property_field(ui, (crate::icons::Icon::Angle, "Angle"), |ui| {
             ui.add(
                 egui::DragValue::new(angle)
                     .speed(1.0)
@@ -1084,7 +1088,9 @@ fn corners_section(
     let unit = state.prefs.unit;
     if same {
         let mut radius = corners.radii[0];
-        if property_field(ui, "Radius", |ui| measure_bare(ui, &mut radius, unit)) {
+        if property_field(ui, (crate::icons::Icon::CornerRadius, "Radius"), |ui| {
+            measure_bare(ui, &mut radius, unit)
+        }) {
             corners.radii = [radius; 4];
             changed = true;
         }
@@ -1097,15 +1103,25 @@ fn corners_section(
 
         let (a, b) = pair(
             ui,
-            ("Top left", |ui: &mut Ui| measure_bare(ui, &mut tl, unit)),
-            ("Top right", |ui: &mut Ui| measure_bare(ui, &mut tr, unit)),
+            (
+                (crate::icons::Icon::CornerTopLeft, "Top left"),
+                |ui: &mut Ui| measure_bare(ui, &mut tl, unit),
+            ),
+            (
+                (crate::icons::Icon::CornerTopRight, "Top right"),
+                |ui: &mut Ui| measure_bare(ui, &mut tr, unit),
+            ),
         );
         let (c, d) = pair(
             ui,
-            ("Bottom left", |ui: &mut Ui| measure_bare(ui, &mut bl, unit)),
-            ("Bottom right", |ui: &mut Ui| {
-                measure_bare(ui, &mut br, unit)
-            }),
+            (
+                (crate::icons::Icon::CornerBottomLeft, "Bottom left"),
+                |ui: &mut Ui| measure_bare(ui, &mut bl, unit),
+            ),
+            (
+                (crate::icons::Icon::CornerBottomRight, "Bottom right"),
+                |ui: &mut Ui| measure_bare(ui, &mut br, unit),
+            ),
         );
         if a || b || c || d {
             corners.radii = [tl, tr, br, bl];
@@ -2407,7 +2423,7 @@ fn effects_section(
     // fraction, which is what every renderer wants. Converted here, once, at
     // the edge.
     let mut percent = blend.alpha() * 100.0;
-    changed |= property_slider(ui, "Opacity", |ui| {
+    changed |= property_slider(ui, (crate::icons::Icon::Opacity, "Opacity"), |ui| {
         ui.add(
             egui::Slider::new(&mut percent, 0.0..=100.0)
                 .suffix("%")
@@ -2423,7 +2439,7 @@ fn effects_section(
     // a 292-point panel as words, and abbreviating them would make the reader
     // learn a code for something they use rarely.
     let before = blend.mode;
-    property_field(ui, "Blend", |ui| {
+    property_field(ui, (crate::icons::Icon::Blend, "Blend"), |ui| {
         crate::icons::reads_as(
             egui::ComboBox::from_id_salt(("blend-mode", id))
                 .selected_text(blend.mode.label())
@@ -2500,7 +2516,7 @@ fn shadow_controls(
     // In points rather than in the document's unit: a blur is not a measurement
     // on the page, it is how soft an edge is, and reading it in millimetres
     // invites somebody to try to line it up with something.
-    changed |= property_slider(ui, "Blur", |ui| {
+    changed |= property_slider(ui, (crate::icons::Icon::Blur, "Blur"), |ui| {
         ui.add(
             egui::Slider::new(&mut shadow.blur, 0.0..=MOST_BLUR)
                 .suffix(" pt")
@@ -2599,29 +2615,37 @@ fn wrap_controls(
     let mut sides = frame.wrap.sides();
     let mut changed = false;
 
-    property_field(ui, "Wrap mode", |ui| {
-        let shown = match how {
-            How::Off => "None",
-            How::Bounds => "Around the box",
-            How::Contour => "Around the shape",
-            How::Jump => "Jump over",
-        };
-        egui::ComboBox::from_id_salt(("wrap-how", id))
-            .width(ui.available_width())
-            .selected_text(shown)
-            .show_ui(ui, |ui| {
-                for (choice, label) in [
-                    (How::Off, "None"),
-                    (How::Bounds, "Around the box"),
-                    (How::Contour, "Around the shape"),
-                    (How::Jump, "Jump over"),
-                ] {
-                    if ui.selectable_value(&mut how, choice, label).changed() {
-                        changed = true;
-                    }
-                }
-            });
-    });
+    changed |= icon_choices(
+        ui,
+        "Wrap mode",
+        &mut how,
+        &[
+            (
+                crate::icons::Icon::WrapNone,
+                "No wrap",
+                "Text runs beneath the frame",
+                How::Off,
+            ),
+            (
+                crate::icons::Icon::WrapBounds,
+                "Around the box",
+                "Text stops at the frame's edges",
+                How::Bounds,
+            ),
+            (
+                crate::icons::Icon::WrapContour,
+                "Around the shape",
+                "Text follows the outline of what is inside",
+                How::Contour,
+            ),
+            (
+                crate::icons::Icon::WrapJump,
+                "Jump over",
+                "Text skips the whole band the frame sits in",
+                How::Jump,
+            ),
+        ],
+    );
     let unit = state.prefs.unit;
     match how {
         How::Bounds => {
@@ -2719,7 +2743,7 @@ fn text_frame_controls(
     let mut columns = f64::from(wanted.columns.max(1));
     let (a, b) = pair(
         ui,
-        ("Columns", |ui: &mut Ui| {
+        ((crate::icons::Icon::Columns, "Columns"), |ui: &mut Ui| {
             ui.add(
                 egui::DragValue::new(&mut columns)
                     .speed(0.1)
@@ -2727,7 +2751,7 @@ fn text_frame_controls(
             )
             .changed()
         }),
-        ("Gutter", |ui: &mut Ui| {
+        ((crate::icons::Icon::Gutter, "Gutter"), |ui: &mut Ui| {
             measure_bare(ui, &mut wanted.gutter, unit)
         }),
     );
@@ -2924,24 +2948,63 @@ fn property_card(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui)) {
     ui.add_space(Theme::space_3());
 }
 
-fn property_field<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+/// What names a field: a word, or a glyph with the word beside it.
+///
+/// The glyph is for the reader who has learned it — leading, tracking, an
+/// indent — and the word stays for the one who has not, and for the screen
+/// reader, which cannot read a picture. A field whose meaning has no honest
+/// picture (X, Y, a miter limit) keeps the bare word.
+#[derive(Clone, Copy)]
+pub(crate) enum FieldLabel<'a> {
+    Word(&'a str),
+    Glyph(crate::icons::Icon, &'a str),
+}
+
+impl<'a> From<&'a str> for FieldLabel<'a> {
+    fn from(word: &'a str) -> Self {
+        Self::Word(word)
+    }
+}
+
+impl<'a> From<(crate::icons::Icon, &'a str)> for FieldLabel<'a> {
+    fn from((icon, word): (crate::icons::Icon, &'a str)) -> Self {
+        Self::Glyph(icon, word)
+    }
+}
+
+impl FieldLabel<'_> {
+    fn show(self, ui: &mut Ui) {
+        match self {
+            Self::Word(word) => {
+                ui.add(
+                    egui::Label::new(egui::RichText::new(word).small().color(Theme::text_muted()))
+                        .wrap(),
+                );
+            }
+            Self::Glyph(icon, word) => text_label(ui, icon, word),
+        }
+    }
+}
+
+fn property_field<'a, R>(
+    ui: &mut Ui,
+    label: impl Into<FieldLabel<'a>>,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = Theme::space_1();
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(label)
-                    .small()
-                    .color(Theme::text_muted()),
-            )
-            .wrap(),
-        );
+        label.into().show(ui);
         ui.spacing_mut().interact_size.x = ui.available_width().min(WIDEST_ROW);
         add(ui)
     })
     .inner
 }
 
-fn property_slider<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+fn property_slider<'a, R>(
+    ui: &mut Ui,
+    label: impl Into<FieldLabel<'a>>,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
     property_field(ui, label, |ui| {
         ui.spacing_mut().interact_size.x = VALUE_BOX;
         ui.spacing_mut().slider_width =
@@ -2954,7 +3017,14 @@ fn text_label(ui: &mut Ui, icon: crate::icons::Icon, label: &str) {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(Theme::ICON_SIZE), Sense::hover());
         crate::icons::paint(ui.painter(), rect, icon, Theme::text_muted());
-        ui.add(egui::Label::new(egui::RichText::new(label).small()).wrap());
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(label)
+                    .small()
+                    .color(Theme::text_muted()),
+            )
+            .wrap(),
+        );
     });
 }
 
@@ -2965,13 +3035,7 @@ fn text_field<R>(
     label: &str,
     add: impl FnOnce(&mut Ui) -> R,
 ) -> R {
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = Theme::space_1();
-        text_label(ui, icon, label);
-        ui.spacing_mut().interact_size.x = ui.available_width().min(WIDEST_ROW);
-        add(ui)
-    })
-    .inner
+    property_field(ui, (icon, label), add)
 }
 
 /// An icon and a permanent label, sharing a clear button boundary and focus ring.
@@ -3371,24 +3435,20 @@ fn labelled<R>(
 
 /// Two equal-width fields with labels above their values. Keeping the labels
 /// out of the value row leaves room for units even in a narrow dock.
-pub(crate) fn pair<A, B>(
+pub(crate) fn pair<'a, A, B>(
     ui: &mut Ui,
-    first: (&str, impl FnOnce(&mut Ui) -> A),
-    second: (&str, impl FnOnce(&mut Ui) -> B),
+    first: (impl Into<FieldLabel<'a>>, impl FnOnce(&mut Ui) -> A),
+    second: (impl Into<FieldLabel<'a>>, impl FnOnce(&mut Ui) -> B),
 ) -> (A, B) {
-    fn cell<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
-        ui.label(
-            egui::RichText::new(label)
-                .small()
-                .color(Theme::text_muted()),
-        );
+    fn cell<R>(ui: &mut Ui, label: FieldLabel<'_>, add: impl FnOnce(&mut Ui) -> R) -> R {
+        label.show(ui);
         ui.spacing_mut().interact_size.x = ui.available_width().min(WIDEST_ROW);
         add(ui)
     }
     ui.columns(2, |columns| {
         (
-            cell(&mut columns[0], first.0, first.1),
-            cell(&mut columns[1], second.0, second.1),
+            cell(&mut columns[0], first.0.into(), first.1),
+            cell(&mut columns[1], second.0.into(), second.1),
         )
     })
 }
@@ -3892,7 +3952,7 @@ fn text_section(
         group_label(ui, "Indents");
         let (left, right) = pair(
             ui,
-            ("Left", |ui: &mut Ui| {
+            ((crate::icons::Icon::IndentLeft, "Left"), |ui: &mut Ui| {
                 optional_number_bare(
                     ui,
                     Some(paragraph.indent_left.unwrap_or(0.0)),
@@ -3901,7 +3961,7 @@ fn text_section(
                     " pt",
                 )
             }),
-            ("Right", |ui: &mut Ui| {
+            ((crate::icons::Icon::IndentRight, "Right"), |ui: &mut Ui| {
                 optional_number_bare(
                     ui,
                     Some(paragraph.indent_right.unwrap_or(0.0)),
@@ -3923,16 +3983,19 @@ fn text_section(
         group_label(ui, "Paragraph spacing");
         let (before, after) = pair(
             ui,
-            ("Before", |ui: &mut Ui| {
-                optional_number_bare(
-                    ui,
-                    Some(paragraph.space_before.unwrap_or(0.0)),
-                    0.25,
-                    0.0..=1440.0,
-                    " pt",
-                )
-            }),
-            ("After", |ui: &mut Ui| {
+            (
+                (crate::icons::Icon::SpaceBefore, "Before"),
+                |ui: &mut Ui| {
+                    optional_number_bare(
+                        ui,
+                        Some(paragraph.space_before.unwrap_or(0.0)),
+                        0.25,
+                        0.0..=1440.0,
+                        " pt",
+                    )
+                },
+            ),
+            ((crate::icons::Icon::SpaceAfter, "After"), |ui: &mut Ui| {
                 optional_number_bare(
                     ui,
                     Some(paragraph.space_after.unwrap_or(0.0)),
@@ -4630,13 +4693,23 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
 
             let orientation = Orientation::of(width, height);
             let mut desired_orientation = orientation;
-            segmented(
+            icon_choices(
                 ui,
                 "Orientation",
                 &mut desired_orientation,
                 &[
-                    ("Portrait", Orientation::Portrait),
-                    ("Landscape", Orientation::Landscape),
+                    (
+                        crate::icons::Icon::PagePortrait,
+                        "Portrait",
+                        "Taller than it is wide",
+                        Orientation::Portrait,
+                    ),
+                    (
+                        crate::icons::Icon::PageLandscape,
+                        "Landscape",
+                        "Wider than it is tall",
+                        Orientation::Landscape,
+                    ),
                 ],
             );
             if desired_orientation != orientation {
@@ -4708,7 +4781,7 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
             let mut count = f64::from(setup.columns.max(1));
             let (i, j) = pair(
                 ui,
-                ("Count", |ui: &mut Ui| {
+                ((crate::icons::Icon::Columns, "Count"), |ui: &mut Ui| {
                     ui.add(
                         egui::DragValue::new(&mut count)
                             .speed(0.1)
@@ -4716,7 +4789,7 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
                     )
                     .changed()
                 }),
-                ("Gutter", |ui: &mut Ui| {
+                ((crate::icons::Icon::Gutter, "Gutter"), |ui: &mut Ui| {
                     measure_bare(ui, &mut setup.column_gutter, unit)
                 }),
             );
@@ -6115,6 +6188,69 @@ mod tests {
                 assert_eq!(
                     state.active().document().frame(id).unwrap().stroke.as_ref(),
                     Some(&before),
+                    "one undo restores {label}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wrap_mode_glyphs_apply_the_named_mode_and_undo() {
+        use tessera_document::nodes::TextWrap;
+        for label in ["No wrap", "Around the box", "Around the shape", "Jump over"] {
+            let ctx = egui::Context::default();
+            crate::theme::apply(&ctx);
+            ctx.enable_accesskit();
+            let mut state = object_properties_fixture("rectangle");
+            let id = state.active().selection.single().unwrap();
+            let before = state.active().document().frame(id).unwrap().wrap;
+            let draw = |ui: &mut Ui, state: &mut TesseraApp| {
+                let frame = state.active().document().frame(id).unwrap().clone();
+                ui.set_width(208.0);
+                property_body(ui, |ui| wrap_controls(ui, state, id, &frame));
+            };
+            let output =
+                crate::headless_frame::frame(&ctx, Default::default(), |ui| draw(ui, &mut state));
+            let tree = output.platform_output.accesskit_update.unwrap();
+            let bounds = tree
+                .nodes
+                .iter()
+                .find(|(_, node)| node.label() == Some(label))
+                .and_then(|(_, node)| node.bounds())
+                .expect("a named wrap glyph");
+            let pos = egui::pos2(
+                ((bounds.x0 + bounds.x1) / 2.0) as f32,
+                ((bounds.y0 + bounds.y1) / 2.0) as f32,
+            );
+            for pressed in [true, false] {
+                let input = egui::RawInput {
+                    events: vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    ..Default::default()
+                };
+                let _ = crate::headless_frame::frame(&ctx, input, |ui| draw(ui, &mut state));
+            }
+            let after = &state.active().document().frame(id).unwrap().wrap;
+            let matches = match label {
+                "No wrap" => matches!(after, TextWrap::None),
+                "Around the box" => matches!(after, TextWrap::Bounds { .. }),
+                "Around the shape" => matches!(after, TextWrap::Contour { .. }),
+                "Jump over" => matches!(after, TextWrap::Jump),
+                _ => unreachable!(),
+            };
+            assert!(matches, "{label} left the wrap as {after:?}");
+            if *after != before {
+                apply(&mut state, Command::Undo);
+                assert_eq!(
+                    state.active().document().frame(id).unwrap().wrap,
+                    before,
                     "one undo restores {label}"
                 );
             }
