@@ -151,7 +151,6 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
                 let bar = ui.available_rect_before_wrap();
                 let open = crate::view::panels::section_heading_with(
                     ui,
-                    dock.icon(),
                     dock.title(),
                     dock.is_open(state),
                 );

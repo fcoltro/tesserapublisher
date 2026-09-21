@@ -138,25 +138,6 @@ impl Section {
         }
     }
 
-    /// The glyph that names the section, so a column of them can be found
-    /// by shape rather than read.
-    pub fn icon(self) -> crate::icons::Icon {
-        use crate::icons::Icon;
-        match self {
-            Section::Transform => Icon::Scale,
-            Section::Fill => Icon::Palette,
-            Section::Stroke => Icon::Line,
-            Section::Corners => Icon::Rectangle,
-            Section::Text => Icon::CaseSensitive,
-            Section::Frame => Icon::TextFrame,
-            Section::Wrap => Icon::AlignJustify,
-            Section::Graphic => Icon::PictureFrame,
-            Section::Effects => Icon::Blend,
-            Section::Style => Icon::Duplicate,
-            Section::PathText => Icon::Pen,
-        }
-    }
-
     /// Whether this section says anything about `frame`.
     pub fn applies_to(self, frame: &tessera_document::nodes::Frame) -> bool {
         use tessera_document::nodes::FrameKind;
@@ -248,34 +229,27 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
         // before it, and the space is what keeps the bands from reading as
         // a ladder of bars.
         ui.add_space(Theme::space_2());
-        if !section_heading(ui, state, section.icon(), section.title()) {
+        if !section_heading(ui, state, section.title()) {
             continue;
         }
-        // Indented under its heading, which is what says the fields belong to
-        // it rather than merely follow it.
-        ui.scope(|ui| {
-            ui.add_space(Theme::space_1());
-            egui::Frame::NONE
-                .inner_margin(egui::Margin {
-                    left: Theme::space_2() as i8,
-                    right: Theme::space_2() as i8,
-                    top: 0,
-                    bottom: Theme::space_1() as i8,
-                })
-                .show(ui, |ui| match section {
-                    Section::Transform => transform_section(ui, state, id, &frame),
-                    Section::Fill => fill_section(ui, state, id, &frame),
-                    Section::Stroke => stroke_section(ui, state, id, &frame),
-                    Section::Corners => corners_section(ui, state, id, &frame),
-                    Section::Text => text_section(ui, state, id, &frame),
-                    Section::Frame => frame_section(ui, &frame),
-                    Section::Wrap => wrap_controls(ui, state, id, &frame),
-                    Section::Graphic => graphic_section(ui, state, id, &frame),
-                    Section::Effects => effects_section(ui, state, id, &frame),
-                    Section::Style => object_style_section(ui, state, id, &frame),
-                    Section::PathText => path_text_section(ui, state, id),
-                });
-        });
+        ui.add_space(Theme::space_1());
+        if section == Section::Text {
+            text_section(ui, state, id, &frame);
+        } else {
+            property_body(ui, |ui| match section {
+                Section::Transform => transform_section(ui, state, id, &frame),
+                Section::Fill => fill_section(ui, state, id, &frame),
+                Section::Stroke => stroke_section(ui, state, id, &frame),
+                Section::Corners => corners_section(ui, state, id, &frame),
+                Section::Text => text_section(ui, state, id, &frame),
+                Section::Frame => frame_section(ui, &frame),
+                Section::Wrap => wrap_controls(ui, state, id, &frame),
+                Section::Graphic => graphic_section(ui, state, id, &frame),
+                Section::Effects => effects_section(ui, state, id, &frame),
+                Section::Style => object_style_section(ui, state, id, &frame),
+                Section::PathText => path_text_section(ui, state, id),
+            });
+        }
     }
 }
 
@@ -590,7 +564,7 @@ fn transform_section(
 
 /// A measurement in a row: its label, then a narrow field.
 ///
-/// The control bar's counterpart to [`measure`], which lays a label and a
+/// The control bar's counterpart to [`measure_bare`], which lays a label and a
 /// field out as a grid row. Same parser, same formatter, same unit rule.
 fn measure_inline(ui: &mut Ui, label: &str, points: &mut f64, unit: Unit) -> bool {
     crate::view::control::label(ui, label);
@@ -802,7 +776,7 @@ fn percent_bare(ui: &mut Ui, value: &mut f64) -> bool {
 
 /// An angle field, in degrees.
 fn angle(ui: &mut Ui, label: &str, value: &mut f64) -> bool {
-    field(ui, label, |ui| {
+    property_field(ui, label, |ui| {
         ui.add(egui::DragValue::new(value).speed(0.5).suffix("°"))
             .changed()
     })
@@ -835,7 +809,7 @@ fn fill_section(
     let mut want = chosen;
     segmented(
         ui,
-        "Kind",
+        "Fill type",
         &mut want,
         &[("Solid", 0), ("Linear", 1), ("Radial", 2)],
     );
@@ -881,7 +855,7 @@ fn fill_section(
         Paint::Solid(colour) => {
             let [r, g, b, a] = colour.to_rgb_f32();
             let mut rgba = [r, g, b, a];
-            if fill_picker(ui, &mut rgba) {
+            if property_field(ui, "Fill colour", |ui| fill_picker(ui, &mut rgba)) {
                 apply(
                     state,
                     Command::SetFill {
@@ -917,7 +891,7 @@ fn gradient_controls(
     // stopping at zero, because 350 and -10 are the same direction and a
     // control that stopped would refuse the shorter way there.
     if let Ramp::Linear { angle } = &mut ramp {
-        changed |= field(ui, "Angle", |ui| {
+        changed |= property_field(ui, "Angle", |ui| {
             ui.add(
                 egui::DragValue::new(angle)
                     .speed(1.0)
@@ -932,13 +906,14 @@ fn gradient_controls(
     // can judge, and this is the control they actually read.
     ramp_preview(ui, &stops);
 
-    group_label(ui, "Stops");
-    let mut remove: Option<usize> = None;
+    group_label(ui, "Gradient stops");
+    let mut remove = None;
     for (index, stop) in stops.iter_mut().enumerate() {
-        ui.horizontal(|ui| {
-            let [r, g, b, a] = stop.colour.to_rgb_f32();
-            let mut rgba = [r, g, b, a];
-            if fill_picker(ui, &mut rgba) {
+        ui.push_id(index, |ui| {
+            ui.separator();
+            ui.label(format!("Stop {}", index + 1));
+            let mut rgba = stop.colour.to_rgb_f32();
+            if property_field(ui, "Colour", |ui| fill_picker(ui, &mut rgba)) {
                 stop.colour = Color::Rgb {
                     r: rgba[0],
                     g: rgba[1],
@@ -947,25 +922,23 @@ fn gradient_controls(
                 };
                 changed = true;
             }
-            // The position as a percentage along the ramp, which is how a
-            // person reads it. The model holds the fraction.
             let mut percent = stop.at * 100.0;
-            if ui
-                .add(
+            if property_field(ui, "Position along gradient", |ui| {
+                ui.add(
                     egui::DragValue::new(&mut percent)
                         .speed(0.5)
                         .range(0.0..=100.0)
                         .suffix("%"),
                 )
                 .changed()
-            {
+            }) {
                 stop.at = percent / 100.0;
                 changed = true;
             }
-            // A ramp needs two ends, so the first two carry no remove button.
-            // Offering one and then refusing it would be worse than not
-            // offering it.
-            if index >= 2 && ui.small_button("\u{2715}").clicked() {
+            if index >= 2
+                && crate::view::panel_ui::action(ui, crate::icons::Icon::Trash, "Remove stop")
+                    .clicked()
+            {
                 remove = Some(index);
             }
         });
@@ -976,7 +949,7 @@ fn gradient_controls(
         changed = true;
     }
 
-    if ui.button("Add a stop").clicked() {
+    if crate::view::panel_ui::action(ui, crate::icons::Icon::Plus, "Add colour stop").clicked() {
         // Halfway between the last two, taking the colour already there, so
         // adding a stop changes nothing until it is moved or recoloured.
         let (a, b) = (stops[stops.len() - 2].at, stops[stops.len() - 1].at);
@@ -1091,18 +1064,11 @@ fn corners_section(
     let mut corners = frame.corners;
     let mut changed = false;
 
-    ui.horizontal(|ui| {
-        for shape in CornerShape::ALL {
-            if ui
-                .selectable_label(corners.shape == shape, shape.label())
-                .clicked()
-                && corners.shape != shape
-            {
-                corners.shape = shape;
-                changed = true;
-            }
-        }
-    });
+    let options: Vec<_> = CornerShape::ALL
+        .into_iter()
+        .map(|shape| (shape.label(), shape))
+        .collect();
+    changed |= property_choice(ui, "Corner shape", &mut corners.shape, &options);
 
     // **One field while the corners agree, four when they do not.** Four
     // fields for the commonest case is three fields of noise; one field for a
@@ -1118,7 +1084,7 @@ fn corners_section(
     let unit = state.prefs.unit;
     if same {
         let mut radius = corners.radii[0];
-        if field(ui, "Radius", |ui| measure_bare(ui, &mut radius, unit)) {
+        if property_field(ui, "Radius", |ui| measure_bare(ui, &mut radius, unit)) {
             corners.radii = [radius; 4];
             changed = true;
         }
@@ -1131,13 +1097,15 @@ fn corners_section(
 
         let (a, b) = pair(
             ui,
-            ("Top L", |ui: &mut Ui| measure_bare(ui, &mut tl, unit)),
-            ("Top R", |ui: &mut Ui| measure_bare(ui, &mut tr, unit)),
+            ("Top left", |ui: &mut Ui| measure_bare(ui, &mut tl, unit)),
+            ("Top right", |ui: &mut Ui| measure_bare(ui, &mut tr, unit)),
         );
         let (c, d) = pair(
             ui,
-            ("Bot L", |ui: &mut Ui| measure_bare(ui, &mut bl, unit)),
-            ("Bot R", |ui: &mut Ui| measure_bare(ui, &mut br, unit)),
+            ("Bottom left", |ui: &mut Ui| measure_bare(ui, &mut bl, unit)),
+            ("Bottom right", |ui: &mut Ui| {
+                measure_bare(ui, &mut br, unit)
+            }),
         );
         if a || b || c || d {
             corners.radii = [tl, tr, br, bl];
@@ -1177,7 +1145,8 @@ fn path_text_section(ui: &mut Ui, state: &mut TesseraApp, id: tessera_document::
 
     let Some(current) = state.active().document().path_text(id).copied() else {
         note_line(ui, "The path carries no text.");
-        if ui.button("Put text on the path").clicked() {
+        if crate::view::panel_ui::action(ui, crate::icons::Icon::Plus, "Add text to path").clicked()
+        {
             put_text_on_path(state, id);
         }
         return;
@@ -1185,61 +1154,39 @@ fn path_text_section(ui: &mut Ui, state: &mut TesseraApp, id: tessera_document::
     let mut edited = current;
     let mut changed = false;
 
-    // Where along the path, in percent of its length.
     let mut start = (current.start * 100.0) as f32;
     let mut end = (current.end * 100.0) as f32;
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::text_muted(), "From");
-        if percent_of(ui, &mut start, 0.0..=100.0) {
-            edited.start = f64::from(start) / 100.0;
-            changed = true;
-        }
-        ui.colored_label(Theme::text_muted(), "to");
-        if percent_of(ui, &mut end, 0.0..=100.0) {
-            edited.end = f64::from(end) / 100.0;
-            changed = true;
-        }
-    });
-
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::text_muted(), "On the path");
-        for (label, align, hint) in [
-            (
-                "Baseline",
-                PathTextAlign::Baseline,
-                "The letters stand on the line",
-            ),
-            (
-                "Centre",
-                PathTextAlign::Centre,
-                "The line runs through the small letters",
-            ),
-            (
-                "Ascender",
-                PathTextAlign::Ascender,
-                "The letters hang below the line",
-            ),
-            (
-                "Descender",
-                PathTextAlign::Descender,
-                "The letters stand clear above the line",
-            ),
-        ] {
-            if ui
-                .selectable_label(current.align == align, label)
-                .on_hover_text(hint)
-                .clicked()
-                && current.align != align
-            {
-                edited.align = align;
-                changed = true;
-            }
-        }
-    });
+    let (from, to) = pair(
+        ui,
+        ("Start position", |ui: &mut Ui| {
+            percent_of(ui, &mut start, 0.0..=100.0)
+        }),
+        ("End position", |ui: &mut Ui| {
+            percent_of(ui, &mut end, 0.0..=100.0)
+        }),
+    );
+    if from {
+        edited.start = f64::from(start) / 100.0;
+    }
+    if to {
+        edited.end = f64::from(end) / 100.0;
+    }
+    changed |= from || to;
+    changed |= property_choice(
+        ui,
+        "Align text to path",
+        &mut edited.align,
+        &[
+            ("Baseline", PathTextAlign::Baseline),
+            ("Centre", PathTextAlign::Centre),
+            ("Ascender", PathTextAlign::Ascender),
+            ("Descender", PathTextAlign::Descender),
+        ],
+    );
 
     let mut flip = current.flip;
     if ui
-        .checkbox(&mut flip, "Flip")
+        .checkbox(&mut flip, "Flip text direction")
         .on_hover_text("Run the other way, on the other side of the path")
         .changed()
     {
@@ -1257,13 +1204,16 @@ fn path_text_section(ui: &mut Ui, state: &mut TesseraApp, id: tessera_document::
         );
     }
 
-    ui.horizontal(|ui| {
-        if ui.button("Edit text\u{2026}").clicked() {
+    ui.vertical(|ui| {
+        if crate::view::panel_ui::action(ui, crate::icons::Icon::TextCursor, "Edit text…").clicked()
+        {
             let mut window = std::mem::take(&mut state.story_editor);
             window.open(state);
             state.story_editor = window;
         }
-        if ui.button("Take the text off").clicked() {
+        if crate::view::panel_ui::action(ui, crate::icons::Icon::Trash, "Remove path text")
+            .clicked()
+        {
             apply(state, Command::SetPathText { id, text: None });
         }
     });
@@ -1292,10 +1242,11 @@ fn stroke_section(
     id: tessera_document::ids::FrameId,
     frame: &tessera_document::nodes::Frame,
 ) {
+    use crate::icons::Icon;
     use tessera_document::nodes::{LineCap, LineJoin, Stroke, StrokeAlign};
 
     let mut on = frame.stroke.is_some();
-    if ui.checkbox(&mut on, "Stroked").changed() {
+    if ui.checkbox(&mut on, "Enable stroke").changed() {
         // Turning it on gives the stroke the model's own default: what
         // everything drew before the extra properties existed.
         let stroke = on.then(|| Stroke::new(Color::BLACK, 1.0));
@@ -1309,19 +1260,13 @@ fn stroke_section(
     let mut stroke = existing.clone();
     let unit = state.prefs.unit;
 
-    measure(ui, "Weight", &mut stroke.width, unit);
+    property_field(ui, "Stroke width", |ui| {
+        measure_bare(ui, &mut stroke.width, unit)
+    });
 
     let [r, g, b, a] = stroke.color.to_rgb_f32();
     let mut rgba = [r, g, b, a];
-    ui.horizontal(|ui| {
-        let (spot, _) = ui.allocate_exact_size(Vec2::splat(Theme::ICON_SIZE), Sense::hover());
-        crate::icons::paint(
-            ui.painter(),
-            spot,
-            crate::icons::Icon::Palette,
-            Theme::text_muted(),
-        );
-        ui.colored_label(Theme::text_muted(), "Colour");
+    property_field(ui, "Stroke colour", |ui| {
         if fill_picker(ui, &mut rgba) {
             stroke.color = Color::Rgb {
                 r: rgba[0],
@@ -1336,7 +1281,7 @@ fn stroke_section(
     // appearance, which is why the model carries it and why it sits first.
     segmented(
         ui,
-        "Align",
+        "Stroke alignment",
         &mut stroke.align,
         &[
             ("Centre", StrokeAlign::Center),
@@ -1345,33 +1290,62 @@ fn stroke_section(
         ],
     );
 
-    segmented(
+    icon_choices(
         ui,
-        "Cap",
+        "Line ends",
         &mut stroke.cap,
         &[
-            ("Butt", LineCap::Butt),
-            ("Round", LineCap::Round),
-            ("Square", LineCap::Square),
+            (
+                Icon::CapButt,
+                "Butt cap",
+                "Flat end at the path endpoint",
+                LineCap::Butt,
+            ),
+            (
+                Icon::CapRound,
+                "Round cap",
+                "Rounded end extending beyond the endpoint",
+                LineCap::Round,
+            ),
+            (
+                Icon::CapSquare,
+                "Projecting square cap",
+                "Square end extending beyond the endpoint",
+                LineCap::Square,
+            ),
         ],
     );
 
-    segmented(
+    icon_choices(
         ui,
-        "Join",
+        "Line joins",
         &mut stroke.join,
         &[
-            ("Miter", LineJoin::Miter),
-            ("Round", LineJoin::Round),
-            ("Bevel", LineJoin::Bevel),
+            (
+                Icon::JoinMiter,
+                "Miter join",
+                "Sharp corner where the strokes meet",
+                LineJoin::Miter,
+            ),
+            (
+                Icon::JoinRound,
+                "Round join",
+                "Rounded corner where the strokes meet",
+                LineJoin::Round,
+            ),
+            (
+                Icon::JoinBevel,
+                "Bevel join",
+                "Flat diagonal corner where the strokes meet",
+                LineJoin::Bevel,
+            ),
         ],
     );
 
     // Shown only when it means something. A miter limit on a rounded join is
     // a control that does nothing, which is worse than one that is absent.
     if stroke.join == LineJoin::Miter {
-        ui.horizontal(|ui| {
-            ui.colored_label(Theme::text_muted(), "Miter limit");
+        property_field(ui, "Miter limit", |ui| {
             ui.add(
                 egui::DragValue::new(&mut stroke.miter_limit)
                     .speed(0.1)
@@ -1380,19 +1354,54 @@ fn stroke_section(
         });
     }
 
-    ui.horizontal(|ui| {
-        ui.colored_label(Theme::text_muted(), "Dashes");
-        for (label, pattern) in DASH_PRESETS {
-            let scaled: Vec<f64> = pattern.iter().map(|d| d * stroke.width.max(0.1)).collect();
-            let selected = dashes_match(&stroke.dashes, &scaled);
-            if ui.selectable_label(selected, label).clicked() {
-                stroke.dashes = scaled;
-            }
-        }
+    let mut pattern = DASH_PRESETS.iter().position(|(_, dashes)| {
+        let scaled: Vec<_> = dashes.iter().map(|d| d * stroke.width.max(0.1)).collect();
+        dashes_match(&stroke.dashes, &scaled)
     });
+    if icon_choices(
+        ui,
+        "Line pattern",
+        &mut pattern,
+        &[
+            (
+                Icon::StrokeSolid,
+                "Solid stroke",
+                "Continuous line",
+                Some(0),
+            ),
+            (
+                Icon::StrokeDashed,
+                "Dashed stroke",
+                "Repeating dashes",
+                Some(1),
+            ),
+            (
+                Icon::StrokeDotted,
+                "Dotted stroke",
+                "Repeating dots; round caps give round dots",
+                Some(2),
+            ),
+        ],
+    ) && let Some(index) = pattern
+    {
+        stroke.dashes = DASH_PRESETS[index]
+            .1
+            .iter()
+            .map(|d| d * stroke.width.max(0.1))
+            .collect();
+        // Zero-length dashes only draw as dots when they have round caps.
+        if index == 2 {
+            stroke.cap = LineCap::Round;
+        }
+    }
+    if pattern.is_none() {
+        crate::view::panel_ui::hint(ui, "Custom dash pattern");
+    }
 
     if stroke.is_dashed() {
-        measure(ui, "Dash offset", &mut stroke.dash_offset, unit);
+        property_field(ui, "Dash offset", |ui| {
+            measure_bare(ui, &mut stroke.dash_offset, unit)
+        });
     }
 
     if stroke != existing {
@@ -2131,8 +2140,10 @@ fn graphic_section(
     };
 
     let Some(placement) = placed else {
-        ui.colored_label(Theme::text_muted(), "Empty");
-        if ui.button("Place artwork...").clicked() {
+        crate::view::panel_ui::hint(ui, "Place an image or illustration in this frame.");
+        if crate::view::panel_ui::action(ui, crate::icons::Icon::PlaceImage, "Place artwork…")
+            .clicked()
+        {
             crate::file_ops::place(state);
         }
         return;
@@ -2151,7 +2162,7 @@ fn graphic_section(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| link.path.to_string_lossy().into_owned());
-    ui.label(&name)
+    ui.add(egui::Label::new(&name).wrap())
         .on_hover_text(link.path.to_string_lossy().into_owned());
 
     // What the disk says, now. **Three** states rather than two: "the file has
@@ -2217,20 +2228,48 @@ fn graphic_section(
         ));
     }
 
-    group_label(ui, "Fit");
-    ui.horizontal(|ui| {
-        for (label, how) in [
-            ("Proportionally", Fit::Proportionally),
-            ("Fill", Fit::FillProportionally),
-            ("Stretch", Fit::Stretch),
-            ("Centre", Fit::Centre),
-        ] {
-            if ui.small_button(label).clicked() {
-                apply(state, Command::RefitArtwork { id, fit: how });
-            }
+    group_label(ui, "Artwork fitting");
+    for (label, icon, how, hint) in [
+        (
+            "Fit artwork",
+            crate::icons::Icon::Scale,
+            Fit::Proportionally,
+            "Show the entire artwork without changing its proportions.",
+        ),
+        (
+            "Fill frame",
+            crate::icons::Icon::PictureFrame,
+            Fit::FillProportionally,
+            "Fill the frame proportionally; edges may be cropped.",
+        ),
+        (
+            "Stretch artwork",
+            crate::icons::Icon::Scale,
+            Fit::Stretch,
+            "Fill the frame by changing the artwork's proportions.",
+        ),
+        (
+            "Centre artwork",
+            crate::icons::Icon::Move,
+            Fit::Centre,
+            "Centre the artwork without resizing it.",
+        ),
+    ] {
+        if crate::view::panel_ui::action(ui, icon, label)
+            .on_hover_text(hint)
+            .clicked()
+        {
+            apply(state, Command::RefitArtwork { id, fit: how });
         }
-    });
-    if ui.button("Fit frame to artwork").clicked() {
+    }
+    ui.separator();
+    if ui
+        .add_sized(
+            [ui.available_width(), Theme::row()],
+            egui::Button::new("Fit frame to artwork").wrap(),
+        )
+        .clicked()
+    {
         apply(state, Command::FitFrameToArtwork { id });
     }
 }
@@ -2275,18 +2314,20 @@ fn object_style_section(
         .unwrap_or_else(|| "None".to_string());
 
     let mut chosen = frame.style;
-    field(ui, "Style", |ui| {
+    property_field(ui, "Style", |ui| {
         crate::icons::reads_as(
             egui::ComboBox::from_id_salt(("object-style", id))
-                .selected_text(current)
+                .selected_text(&current)
                 .width(ui.available_width())
+                .truncate()
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut chosen, None, "None");
                     for (style, name) in &listed {
                         ui.selectable_value(&mut chosen, Some(*style), name);
                     }
                 })
-                .response,
+                .response
+                .on_hover_text(&current),
             "Style",
             egui::WidgetType::ComboBox,
             None,
@@ -2366,7 +2407,7 @@ fn effects_section(
     // fraction, which is what every renderer wants. Converted here, once, at
     // the edge.
     let mut percent = blend.alpha() * 100.0;
-    changed |= slider_field(ui, "Opacity", |ui| {
+    changed |= property_slider(ui, "Opacity", |ui| {
         ui.add(
             egui::Slider::new(&mut percent, 0.0..=100.0)
                 .suffix("%")
@@ -2382,7 +2423,7 @@ fn effects_section(
     // a 292-point panel as words, and abbreviating them would make the reader
     // learn a code for something they use rarely.
     let before = blend.mode;
-    field(ui, "Blend", |ui| {
+    property_field(ui, "Blend", |ui| {
         crate::icons::reads_as(
             egui::ComboBox::from_id_salt(("blend-mode", id))
                 .selected_text(blend.mode.label())
@@ -2450,7 +2491,7 @@ fn shadow_controls(
         ("Offset X", |ui: &mut Ui| {
             measure_bare(ui, &mut shadow.offset.0, unit)
         }),
-        ("Y", |ui: &mut Ui| {
+        ("Offset Y", |ui: &mut Ui| {
             measure_bare(ui, &mut shadow.offset.1, unit)
         }),
     );
@@ -2459,7 +2500,7 @@ fn shadow_controls(
     // In points rather than in the document's unit: a blur is not a measurement
     // on the page, it is how soft an edge is, and reading it in millimetres
     // invites somebody to try to line it up with something.
-    changed |= slider_field(ui, "Blur", |ui| {
+    changed |= property_slider(ui, "Blur", |ui| {
         ui.add(
             egui::Slider::new(&mut shadow.blur, 0.0..=MOST_BLUR)
                 .suffix(" pt")
@@ -2472,7 +2513,7 @@ fn shadow_controls(
     // picker offers alpha here where the fill's does not.
     let [r, g, b, a] = shadow.colour.to_rgb_f32();
     let mut rgba = [r, g, b, a];
-    if field(ui, "Colour", |ui| shadow_picker(ui, &mut rgba)) {
+    if property_field(ui, "Colour", |ui| shadow_picker(ui, &mut rgba)) {
         shadow.colour = Color::Rgb {
             r: rgba[0],
             g: rgba[1],
@@ -2558,7 +2599,7 @@ fn wrap_controls(
     let mut sides = frame.wrap.sides();
     let mut changed = false;
 
-    field(ui, "Text wrap", |ui| {
+    property_field(ui, "Wrap mode", |ui| {
         let shown = match how {
             How::Off => "None",
             How::Bounds => "Around the box",
@@ -2566,6 +2607,7 @@ fn wrap_controls(
             How::Jump => "Jump over",
         };
         egui::ComboBox::from_id_salt(("wrap-how", id))
+            .width(ui.available_width())
             .selected_text(shown)
             .show_ui(ui, |ui| {
                 for (choice, label) in [
@@ -2586,7 +2628,7 @@ fn wrap_controls(
             changed |= linked_edges(
                 ui,
                 egui::Id::new(("wrap-link", state.active, id)),
-                "Standoff",
+                "Distance from text",
                 ["Top", "Bottom", "Left", "Right"],
                 [
                     &mut standoff.top,
@@ -2600,7 +2642,9 @@ fn wrap_controls(
         How::Contour => {
             // One distance all round: a contour has no top and no left.
             let mut all = standoff.top;
-            if field(ui, "Standoff", |ui| measure_bare(ui, &mut all, unit)) {
+            if property_field(ui, "Distance from text", |ui| {
+                measure_bare(ui, &mut all, unit)
+            }) {
                 standoff = tessera_document::nodes::Insets {
                     top: all,
                     bottom: all,
@@ -2620,8 +2664,9 @@ fn wrap_controls(
             WrapTo::Left => "Left side",
             WrapTo::Right => "Right side",
         };
-        field(ui, "Wrap to", |ui| {
+        property_field(ui, "Wrap to", |ui| {
             egui::ComboBox::from_id_salt(("wrap-to", id))
+                .width(ui.available_width())
                 .selected_text(name(sides))
                 .show_ui(ui, |ui| {
                     for choice in [WrapTo::Largest, WrapTo::Both, WrapTo::Left, WrapTo::Right] {
@@ -2669,7 +2714,7 @@ fn text_frame_controls(
     let unit = state.prefs.unit;
     let mut changed = false;
 
-    subheading(ui, crate::icons::Icon::TextFrame, "Frame");
+    group_label(ui, "Frame");
 
     let mut columns = f64::from(wanted.columns.max(1));
     let (a, b) = pair(
@@ -2854,19 +2899,8 @@ fn linked_edges(
     changed
 }
 
-/// A heading inside a section, with the glyph that names what follows.
-fn subheading(ui: &mut Ui, icon: crate::icons::Icon, label: &str) {
-    ui.add_space(Theme::space_2());
-    ui.horizontal(|ui| {
-        let size = Vec2::splat(Theme::ICON_SIZE);
-        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-        crate::icons::paint(ui.painter(), rect, icon, Theme::text_muted());
-        ui.add(egui::Label::new(group_text(label)).selectable(false));
-    });
-}
-
-/// A bounded group with room between controls and a visible title.
-fn text_card(ui: &mut Ui, icon: crate::icons::Icon, title: &str, add: impl FnOnce(&mut Ui)) {
+/// A quiet surface groups related controls without another heading icon.
+fn property_body<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     egui::Frame::new()
         .fill(Theme::panel_bg_alt())
         .stroke(egui::Stroke::new(1.0, Theme::rule()))
@@ -2876,11 +2910,44 @@ fn text_card(ui: &mut Ui, icon: crate::icons::Icon, title: &str, add: impl FnOnc
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing = Vec2::splat(Theme::space_2());
             ui.spacing_mut().interact_size.y = Theme::row();
-            text_label(ui, icon, title);
-            ui.separator();
-            add(ui);
-        });
+            add(ui)
+        })
+        .inner
+}
+
+fn property_card(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui)) {
+    property_body(ui, |ui| {
+        ui.strong(title);
+        ui.separator();
+        add(ui);
+    });
     ui.add_space(Theme::space_3());
+}
+
+fn property_field<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = Theme::space_1();
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(label)
+                    .small()
+                    .color(Theme::text_muted()),
+            )
+            .wrap(),
+        );
+        ui.spacing_mut().interact_size.x = ui.available_width().min(WIDEST_ROW);
+        add(ui)
+    })
+    .inner
+}
+
+fn property_slider<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+    property_field(ui, label, |ui| {
+        ui.spacing_mut().interact_size.x = VALUE_BOX;
+        ui.spacing_mut().slider_width =
+            (ui.available_width() - VALUE_BOX - ui.spacing().item_spacing.x).max(0.0);
+        add(ui)
+    })
 }
 
 fn text_label(ui: &mut Ui, icon: crate::icons::Icon, label: &str) {
@@ -2973,14 +3040,9 @@ fn text_toggle(ui: &mut Ui, icon: crate::icons::Icon, label: &str, active: bool)
     crate::icons::named_toggle(response, label, egui::WidgetType::Button, active).clicked()
 }
 
-fn text_disclosure(
-    ui: &mut Ui,
-    state: &mut TesseraApp,
-    icon: crate::icons::Icon,
-    title: &'static str,
-) -> bool {
+fn property_disclosure(ui: &mut Ui, state: &mut TesseraApp, title: &'static str) -> bool {
     ui.add_space(Theme::space_2());
-    let open = section_heading(ui, state, icon, title);
+    let open = section_heading(ui, state, title);
     if open {
         ui.add_space(Theme::space_2());
     }
@@ -2989,6 +3051,26 @@ fn text_disclosure(
 
 /// A row of mutually exclusive choices, the shape a three-way property wants.
 fn segmented<T: PartialEq + Copy>(ui: &mut Ui, label: &str, value: &mut T, options: &[(&str, T)]) {
+    let widest = options
+        .iter()
+        .map(|(label, _)| {
+            ui.painter()
+                .layout_no_wrap(
+                    (*label).to_owned(),
+                    egui::TextStyle::Button.resolve(ui.style()),
+                    Theme::text_primary(),
+                )
+                .size()
+                .x
+                + 2.0 * ui.spacing().button_padding.x
+        })
+        .fold(0.0_f32, f32::max);
+    let needed = widest * options.len() as f32
+        + ui.spacing().item_spacing.x * options.len().saturating_sub(1) as f32;
+    if needed > ui.available_width() {
+        property_choice(ui, label, value, options);
+        return;
+    }
     ui.label(
         egui::RichText::new(label)
             .small()
@@ -2999,7 +3081,7 @@ fn segmented<T: PartialEq + Copy>(ui: &mut Ui, label: &str, value: &mut T, optio
             let selected = *value == *candidate;
             if column
                 .add_sized(
-                    [column.available_width(), Theme::control_height()],
+                    [column.available_width(), Theme::row()],
                     egui::Button::new(*text)
                         .selected(selected)
                         .fill(if selected {
@@ -3014,6 +3096,109 @@ fn segmented<T: PartialEq + Copy>(ui: &mut Ui, label: &str, value: &mut T, optio
             }
         }
     });
+}
+
+fn property_choice<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut T,
+    options: &[(&str, T)],
+) -> bool {
+    let before = *value;
+    property_field(ui, label, |ui| {
+        let shown = options
+            .iter()
+            .find(|(_, candidate)| candidate == value)
+            .map_or("Custom", |(label, _)| *label);
+        let response = egui::ComboBox::from_id_salt(label)
+            .width(ui.available_width())
+            .truncate()
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                for (label, candidate) in options {
+                    ui.selectable_value(value, *candidate, *label);
+                }
+            })
+            .response;
+        crate::icons::reads_as(response, label, egui::WidgetType::ComboBox, None);
+    });
+    before != *value
+}
+
+/// Small visual choices retain their group label, tooltip, and keyboard focus.
+fn icon_choices<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut T,
+    options: &[(crate::icons::Icon, &str, &str, T)],
+) -> bool {
+    let before = *value;
+    ui.push_id(label, |ui| {
+        ui.label(
+            egui::RichText::new(label)
+                .small()
+                .color(Theme::text_muted()),
+        );
+        ui.columns(options.len(), |columns| {
+            for (column, (icon, name, hint, candidate)) in columns.iter_mut().zip(options) {
+                let selected = *value == *candidate;
+                let (rect, response) = column.allocate_exact_size(
+                    Vec2::new(column.available_width(), Theme::row() + Theme::space_1()),
+                    Sense::click(),
+                );
+                let painter = column.painter_at(rect);
+                painter.rect_filled(
+                    rect,
+                    Theme::RADIUS,
+                    if selected {
+                        Theme::accent_soft()
+                    } else if response.hovered() {
+                        Theme::hover_bg()
+                    } else {
+                        Theme::field_bg()
+                    },
+                );
+                painter.rect_stroke(
+                    rect,
+                    Theme::RADIUS,
+                    egui::Stroke::new(
+                        1.0,
+                        if response.has_focus() {
+                            Theme::focus()
+                        } else if selected {
+                            Theme::accent()
+                        } else {
+                            Theme::border()
+                        },
+                    ),
+                    egui::StrokeKind::Inside,
+                );
+                let glyph = egui::Rect::from_center_size(
+                    rect.center(),
+                    Vec2::splat(Theme::control_height().min(rect.width())),
+                );
+                crate::icons::paint_rotated(
+                    &painter,
+                    glyph,
+                    *icon,
+                    Theme::text_primary(),
+                    0.0,
+                    1.0,
+                );
+                let response = crate::icons::reads_as(
+                    response,
+                    *name,
+                    egui::WidgetType::RadioButton,
+                    Some(selected),
+                )
+                .on_hover_text(format!("{name}\n{hint}"));
+                if response.clicked() {
+                    *value = *candidate;
+                }
+            }
+        });
+    });
+    before != *value
 }
 
 /// What the typography controls act on: the text selection if there is one,
@@ -3214,14 +3399,9 @@ pub(crate) fn pair<A, B>(
 /// panel that shows Transform, Fill, Stroke, Text and Styles at once is a
 /// column nobody reads to the end of — which is the same complaint the Object
 /// menu earned before it grew submenus.
-pub(crate) fn section_heading(
-    ui: &mut Ui,
-    state: &mut TesseraApp,
-    icon: crate::icons::Icon,
-    title: &'static str,
-) -> bool {
+pub(crate) fn section_heading(ui: &mut Ui, state: &mut TesseraApp, title: &'static str) -> bool {
     let was = state.sections.is_open(title);
-    let now = section_heading_with(ui, icon, title, was);
+    let now = section_heading_with(ui, title, was);
     if now != was {
         state.sections.set_open(title, now);
     }
@@ -3234,12 +3414,7 @@ pub(crate) fn section_heading(
 /// the Window menu opens and shut, so their flag lives with the panel — a
 /// heading with a second, private record of the same fact is two records that
 /// can disagree, and on the first frame they did.
-pub(crate) fn section_heading_with(
-    ui: &mut Ui,
-    icon: crate::icons::Icon,
-    title: &str,
-    open: bool,
-) -> bool {
+pub(crate) fn section_heading_with(ui: &mut Ui, title: &str, open: bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(
         Vec2::new(ui.available_width(), Theme::row()),
         Sense::click(),
@@ -3281,15 +3456,6 @@ pub(crate) fn section_heading_with(
         1.0,
     );
 
-    let glyph = egui::Rect::from_min_size(
-        egui::pos2(
-            rect.left() + Theme::space_1(),
-            rect.center().y - Theme::ICON_SIZE / 2.0,
-        ),
-        Vec2::splat(Theme::ICON_SIZE),
-    );
-    crate::icons::paint(&painter, glyph, icon, Theme::text_muted());
-
     // The heading face at the body size: semibold where the theme installed
     // it, and whatever the heading style resolves to where it did not — a
     // test context has no such face, and naming one it lacks is a panic.
@@ -3301,7 +3467,7 @@ pub(crate) fn section_heading_with(
             .get(&egui::TextStyle::Heading)
             .map_or(egui::FontFamily::Proportional, |f| f.family.clone()),
     };
-    let text_left = glyph.right() + Theme::space_2();
+    let text_left = rect.left() + Theme::space_2();
     let galley = ui.fonts_mut(|fonts| {
         let mut job =
             egui::text::LayoutJob::simple_singleline(title.to_owned(), font, Theme::text_primary());
@@ -3492,7 +3658,7 @@ fn text_section(
         },
     );
     ui.add_space(Theme::space_2());
-    text_card(ui, Icon::CaseSensitive, "Character", |ui| {
+    property_card(ui, "Character", |ui| {
         // These controls also work on a selected frame, before entering its text.
         // The same target and pending format as the other controls keep both
         // entry points in sync with the toolbar while typing.
@@ -3681,7 +3847,7 @@ fn text_section(
         }
     });
 
-    text_card(ui, Icon::Pilcrow, "Paragraph", |ui| {
+    property_card(ui, "Paragraph", |ui| {
         ui.label(egui::RichText::new("Alignment").small());
         let button_width = text_toggle_width(ui, "Centre");
 
@@ -3723,7 +3889,7 @@ fn text_section(
             );
         }
 
-        subheading(ui, Icon::Indent, "Indents");
+        group_label(ui, "Indents");
         let (left, right) = pair(
             ui,
             ("Left", |ui: &mut Ui| {
@@ -3754,7 +3920,7 @@ fn text_section(
                 " pt",
             )
         });
-        subheading(ui, Icon::ParagraphSpacing, "Paragraph spacing");
+        group_label(ui, "Paragraph spacing");
         let (before, after) = pair(
             ui,
             ("Before", |ui: &mut Ui| {
@@ -3798,7 +3964,7 @@ fn text_section(
         }
     });
 
-    if text_disclosure(ui, state, Icon::LetterSpacing, "Character options") {
+    if property_disclosure(ui, state, "Character options") {
         // Tracking in thousandths of an em, the unit every type specimen uses.
         if let Some(tracking) = text_field(ui, Icon::LetterSpacing, "Tracking", |ui| {
             optional_number_bare(
@@ -3971,7 +4137,7 @@ fn text_section(
         }
     }
 
-    if text_disclosure(ui, state, Icon::OpenType, "OpenType features") {
+    if property_disclosure(ui, state, "OpenType features") {
         // OpenType features. Each row states `Some(..)` either way, for the
         // reason italic does: `None` would inherit, and off has to mean off.
         // What a font lacks it ignores, so a control here can never make text
@@ -4095,7 +4261,7 @@ fn text_section(
         }
     }
 
-    if text_disclosure(ui, state, Icon::DropCap, "Drop caps") {
+    if property_disclosure(ui, state, "Drop caps") {
         // Drop cap. Zero lines is no drop cap, which is why the row reads as a
         // count rather than as a switch with a count beside it.
         if let Some(lines) = optional_number(
@@ -4137,7 +4303,7 @@ fn text_section(
             );
         }
     }
-    if text_disclosure(ui, state, Icon::LineSpacing, "Line breaking") {
+    if property_disclosure(ui, state, "Line breaking") {
         // Hyphenation. English only for now: `hypher` holds its patterns per
         // language and a story has no language to pick one with.
         let mut hyphenating = paragraph.hyphenate == Some(true);
@@ -4213,7 +4379,7 @@ fn text_section(
             }
         }
     }
-    if text_disclosure(ui, state, Icon::TabStop, "Tabs") {
+    if property_disclosure(ui, state, "Tabs") {
         // Tab stops. Edited as a whole: the list is one value in the cascade,
         // so a change to any stop writes the whole list back.
         let mut stops = paragraph.tab_stops.clone();
@@ -4231,7 +4397,7 @@ fn text_section(
             );
         }
     }
-    if text_disclosure(ui, state, Icon::Line, "Paragraph rules") {
+    if property_disclosure(ui, state, "Paragraph rules") {
         // Paragraph rules. Each is one value in the cascade, written whole.
         for (label, above) in [("Rule above", true), ("Rule below", false)] {
             let mut rule = if above {
@@ -4256,7 +4422,7 @@ fn text_section(
             }
         }
     }
-    if text_disclosure(ui, state, Icon::List, "Bullets and numbering") {
+    if property_disclosure(ui, state, "Bullets and numbering") {
         // List: one value, written whole. "Hang" is a convenience over the
         // indents below — an item whose turnover lines up under its text is what
         // nearly every list wants, and setting two indents by hand to get it is
@@ -4291,7 +4457,7 @@ fn text_section(
             );
         }
     }
-    if text_disclosure(ui, state, Icon::TextAlignJustify, "Justification") {
+    if property_disclosure(ui, state, "Justification") {
         // Justification and hyphenation settings: each one value, written whole.
         let mut justification = paragraph.justification;
         if justification_editor(ui, &mut justification, false) {
@@ -4307,7 +4473,7 @@ fn text_section(
         }
     }
 
-    if text_disclosure(ui, state, Icon::Link2, "Keep options") {
+    if property_disclosure(ui, state, "Keep options") {
         // Keep options: one value, written whole.
         let mut keep = paragraph.keep;
         if keep_options_editor(ui, &mut keep, false) {
@@ -4324,15 +4490,10 @@ fn text_section(
             );
         }
     }
-    if text_disclosure(
-        ui,
-        state,
-        crate::icons::Icon::TextFrame,
-        "Text frame layout",
-    ) {
+    if property_disclosure(ui, state, "Text frame layout") {
         text_frame_controls(ui, state, id, frame);
     }
-    if text_disclosure(ui, state, crate::icons::Icon::Styles, "Text styles") {
+    if property_disclosure(ui, state, "Text styles") {
         style_rows(ui, state, story, target);
     }
 }
@@ -4369,6 +4530,7 @@ fn family_menu(
     crate::icons::reads_as(
         egui::ComboBox::from_id_salt("family")
             .width(ui.available_width().min(max_width))
+            .truncate()
             .selected_text(label)
             .show_ui(ui, |ui| {
                 for family in state.shaper.families() {
@@ -4425,70 +4587,77 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
     let page = state.first_page_bounds();
     let (mut width, mut height) = (page.width, page.height);
 
-    if section_heading(ui, state, crate::icons::Icon::Pages, "Page format") {
-        // The preset names a pair of numbers the user recognises; the model still
-        // stores only a width and a height. "Custom" is not a value — it is what
-        // no preset matching looks like.
-        let current = PagePreset::matching(width, height);
-        let mut wanted = None;
-        crate::icons::reads_as(
-            egui::ComboBox::from_id_salt("page-preset")
-                .width(ui.available_width())
-                .selected_text(current.map_or("Custom", PagePreset::name))
-                .show_ui(ui, |ui| {
-                    for preset in PagePreset::ALL {
-                        if ui
-                            .selectable_label(current == Some(preset), preset.name())
-                            .clicked()
-                        {
-                            wanted = Some(preset);
+    if section_heading(ui, state, "Page format") {
+        let edited = property_body(ui, |ui| {
+            // The preset names a pair of numbers the user recognises; the model still
+            // stores only a width and a height. "Custom" is not a value — it is what
+            // no preset matching looks like.
+            let current = PagePreset::matching(width, height);
+            let mut wanted = None;
+            crate::icons::reads_as(
+                egui::ComboBox::from_id_salt("page-preset")
+                    .width(ui.available_width())
+                    .selected_text(current.map_or("Custom", PagePreset::name))
+                    .show_ui(ui, |ui| {
+                        for preset in PagePreset::ALL {
+                            if ui
+                                .selectable_label(current == Some(preset), preset.name())
+                                .clicked()
+                            {
+                                wanted = Some(preset);
+                            }
                         }
-                    }
-                })
-                .response,
-            "Page size",
-            egui::WidgetType::ComboBox,
-            None,
-        );
-        if let Some(preset) = wanted {
-            // Applied in the orientation the page already has, so choosing A4 for
-            // a landscape document does not silently turn it upright.
-            let (w, h) = preset.size();
-            let (w, h) = Orientation::of(width, height).apply(w, h);
-            apply(
-                state,
-                Command::SetPageSize {
-                    width: w,
-                    height: h,
-                },
+                    })
+                    .response,
+                "Page size",
+                egui::WidgetType::ComboBox,
+                None,
             );
-            return;
-        }
+            if let Some(preset) = wanted {
+                // Applied in the orientation the page already has, so choosing A4 for
+                // a landscape document does not silently turn it upright.
+                let (w, h) = preset.size();
+                let (w, h) = Orientation::of(width, height).apply(w, h);
+                apply(
+                    state,
+                    Command::SetPageSize {
+                        width: w,
+                        height: h,
+                    },
+                );
+                return true;
+            }
 
-        let orientation = Orientation::of(width, height);
-        let mut desired_orientation = orientation;
-        segmented(
-            ui,
-            "Orientation",
-            &mut desired_orientation,
-            &[
-                ("Portrait", Orientation::Portrait),
-                ("Landscape", Orientation::Landscape),
-            ],
-        );
-        if desired_orientation != orientation {
-            let (width, height) = desired_orientation.apply(width, height);
-            apply(state, Command::SetPageSize { width, height });
-            return;
-        }
+            let orientation = Orientation::of(width, height);
+            let mut desired_orientation = orientation;
+            segmented(
+                ui,
+                "Orientation",
+                &mut desired_orientation,
+                &[
+                    ("Portrait", Orientation::Portrait),
+                    ("Landscape", Orientation::Landscape),
+                ],
+            );
+            if desired_orientation != orientation {
+                let (width, height) = desired_orientation.apply(width, height);
+                apply(state, Command::SetPageSize { width, height });
+                return true;
+            }
 
-        let (w_changed, h_changed) = pair(
-            ui,
-            ("Width", |ui: &mut Ui| measure_bare(ui, &mut width, unit)),
-            ("Height", |ui: &mut Ui| measure_bare(ui, &mut height, unit)),
-        );
-        if w_changed || h_changed {
-            apply(state, Command::SetPageSize { width, height });
+            let (w_changed, h_changed) = pair(
+                ui,
+                ("Width", |ui: &mut Ui| measure_bare(ui, &mut width, unit)),
+                ("Height", |ui: &mut Ui| measure_bare(ui, &mut height, unit)),
+            );
+            if w_changed || h_changed {
+                apply(state, Command::SetPageSize { width, height });
+                return true;
+            }
+
+            false
+        });
+        if edited {
             return;
         }
     }
@@ -4496,28 +4665,7 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
     let mut changed = false;
 
     ui.add_space(Theme::space_3());
-    let margins_open = section_heading(
-        ui,
-        state,
-        crate::icons::Icon::TextFrame,
-        "Margins & columns",
-    );
-    if margins_open {
-        changed |= ui
-            .checkbox(&mut setup.facing_pages, "Facing pages")
-            .changed();
-    }
-
-    // The labels change with the binding, because the fields themselves mean
-    // something different: with facing pages on, the wide margin is the one
-    // against the spine and swaps sides between left-hand and right-hand
-    // pages. Calling it "Left" then would be a lie on half the document.
-    let (near, far) = if setup.facing_pages {
-        ("Inside", "Outside")
-    } else {
-        ("Left", "Right")
-    };
-
+    let margins_open = section_heading(ui, state, "Margins & columns");
     // Four edges are two pairs, not four rows: top against bottom and one
     // side against the other are the comparisons a person actually makes.
     let document_key = state.active;
@@ -4536,104 +4684,118 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
     };
 
     if margins_open {
-        changed |= edges(
-            ui,
-            "Margins",
-            (&mut setup.margins.top, &mut setup.margins.bottom),
-            (
-                (near, &mut setup.margins.inside),
-                (far, &mut setup.margins.outside),
-            ),
-        );
-        // Column guides, next to the margins they subdivide.
-        ui.add_space(Theme::space_3());
-        group_label(ui, "Columns");
-        let mut count = f64::from(setup.columns.max(1));
-        let (i, j) = pair(
-            ui,
-            ("Count", |ui: &mut Ui| {
-                ui.add(
-                    egui::DragValue::new(&mut count)
-                        .speed(0.1)
-                        .range(1.0..=20.0),
-                )
-                .changed()
-            }),
-            ("Gutter", |ui: &mut Ui| {
-                measure_bare(ui, &mut setup.column_gutter, unit)
-            }),
-        );
-        if i {
-            setup.columns = count.round().clamp(1.0, 20.0) as u8;
-        }
-        changed |= i || j;
+        property_body(ui, |ui| {
+            changed |= ui
+                .checkbox(&mut setup.facing_pages, "Facing pages")
+                .changed();
+            let (near, far) = if setup.facing_pages {
+                ("Inside", "Outside")
+            } else {
+                ("Left", "Right")
+            };
+            changed |= edges(
+                ui,
+                "Margins",
+                (&mut setup.margins.top, &mut setup.margins.bottom),
+                (
+                    (near, &mut setup.margins.inside),
+                    (far, &mut setup.margins.outside),
+                ),
+            );
+            // Column guides, next to the margins they subdivide.
+            ui.add_space(Theme::space_3());
+            group_label(ui, "Columns");
+            let mut count = f64::from(setup.columns.max(1));
+            let (i, j) = pair(
+                ui,
+                ("Count", |ui: &mut Ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut count)
+                            .speed(0.1)
+                            .range(1.0..=20.0),
+                    )
+                    .changed()
+                }),
+                ("Gutter", |ui: &mut Ui| {
+                    measure_bare(ui, &mut setup.column_gutter, unit)
+                }),
+            );
+            if i {
+                setup.columns = count.round().clamp(1.0, 20.0) as u8;
+            }
+            changed |= i || j;
+        });
     }
 
     // The baseline grid, with the document's other page-wide rhythms.
     ui.add_space(Theme::space_3());
-    if section_heading(ui, state, crate::icons::Icon::AlignJustify, "Layout guides") {
-        ui.label(
-            egui::RichText::new("Keep text aligned across columns.")
-                .small()
-                .color(Theme::text_muted()),
-        );
-        let mut on = setup.baseline_grid.is_some();
-        if ui.checkbox(&mut on, "Use a baseline grid").changed() {
-            setup.baseline_grid = on.then_some(tessera_document::nodes::BaselineGrid {
-                start: 0.0,
-                // Twelve on twelve: a grid that matches the default leading, so
-                // turning it on changes nothing until something is set against it.
-                step: 12.0,
-            });
-            changed = true;
-        }
-        if let Some(mut grid) = setup.baseline_grid {
-            let (g, h) = pair(
-                ui,
-                ("Start", |ui: &mut Ui| {
-                    measure_bare(ui, &mut grid.start, unit)
-                }),
-                ("Every", |ui: &mut Ui| {
-                    measure_bare(ui, &mut grid.step, unit)
-                }),
+    if section_heading(ui, state, "Layout guides") {
+        property_body(ui, |ui| {
+            ui.label(
+                egui::RichText::new("Keep text aligned across columns.")
+                    .small()
+                    .color(Theme::text_muted()),
             );
-            if g || h {
-                // A step of zero is a grid with every line in one place, which no
-                // caller can use and the flow would have to guard against.
-                grid.step = grid.step.max(0.1);
-                setup.baseline_grid = Some(grid);
+            let mut on = setup.baseline_grid.is_some();
+            if ui.checkbox(&mut on, "Use a baseline grid").changed() {
+                setup.baseline_grid = on.then_some(tessera_document::nodes::BaselineGrid {
+                    start: 0.0,
+                    // Twelve on twelve: a grid that matches the default leading, so
+                    // turning it on changes nothing until something is set against it.
+                    step: 12.0,
+                });
                 changed = true;
             }
-        }
+            if let Some(mut grid) = setup.baseline_grid {
+                let (g, h) = pair(
+                    ui,
+                    ("Start", |ui: &mut Ui| {
+                        measure_bare(ui, &mut grid.start, unit)
+                    }),
+                    ("Every", |ui: &mut Ui| {
+                        measure_bare(ui, &mut grid.step, unit)
+                    }),
+                );
+                if g || h {
+                    // A step of zero is a grid with every line in one place, which no
+                    // caller can use and the flow would have to guard against.
+                    grid.step = grid.step.max(0.1);
+                    setup.baseline_grid = Some(grid);
+                    changed = true;
+                }
+            }
+        });
     }
 
     ui.add_space(Theme::space_3());
-    if section_heading(ui, state, crate::icons::Icon::Preflight, "Print production") {
-        ui.label(
-            egui::RichText::new(
-                "Bleed extends artwork beyond the trim. Slug adds space for production notes.",
-            )
-            .small()
-            .color(Theme::text_muted()),
-        );
-        changed |= edges(
-            ui,
-            "Bleed",
-            (&mut setup.bleed.top, &mut setup.bleed.bottom),
-            (
-                ("Left", &mut setup.bleed.left),
-                ("Right", &mut setup.bleed.right),
-            ),
-        );
-        changed |= edges(
-            ui,
-            "Slug",
-            (&mut setup.slug.top, &mut setup.slug.bottom),
-            (
-                ("Left", &mut setup.slug.left),
-                ("Right", &mut setup.slug.right),
-            ),
-        );
+    if section_heading(ui, state, "Print production") {
+        property_body(ui, |ui| {
+            ui.label(
+                egui::RichText::new(
+                    "Bleed extends artwork beyond the trim. Slug adds space for production notes.",
+                )
+                .small()
+                .color(Theme::text_muted()),
+            );
+            changed |= edges(
+                ui,
+                "Bleed",
+                (&mut setup.bleed.top, &mut setup.bleed.bottom),
+                (
+                    ("Left", &mut setup.bleed.left),
+                    ("Right", &mut setup.bleed.right),
+                ),
+            );
+            changed |= edges(
+                ui,
+                "Slug",
+                (&mut setup.slug.top, &mut setup.slug.bottom),
+                (
+                    ("Left", &mut setup.slug.left),
+                    ("Right", &mut setup.slug.right),
+                ),
+            );
+        });
     }
 
     if changed {
@@ -4643,8 +4805,10 @@ pub fn document_setup(ui: &mut Ui, state: &mut TesseraApp) {
     }
 
     ui.add_space(Theme::space_3());
-    if section_heading(ui, state, crate::icons::Icon::Palette, "Colour management") {
-        output_intent_controls(ui, state);
+    if section_heading(ui, state, "Colour management") {
+        property_body(ui, |ui| {
+            output_intent_controls(ui, state);
+        });
     }
 
     ui.add_space(Theme::space_4());
@@ -4700,7 +4864,7 @@ fn output_intent_controls(ui: &mut Ui, state: &mut TesseraApp) {
     }
 
     let before = intent.rendering;
-    field(ui, "Intent", |ui| {
+    property_field(ui, "Intent", |ui| {
         crate::icons::reads_as(
             egui::ComboBox::from_id_salt("output-intent-rendering")
                 .selected_text(intent.rendering.label())
@@ -4748,11 +4912,12 @@ fn profile_picker(ui: &mut Ui, state: &mut TesseraApp, current: Option<&str>) {
     let choices = state.profiles.choices();
     let mut chosen: Option<crate::catalogue::Choice> = None;
 
-    field(ui, "Profile", |ui| {
+    property_field(ui, "Profile", |ui| {
         crate::icons::reads_as(
             egui::ComboBox::from_id_salt("output-intent-profile")
                 .selected_text(current.unwrap_or("Choose..."))
                 .width(ui.available_width())
+                .truncate()
                 .show_ui(ui, |ui| {
                     let mut heading = "";
                     for choice in &choices {
@@ -4842,32 +5007,6 @@ pub(crate) fn unit_name(unit: Unit) -> &'static str {
         Unit::Inches => "inches",
         Unit::Picas => "picas",
     }
-}
-
-/// A numeric field holding a measurement.
-///
-/// The document stores points; this shows and edits the user's preferred unit
-/// and converts at the edge, which is the only place a conversion belongs.
-fn measure(ui: &mut Ui, label: &str, points: &mut f64, unit: Unit) -> bool {
-    let mut shown = unit.from_points(*points);
-    let changed = field(ui, label, |ui| {
-        ui.add(
-            egui::DragValue::new(&mut shown)
-                .speed(0.25)
-                // Typing `12mm` into a field showing points converts it.
-                // This is D5: a unit is parsed, never moded, so the same
-                // keystrokes never mean two different things.
-                .custom_formatter(move |v, _| format!("{v:.2} {}", unit.suffix()))
-                .custom_parser(move |text| {
-                    Unit::parse_to_points(text, unit).map(|p| unit.from_points(p))
-                }),
-        )
-        .changed()
-    });
-    if changed {
-        *points = unit.to_points(shown);
-    }
-    changed
 }
 
 // --- status bar --------------------------------------------------------
@@ -5013,7 +5152,7 @@ fn style_rows(ui: &mut Ui, state: &mut TesseraApp, story: StoryId, target: std::
         .map(|(id, s)| (id, s.name.clone()))
         .collect();
 
-    subheading(ui, crate::icons::Icon::Palette, "Styles");
+    group_label(ui, "Styles");
 
     // --- paragraph styles
 
@@ -5027,6 +5166,7 @@ fn style_rows(ui: &mut Ui, state: &mut TesseraApp, story: StoryId, target: std::
             .to_string();
         crate::icons::reads_as(
             egui::ComboBox::from_id_salt("paragraph-style")
+                .truncate()
                 .width((ui.available_width() - 24.0 - ui.spacing().item_spacing.x).max(0.0))
                 .selected_text(label)
                 .show_ui(ui, |ui| {
@@ -5095,6 +5235,7 @@ fn style_rows(ui: &mut Ui, state: &mut TesseraApp, story: StoryId, target: std::
             .to_string();
         crate::icons::reads_as(
             egui::ComboBox::from_id_salt("character-style")
+                .truncate()
                 .width((ui.available_width() - 24.0 - ui.spacing().item_spacing.x).max(0.0))
                 .selected_text(label)
                 .show_ui(ui, |ui| {
@@ -5671,6 +5812,311 @@ mod tests {
                         ui.min_rect()
                     );
                 });
+            }
+        }
+    }
+
+    #[test]
+    fn expanded_object_properties_fit_narrow_docks() {
+        for width in [208.0, 288.0] {
+            for kind in [
+                "rectangle",
+                "ellipse",
+                "empty artwork",
+                "artwork",
+                "path",
+                "path text",
+                "group",
+                "table",
+                "document",
+            ] {
+                let ctx = egui::Context::default();
+                crate::theme::apply(&ctx);
+                let mut state = object_properties_fixture(kind);
+                for _ in 0..2 {
+                    let _ = crate::headless_frame::frame(&ctx, egui::RawInput::default(), |ui| {
+                        ui.set_width(width);
+                        let left = ui.cursor().left();
+                        inspector(ui, &mut state);
+                        assert!(
+                            ui.min_rect().right() <= left + width + 1.0,
+                            "{kind} overflows {width}: {:?}",
+                            ui.min_rect()
+                        );
+                    });
+                }
+            }
+        }
+    }
+
+    fn object_properties_fixture(kind: &str) -> TesseraApp {
+        use tessera_document::{
+            nodes::{Insets, Stroke, TextWrap, WrapTo},
+            paint::{Gradient, Ramp, Stop},
+        };
+        let mut state = TesseraApp::headless();
+        for section in Section::ALL {
+            state.sections.set_open(section.title(), true);
+        }
+        for title in ["Layout guides", "Print production", "Colour management"] {
+            state.sections.set_open(title, true);
+        }
+        if kind == "document" {
+            state.active_mut().document_mut().setup.baseline_grid =
+                Some(tessera_document::nodes::BaselineGrid {
+                    start: 0.0,
+                    step: 12.0,
+                });
+            return state;
+        }
+        apply(
+            &mut state,
+            Command::AddRectangle(DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 200.0,
+                height: 100.0,
+            }),
+        );
+        let id = state.active().selection.single().unwrap();
+        let frame_kind = match kind {
+            "ellipse" => FrameKind::Ellipse,
+            "empty artwork" => FrameKind::Graphic { placed: None },
+            "artwork" => {
+                let link = state.active_mut().document_mut().links.insert(tessera_document::links::Link::new(
+                    "a deliberately long artwork filename that should wrap in the inspector.png", (600.0, 400.0)));
+                FrameKind::Graphic {
+                    placed: Some(tessera_document::graphic::Placement {
+                        link,
+                        inner: Transform::IDENTITY,
+                    }),
+                }
+            }
+            "path" | "path text" => {
+                let mut path = kurbo::BezPath::new();
+                path.move_to((0.0, 0.0));
+                path.line_to((200.0, 100.0));
+                FrameKind::Path(path)
+            }
+            "group" => FrameKind::Group(Vec::new()),
+            "table" => {
+                let story = state
+                    .active_mut()
+                    .document_mut()
+                    .stories
+                    .insert(tessera_text::story::Story::new(""));
+                FrameKind::Table(tessera_document::table::new(1, 1, 200.0, || story))
+            }
+            _ => FrameKind::Rectangle,
+        };
+        let style = if kind == "rectangle" {
+            let mut style = tessera_document::object_style::ObjectStyle::new(
+                "A deliberately long object style name to verify narrow panels",
+            );
+            style.format.fill = Some(Paint::Solid(Color::WHITE));
+            let doc = state.active_mut().document_mut();
+            let style = doc.object_styles.insert(style);
+            doc.object_style_order.push(style);
+            Some(style)
+        } else {
+            None
+        };
+        let frame = state.active_mut().document_mut().frame_mut(id).unwrap();
+        frame.style = style;
+        frame.kind = frame_kind;
+        frame.fill = Paint::Gradient(Gradient::new(
+            Ramp::Linear { angle: 45.0 },
+            vec![
+                Stop {
+                    at: 0.0,
+                    colour: Color::BLACK,
+                },
+                Stop {
+                    at: 0.5,
+                    colour: Color::WHITE,
+                },
+                Stop {
+                    at: 1.0,
+                    colour: Color::BLACK,
+                },
+            ],
+        ));
+        let mut stroke = Stroke::new(Color::BLACK, 2.0);
+        stroke.dashes = vec![6.0, 4.0];
+        frame.stroke = Some(stroke);
+        frame.shadow = Some(tessera_document::shadow::Shadow::TYPICAL);
+        frame.corners.radii = [1.0, 2.0, 3.0, 4.0];
+        frame.wrap = TextWrap::Bounds {
+            standoff: Insets::default(),
+            sides: WrapTo::Both,
+        };
+        if kind == "path text" {
+            apply(
+                &mut state,
+                Command::PutTextOnPath {
+                    id,
+                    text: "Type along this path".into(),
+                },
+            );
+        }
+        state
+    }
+
+    #[test]
+    fn object_inspector_actions_update_the_selected_object() {
+        for label in [
+            "Enable stroke",
+            "Casts a shadow",
+            "Add colour stop",
+            "Remove stop",
+        ] {
+            let ctx = egui::Context::default();
+            crate::theme::apply(&ctx);
+            ctx.enable_accesskit();
+            let mut state = object_properties_fixture("rectangle");
+            let id = state.active().selection.single().unwrap();
+            let raw = || egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(288.0, 5000.0),
+                )),
+                ..Default::default()
+            };
+            let output = crate::headless_frame::frame(&ctx, raw(), |ui| inspector(ui, &mut state));
+            let bounds = output
+                .platform_output
+                .accesskit_update
+                .unwrap()
+                .nodes
+                .iter()
+                .find(|(_, node)| node.label() == Some(label))
+                .and_then(|(_, node)| node.bounds())
+                .expect("a named action with a hit target");
+            let pos = egui::pos2(
+                ((bounds.x0 + bounds.x1) / 2.0) as f32,
+                ((bounds.y0 + bounds.y1) / 2.0) as f32,
+            );
+            for pressed in [true, false] {
+                let mut input = raw();
+                input.events = vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ];
+                let _ = crate::headless_frame::frame(&ctx, input, |ui| inspector(ui, &mut state));
+            }
+            let frame = state.active().document().frame(id).unwrap();
+            match label {
+                "Enable stroke" => assert!(frame.stroke.is_none()),
+                "Casts a shadow" => assert!(frame.shadow.is_none()),
+                "Add colour stop" => assert_eq!(frame.fill.gradient().unwrap().stops().len(), 4),
+                "Remove stop" => assert_eq!(frame.fill.gradient().unwrap().stops().len(), 2),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn stroke_icon_choices_apply_the_named_option_and_undo() {
+        use tessera_document::nodes::{LineCap, LineJoin};
+        for label in [
+            "Butt cap",
+            "Round cap",
+            "Projecting square cap",
+            "Miter join",
+            "Round join",
+            "Bevel join",
+            "Solid stroke",
+            "Dashed stroke",
+            "Dotted stroke",
+        ] {
+            let ctx = egui::Context::default();
+            crate::theme::apply(&ctx);
+            ctx.enable_accesskit();
+            let mut state = object_properties_fixture("rectangle");
+            let id = state.active().selection.single().unwrap();
+            let stroke = state
+                .active_mut()
+                .document_mut()
+                .frame_mut(id)
+                .unwrap()
+                .stroke
+                .as_mut()
+                .unwrap();
+            stroke.cap = LineCap::Square;
+            stroke.join = LineJoin::Bevel;
+            stroke.dashes = vec![1.0, 3.0, 2.0, 4.0];
+            let before = stroke.clone();
+            let mut expected = before.clone();
+            match label {
+                "Butt cap" => expected.cap = LineCap::Butt,
+                "Round cap" => expected.cap = LineCap::Round,
+                "Projecting square cap" => expected.cap = LineCap::Square,
+                "Miter join" => expected.join = LineJoin::Miter,
+                "Round join" => expected.join = LineJoin::Round,
+                "Bevel join" => expected.join = LineJoin::Bevel,
+                "Solid stroke" => expected.dashes.clear(),
+                "Dashed stroke" => expected.dashes = vec![6.0, 4.0],
+                "Dotted stroke" => {
+                    expected.dashes = vec![0.0, 4.0];
+                    expected.cap = LineCap::Round;
+                }
+                _ => unreachable!(),
+            }
+            let draw = |ui: &mut Ui, state: &mut TesseraApp| {
+                let frame = state.active().document().frame(id).unwrap().clone();
+                ui.set_width(208.0);
+                property_body(ui, |ui| stroke_section(ui, state, id, &frame));
+            };
+            let output =
+                crate::headless_frame::frame(&ctx, Default::default(), |ui| draw(ui, &mut state));
+            assert_eq!(
+                state.active().document().frame(id).unwrap().stroke.as_ref(),
+                Some(&before),
+                "drawing must preserve custom patterns"
+            );
+            let tree = output.platform_output.accesskit_update.unwrap();
+            let bounds = tree
+                .nodes
+                .iter()
+                .find(|(_, node)| node.label() == Some(label))
+                .and_then(|(_, node)| node.bounds())
+                .expect("a named icon button");
+            let pos = egui::pos2(
+                ((bounds.x0 + bounds.x1) / 2.0) as f32,
+                ((bounds.y0 + bounds.y1) / 2.0) as f32,
+            );
+            for pressed in [true, false] {
+                let input = egui::RawInput {
+                    events: vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    ..Default::default()
+                };
+                let _ = crate::headless_frame::frame(&ctx, input, |ui| draw(ui, &mut state));
+            }
+            assert_eq!(
+                state.active().document().frame(id).unwrap().stroke.as_ref(),
+                Some(&expected),
+                "{label}"
+            );
+            if expected != before {
+                apply(&mut state, Command::Undo);
+                assert_eq!(
+                    state.active().document().frame(id).unwrap().stroke.as_ref(),
+                    Some(&before),
+                    "one undo restores {label}"
+                );
             }
         }
     }

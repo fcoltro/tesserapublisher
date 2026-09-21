@@ -107,6 +107,16 @@ pub enum Icon {
     List,
     TabStop,
     DropCap,
+    // Stroke samples: show the resulting line end, join, or pattern.
+    CapButt,
+    CapRound,
+    CapSquare,
+    JoinMiter,
+    JoinRound,
+    JoinBevel,
+    StrokeSolid,
+    StrokeDashed,
+    StrokeDotted,
     Plus,
     Duplicate,
     PlaceImage,
@@ -491,6 +501,21 @@ impl Icon {
             Self::DropCap => {
                 &["M2 18 L7 4 L12 18 M4 13 H10 M15 5 H22 M15 11 H22 M15 17 H22 M2 22 H22"]
             }
+            // Tessera: outlined stroke samples. The cap ticks mark the path endpoint.
+            Self::CapButt => &["M3 8 H16 V16 H3", "M16 3 V5 M16 19 V21"],
+            Self::CapRound => &["M3 8 H16 A4 4 0 0 1 16 16 H3", "M16 3 V5 M16 19 V21"],
+            Self::CapSquare => &["M3 8 H20 V16 H3", "M16 3 V5 M16 19 V21"],
+            Self::JoinMiter => &["M4 20 V4 H20 V10 H10 V20 Z"],
+            Self::JoinRound => &["M4 20 V10 A6 6 0 0 1 10 4 H20 V10 H10 V20 Z"],
+            Self::JoinBevel => &["M4 20 V10 L10 4 H20 V10 H10 V20 Z"],
+            Self::StrokeSolid => &["M3 12 H21"],
+            Self::StrokeDashed => &["M3 12 H7 M10 12 H14 M17 12 H21"],
+            Self::StrokeDotted => &[
+                "M5 12 A1 1 0 1 1 3 12 A1 1 0 1 1 5 12 Z",
+                "M10 12 A1 1 0 1 1 8 12 A1 1 0 1 1 10 12 Z",
+                "M15 12 A1 1 0 1 1 13 12 A1 1 0 1 1 15 12 Z",
+                "M20 12 A1 1 0 1 1 18 12 A1 1 0 1 1 20 12 Z",
+            ],
             // lucide: a-large-small
             Self::TypeSize => &[
                 "m15 16 2.536-7.328a1.02 1.02 1 0 1 1.928 0L22 16",
@@ -657,6 +682,15 @@ impl Icon {
             | Self::List
             | Self::TabStop
             | Self::DropCap
+            | Self::CapButt
+            | Self::CapRound
+            | Self::CapSquare
+            | Self::JoinMiter
+            | Self::JoinRound
+            | Self::JoinBevel
+            | Self::StrokeSolid
+            | Self::StrokeDashed
+            | Self::StrokeDotted
             | Self::Plus
             | Self::Duplicate
             | Self::PlaceImage
@@ -994,7 +1028,7 @@ pub fn rotated_shapes(
 /// icon rather than returning nothing, so the cost of forgetting is a slower
 /// first draw instead of an invisible button; this list is the fast path, not
 /// the only one.
-pub const ALL: [Icon; 80] = [
+pub const ALL: [Icon; 89] = [
     Icon::Sun,
     Icon::Moon,
     Icon::DirectSelect,
@@ -1057,6 +1091,15 @@ pub const ALL: [Icon; 80] = [
     Icon::List,
     Icon::TabStop,
     Icon::DropCap,
+    Icon::CapButt,
+    Icon::CapRound,
+    Icon::CapSquare,
+    Icon::JoinMiter,
+    Icon::JoinRound,
+    Icon::JoinBevel,
+    Icon::StrokeSolid,
+    Icon::StrokeDashed,
+    Icon::StrokeDotted,
     Icon::Plus,
     Icon::Duplicate,
     Icon::Trash,
@@ -1254,7 +1297,7 @@ mod tests {
         // fails this rather than shipping an invisible button.
         assert_eq!(
             ALL.len(),
-            80,
+            89,
             "an icon was added to the enum without being added to ALL"
         );
     }
