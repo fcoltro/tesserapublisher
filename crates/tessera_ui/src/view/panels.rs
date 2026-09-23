@@ -1352,22 +1352,28 @@ fn stroke_section(
     let mut stroke = existing.clone();
     let unit = state.prefs.unit;
 
-    property_field(ui, "Stroke width", |ui| {
-        measure_bare(ui, &mut stroke.width, unit)
-    });
-
+    // Weight and colour on one row, as InDesign's Appearance row has them:
+    // two things that describe one line, read together.
     let [r, g, b, a] = stroke.color.to_rgb_f32();
     let mut rgba = [r, g, b, a];
-    property_field(ui, "Stroke colour", |ui| {
-        if fill_picker(ui, &mut rgba) {
-            stroke.color = Color::Rgb {
-                r: rgba[0],
-                g: rgba[1],
-                b: rgba[2],
-                a: rgba[3],
-            };
-        }
+    let recoloured = property_field(ui, (Icon::StrokeWeight, "Stroke weight"), |ui| {
+        ui.horizontal(|ui| {
+            let swatch = 2.0 * Theme::control_height();
+            ui.spacing_mut().interact_size.x =
+                (ui.available_width() - swatch - ui.spacing().item_spacing.x).max(VALUE_BOX);
+            measure_bare(ui, &mut stroke.width, unit);
+            fill_picker(ui, &mut rgba)
+        })
+        .inner
     });
+    if recoloured {
+        stroke.color = Color::Rgb {
+            r: rgba[0],
+            g: rgba[1],
+            b: rgba[2],
+            a: rgba[3],
+        };
+    }
 
     // Alignment is the one stroke property that changes geometry rather than
     // appearance, which is why the model carries it and why it sits first.
@@ -3279,7 +3285,10 @@ fn property_choice<T: PartialEq + Copy>(
     before != *value
 }
 
-/// Small visual choices retain their group label, tooltip, and keyboard focus.
+/// A choice made by picture — line ends, joins, a dash pattern — on one row:
+/// its name at the left in the label column, as InDesign's Stroke panel
+/// writes "Cap" and "Join", and the pictures packed after it. The name above
+/// the row cost a line per choice for a word the row could carry.
 fn icon_choices<T: PartialEq + Copy>(
     ui: &mut Ui,
     label: &str,
@@ -3288,25 +3297,28 @@ fn icon_choices<T: PartialEq + Copy>(
 ) -> bool {
     let before = *value;
     ui.push_id(label, |ui| {
-        ui.label(
-            egui::RichText::new(label)
-                .small()
-                .color(Theme::text_muted()),
-        );
-        ui.columns(options.len(), |columns| {
-            for (column, (icon, name, hint, candidate)) in columns.iter_mut().zip(options) {
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(
+                Vec2::new(Theme::LABEL_COLUMN, Theme::control_height()),
+                Sense::hover(),
+            );
+            ui.painter().text(
+                rect.left_center(),
+                egui::Align2::LEFT_CENTER,
+                label,
+                egui::FontId::proportional(Theme::TYPE_SM),
+                Theme::text_muted(),
+            );
+            ui.spacing_mut().item_spacing.x = 1.0;
+            let cell = Vec2::new(
+                Theme::control_height() + Theme::space_1(),
+                Theme::control_height(),
+            );
+            for (icon, name, hint, candidate) in options {
                 let selected = *value == *candidate;
-                let (rect, response) = column.allocate_exact_size(
-                    Vec2::new(column.available_width(), Theme::row()),
-                    Sense::click(),
-                );
-                paint_toggle_frame(column, rect, &response, selected);
-                let painter = column.painter_at(rect);
-                let glyph = egui::Rect::from_center_size(
-                    rect.center(),
-                    Vec2::splat(Theme::ICON_SIZE.min(rect.width())),
-                );
-                crate::icons::paint_rotated(&painter, glyph, *icon, Theme::text_primary(), 0.0);
+                let (rect, response) = ui.allocate_exact_size(cell, Sense::click());
+                paint_toggle_frame(ui, rect, &response, selected);
+                crate::icons::paint(&ui.painter_at(rect), rect, *icon, Theme::text_primary());
                 let response = crate::icons::reads_as(
                     response,
                     *name,

@@ -121,6 +121,8 @@ pub enum Icon {
     StrokeSolid,
     StrokeDashed,
     StrokeDotted,
+    /// A stroke's weight: Spectrum's own picture of it.
+    StrokeWeight,
     // Field glyphs: each stands beside a number and says what the number is.
     ScaleX,
     ScaleY,
@@ -332,6 +334,7 @@ impl Icon {
             | Self::TabStop
             | Self::StrokeSolid
             | Self::StrokeDotted
+            | Self::StrokeWeight
             | Self::Shear
             | Self::CornerRadius
             | Self::CornerTopLeft
@@ -447,6 +450,7 @@ impl Icon {
             | Self::StrokeSolid
             | Self::StrokeDashed
             | Self::StrokeDotted
+            | Self::StrokeWeight
             | Self::ScaleX
             | Self::ScaleY
             | Self::Shear
@@ -574,6 +578,7 @@ impl Icon {
             Self::TabStop => s2!("Ruler"),
             Self::StrokeSolid => s2!("StrokeSolid"),
             Self::StrokeDotted => s2!("StrokeDotted"),
+            Self::StrokeWeight => s2!("StrokeWidth"),
             Self::Shear => s2!("TransformSkew"),
             Self::CornerRadius => s2!("CornerRadius"),
             Self::CornerTopLeft => s2!("CornerRadiusTopLeft"),
@@ -941,7 +946,8 @@ fn texture(ctx: &egui::Context, icon: Icon, side: u32, degrees: f32) -> egui::Te
 /// **An icon missing from this list is missing from its own tests.** Seventeen
 /// were once, and three more — `Book`, `Pipette`, `Pi` — until the move to
 /// Spectrum, when a count taken by hand matched a list that was short.
-pub const ALL: [Icon; 116] = [
+pub const ALL: [Icon; 117] = [
+    Icon::StrokeWeight,
     Icon::Disclosure,
     Icon::Book,
     Icon::Pipette,
@@ -1237,6 +1243,6 @@ mod tests {
         // count is what is checked, and it is the enum's own count.
         let unique: std::collections::HashSet<_> = ALL.iter().collect();
         assert_eq!(unique.len(), ALL.len(), "an icon is listed twice");
-        assert_eq!(ALL.len(), 116);
+        assert_eq!(ALL.len(), 117);
     }
 }
