@@ -442,12 +442,27 @@ pub fn transform_row(
 
     let w_changed = measure_inline(ui, "W", &mut bounds.width, unit);
     let h_changed = measure_inline(ui, "H", &mut bounds.height, unit);
+    chain_button(ui, state);
+    crate::view::control::separator(ui);
 
-    let mut chain = state.constrain_proportions;
-    // InDesign's chain link, now that the icon set has one. A padlock stood in
-    // while it did not, and a padlock means permission elsewhere in this
-    // application — a locked layer cannot be touched, whereas a constrained
-    // ratio is two fields moving together.
+    let d = frame.transform.decompose();
+    let mut rotation = d.rotation_degrees;
+    let turned = angle_inline(ui, &mut rotation);
+
+    apply_geometry(
+        state,
+        id,
+        GeometryEdit {
+            moved: moved.then_some((x - origin.x, y - origin.y)),
+            resized: (w_changed || h_changed).then_some((was_w, was_h, bounds, w_changed)),
+            turned: turned.then_some(rotation - d.rotation_degrees),
+        },
+    );
+}
+
+/// The chain between width and height, as a toggle.
+fn chain_button(ui: &mut Ui, state: &mut TesseraApp) {
+    let chain = state.constrain_proportions;
     if icon_button(
         ui,
         if chain {
@@ -458,49 +473,50 @@ pub fn transform_row(
         "Constrain proportions",
         chain,
     ) {
-        chain = !chain;
-        state.constrain_proportions = chain;
+        state.constrain_proportions = !chain;
     }
-    crate::view::control::separator(ui);
+}
 
-    let d = frame.transform.decompose();
-    let mut rotation = d.rotation_degrees;
-    let turned = angle_inline(ui, &mut rotation);
+/// What a geometry editor changed, read off its fields: a move by `(dx, dy)`,
+/// a new size from `(was width, was height, bounds, width was the one edited)`,
+/// a turn by so many degrees.
+#[derive(Default)]
+struct GeometryEdit {
+    moved: Option<(f64, f64)>,
+    resized: Option<(f64, f64, tessera_geometry::DocRect, bool)>,
+    turned: Option<f64>,
+}
 
-    if moved {
-        // Translated in document space, so a turned frame goes where the
-        // number says rather than off along its own axes.
-        apply(
-            state,
-            Command::TranslateSelection {
-                dx: x - origin.x,
-                dy: y - origin.y,
-            },
-        );
+/// Carry out a [`GeometryEdit`], the same way from the control bar and from
+/// the panel: one place that knows a size under the chain keeps its
+/// proportions, and that a turn is about the reference point.
+fn apply_geometry(state: &mut TesseraApp, id: tessera_document::ids::FrameId, edit: GeometryEdit) {
+    if let Some((dx, dy)) = edit.moved {
+        apply(state, Command::TranslateSelection { dx, dy });
     }
-    if w_changed || h_changed {
-        if chain {
+    if let Some((was_w, was_h, mut bounds, w_changed)) = edit.resized {
+        if state.constrain_proportions {
             let (w, h) = constrained((was_w, was_h), (bounds.width, bounds.height), w_changed);
             bounds.width = w;
             bounds.height = h;
         }
         apply(state, Command::SetBounds { id, bounds });
     }
-    if turned {
+    if let Some(degrees) = edit.turned {
         apply(
             state,
             Command::TransformAbout {
                 id,
                 anchor: state.anchor,
                 scale: (1.0, 1.0),
-                rotate: rotation - d.rotation_degrees,
+                rotate: degrees,
                 shear: 0.0,
             },
         );
     }
 }
 
-/// Scale and shear: what is left of the old transform section.
+/// The panel's Transform: position, size and turn, then scale and shear.
 fn transform_section(
     ui: &mut Ui,
     state: &mut TesseraApp,
@@ -510,7 +526,51 @@ fn transform_section(
     // Read from one decomposition and written back as deltas about the
     // reference point, so the fields, the handles and the proxy mean one
     // thing rather than three.
+    // Position, size and turn at the head of the section, as InDesign's
+    // Properties panel has them: the reference point on the left, X and Y,
+    // then W and H with the chain. The control bar has the same fields; the
+    // panel is where somebody who works from it looks for them, and a
+    // Transform section that could scale and shear but not move was missing
+    // its first line.
+    let unit = state.prefs.unit;
     let d = frame.transform.decompose();
+    let origin = frame.transform.apply(state.anchor.in_rect(frame.bounds));
+    let (mut x, mut y) = (origin.x, origin.y);
+    let mut bounds = frame.bounds;
+    let (was_w, was_h) = (bounds.width, bounds.height);
+    let mut anchor = state.anchor;
+    let (mut moved, mut w_changed, mut h_changed) = (false, false, false);
+    ui.horizontal(|ui| {
+        let side = 2.0 * Theme::control_height() + ui.spacing().item_spacing.y;
+        if reference_proxy_sized(ui, &mut anchor, side) {
+            state.anchor = anchor;
+        }
+        ui.vertical(|ui| {
+            ui.horizontal_wrapped(|ui| {
+                moved |= measure_inline(ui, "X", &mut x, unit);
+                moved |= measure_inline(ui, "Y", &mut y, unit);
+            });
+            ui.horizontal_wrapped(|ui| {
+                w_changed = measure_inline(ui, "W", &mut bounds.width, unit);
+                h_changed = measure_inline(ui, "H", &mut bounds.height, unit);
+                chain_button(ui, state);
+            });
+        });
+    });
+    let mut rotation = d.rotation_degrees;
+    let turned = angle(ui, (crate::icons::Icon::Angle, "Rotation"), &mut rotation);
+    if moved || w_changed || h_changed || turned {
+        apply_geometry(
+            state,
+            id,
+            GeometryEdit {
+                moved: moved.then_some((x - origin.x, y - origin.y)),
+                resized: (w_changed || h_changed).then_some((was_w, was_h, bounds, w_changed)),
+                turned: turned.then_some(rotation - d.rotation_degrees),
+            },
+        );
+        return;
+    }
     let anchor = state.anchor;
 
     let (mut sx, mut sy) = (d.scale_x * 100.0, d.scale_y * 100.0);
