@@ -5130,9 +5130,17 @@ pub fn status_bar(ui: &mut Ui, state: &mut TesseraApp) {
                     .size()
                     .x;
                 let message_width = text_width.min((left_width * 0.4).min(180.0));
+                // Drawn in the size it was measured in. It was measured small
+                // and drawn at the body size, so every message was a few
+                // points wider than its room and read "New docum..." for ever.
                 ui.add_sized(
                     egui::vec2(message_width, 20.0),
-                    egui::Label::new(egui::RichText::new(message).color(tint)).truncate(),
+                    egui::Label::new(
+                        egui::RichText::new(message)
+                            .size(Theme::TYPE_SM)
+                            .color(tint),
+                    )
+                    .truncate(),
                 )
                 .on_hover_text(message);
                 ui.separator();

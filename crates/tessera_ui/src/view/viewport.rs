@@ -3156,7 +3156,7 @@ fn draw_overlays(
         .collect();
         painter.add(egui::Shape::closed_line(
             corners,
-            Stroke::new(1.0, Theme::selection()),
+            Stroke::new(1.0, Theme::accent_edge()),
         ));
     }
 
@@ -3180,18 +3180,21 @@ fn draw_overlays(
             .collect();
             painter.add(egui::Shape::closed_line(
                 corners,
-                Stroke::new(1.0, Theme::selection()),
+                Stroke::new(1.0, Theme::accent_edge()),
             ));
         }
 
         // Handles ride the rotation too, so they stay on the frame's own
-        // corners.
+        // corners. The outline, the handles and the reference mark are drawn
+        // in the accent at full strength: they were drawn in the wash meant
+        // for behind selected text, at a third of it, and on white paper the
+        // selection was the faintest thing on the page.
         let h = Theme::HANDLE_SIZE;
         for (_, pos) in handle_positions(state, rect) {
             painter.rect_filled(
                 Rect::from_center_size(pos, egui::vec2(h, h)),
                 0.0,
-                Theme::selection(),
+                Theme::accent_edge(),
             );
         }
 
@@ -3205,7 +3208,7 @@ fn draw_overlays(
         // safe place to show a mode is where the user is already looking.
         let c = to_screen(placement.apply(state.anchor.in_rect(bounds)));
         let arm = Theme::REFERENCE_MARK;
-        let hair = Stroke::new(1.0, Theme::selection());
+        let hair = Stroke::new(1.0, Theme::accent_edge());
         painter.line_segment([c - egui::vec2(arm, arm), c + egui::vec2(arm, arm)], hair);
         painter.line_segment([c - egui::vec2(arm, -arm), c + egui::vec2(arm, -arm)], hair);
     }
@@ -3345,7 +3348,7 @@ fn draw_overlays(
                 painter.rect_stroke(
                     r,
                     0.0,
-                    Stroke::new(1.0, Theme::selection()),
+                    Stroke::new(1.0, Theme::accent_edge()),
                     egui::StrokeKind::Middle,
                 );
             }
