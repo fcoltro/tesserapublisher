@@ -1238,14 +1238,16 @@ fn optional_number(
             Some(v) => {
                 let mut edited = f64::from(*v);
                 let suffix = suffix.to_string();
-                if ui
-                    .add(
+                if crate::icons::speak_as(
+                    ui.add(
                         egui::DragValue::new(&mut edited)
                             .speed(speed)
                             .range(range)
                             .custom_formatter(move |n, _| format!("{n:.2}{suffix}")),
-                    )
-                    .changed()
+                    ),
+                    label,
+                )
+                .changed()
                 {
                     *v = edited as f32;
                 }
@@ -1303,9 +1305,11 @@ fn optional_count(ui: &mut Ui, label: &str, value: &mut Option<u8>, default: u8)
         ui.add_enabled_ui(value.is_some(), |ui| match value {
             Some(v) => {
                 let mut edited = i32::from(*v);
-                if ui
-                    .add(egui::DragValue::new(&mut edited).speed(1.0).range(0..=10))
-                    .changed()
+                if crate::icons::speak_as(
+                    ui.add(egui::DragValue::new(&mut edited).speed(1.0).range(0..=10)),
+                    label,
+                )
+                .changed()
                 {
                     *v = edited.clamp(0, 10) as u8;
                 }

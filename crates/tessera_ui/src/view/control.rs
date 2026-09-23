@@ -53,14 +53,16 @@ fn polygon_options(ui: &mut Ui, state: &mut TesseraApp) {
 
     let mut sides = f64::from(state.prefs.polygon_sides);
     label(ui, "Sides");
-    if ui
-        .add(
+    if crate::icons::speak_as(
+        ui.add(
             egui::DragValue::new(&mut sides)
                 .range(f64::from(FEWEST_SIDES)..=f64::from(MOST_SIDES))
                 .speed(0.15)
                 .fixed_decimals(0),
-        )
-        .changed()
+        ),
+        "Sides",
+    )
+    .changed()
     {
         state.prefs.polygon_sides = sides.round() as u32;
         crate::prefs::remember(state);
@@ -70,15 +72,17 @@ fn polygon_options(ui: &mut Ui, state: &mut TesseraApp) {
     // about it in points.
     let mut inset = state.prefs.polygon_inset * 100.0;
     label(ui, "Star");
-    if ui
-        .add(
+    if crate::icons::speak_as(
+        ui.add(
             egui::DragValue::new(&mut inset)
                 .range(0.0..=95.0)
                 .suffix("%")
                 .speed(0.5)
                 .fixed_decimals(0),
-        )
-        .changed()
+        ),
+        "Star inset",
+    )
+    .changed()
     {
         state.prefs.polygon_inset = inset / 100.0;
         crate::prefs::remember(state);

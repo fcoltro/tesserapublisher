@@ -826,6 +826,41 @@ pub fn reads_as(
     response
 }
 
+/// Give a field its spoken name: the word a screen reader says before its
+/// role and value.
+///
+/// egui's number box clears its own name so its value is not read twice, and
+/// the word printed beside a field is a separate label that Tab never lands
+/// on — so without this NVDA says "spin button, 264.58 mm" and nothing about
+/// whether that is X or H.
+pub fn speak_as(response: egui::Response, name: &str) -> egui::Response {
+    response
+        .ctx
+        .accesskit_node_builder(response.id, |node| node.set_label(name));
+    response
+}
+
+/// The same, for the field egui is about to give `id`, when the caller hands
+/// on a closure and never sees the field's response: the first widget a
+/// field row adds takes the row's next id. Only a field that would otherwise
+/// be announced by its role alone is named, and nothing is if `id` did not
+/// become a widget — asking AccessKit for a node that is not there makes one.
+pub(crate) fn speak_field_as(ctx: &egui::Context, id: egui::Id, name: &str) {
+    use egui::accesskit::Role;
+    if ctx.read_response(id).is_none() {
+        return;
+    }
+    ctx.accesskit_node_builder(id, |node| {
+        let a_field = matches!(
+            node.role(),
+            Role::SpinButton | Role::TextInput | Role::ComboBox | Role::Slider
+        );
+        if a_field && node.label().is_none_or(str::is_empty) {
+            node.set_label(name);
+        }
+    });
+}
+
 /// Paint `icon` centred in `rect`, at the interface's icon size, in `color`.
 pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
     let side = crate::theme::Theme::ICON_SIZE

@@ -278,15 +278,17 @@ pub(crate) fn appearance_row(
     crate::view::control::glyph(ui, crate::icons::Icon::Opacity, "Opacity");
     let mut blend = frame.blend;
     let mut percent = blend.alpha() * 100.0;
-    if ui
-        .add(
+    if crate::icons::speak_as(
+        ui.add(
             egui::DragValue::new(&mut percent)
                 .range(0.0..=100.0)
                 .speed(0.5)
                 .suffix("%")
                 .fixed_decimals(0),
-        )
-        .changed()
+        ),
+        "Opacity",
+    )
+    .changed()
     {
         blend.opacity = percent / 100.0;
         apply(state, Command::SetBlending { id, blend });
@@ -658,17 +660,26 @@ fn transform_section(
 /// field out as a grid row. Same parser, same formatter, same unit rule.
 fn measure_inline(ui: &mut Ui, label: &str, points: &mut f64, unit: Unit) -> bool {
     crate::view::control::label(ui, label);
+    // The letter is InDesign's and reads at a glance. Spoken, "W" is a letter
+    // and not a field, so a screen reader is given the word.
+    let spoken = match label {
+        "W" => "Width",
+        "H" => "Height",
+        other => other,
+    };
     let mut shown = unit.from_points(*points);
-    let changed = ui
-        .add(
+    let changed = crate::icons::speak_as(
+        ui.add(
             egui::DragValue::new(&mut shown)
                 .speed(0.25)
                 .custom_formatter(move |v, _| format!("{v:.2} {}", unit.suffix()))
                 .custom_parser(move |text| {
                     Unit::parse_to_points(text, unit).map(|p| unit.from_points(p))
                 }),
-        )
-        .changed();
+        ),
+        spoken,
+    )
+    .changed();
     if changed {
         *points = unit.to_points(shown);
     }
@@ -678,8 +689,11 @@ fn measure_inline(ui: &mut Ui, label: &str, points: &mut f64, unit: Unit) -> boo
 /// An angle in a row.
 fn angle_inline(ui: &mut Ui, degrees: &mut f64) -> bool {
     crate::view::control::glyph(ui, crate::icons::Icon::Angle, "Rotation");
-    ui.add(egui::DragValue::new(degrees).speed(0.5).suffix("\u{00B0}"))
-        .changed()
+    crate::icons::speak_as(
+        ui.add(egui::DragValue::new(degrees).speed(0.5).suffix("\u{00B0}")),
+        "Rotation",
+    )
+    .changed()
 }
 
 /// Family, size and leading for the text being edited.
@@ -730,14 +744,16 @@ pub fn type_row(ui: &mut Ui, state: &mut TesseraApp) {
 
     let mut size = common.size.unwrap_or(12.0) as f64;
     crate::view::control::glyph(ui, crate::icons::Icon::TypeSize, "Size");
-    if ui
-        .add(
+    if crate::icons::speak_as(
+        ui.add(
             egui::DragValue::new(&mut size)
                 .speed(0.25)
                 .range(0.1..=2000.0)
                 .suffix(" pt"),
-        )
-        .changed()
+        ),
+        "Size",
+    )
+    .changed()
     {
         set_character(
             state,
@@ -753,13 +769,15 @@ pub fn type_row(ui: &mut Ui, state: &mut TesseraApp) {
 
     let mut leading = common.line_height.unwrap_or(1.2) as f64;
     crate::view::control::glyph(ui, crate::icons::Icon::LineSpacing, "Leading");
-    if ui
-        .add(
+    if crate::icons::speak_as(
+        ui.add(
             egui::DragValue::new(&mut leading)
                 .speed(0.02)
                 .range(0.5..=4.0),
-        )
-        .changed()
+        ),
+        "Leading",
+    )
+    .changed()
     {
         set_character(
             state,
@@ -971,7 +989,9 @@ fn fill_section(
         Paint::Solid(colour) => {
             let [r, g, b, a] = colour.to_rgb_f32();
             let mut rgba = [r, g, b, a];
-            if property_field(ui, "Fill colour", |ui| fill_picker(ui, &mut rgba)) {
+            if property_field(ui, "Fill colour", |ui| {
+                fill_picker(ui, &mut rgba, "Fill colour")
+            }) {
                 apply(
                     state,
                     Command::SetFill {
@@ -1029,7 +1049,8 @@ fn gradient_controls(
             ui.separator();
             ui.label(format!("Stop {}", index + 1));
             let mut rgba = stop.colour.to_rgb_f32();
-            if property_field(ui, "Colour", |ui| fill_picker(ui, &mut rgba)) {
+            let name = format!("Stop {} colour", index + 1);
+            if property_field(ui, "Colour", |ui| fill_picker(ui, &mut rgba, &name)) {
                 stop.colour = Color::Rgb {
                     r: rgba[0],
                     g: rgba[1],
@@ -1397,8 +1418,12 @@ fn stroke_section(
             let swatch = 2.0 * Theme::control_height();
             ui.spacing_mut().interact_size.x =
                 (ui.available_width() - swatch - ui.spacing().item_spacing.x).max(VALUE_BOX);
+            // Two fields in the row, so the row's name cannot go to its first
+            // widget alone: the weight takes it and the swatch has its own.
+            let weight = ui.next_auto_id();
             measure_bare(ui, &mut stroke.width, unit);
-            fill_picker(ui, &mut rgba)
+            crate::icons::speak_field_as(ui.ctx(), weight, "Stroke weight");
+            fill_picker(ui, &mut rgba, "Stroke colour")
         })
         .inner
     });
@@ -1698,7 +1723,7 @@ pub(crate) fn paragraph_rule_editor(
         }
         let [cr, cg, cb, ca] = r.colour.clone().unwrap_or(Color::BLACK).to_rgb_f32();
         let mut rgba = [cr, cg, cb, ca];
-        if fill_picker(ui, &mut rgba) {
+        if fill_picker(ui, &mut rgba, "Rule colour") {
             r.colour = Some(Color::Rgb {
                 r: rgba[0],
                 g: rgba[1],
@@ -3108,7 +3133,10 @@ impl FieldLabel<'_> {
                         .wrap(),
                     );
                     ui.spacing_mut().interact_size.x = ui.available_width().min(WIDEST_ROW);
-                    add(ui)
+                    let field = ui.next_auto_id();
+                    let added = add(ui);
+                    crate::icons::speak_field_as(ui.ctx(), field, word);
+                    added
                 })
                 .inner
             }
@@ -3121,7 +3149,10 @@ impl FieldLabel<'_> {
                     crate::icons::reads_as(response, word, egui::WidgetType::Label, None)
                         .on_hover_text(word);
                     ui.spacing_mut().interact_size.x = ui.available_width().min(WIDEST_ROW);
-                    add(ui)
+                    let field = ui.next_auto_id();
+                    let added = add(ui);
+                    crate::icons::speak_field_as(ui.ctx(), field, word);
+                    added
                 })
                 .inner
             }
@@ -3553,7 +3584,10 @@ fn labelled<R>(
 
         ui.scope(|ui| {
             ui.spacing_mut().interact_size.x = box_;
-            add(ui)
+            let field = ui.next_auto_id();
+            let added = add(ui);
+            crate::icons::speak_field_as(ui.ctx(), field, label);
+            added
         })
         .inner
     })
@@ -3918,7 +3952,7 @@ fn text_section(
         let [r, g, b, a] = shown_colour.to_rgb_f32();
         let mut rgba = [r, g, b, a];
         if text_field(ui, Icon::Palette, "Text colour", |ui| {
-            fill_picker(ui, &mut rgba)
+            fill_picker(ui, &mut rgba, "Text colour")
         }) {
             set_character(
                 state,
@@ -4766,14 +4800,20 @@ fn frame_section(ui: &mut Ui, frame: &tessera_document::nodes::Frame) {
 /// A swatch, not a bar: InDesign's is a chip beside its field. A black bar the
 /// width of the panel was the heaviest thing in it, and said no more than a
 /// chip does.
-fn fill_picker(ui: &mut Ui, rgba: &mut [f32; 4]) -> bool {
+/// A colour swatch that opens a picker. `name` is what a screen reader says
+/// for it: a swatch is a patch of colour, and without one NVDA says only
+/// "button".
+fn fill_picker(ui: &mut Ui, rgba: &mut [f32; 4], name: &str) -> bool {
     ui.spacing_mut().interact_size =
         Vec2::new(2.0 * Theme::control_height(), Theme::control_height());
     let mut colour = egui::Rgba::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
-    let changed = egui::widgets::color_picker::color_edit_button_rgba(
-        ui,
-        &mut colour,
-        egui::widgets::color_picker::Alpha::Opaque,
+    let changed = crate::icons::speak_as(
+        egui::widgets::color_picker::color_edit_button_rgba(
+            ui,
+            &mut colour,
+            egui::widgets::color_picker::Alpha::Opaque,
+        ),
+        name,
     )
     .changed();
     if changed {
@@ -5315,14 +5355,16 @@ pub fn status_bar(ui: &mut Ui, state: &mut TesseraApp) {
             ui.separator();
 
             let mut percent = state.active().view.zoom * 100.0;
-            if ui
-                .add(
+            if crate::icons::speak_as(
+                ui.add(
                     egui::DragValue::new(&mut percent)
                         .speed(1.0)
                         .range(5.0..=1600.0)
                         .suffix("%"),
-                )
-                .changed()
+                ),
+                "Zoom",
+            )
+            .changed()
             {
                 state.active_mut().view.zoom = percent / 100.0;
             }
@@ -5796,7 +5838,19 @@ mod tests {
     }
 
     /// The roles a person can reach, focus and act on.
-    const INTERACTIVE: [&str; 5] = ["Button", "RadioButton", "CheckBox", "ComboBox", "Link"];
+    ///
+    /// `SpinButton` is a number field. It was missing from this list, and NVDA
+    /// walking the Properties panel said "spin button, 264.58 mm" four times
+    /// over with nothing to say which was X and which was H.
+    const INTERACTIVE: [&str; 7] = [
+        "Button",
+        "RadioButton",
+        "CheckBox",
+        "ComboBox",
+        "Link",
+        "SpinButton",
+        "ColorWell",
+    ];
 
     #[test]
     fn every_tool_tells_a_screen_reader_its_name() {
@@ -5840,10 +5894,45 @@ mod tests {
         // name it. `allocate_exact_size` plus a painter is how most of this
         // interface is drawn, and nothing about that spelling makes a name
         // appear — which is exactly why every one of them was missing.
-        let mut state = TesseraApp::headless();
+        //
+        // Nothing selected, a shape and a text frame: each puts different
+        // sections in the panels and the control bar, and nothing selected
+        // alone never drew a Transform, Fill or Stroke field to check.
+        let mut shape = TesseraApp::headless();
+        apply(
+            &mut shape,
+            Command::AddRectangle(DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 60.0,
+            }),
+        );
+        let (mut text, _, _) = a_text_frame("Words");
+        no_control_reaches_a_screen_reader_unnamed(&mut TesseraApp::headless());
+        no_control_reaches_a_screen_reader_unnamed(&mut text);
+        let fields = no_control_reaches_a_screen_reader_unnamed(&mut shape);
+
+        // And the names are the right ones: a selected shape's geometry, which
+        // is what NVDA read out as five bare numbers. Checked by name, so a
+        // Transform section that stopped drawing fails here rather than
+        // passing for having no fields to name.
+        for name in ["X", "Y", "Width", "Height", "Rotation", "Opacity"] {
+            assert!(
+                fields.iter().any(|f| f == name),
+                "no number field is named {name:?}: {fields:?}"
+            );
+        }
+    }
+
+    /// Draws everything docked round the canvas for `state`, fails on any
+    /// control with no name, and hands back the number fields' names.
+    fn no_control_reaches_a_screen_reader_unnamed(state: &mut TesseraApp) -> Vec<String> {
         let named = accessibility_tree(|ui| {
-            crate::view::docks::show(ui, &mut state);
-            tool_strip(ui, &mut state);
+            crate::view::docks::show(ui, state);
+            tool_strip(ui, state);
+            crate::view::control::show(ui, state);
+            status_bar(ui, state);
         });
 
         let interactive: Vec<_> = named
@@ -5867,6 +5956,11 @@ mod tests {
             "{} control(s) reached the accessibility tree with no name: {nameless:?}",
             nameless.len()
         );
+        interactive
+            .iter()
+            .filter(|(role, _)| role == "SpinButton")
+            .filter_map(|(_, label)| label.clone())
+            .collect()
     }
 
     #[test]

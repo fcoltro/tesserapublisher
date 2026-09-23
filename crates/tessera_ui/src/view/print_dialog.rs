@@ -61,16 +61,22 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                 ui.add_enabled_ui(!window.all, |ui| {
                     let mut from = window.from as f64;
                     let mut to = window.to as f64;
-                    ui.add(
-                        egui::DragValue::new(&mut from)
-                            .range(1.0..=count as f64)
-                            .fixed_decimals(0),
+                    crate::icons::speak_as(
+                        ui.add(
+                            egui::DragValue::new(&mut from)
+                                .range(1.0..=count as f64)
+                                .fixed_decimals(0),
+                        ),
+                        "First page",
                     );
                     ui.colored_label(Theme::text_muted(), "to");
-                    ui.add(
-                        egui::DragValue::new(&mut to)
-                            .range(1.0..=count as f64)
-                            .fixed_decimals(0),
+                    crate::icons::speak_as(
+                        ui.add(
+                            egui::DragValue::new(&mut to)
+                                .range(1.0..=count as f64)
+                                .fixed_decimals(0),
+                        ),
+                        "Last page",
                     );
                     window.from = from.round() as usize;
                     window.to = to.round().max(from.round()) as usize;

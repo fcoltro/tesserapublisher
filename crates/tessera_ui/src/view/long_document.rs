@@ -216,11 +216,14 @@ fn index_entry(ctx: &egui::Context, state: &mut TesseraApp) {
                     });
                 if let IndexSpan::Paragraphs(n) = &mut window.span {
                     let mut count = f64::from(*n);
-                    ui.add(
-                        egui::DragValue::new(&mut count)
-                            .range(0.0..=999.0)
-                            .speed(0.2)
-                            .fixed_decimals(0),
+                    crate::icons::speak_as(
+                        ui.add(
+                            egui::DragValue::new(&mut count)
+                                .range(0.0..=999.0)
+                                .speed(0.2)
+                                .fixed_decimals(0),
+                        ),
+                        "Paragraphs",
                     );
                     *n = count.round() as u32;
                 }
