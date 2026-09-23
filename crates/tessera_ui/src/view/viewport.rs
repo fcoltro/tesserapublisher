@@ -3135,7 +3135,10 @@ fn draw_overlays(
     // A text frame's edge is always drawn, selected or not — the way InDesign
     // shows one. An empty text frame has no ink of its own, so without this it
     // is invisible until something is typed into it, and there is nothing to
-    // aim at when nothing has been.
+    // aim at when nothing has been. In its layer's colour, as InDesign draws
+    // frame edges: a page with frames on two layers says which is which
+    // before anything is selected. A selected frame is told apart by its
+    // handles.
     for id in state.active().document().paint_order() {
         let Some(frame) = state.active().document().frame(id) else {
             continue;
@@ -3143,11 +3146,11 @@ fn draw_overlays(
         if !matches!(frame.kind, tessera_document::nodes::FrameKind::Text { .. })
             || state.active().selection.contains(id)
         {
-            continue; // a selected frame already has a brighter outline
+            continue; // a selected frame has its outline drawn below
         }
         painter.add(egui::Shape::closed_line(
             quad(state, rect, frame.bounds, frame.transform),
-            Stroke::new(1.0, Theme::frame_edge()),
+            Stroke::new(1.0, layer_edge(state, [id])),
         ));
     }
 

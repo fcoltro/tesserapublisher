@@ -57,7 +57,6 @@ pub struct Palette {
     /// hue alone — the two appear in the same 13-point square, never side by
     /// side, so shape and position carry nothing.
     pub ok: Color32,
-    pub frame_edge: Color32,
 }
 
 /// Which palette everything is drawn from at the moment.
@@ -182,9 +181,6 @@ impl Palette {
         accent_hover: Color32::from_rgb(0x7A, 0xA3, 0xF4),
         error: Color32::from_rgb(0xF0, 0x8C, 0x82),
         ok: Color32::from_rgb(0x2E, 0x9E, 0x5B),
-        // Light enough to clear 3:1 on the lifted pasteboard, and still 3:1
-        // on paper, where an empty text frame's edge is also drawn.
-        frame_edge: Color32::from_rgb(0x8C, 0x8C, 0x8C),
     };
 
     // The same scale, light, as published — but step 8, the focus ring, is
@@ -218,10 +214,6 @@ impl Palette {
         // Darker than the dark theme's green rather than lighter: this one is
         // read against white paper, and it carries a white tick.
         ok: Color32::from_rgb(0x1E, 0x7A, 0x44),
-        // Dark enough to read on the pasteboard as well as on paper: an
-        // empty text frame is invisible without its edge, and it can sit in
-        // either place.
-        frame_edge: Color32::from_rgb(0x62, 0x62, 0x62),
     };
 }
 
@@ -516,11 +508,6 @@ impl Theme {
     /// Side of a painted cursor, in logical points.
     pub const CURSOR_SIZE: f32 = 20.0;
 
-    /// A text frame's non-printing edge, shown whether or not it is selected —
-    /// an empty text frame is otherwise invisible.
-    pub fn frame_edge() -> Color32 {
-        palette().frame_edge
-    }
     /// The reference point a rotation turns about.
     pub const REFERENCE_MARK: f32 = 4.0;
 
@@ -1038,7 +1025,6 @@ mod tests {
                 ("a focus ring on panel", p.step(8), p.step(2)),
                 ("the accent on panel", p.accent, p.step(2)),
                 ("the accent on canvas", p.accent, p.canvas_bg),
-                ("a frame edge on canvas", p.frame_edge, p.canvas_bg),
             ] {
                 let ratio = contrast_ratio(fg, bg);
                 assert!(
