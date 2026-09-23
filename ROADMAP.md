@@ -508,7 +508,7 @@ stand on it — and because PDF export already ships without a bleed box.
   a spread move independently, which is milestone 3's concern. Landing here rather than at milestone 4 costs nothing extra, because
   the format bump is already being paid — and it is what lets phase C's rulers
   actually yield a guide.
-- [ ] ~~**B4 — `ColorRef::{ Direct, Swatch }`.**~~ **Dropped 2026-09-04, to
+- ~~**B4 — `ColorRef::{ Direct, Swatch }`.**~~ **Dropped 2026-09-04, to
   milestone 5 where it belongs.** The argument for reserving it early was that
   adding the indirection at milestone 5 would mean migrating every fill and
   stroke in every saved document. Reading `format/mod.rs` undermines that:
@@ -684,7 +684,7 @@ The reason a layout tool is not a drawing tool.
   `+` override indicator, Clear Overrides, Redefine Style, Break Link, and a
   delete that folds the style into the text so nothing changes appearance.
 - [x] Text selection by click-drag, double-click word, triple-click paragraph.
-- [ ] IME composition rendered on canvas -> **moved to milestone 2.5.** It is
+- [x] **Built in milestone 2.5.** IME composition rendered on canvas -> **moved to milestone 2.5.** It is
   a windowing concern rather than a text-model one, and the only item here
   that no headless test can reach; leaving it in would have made the whole
   milestone unverifiable by the suite.
@@ -697,6 +697,11 @@ The reason a layout tool is not a drawing tool.
 - [x] Typography inspector panel.
 
 ### Asked for by the acceptance sentence, and not built
+
+**Built since, in milestone 9** — manual kerning, optical kerning, H&J
+parameters and glyph scaling; see *Kerning control and H&J parameters* there,
+`[~]` until a person has looked at the result. What follows is the record of
+why they were left here.
 
 Both are recorded rather than half-built, because a control that sets a value
 nothing honours is worse than one that is absent.
@@ -846,7 +851,7 @@ unverified one.
   - Duplicating is a **deep** copy, stories included. Sharing one would make
     editing the copy edit the original, and both pages would look right until
     somebody typed.
-- [ ] Facing-page spreads with correct left/right geometry. → **moved to
+- [x] **Built in milestone 1.5 (B2).** Facing-page spreads with correct left/right geometry. → **moved to
   milestone 1.5, phase B**, along with page size, margins, bleed, slug, and a
   spread that renders as a spread. Tracked there, not here.
 ### The remaining work, reordered
@@ -926,11 +931,11 @@ masters twice.
   - Format version 8 → 9. Nothing to rewrite, and this time the defaults really
     are the truth: a document written before parents existed has none, none of
     its pages is built on one, and nothing overrides anything.
-- [ ] Document setup: page size, orientation, margins, bleed, slug. → **moved
+- [x] **Built in milestone 1.5 (B7).** Document setup: page size, orientation, margins, bleed, slug. → **moved
   to milestone 1.5, phase B.** Too much stands on it to leave it this late:
   rulers, screen modes, align-to-page, `TrimBox` and `BleedBox`, and
   preflight's out-of-bleed rule. Per-page size overrides stay here.
-- [ ] Screen modes Bleed and Slug → **moved to milestone 1.5, phase C**, since
+- [x] **Built in milestone 1.5 (C9).** Screen modes Bleed and Slug → **moved to milestone 1.5, phase C**, since
   phase B supplies the geometry they need.
 
 ---
@@ -1008,7 +1013,7 @@ full argument, with sources, is in `docs/superpowers/specs/`.
 > across two pages, resize the first, and watch the text reflow through the
 > chain. See the connector lines between linked frames when one is selected.
 
-- [ ] Rulers with unit selection (mm, pt, px, in, picas) → **moved to
+- [x] **Built in milestone 1.5 (C8).** Rulers with unit selection (mm, pt, px, in, picas) → **moved to
   milestone 1.5**: the unit type to phase A, the ruler to phase C.
 - [x] Ruler guides → **moved to milestone 1.5**: the data to phase B, the
   drag-out to phase C. Margin guides are drawn by phase B; **column guides
@@ -1967,7 +1972,7 @@ milestone the layout is fixed: a tool strip, one inspector, and the canvas.
 - [x] **The first-run tour is removed (2026-09-22)**, at the user's word: "we
   don't need a tour thing, it is just time lost." `docs/USING.md` stays. What
   follows is the record of what it was.
-- [ ] ~~User documentation and a first-run tour.~~ `docs/USING.md` is written and
+- [x] **User documentation, and ~~a first-run tour~~ (removed; see the entry above).** `docs/USING.md` is written and
   the tour was built — five cards about *where things are*, in
   `crates/tessera_ui/src/tour.rs` with its card in `view/tour.rs`, offered once
   on a first run and available from Help ever after. Each step names a place and
