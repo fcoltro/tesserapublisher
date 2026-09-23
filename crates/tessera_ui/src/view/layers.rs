@@ -38,9 +38,150 @@ const COUNT: f32 = 62.0;
 /// The section, as it sits in the rail.
 pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
     body(ui, state);
+    objects(ui, state);
     // Drawn from the context rather than inside the section, so the question
     // survives the rail being scrolled or the section being shut under it.
     confirm_removal(ui, state);
+}
+
+/// The active layer's objects, front to back, under the layers.
+///
+/// What InDesign shows when a layer is opened: each object by its kind and by
+/// what it says — a text frame by its first words, a picture by its file — and
+/// a click selects it and brings it into view. A page of twenty frames stacked
+/// under one another is a page where the one at the back can only be reached
+/// by moving the ones in front; here it is a row.
+///
+/// Listed below the layers rather than between them because a layer row drags
+/// to reorder by its place in a column of equal rows, and rows of objects
+/// among them would be places it could not land.
+fn objects(ui: &mut Ui, state: &mut TesseraApp) {
+    let doc = state.active().document();
+    let Some(layer) = doc.active_layer.and_then(|id| doc.layers.get(id)) else {
+        return;
+    };
+    if layer.frames.is_empty() {
+        return;
+    }
+    let heading = format!("Objects on {}", layer.name);
+    let rows: Vec<_> = layer
+        .frames
+        .iter()
+        .rev()
+        .filter_map(|&id| {
+            let frame = doc.frame(id)?;
+            let (icon, name) = describe(doc, frame);
+            Some((id, icon, name))
+        })
+        .collect();
+
+    ui.add_space(Theme::space_3());
+    super::panels::group_label(ui, &heading);
+    ui.add_space(Theme::space_1());
+    let mut chosen = None;
+    for (id, icon, name) in rows {
+        let selected = state.active().selection.contains(id);
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::click());
+        let painter = ui.painter_at(rect);
+        if selected {
+            painter.rect_filled(rect, 3.0, Theme::accent_soft());
+        } else if response.hovered() {
+            painter.rect_filled(rect, 3.0, Theme::hover_bg());
+        }
+        let glyph = Rect::from_min_size(
+            rect.min + Vec2::new(SWITCH / 2.0, (ROW - Theme::ICON_SIZE) / 2.0),
+            Vec2::splat(Theme::ICON_SIZE),
+        );
+        crate::icons::paint(&painter, glyph, icon, Theme::text_muted());
+        let text_left = glyph.right() + Theme::space_2();
+        let room = (rect.right() - text_left - Theme::space_1()).max(0.0);
+        let galley = painter.layout(
+            name.clone(),
+            egui::FontId::proportional(Theme::TYPE_MD),
+            Theme::text_primary(),
+            f32::INFINITY,
+        );
+        let galley = if galley.size().x > room {
+            ui.fonts_mut(|fonts| {
+                let mut job = egui::text::LayoutJob::single_section(
+                    name.clone(),
+                    egui::TextFormat::simple(
+                        egui::FontId::proportional(Theme::TYPE_MD),
+                        Theme::text_primary(),
+                    ),
+                );
+                job.wrap = egui::text::TextWrapping::truncate_at_width(room);
+                fonts.layout_job(job)
+            })
+        } else {
+            galley
+        };
+        painter.galley(
+            egui::pos2(text_left, rect.center().y - galley.size().y / 2.0),
+            galley,
+            Theme::text_primary(),
+        );
+        let response = crate::icons::reads_as(
+            response,
+            &name,
+            egui::WidgetType::SelectableLabel,
+            Some(selected),
+        )
+        .on_hover_text(format!("{name}\nClick to select it"));
+        if response.clicked() {
+            chosen = Some(id);
+        }
+    }
+    if let Some(id) = chosen {
+        state.active_mut().selection.set(id);
+        state.reveal = Some(id);
+    }
+}
+
+/// An object as the list names it: the picture for its kind, and what it says.
+fn describe(
+    doc: &tessera_document::document::Document,
+    frame: &tessera_document::nodes::Frame,
+) -> (Icon, String) {
+    use tessera_document::nodes::FrameKind;
+    match &frame.kind {
+        FrameKind::Text { story, .. } => {
+            let words = doc
+                .story(*story)
+                // The first few words, not the story: a book-length one would
+                // be joined whole on every frame to show a dozen of them.
+                .map(|s| {
+                    s.text
+                        .split_whitespace()
+                        .take(12)
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .unwrap_or_default();
+            if words.is_empty() {
+                (Icon::Text, "Empty text frame".to_string())
+            } else {
+                (Icon::Text, words)
+            }
+        }
+        FrameKind::Graphic { placed } => {
+            let file = placed
+                .as_ref()
+                .and_then(|p| doc.links.get(p.link))
+                .and_then(|l| l.path.file_name())
+                .map(|n| n.to_string_lossy().into_owned());
+            (
+                Icon::PictureFrame,
+                file.unwrap_or_else(|| "Empty picture frame".to_string()),
+            )
+        }
+        FrameKind::Rectangle => (Icon::Rectangle, "Rectangle".to_string()),
+        FrameKind::Ellipse => (Icon::Ellipse, "Ellipse".to_string()),
+        FrameKind::Path(_) => (Icon::Pen, "Path".to_string()),
+        FrameKind::Table(_) => (Icon::Columns, "Table".to_string()),
+        FrameKind::Group(children) => (Icon::Layers, format!("Group of {}", children.len())),
+    }
 }
 
 fn body(ui: &mut Ui, state: &mut TesseraApp) {
