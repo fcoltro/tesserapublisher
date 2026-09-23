@@ -500,6 +500,12 @@ pub struct TesseraApp {
     /// has already put it away.
     pub update_check: crate::update::Check,
 
+    /// The font families chosen lately, the latest first: the head of the
+    /// family menu, as InDesign keeps its recent fonts there. A layout uses
+    /// three or four faces, and each was a scroll through every face on the
+    /// machine to reach.
+    pub recent_fonts: Vec<String>,
+
     /// What the platform has been told about the caret, so an input method can
     /// put its candidate window there.
     pub ime: crate::ime::Ime,
@@ -591,6 +597,7 @@ impl TesseraApp {
             palette: crate::view::palette::Palette::default(),
             prefs: crate::prefs::Preferences::default(),
             update_check: crate::update::Check::default(),
+            recent_fonts: Vec::new(),
             ime: crate::ime::Ime::default(),
         }
     }

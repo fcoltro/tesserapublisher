@@ -4677,12 +4677,29 @@ fn family_menu(
 ) -> Option<String> {
     let mut chosen = None;
     let label = shown.unwrap_or("Mixed");
+    let recent = state.recent_fonts.clone();
     crate::icons::reads_as(
         egui::ComboBox::from_id_salt("family")
             .width(ui.available_width().min(max_width))
             .truncate()
             .selected_text(label)
             .show_ui(ui, |ui| {
+                if !recent.is_empty() {
+                    ui.label(
+                        egui::RichText::new("Recent")
+                            .small()
+                            .color(Theme::text_muted()),
+                    );
+                    for family in &recent {
+                        if ui
+                            .selectable_label(shown == Some(family.as_str()), family)
+                            .clicked()
+                        {
+                            chosen = Some(family.clone());
+                        }
+                    }
+                    ui.separator();
+                }
                 for family in state.shaper.families() {
                     if ui
                         .selectable_label(shown == Some(family.as_str()), family)
@@ -4697,7 +4714,20 @@ fn family_menu(
         egui::WidgetType::ComboBox,
         None,
     );
+    if let Some(family) = &chosen {
+        remember_font(&mut state.recent_fonts, family);
+    }
     chosen
+}
+
+/// How many families the menu's Recent list keeps.
+const RECENT_FONTS: usize = 5;
+
+/// Put `family` at the head of `recent`, once, keeping the list short.
+fn remember_font(recent: &mut Vec<String>, family: &str) {
+    recent.retain(|f| f != family);
+    recent.insert(0, family.to_string());
+    recent.truncate(RECENT_FONTS);
 }
 
 fn frame_section(ui: &mut Ui, frame: &tessera_document::nodes::Frame) {
@@ -6558,6 +6588,21 @@ mod tests {
         let names = fill_section_names(&ctx, &mut state, id, Some("Solid"));
         assert_eq!(fill(&state), Paint::Solid(red));
         assert!(names.iter().any(|n| n == "Fill colour"), "{names:?}");
+    }
+
+    #[test]
+    fn a_font_chosen_again_moves_to_the_head_of_recent_and_the_list_stays_short() {
+        let mut recent = Vec::new();
+        for family in ["A", "B", "C"] {
+            remember_font(&mut recent, family);
+        }
+        remember_font(&mut recent, "A");
+        assert_eq!(recent, ["A", "C", "B"]);
+        for family in ["D", "E", "F", "G"] {
+            remember_font(&mut recent, family);
+        }
+        assert_eq!(recent.len(), RECENT_FONTS);
+        assert_eq!(recent[0], "G");
     }
 
     #[test]
