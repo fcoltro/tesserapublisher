@@ -46,6 +46,12 @@ impl LinksPanel {
     ) -> Vec<(LinkId, Status)> {
         let stale = self.asked.is_none_or(|at| at.elapsed() > STATUS_TTL)
             || self.revision != state_doc.revision();
+        if self.asked.is_none() {
+            // Asked for by a person: the disk itself, not what it last said.
+            for link in state_doc.links.values() {
+                tessera_io::seen::look_now(&link.path);
+            }
+        }
         if stale {
             self.statuses = state_doc
                 .links

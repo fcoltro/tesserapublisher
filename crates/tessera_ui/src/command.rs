@@ -2453,6 +2453,9 @@ fn measure_link(
     let modified = std::fs::metadata(&path)
         .ok()
         .and_then(|m| tessera_document::links::modified_seconds(&m));
+    // Just placed from this path: whatever was remembered about it — missing,
+    // an older version — is out of date now.
+    tessera_io::seen::look_now(&path);
     let mut link = tessera_document::links::Link::new(path, natural);
     link.modified = modified;
     Some(link)

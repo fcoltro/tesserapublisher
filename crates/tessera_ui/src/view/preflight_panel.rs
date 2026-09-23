@@ -35,6 +35,10 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
                 )
                 .clicked()
             {
+                // The disk itself, this moment: what "Check again" promises.
+                for link in state.active().document().links.values() {
+                    tessera_io::seen::look_now(&link.path);
+                }
                 state.preflight.recheck();
             }
         });

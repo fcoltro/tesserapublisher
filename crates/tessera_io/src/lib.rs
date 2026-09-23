@@ -8,5 +8,6 @@
 
 pub mod atomic;
 pub mod capped;
+pub mod seen;
 
 pub use atomic::{IoError, write_atomic};

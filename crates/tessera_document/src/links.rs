@@ -51,9 +51,12 @@ impl Link {
         }
     }
 
-    /// What the disk says about this link now.
+    /// What the disk says about this link — as it said it at most a couple
+    /// of seconds ago, from [`tessera_io::seen`]. Layout asks this for every
+    /// placed picture on every edit, and the disk is not asked each time.
     pub fn status(&self) -> Status {
-        let Ok(meta) = std::fs::metadata(&self.path) else {
+        let tessera_io::seen::Seen::Present { modified } = tessera_io::seen::seen(&self.path)
+        else {
             return Status::Missing;
         };
         let Some(placed) = self.modified else {
@@ -61,7 +64,7 @@ impl Link {
             // that could not read one. Present is the most that can be said.
             return Status::Fine;
         };
-        match modified_seconds(&meta) {
+        match modified {
             Some(now) if now != placed => Status::Modified,
             _ => Status::Fine,
         }

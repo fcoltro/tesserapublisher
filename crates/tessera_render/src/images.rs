@@ -97,9 +97,13 @@ impl Images {
     /// again. `None` for the size asks for the original, which is what anything
     /// needing real pixels — a resolution report, an export — must have.
     pub fn at_size(&mut self, path: &Path, longest_edge: Option<u32>) -> Option<&Decoded> {
-        let modified = std::fs::metadata(path)
-            .ok()
-            .and_then(|m| tessera_document::links::modified_seconds(&m));
+        // What the disk last said, not what it says this instant: this runs
+        // for every picture on every redraw, and a stale key costs at most a
+        // couple of seconds before an edited file is decoded again.
+        let modified = match tessera_io::seen::seen(path) {
+            tessera_io::seen::Seen::Present { modified } => modified,
+            tessera_io::seen::Seen::Missing => None,
+        };
         let bucket = longest_edge.map(crate::proxies::bucket);
         let key = Key {
             path: path.to_path_buf(),
@@ -473,6 +477,9 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(1100));
         let bigger = image::RgbaImage::from_pixel(16, 16, image::Rgba([1, 2, 3, 255]));
         bigger.save(&path).expect("write a png");
+        // What the next background look finds, a couple of seconds on; the
+        // freshness is `tessera_io::seen`'s to test, the key is this one's.
+        tessera_io::seen::look_now(&path);
 
         assert_eq!(images.get(&path).expect("decoded").pixels, (16, 16));
         assert_eq!(images.decodes(), 2);
@@ -609,6 +616,7 @@ mod tests {
         image::RgbaImage::from_pixel(64, 64, image::Rgba([9, 9, 9, 255]))
             .save(&path)
             .expect("write a png");
+        tessera_io::seen::look_now(&path);
 
         let mut later = Images::keeping_proxies_in(Some(directory.clone()));
         let decoded = later.at_size(&path, Some(200)).expect("decoded");
