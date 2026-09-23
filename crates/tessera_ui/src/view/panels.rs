@@ -3400,6 +3400,27 @@ fn format_target(
     }
 }
 
+/// The paragraph formatting the text in hand states: the selection's, or the
+/// caret's paragraph, or the whole story when a text frame is selected — its
+/// own overrides and nothing it inherits, so a style made from it states what
+/// somebody set rather than every default. `None` with no text frame selected.
+pub(crate) fn stated_paragraph_format(state: &TesseraApp) -> Option<ParagraphFormat> {
+    let id = state.active().selection.single()?;
+    let tessera_document::nodes::FrameKind::Text { story, .. } =
+        state.active().document().frame(id)?.kind
+    else {
+        return None;
+    };
+    let range = format_target(state, id, story);
+    Some(
+        state
+            .active()
+            .document()
+            .story(story)?
+            .common_paragraph_format(range),
+    )
+}
+
 /// A character property the user just changed, as a format stating only it.
 ///
 /// Only the changed field, never the whole shown struct. Sending everything
@@ -6603,6 +6624,24 @@ mod tests {
         }
         assert_eq!(recent.len(), RECENT_FONTS);
         assert_eq!(recent[0], "G");
+    }
+
+    #[test]
+    fn a_style_from_text_holds_what_the_text_states_and_no_more() {
+        let (mut state, id, story) = a_text_frame("A heading");
+        set_paragraph(
+            &mut state,
+            story,
+            0..9,
+            ParagraphFormat {
+                alignment: Some(Alignment::Centre),
+                ..Default::default()
+            },
+        );
+        state.active_mut().selection.set(id);
+        let format = stated_paragraph_format(&state).expect("a text frame is selected");
+        assert_eq!(format.alignment, Some(Alignment::Centre));
+        assert_eq!(format.indent_left, None, "only what the text states");
     }
 
     #[test]

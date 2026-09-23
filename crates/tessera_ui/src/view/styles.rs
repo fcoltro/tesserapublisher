@@ -591,6 +591,28 @@ fn paragraph_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
                         state.styles_window.paragraph =
                             state.active().document().paragraph_styles.keys().last();
                     }
+                    // InDesign's New Paragraph Style: a style holding what the
+                    // text in hand states — its alignment, its spacing, what
+                    // somebody set — so formatting worked out on one paragraph
+                    // becomes a style without being typed in again.
+                    if let Some(format) = crate::view::panels::stated_paragraph_format(state)
+                        && super::panel_ui::action(ui, crate::icons::Icon::Pilcrow, "From text")
+                            .on_hover_text(
+                                "A new style holding the formatting the selected text states",
+                            )
+                            .clicked()
+                    {
+                        apply(
+                            state,
+                            Command::DefineParagraphStyle(ParagraphStyle {
+                                name: format!("Paragraph style {}", styles.len() + 1),
+                                based_on: None,
+                                format,
+                            }),
+                        );
+                        state.styles_window.paragraph =
+                            state.active().document().paragraph_styles.keys().last();
+                    }
                     if let Some(id) = selected {
                         ui.menu_button("Style actions", |ui| {
                             if ui.button("Edit style...").clicked() {
