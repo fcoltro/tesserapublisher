@@ -73,16 +73,19 @@ fn crop(content: &mut Content, trim: DocRect, bleed: DocRect, offset: f64, ink: 
     // The gap: never inside the bleed, because a mark over the ink is a mark
     // that cannot be seen.
     let gap = offset.max(bleed_gap(trim, bleed));
+    let pdf = flip(trim);
 
     let (l, r) = (trim.x, trim.x + trim.width);
-    let (t, b) = (to_pdf(trim.y + trim.height), to_pdf(trim.y));
+    let (top, bottom) = (pdf(trim.y), pdf(trim.y + trim.height));
 
+    // Level with the top and bottom edges, reaching out sideways.
     for (x, dir) in [(l, -1.0), (r, 1.0)] {
-        for y in [t, b] {
+        for y in [top, bottom] {
             line(content, x + dir * gap, y, x + dir * (gap + MARK_LENGTH), y);
         }
     }
-    for (y, dir) in [(b, -1.0), (t, 1.0)] {
+    // In line with the sides, reaching out above the top and below the bottom.
+    for (y, dir) in [(top, 1.0), (bottom, -1.0)] {
         for x in [l, r] {
             line(content, x, y + dir * gap, x, y + dir * (gap + MARK_LENGTH));
         }
@@ -106,11 +109,12 @@ fn bleed_marks(content: &mut Content, trim: DocRect, bleed: DocRect, offset: f64
 
     let gap = offset.max(bleed_gap(trim, bleed));
     let short = MARK_LENGTH / 2.0;
+    let pdf = flip(trim);
     let (l, r) = (bleed.x, bleed.x + bleed.width);
-    let (t, b) = (to_pdf(bleed.y + bleed.height), to_pdf(bleed.y));
+    let (top, bottom) = (pdf(bleed.y), pdf(bleed.y + bleed.height));
 
     for (x, dir) in [(l, -1.0), (r, 1.0)] {
-        for y in [t, b] {
+        for y in [top, bottom] {
             line(content, x + dir * gap, y, x + dir * (gap + short), y);
         }
     }
@@ -126,13 +130,15 @@ fn registration(content: &mut Content, trim: DocRect, offset: f64, ink: &Ink) {
     const RADIUS: f64 = 5.0;
     ink.set_stroke(content, &registration_colour(ink));
 
+    let pdf = flip(trim);
     let middle_x = trim.x + trim.width / 2.0;
-    let middle_y = to_pdf(trim.y + trim.height / 2.0);
+    let middle_y = pdf(trim.y + trim.height / 2.0);
     let out = offset + RADIUS + 2.0;
 
+    // Above the top, below the bottom, and beside each side.
     let spots = [
-        (middle_x, to_pdf(trim.y) - out),
-        (middle_x, to_pdf(trim.y + trim.height) + out),
+        (middle_x, pdf(trim.y) + out),
+        (middle_x, pdf(trim.y + trim.height) - out),
         (trim.x - out, middle_y),
         (trim.x + trim.width + out, middle_y),
     ];
@@ -158,7 +164,9 @@ fn colour_bar(content: &mut Content, trim: DocRect, offset: f64, ink: &Ink) {
     }
 
     const PATCH: f64 = 8.0;
-    let y = to_pdf(trim.y + trim.height) + offset + 2.0;
+    // Below the bottom edge: a patch's origin is its lower corner, so it goes
+    // down by its own height as well as the offset.
+    let y = flip(trim)(trim.y + trim.height) - offset - 2.0 - PATCH;
     let mut x = trim.x;
 
     // Each ink solid, then each at a quarter, half and three-quarter tint. The
@@ -205,13 +213,16 @@ fn bleed_gap(trim: DocRect, bleed: DocRect) -> f64 {
     left.max(top).max(right).max(bottom).max(0.0)
 }
 
-/// Document y to PDF y, for a page whose origin is the trim corner.
+/// Document y to PDF y, in the space the TrimBox is written in: the trim's
+/// lower-left corner at the origin, y up.
 ///
-/// The rest of the writer flips through `to_pdf_y`; marks are positioned
-/// relative to the trim rather than to a rectangle, so they flip here. Both go
-/// through one subtraction and neither invents a second convention.
-fn to_pdf(y: f64) -> f64 {
-    -y
+/// It was `-y`, and a whole page out: the top edge's marks came out on the
+/// bottom edge and the bottom edge's a page below the sheet, so an exported
+/// PDF showed half its crop marks and none at the top. Acrobat's Output
+/// Preview is what saw it — no test placed a mark, only counted that one was
+/// drawn. `marks_sit_outside_the_trim_on_every_side` places them now.
+fn flip(trim: DocRect) -> impl Fn(f64) -> f64 {
+    move |y| trim.y + trim.height - y
 }
 
 fn line(content: &mut Content, x1: f64, y1: f64, x2: f64, y2: f64) {
@@ -319,6 +330,62 @@ mod tests {
         };
         draw(&mut content, &a_page(), &options, &Ink::Rgb);
         assert!(!content.finish().is_empty());
+    }
+
+    /// Every coordinate a `m`, `l` or `re` operator in `content` names.
+    fn points(content: &[u8]) -> Vec<(f64, f64)> {
+        let text = String::from_utf8_lossy(content);
+        let words: Vec<&str> = text.split_whitespace().collect();
+        let mut out = Vec::new();
+        for (i, word) in words.iter().enumerate() {
+            if matches!(*word, "m" | "l" | "re") && i >= 2 {
+                let at = if *word == "re" { i - 4 } else { i - 2 };
+                if let (Ok(x), Ok(y)) = (words[at].parse(), words[at + 1].parse()) {
+                    out.push((x, y));
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn marks_sit_outside_the_trim_on_every_side() {
+        // The trim in PDF space is 0..100 across and 0..200 up. Every mark is
+        // outside it, none is a page away, and there are marks above the top,
+        // below the bottom and beside each side.
+        let mut content = Content::new();
+        let options = ExportOptions {
+            marks: crate::options::Marks::all(),
+            ..Default::default()
+        };
+        draw(&mut content, &a_page(), &options, &Ink::Rgb);
+        let points = points(&content.finish());
+        assert!(!points.is_empty());
+        let reach = options.marks.reach() + 1.0;
+        for &(x, y) in &points {
+            let inside = x > 0.0 && x < 100.0 && y > 0.0 && y < 200.0;
+            assert!(!inside, "a mark at ({x}, {y}) is on the page");
+            assert!(
+                x > -reach && x < 100.0 + reach && y > -reach && y < 200.0 + reach,
+                "a mark at ({x}, {y}) is off the sheet"
+            );
+        }
+        assert!(
+            points.iter().any(|&(_, y)| y > 200.0),
+            "nothing above the top"
+        );
+        assert!(
+            points.iter().any(|&(_, y)| y < 0.0),
+            "nothing below the bottom"
+        );
+        assert!(
+            points.iter().any(|&(x, _)| x < 0.0),
+            "nothing beside the left"
+        );
+        assert!(
+            points.iter().any(|&(x, _)| x > 100.0),
+            "nothing beside the right"
+        );
     }
 
     #[test]
