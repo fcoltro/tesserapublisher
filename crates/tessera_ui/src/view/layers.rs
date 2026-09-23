@@ -143,7 +143,7 @@ fn objects(ui: &mut Ui, state: &mut TesseraApp) {
 }
 
 /// An object as the list names it: the picture for its kind, and what it says.
-fn describe(
+pub(crate) fn describe(
     doc: &tessera_document::document::Document,
     frame: &tessera_document::nodes::Frame,
 ) -> (Icon, String) {

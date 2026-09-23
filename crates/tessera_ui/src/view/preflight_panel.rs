@@ -120,10 +120,29 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
                     row.on_hover_text("About the document as a whole");
                     continue;
                 }
+                // Which objects, by the names the Layers panel gives them:
+                // "(3 objects)" says how many and not which.
+                let doc = state.active().document();
+                let named: Vec<String> = frames
+                    .iter()
+                    .filter_map(|id| doc.frame(*id))
+                    .map(|frame| super::layers::describe(doc, frame).1)
+                    .collect();
                 let hint = if frames.len() > 1 {
-                    "Go to the next of these objects"
+                    format!(
+                        "{}
+Click to go to the next of these",
+                        named.join(
+                            "
+"
+                        )
+                    )
                 } else {
-                    "Go to this object"
+                    format!(
+                        "{}
+Click to go to it",
+                        named.join("")
+                    )
                 };
                 if row.on_hover_text(hint).clicked() {
                     // Which of them is next, remembered per row between clicks.
