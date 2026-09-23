@@ -1577,6 +1577,37 @@ impl Document {
                 // Deleted, or never defined. The alarming colour, on purpose.
                 return at;
             };
+            // A spot swatch is an ink of its own, and has to reach the writer
+            // as one to be given a plate. It reached it as its process colour:
+            // the Swatches panel's "Spot colour (separate ink plate)" made no
+            // plate, and Acrobat's Output Preview — the check the roadmap had
+            // owed since milestone 6 — listed four inks and not five. Its
+            // process colour goes along as the fallback a screen draws.
+            if swatch.spot && !matches!(swatch.colour, Color::Spot { .. }) {
+                return Color::Spot {
+                    name: swatch.name.clone(),
+                    tint: *tint,
+                    fallback: Box::new(self.resolve_process(&swatch.colour)),
+                };
+            }
+            at = swatch.colour.tinted(*tint);
+        }
+        at
+    }
+
+    /// Swatch references followed to the colour they stand for, without
+    /// turning a spot swatch into its ink: a spot's own fallback, which must
+    /// not be a spot again or a swatch naming itself would never finish.
+    fn resolve_process(&self, colour: &Color) -> Color {
+        const DEPTH: usize = 8;
+        let mut at = colour.clone();
+        for _ in 0..DEPTH {
+            let Color::Swatch { name, tint } = &at else {
+                return at;
+            };
+            let Some(swatch) = self.swatch(name) else {
+                return at;
+            };
             at = swatch.colour.tinted(*tint);
         }
         at
@@ -5086,6 +5117,52 @@ mod tests {
     }
 
     // --- naming, adding and removing layers ---------------------------------
+
+    #[test]
+    fn a_spot_swatch_resolves_to_its_ink_with_the_process_colour_behind_it() {
+        let mut doc = Document::new();
+        let orange = Color::Cmyk {
+            c: 0.0,
+            m: 0.6,
+            y: 1.0,
+            k: 0.0,
+            a: 1.0,
+        };
+        let mut swatch = crate::nodes::Swatch::new("Tessera Orange", orange.clone());
+        swatch.spot = true;
+        doc.swatches.push(swatch);
+        let resolved = doc.resolve_colour(&Color::Swatch {
+            name: "Tessera Orange".into(),
+            tint: 0.5,
+        });
+        assert_eq!(
+            resolved,
+            Color::Spot {
+                name: "Tessera Orange".into(),
+                tint: 0.5,
+                fallback: Box::new(orange),
+            }
+        );
+    }
+
+    #[test]
+    fn a_spot_swatch_naming_itself_still_finishes() {
+        let mut doc = Document::new();
+        let mut swatch = crate::nodes::Swatch::new(
+            "Loop",
+            Color::Swatch {
+                name: "Loop".into(),
+                tint: 1.0,
+            },
+        );
+        swatch.spot = true;
+        doc.swatches.push(swatch);
+        let resolved = doc.resolve_colour(&Color::Swatch {
+            name: "Loop".into(),
+            tint: 1.0,
+        });
+        assert!(matches!(resolved, Color::Spot { .. }));
+    }
 
     #[test]
     fn each_new_layer_takes_the_next_colour() {
