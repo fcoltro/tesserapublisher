@@ -114,18 +114,24 @@ fn reference_box(ctx: &egui::Context, state: &mut TesseraApp) {
                         "No anchors yet. Type › Insert marker › Text anchor puts one in the text.",
                     );
                 } else {
-                    egui::ComboBox::from_id_salt("cross-reference-target")
-                        .selected_text(if window.target.is_empty() {
-                            "Choose…"
-                        } else {
-                            window.target.as_str()
-                        })
-                        .width(ui.available_width())
-                        .show_ui(ui, |ui| {
-                            for name in &targets {
-                                ui.selectable_value(&mut window.target, name.clone(), name);
-                            }
-                        });
+                    crate::icons::reads_as(
+                        egui::ComboBox::from_id_salt("cross-reference-target")
+                            .selected_text(if window.target.is_empty() {
+                                "Choose…"
+                            } else {
+                                window.target.as_str()
+                            })
+                            .width(ui.available_width())
+                            .show_ui(ui, |ui| {
+                                for name in &targets {
+                                    ui.selectable_value(&mut window.target, name.clone(), name);
+                                }
+                            })
+                            .response,
+                        "To",
+                        egui::WidgetType::ComboBox,
+                        None,
+                    );
                 }
             });
             crate::view::panels::field(ui, "Reads as", |ui| {

@@ -236,15 +236,21 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
             .clone()
             .or_else(|| caret.clone())
             .unwrap_or_else(|| "Default".to_string());
-        egui::ComboBox::from_id_salt("glyphs-family")
-            .selected_text(label)
-            .width(ui.available_width())
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut chosen, None, "Follow text cursor");
-                for family in &families {
-                    ui.selectable_value(&mut chosen, Some(family.clone()), family);
-                }
-            });
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt("glyphs-family")
+                .selected_text(label)
+                .width(ui.available_width())
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut chosen, None, "Follow text cursor");
+                    for family in &families {
+                        ui.selectable_value(&mut chosen, Some(family.clone()), family);
+                    }
+                })
+                .response,
+            "Font family",
+            egui::WidgetType::ComboBox,
+            None,
+        );
     });
     state.glyphs.family = chosen;
     let family = state.glyphs.family.clone().or(caret);

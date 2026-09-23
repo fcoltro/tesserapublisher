@@ -310,7 +310,7 @@ fn body(ui: &mut Ui, settings: &mut NewDocument, unit: tessera_geometry::Unit) {
             );
         }),
         ("Facing", |ui: &mut Ui| {
-            ui.checkbox(&mut settings.facing_pages, "");
+            crate::icons::speak_as(ui.checkbox(&mut settings.facing_pages, ""), "Facing pages");
         }),
     );
     settings.pages = (pages.round() as u32).clamp(1, 2000);

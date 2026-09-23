@@ -193,22 +193,34 @@ fn one(
                     .iter()
                     .find(|(id, _)| id == style)
                     .map_or("(style missing)", |(_, name)| name.as_str());
-                egui::ComboBox::from_id_salt(("running-style", i))
-                    .selected_text(shown)
-                    .show_ui(ui, |ui| {
-                        for (id, name) in styles {
-                            ui.selectable_value(style, *id, name);
-                        }
-                    });
-                egui::ComboBox::from_id_salt(("running-which", i))
-                    .selected_text(match which {
-                        Which::First => "first on page",
-                        Which::Last => "last on page",
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(which, Which::First, "first on page");
-                        ui.selectable_value(which, Which::Last, "last on page");
-                    });
+                crate::icons::reads_as(
+                    egui::ComboBox::from_id_salt(("running-style", i))
+                        .selected_text(shown)
+                        .show_ui(ui, |ui| {
+                            for (id, name) in styles {
+                                ui.selectable_value(style, *id, name);
+                            }
+                        })
+                        .response,
+                    "Paragraph style",
+                    egui::WidgetType::ComboBox,
+                    None,
+                );
+                crate::icons::reads_as(
+                    egui::ComboBox::from_id_salt(("running-which", i))
+                        .selected_text(match which {
+                            Which::First => "first on page",
+                            Which::Last => "last on page",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(which, Which::First, "first on page");
+                            ui.selectable_value(which, Which::Last, "last on page");
+                        })
+                        .response,
+                    "Which on the page",
+                    egui::WidgetType::ComboBox,
+                    None,
+                );
             }
         }
         if ui

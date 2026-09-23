@@ -43,13 +43,19 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                     .iter()
                     .find(|(n, _)| *n == draft.numbering)
                     .map_or("1, 2, 3", |(_, l)| *l);
-                egui::ComboBox::from_id_salt("footnote-numbering")
-                    .selected_text(shown)
-                    .show_ui(ui, |ui| {
-                        for (choice, label) in choices {
-                            ui.selectable_value(&mut draft.numbering, choice, label);
-                        }
-                    });
+                crate::icons::reads_as(
+                    egui::ComboBox::from_id_salt("footnote-numbering")
+                        .selected_text(shown)
+                        .show_ui(ui, |ui| {
+                            for (choice, label) in choices {
+                                ui.selectable_value(&mut draft.numbering, choice, label);
+                            }
+                        })
+                        .response,
+                    "Numbering",
+                    egui::WidgetType::ComboBox,
+                    None,
+                );
             });
             crate::view::panels::field(ui, "Start at", |ui| {
                 let mut start = f64::from(draft.start_at);
@@ -62,34 +68,46 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                 draft.start_at = start.round() as u32;
             });
             crate::view::panels::field(ui, "Restart", |ui| {
-                egui::ComboBox::from_id_salt("footnote-restart")
-                    .selected_text(match draft.restart {
-                        Restart::Never => "Never",
-                        Restart::Page => "Every page",
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut draft.restart, Restart::Never, "Never");
-                        ui.selectable_value(&mut draft.restart, Restart::Page, "Every page");
-                    });
+                crate::icons::reads_as(
+                    egui::ComboBox::from_id_salt("footnote-restart")
+                        .selected_text(match draft.restart {
+                            Restart::Never => "Never",
+                            Restart::Page => "Every page",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut draft.restart, Restart::Never, "Never");
+                            ui.selectable_value(&mut draft.restart, Restart::Page, "Every page");
+                        })
+                        .response,
+                    "Restart",
+                    egui::WidgetType::ComboBox,
+                    None,
+                );
             });
             crate::view::panels::field(ui, "Placement", |ui| {
-                egui::ComboBox::from_id_salt("footnote-placement")
-                    .selected_text(match draft.placement {
-                        NotePlacement::Foot => "Foot of the column",
-                        NotePlacement::End => "End of the document",
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut draft.placement,
-                            NotePlacement::Foot,
-                            "Foot of the column",
-                        );
-                        ui.selectable_value(
-                            &mut draft.placement,
-                            NotePlacement::End,
-                            "End of the document",
-                        );
-                    });
+                crate::icons::reads_as(
+                    egui::ComboBox::from_id_salt("footnote-placement")
+                        .selected_text(match draft.placement {
+                            NotePlacement::Foot => "Foot of the column",
+                            NotePlacement::End => "End of the document",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut draft.placement,
+                                NotePlacement::Foot,
+                                "Foot of the column",
+                            );
+                            ui.selectable_value(
+                                &mut draft.placement,
+                                NotePlacement::End,
+                                "End of the document",
+                            );
+                        })
+                        .response,
+                    "Placement",
+                    egui::WidgetType::ComboBox,
+                    None,
+                );
             });
             if draft.placement == NotePlacement::End {
                 ui.colored_label(

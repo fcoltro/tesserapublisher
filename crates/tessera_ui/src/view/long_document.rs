@@ -195,25 +195,31 @@ fn index_entry(ctx: &egui::Context, state: &mut TesseraApp) {
                     IndexSpan::ToEndOfStory => "To the end of the story".to_string(),
                     IndexSpan::Paragraphs(n) => format!("{} more paragraph(s)", n),
                 };
-                egui::ComboBox::from_id_salt("index-span")
-                    .selected_text(label)
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut window.span, IndexSpan::Here, "This page");
-                        ui.selectable_value(
-                            &mut window.span,
-                            IndexSpan::ToEndOfStory,
-                            "To the end of the story",
-                        );
-                        if ui
-                            .selectable_label(
-                                matches!(window.span, IndexSpan::Paragraphs(_)),
-                                "The next paragraphs",
-                            )
-                            .clicked()
-                        {
-                            window.span = IndexSpan::Paragraphs(1);
-                        }
-                    });
+                crate::icons::reads_as(
+                    egui::ComboBox::from_id_salt("index-span")
+                        .selected_text(label)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut window.span, IndexSpan::Here, "This page");
+                            ui.selectable_value(
+                                &mut window.span,
+                                IndexSpan::ToEndOfStory,
+                                "To the end of the story",
+                            );
+                            if ui
+                                .selectable_label(
+                                    matches!(window.span, IndexSpan::Paragraphs(_)),
+                                    "The next paragraphs",
+                                )
+                                .clicked()
+                            {
+                                window.span = IndexSpan::Paragraphs(1);
+                            }
+                        })
+                        .response,
+                    "Span",
+                    egui::WidgetType::ComboBox,
+                    None,
+                );
                 if let IndexSpan::Paragraphs(n) = &mut window.span {
                     let mut count = f64::from(*n);
                     crate::icons::speak_as(
@@ -313,6 +319,7 @@ pub(crate) fn insert_index_entry(
 
 fn style_combo(
     ui: &mut Ui,
+    name: &str,
     id: impl std::hash::Hash + std::fmt::Debug,
     chosen: &mut Option<ParagraphStyleId>,
     styles: &[(ParagraphStyleId, String)],
@@ -321,14 +328,20 @@ fn style_combo(
     let shown = chosen
         .and_then(|c| styles.iter().find(|(id, _)| *id == c))
         .map_or(none, |(_, name)| name.as_str());
-    egui::ComboBox::from_id_salt(id)
-        .selected_text(shown)
-        .show_ui(ui, |ui| {
-            ui.selectable_value(chosen, None, none);
-            for (id, name) in styles {
-                ui.selectable_value(chosen, Some(*id), name);
-            }
-        });
+    crate::icons::reads_as(
+        egui::ComboBox::from_id_salt(id)
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(chosen, None, none);
+                for (id, name) in styles {
+                    ui.selectable_value(chosen, Some(*id), name);
+                }
+            })
+            .response,
+        name,
+        egui::WidgetType::ComboBox,
+        None,
+    );
 }
 
 fn contents(ctx: &egui::Context, state: &mut TesseraApp) {
@@ -364,6 +377,7 @@ fn contents(ctx: &egui::Context, state: &mut TesseraApp) {
             crate::view::panels::field(ui, "Title style", |ui| {
                 style_combo(
                     ui,
+                    "Title style",
                     "toc-title-style",
                     &mut draft.title_style,
                     &styles,
@@ -378,13 +392,22 @@ fn contents(ctx: &egui::Context, state: &mut TesseraApp) {
             for (i, level) in draft.levels.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
                     let mut style = Some(level.style);
-                    style_combo(ui, ("toc-level", i), &mut style, &styles, "(choose)");
+                    let level_name = format!("Level {} style", i + 1);
+                    style_combo(
+                        ui,
+                        &level_name,
+                        ("toc-level", i),
+                        &mut style,
+                        &styles,
+                        "(choose)",
+                    );
                     if let Some(style) = style {
                         level.style = style;
                     }
                     ui.label("set as");
                     style_combo(
                         ui,
+                        &format!("Level {} entry style", i + 1),
                         ("toc-entry", i),
                         &mut level.entry_style,
                         &styles,

@@ -1836,21 +1836,27 @@ pub(crate) fn list_editor(
                     .iter()
                     .find(|(n, _)| *n == l.numbering)
                     .map_or("1, 2, 3", |(_, label)| *label);
-                egui::ComboBox::from_id_salt("list-numbering")
-                    .width(ui.available_width())
-                    .selected_text(shown)
-                    .show_ui(ui, |ui| {
-                        for (numbering, label) in numberings {
-                            if ui
-                                .selectable_label(l.numbering == numbering, label)
-                                .clicked()
-                                && l.numbering != numbering
-                            {
-                                l.numbering = numbering;
-                                changed = true;
+                crate::icons::reads_as(
+                    egui::ComboBox::from_id_salt("list-numbering")
+                        .width(ui.available_width())
+                        .selected_text(shown)
+                        .show_ui(ui, |ui| {
+                            for (numbering, label) in numberings {
+                                if ui
+                                    .selectable_label(l.numbering == numbering, label)
+                                    .clicked()
+                                    && l.numbering != numbering
+                                {
+                                    l.numbering = numbering;
+                                    changed = true;
+                                }
                             }
-                        }
-                    });
+                        })
+                        .response,
+                    "Numbering",
+                    egui::WidgetType::ComboBox,
+                    None,
+                );
             });
             field(ui, "Suffix", |ui| {
                 let mut suffix = l.suffix.clone();
@@ -2103,23 +2109,29 @@ pub(crate) fn keep_options_editor(
                 ends,
             ),
         ];
-        egui::ComboBox::from_id_salt("keep-lines")
-            .width(ui.available_width())
-            .selected_text(if all {
-                "All lines"
-            } else if ends {
-                "First and last lines"
-            } else {
-                "Off"
-            })
-            .show_ui(ui, |ui| {
-                for (choice, text, selected) in choices {
-                    if ui.selectable_label(selected, text).clicked() && !selected {
-                        k.together = choice;
-                        changed = true;
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt("keep-lines")
+                .width(ui.available_width())
+                .selected_text(if all {
+                    "All lines"
+                } else if ends {
+                    "First and last lines"
+                } else {
+                    "Off"
+                })
+                .show_ui(ui, |ui| {
+                    for (choice, text, selected) in choices {
+                        if ui.selectable_label(selected, text).clicked() && !selected {
+                            k.together = choice;
+                            changed = true;
+                        }
                     }
-                }
-            });
+                })
+                .response,
+            "Keep lines together",
+            egui::WidgetType::ComboBox,
+            None,
+        );
     });
     if let KeepTogether::Ends { start, end } = &mut k.together {
         let count = |ui: &mut Ui, value: &mut u8| {
@@ -2214,21 +2226,27 @@ pub(crate) fn tab_stops_editor(
                 .find(|(a, _)| *a == stop.alignment)
                 .map_or("Left", |(_, label)| *label);
             field(ui, "Align", |ui| {
-                egui::ComboBox::from_id_salt(("tab-alignment", i))
-                    .selected_text(shown)
-                    .width(ui.available_width())
-                    .show_ui(ui, |ui| {
-                        for (alignment, label) in alignments {
-                            if ui
-                                .selectable_label(stop.alignment == alignment, label)
-                                .clicked()
-                                && stop.alignment != alignment
-                            {
-                                stop.alignment = alignment;
-                                changed = true;
+                crate::icons::reads_as(
+                    egui::ComboBox::from_id_salt(("tab-alignment", i))
+                        .selected_text(shown)
+                        .width(ui.available_width())
+                        .show_ui(ui, |ui| {
+                            for (alignment, label) in alignments {
+                                if ui
+                                    .selectable_label(stop.alignment == alignment, label)
+                                    .clicked()
+                                    && stop.alignment != alignment
+                                {
+                                    stop.alignment = alignment;
+                                    changed = true;
+                                }
                             }
-                        }
-                    })
+                        })
+                        .response,
+                    "Align",
+                    egui::WidgetType::ComboBox,
+                    None,
+                )
             });
 
             // The leader is one character; the field takes the last one typed
@@ -2831,19 +2849,25 @@ fn wrap_controls(
             WrapTo::Right => "Right side",
         };
         property_field(ui, "Wrap to", |ui| {
-            egui::ComboBox::from_id_salt(("wrap-to", id))
-                .width(ui.available_width())
-                .selected_text(name(sides))
-                .show_ui(ui, |ui| {
-                    for choice in [WrapTo::Largest, WrapTo::Both, WrapTo::Left, WrapTo::Right] {
-                        if ui
-                            .selectable_value(&mut sides, choice, name(choice))
-                            .changed()
-                        {
-                            changed = true;
+            crate::icons::reads_as(
+                egui::ComboBox::from_id_salt(("wrap-to", id))
+                    .width(ui.available_width())
+                    .selected_text(name(sides))
+                    .show_ui(ui, |ui| {
+                        for choice in [WrapTo::Largest, WrapTo::Both, WrapTo::Left, WrapTo::Right] {
+                            if ui
+                                .selectable_value(&mut sides, choice, name(choice))
+                                .changed()
+                            {
+                                changed = true;
+                            }
                         }
-                    }
-                });
+                    })
+                    .response,
+                "Wrap to",
+                egui::WidgetType::ComboBox,
+                None,
+            );
         });
     }
 
@@ -4238,25 +4262,32 @@ fn text_section(
                 (Case::SmallCaps, "Small caps"),
                 (Case::Lower, "Lowercase"),
             ];
-            egui::ComboBox::from_id_salt("text-case")
-                .width(ui.available_width())
-                .selected_text(choices.iter().find(|(case, _)| *case == current).unwrap().1)
-                .show_ui(ui, |ui| {
-                    for (case, label) in choices {
-                        if ui.selectable_label(current == case, label).clicked() && current != case
-                        {
-                            set_character(
-                                state,
-                                story,
-                                target.clone(),
-                                CharacterFormat {
-                                    case: Some(case),
-                                    ..Default::default()
-                                },
-                            );
+            crate::icons::reads_as(
+                egui::ComboBox::from_id_salt("text-case")
+                    .width(ui.available_width())
+                    .selected_text(choices.iter().find(|(case, _)| *case == current).unwrap().1)
+                    .show_ui(ui, |ui| {
+                        for (case, label) in choices {
+                            if ui.selectable_label(current == case, label).clicked()
+                                && current != case
+                            {
+                                set_character(
+                                    state,
+                                    story,
+                                    target.clone(),
+                                    CharacterFormat {
+                                        case: Some(case),
+                                        ..Default::default()
+                                    },
+                                );
+                            }
                         }
-                    }
-                });
+                    })
+                    .response,
+                "Case",
+                egui::WidgetType::ComboBox,
+                None,
+            );
         });
 
         // The kern at the caret: between the character before it and the one
@@ -4292,18 +4323,24 @@ fn text_section(
                 .find(|(code, _)| *code == current)
                 .map_or(current, |(_, name)| *name);
             let mut chosen = None;
-            egui::ComboBox::from_id_salt("text-language")
-                .width(ui.available_width())
-                .selected_text(name)
-                .show_ui(ui, |ui| {
-                    for (code, name) in LANGUAGES {
-                        if ui.selectable_label(current == *code, *name).clicked()
-                            && current != *code
-                        {
-                            chosen = Some((*code).to_string());
+            crate::icons::reads_as(
+                egui::ComboBox::from_id_salt("text-language")
+                    .width(ui.available_width())
+                    .selected_text(name)
+                    .show_ui(ui, |ui| {
+                        for (code, name) in LANGUAGES {
+                            if ui.selectable_label(current == *code, *name).clicked()
+                                && current != *code
+                            {
+                                chosen = Some((*code).to_string());
+                            }
                         }
-                    }
-                });
+                    })
+                    .response,
+                "Language",
+                egui::WidgetType::ComboBox,
+                None,
+            );
             if let Some(code) = chosen {
                 set_character(
                     state,
@@ -5923,6 +5960,77 @@ mod tests {
                 "no number field is named {name:?}: {fields:?}"
             );
         }
+    }
+
+    #[test]
+    fn no_control_in_a_dialog_reaches_a_screen_reader_unnamed() {
+        // The dialogs are windows of their own, which the docked-panel test
+        // never opens. NVDA found the New Document dialog's facing-pages box
+        // as "check box, checked" and nothing more.
+        let (mut state, _, _) = a_text_frame("Words");
+        state.new_document.open = true;
+        state.export.open = true;
+        state.print.open = true;
+        state.step.open = true;
+        state.variables.open = true;
+        state.contents.open = true;
+        state.cross_reference.open = true;
+        state.hyperlink.open = true;
+        state.footnote_options.open = true;
+
+        // Two frames: a window lays itself out unseen on its first.
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut draw = |ui: &mut Ui| {
+            let ctx = ui.ctx().clone();
+            crate::view::new_document::show(&ctx, &mut state);
+            crate::view::export_dialog::show(&ctx, &mut state);
+            crate::view::print_dialog::show(&ctx, &mut state);
+            crate::view::step_repeat::show(&ctx, &mut state);
+            crate::view::variables::show(&ctx, &mut state);
+            crate::view::long_document::show(&ctx, &mut state);
+            crate::view::cross_reference::show(&ctx, &mut state);
+            crate::view::hyperlink::show(&ctx, &mut state);
+            crate::view::footnote_options::show(&ctx, &mut state);
+        };
+        let _ = crate::headless_frame::frame(&ctx, egui::RawInput::default(), &mut draw);
+        let output = crate::headless_frame::frame(&ctx, egui::RawInput::default(), &mut draw);
+        let nodes: Vec<(String, Option<String>)> = output
+            .platform_output
+            .accesskit_update
+            .expect("accessibility was enabled, so there is a tree")
+            .nodes
+            .iter()
+            .map(|(_, node)| {
+                (
+                    format!("{:?}", node.role()),
+                    node.label().map(ToString::to_string),
+                )
+            })
+            .collect();
+        let interactive: Vec<_> = nodes
+            .iter()
+            .filter(|(role, _)| INTERACTIVE.contains(&role.as_str()))
+            .collect();
+
+        // The dialogs were drawn, or this checks nothing: the box NVDA
+        // stumbled on is there, by name.
+        assert!(
+            interactive
+                .iter()
+                .any(|(_, label)| label.as_deref() == Some("Facing pages")),
+            "the New Document dialog did not draw: {interactive:?}"
+        );
+        let nameless: Vec<_> = interactive
+            .iter()
+            .filter(|(_, label)| label.as_deref().unwrap_or("").is_empty())
+            .collect();
+        assert!(
+            nameless.is_empty(),
+            "{} control(s) in a dialog reached the accessibility tree with no name: \
+             {nameless:?}",
+            nameless.len()
+        );
     }
 
     /// Draws everything docked round the canvas for `state`, fails on any

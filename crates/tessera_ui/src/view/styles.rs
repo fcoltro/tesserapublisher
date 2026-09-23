@@ -365,18 +365,24 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
         .map(|s| s.name.clone())
         .unwrap_or_else(|| "Nothing".to_string());
     crate::view::panels::field(ui, "Based on", |ui| {
-        egui::ComboBox::from_id_salt(("object-style-base", id))
-            .selected_text(based_label)
-            .width(ui.available_width())
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut based_on, None, "Nothing");
-                for (other, other_name) in &listed {
-                    if *other == id {
-                        continue;
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt(("object-style-base", id))
+                .selected_text(based_label)
+                .width(ui.available_width())
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut based_on, None, "Nothing");
+                    for (other, other_name) in &listed {
+                        if *other == id {
+                            continue;
+                        }
+                        ui.selectable_value(&mut based_on, Some(*other), other_name);
                     }
-                    ui.selectable_value(&mut based_on, Some(*other), other_name);
-                }
-            });
+                })
+                .response,
+            "Based on",
+            egui::WidgetType::ComboBox,
+            None,
+        );
     });
     if based_on != style.based_on {
         apply(
@@ -698,32 +704,38 @@ fn paragraph_fields(
             .and_then(|p| styles.iter().find(|(s, _)| *s == p))
             .map_or("[Basic Paragraph]", |(_, name)| name.as_str())
             .to_string();
-        egui::ComboBox::from_id_salt("paragraph-based-on")
-            .selected_text(label)
-            .show_ui(ui, |ui| {
-                if ui
-                    .selectable_label(existing.based_on.is_none(), "[Basic Paragraph]")
-                    .clicked()
-                {
-                    chosen_parent = Some(None);
-                }
-                for (candidate, name) in styles {
-                    if *candidate == id
-                        || state
-                            .active()
-                            .document()
-                            .paragraph_based_on_would_cycle(id, *candidate)
-                    {
-                        continue;
-                    }
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt("paragraph-based-on")
+                .selected_text(label)
+                .show_ui(ui, |ui| {
                     if ui
-                        .selectable_label(existing.based_on == Some(*candidate), name)
+                        .selectable_label(existing.based_on.is_none(), "[Basic Paragraph]")
                         .clicked()
                     {
-                        chosen_parent = Some(Some(*candidate));
+                        chosen_parent = Some(None);
                     }
-                }
-            });
+                    for (candidate, name) in styles {
+                        if *candidate == id
+                            || state
+                                .active()
+                                .document()
+                                .paragraph_based_on_would_cycle(id, *candidate)
+                        {
+                            continue;
+                        }
+                        if ui
+                            .selectable_label(existing.based_on == Some(*candidate), name)
+                            .clicked()
+                        {
+                            chosen_parent = Some(Some(*candidate));
+                        }
+                    }
+                })
+                .response,
+            "Based on",
+            egui::WidgetType::ComboBox,
+            None,
+        );
     });
 
     if let Some(based_on) = chosen_parent {
@@ -959,32 +971,41 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
                         .and_then(|p| styles.iter().find(|(s, _)| *s == p))
                         .map_or("[None]", |(_, name)| name.as_str())
                         .to_string();
-                    egui::ComboBox::from_id_salt("character-based-on")
-                        .selected_text(label)
-                        .show_ui(ui, |ui| {
-                            if ui
-                                .selectable_label(existing.based_on.is_none(), "[None]")
-                                .clicked()
-                            {
-                                chosen_parent = Some(None);
-                            }
-                            for (candidate, name) in &styles {
-                                if *candidate == id
-                                    || state
-                                        .active()
-                                        .document()
-                                        .character_based_on_would_cycle(id, *candidate)
-                                {
-                                    continue;
-                                }
+                    crate::icons::reads_as(
+                        egui::ComboBox::from_id_salt("character-based-on")
+                            .selected_text(label)
+                            .show_ui(ui, |ui| {
                                 if ui
-                                    .selectable_label(existing.based_on == Some(*candidate), name)
+                                    .selectable_label(existing.based_on.is_none(), "[None]")
                                     .clicked()
                                 {
-                                    chosen_parent = Some(Some(*candidate));
+                                    chosen_parent = Some(None);
                                 }
-                            }
-                        });
+                                for (candidate, name) in &styles {
+                                    if *candidate == id
+                                        || state
+                                            .active()
+                                            .document()
+                                            .character_based_on_would_cycle(id, *candidate)
+                                    {
+                                        continue;
+                                    }
+                                    if ui
+                                        .selectable_label(
+                                            existing.based_on == Some(*candidate),
+                                            name,
+                                        )
+                                        .clicked()
+                                    {
+                                        chosen_parent = Some(Some(*candidate));
+                                    }
+                                }
+                            })
+                            .response,
+                        "Based on",
+                        egui::WidgetType::ComboBox,
+                        None,
+                    );
                 });
 
                 if let Some(based_on) = chosen_parent {
@@ -1006,25 +1027,30 @@ fn character_basic(ui: &mut Ui, state: &mut TesseraApp, format: &mut CharacterFo
     let mut toggled = false;
     ui.horizontal(|ui| {
         let mut on = set;
-        toggled = ui
-            .checkbox(&mut on, "")
+        toggled = crate::icons::speak_as(ui.checkbox(&mut on, ""), "Family")
             .on_hover_text(INHERIT_HINT)
             .changed();
         ui.colored_label(Theme::text_muted(), "Family");
         ui.add_enabled_ui(set, |ui| {
             let label = format.family.clone().unwrap_or_else(|| "—".to_string());
-            egui::ComboBox::from_id_salt("style-family")
-                .selected_text(label)
-                .show_ui(ui, |ui| {
-                    for family in state.shaper.families() {
-                        if ui
-                            .selectable_label(format.family.as_deref() == Some(family), family)
-                            .clicked()
-                        {
-                            format.family = Some(family.clone());
+            crate::icons::reads_as(
+                egui::ComboBox::from_id_salt("style-family")
+                    .selected_text(label)
+                    .show_ui(ui, |ui| {
+                        for family in state.shaper.families() {
+                            if ui
+                                .selectable_label(format.family.as_deref() == Some(family), family)
+                                .clicked()
+                            {
+                                format.family = Some(family.clone());
+                            }
                         }
-                    }
-                });
+                    })
+                    .response,
+                "Family",
+                egui::WidgetType::ComboBox,
+                None,
+            );
         });
     });
     if toggled {
@@ -1121,8 +1147,7 @@ fn character_advanced(ui: &mut Ui, format: &mut CharacterFormat) {
     );
     ui.horizontal(|ui| {
         let mut stated = format.language.is_some();
-        if ui
-            .checkbox(&mut stated, "")
+        if crate::icons::speak_as(ui.checkbox(&mut stated, ""), "Language")
             .on_hover_text(INHERIT_HINT)
             .changed()
         {
@@ -1135,15 +1160,21 @@ fn character_advanced(ui: &mut Ui, format: &mut CharacterFormat) {
                 .iter()
                 .find(|(code, _)| code == language)
                 .map_or(language.as_str(), |(_, name)| *name);
-            egui::ComboBox::from_id_salt("style-language")
-                .selected_text(name)
-                .show_ui(ui, |ui| {
-                    for (code, name) in LANGUAGES {
-                        if ui.selectable_label(language == code, *name).clicked() {
-                            *language = (*code).to_string();
+            crate::icons::reads_as(
+                egui::ComboBox::from_id_salt("style-language")
+                    .selected_text(name)
+                    .show_ui(ui, |ui| {
+                        for (code, name) in LANGUAGES {
+                            if ui.selectable_label(language == code, *name).clicked() {
+                                *language = (*code).to_string();
+                            }
                         }
-                    }
-                });
+                    })
+                    .response,
+                "Language",
+                egui::WidgetType::ComboBox,
+                None,
+            );
         }
     });
 }
@@ -1179,8 +1210,7 @@ fn character_opentype(ui: &mut Ui, format: &mut CharacterFormat) {
     optional_flag(ui, "Fractions", &mut format.fractions);
     ui.horizontal(|ui| {
         let mut stated = format.stylistic_sets.is_some();
-        if ui
-            .checkbox(&mut stated, "")
+        if crate::icons::speak_as(ui.checkbox(&mut stated, ""), "Stylistic sets")
             .on_hover_text(INHERIT_HINT)
             .changed()
         {
@@ -1226,8 +1256,7 @@ fn optional_number(
 ) {
     ui.horizontal(|ui| {
         let mut on = value.is_some();
-        if ui
-            .checkbox(&mut on, "")
+        if crate::icons::speak_as(ui.checkbox(&mut on, ""), label)
             .on_hover_text(INHERIT_HINT)
             .changed()
         {
@@ -1269,8 +1298,7 @@ fn optional_choice<T: PartialEq + Copy>(
 ) {
     ui.horizontal(|ui| {
         let mut on = value.is_some();
-        if ui
-            .checkbox(&mut on, "")
+        if crate::icons::speak_as(ui.checkbox(&mut on, ""), label)
             .on_hover_text(INHERIT_HINT)
             .changed()
         {
@@ -1294,8 +1322,7 @@ fn optional_choice<T: PartialEq + Copy>(
 fn optional_count(ui: &mut Ui, label: &str, value: &mut Option<u8>, default: u8) {
     ui.horizontal(|ui| {
         let mut on = value.is_some();
-        if ui
-            .checkbox(&mut on, "")
+        if crate::icons::speak_as(ui.checkbox(&mut on, ""), label)
             .on_hover_text(INHERIT_HINT)
             .changed()
         {
@@ -1400,8 +1427,7 @@ fn decoration_editor(ui: &mut Ui, label: &str, value: &mut Option<Decoration>) {
 fn optional_flag(ui: &mut Ui, label: &str, value: &mut Option<bool>) {
     ui.horizontal(|ui| {
         let mut on = value.is_some();
-        if ui
-            .checkbox(&mut on, "")
+        if crate::icons::speak_as(ui.checkbox(&mut on, ""), label)
             .on_hover_text(INHERIT_HINT)
             .changed()
         {
@@ -1410,7 +1436,7 @@ fn optional_flag(ui: &mut Ui, label: &str, value: &mut Option<bool>) {
         ui.colored_label(Theme::text_muted(), label);
         ui.add_enabled_ui(value.is_some(), |ui| {
             let mut state = value.unwrap_or(false);
-            if ui.checkbox(&mut state, "").changed() {
+            if crate::icons::speak_as(ui.checkbox(&mut state, ""), label).changed() {
                 *value = Some(state);
             }
         });

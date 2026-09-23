@@ -120,13 +120,19 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                             .page
                             .and_then(|p| pages.iter().find(|(id, _)| *id == p))
                             .map_or("(choose)", |(_, label)| label.as_str());
-                        egui::ComboBox::from_id_salt("hyperlink-page")
-                            .selected_text(shown)
-                            .show_ui(ui, |ui| {
-                                for (id, label) in &pages {
-                                    ui.selectable_value(&mut window.page, Some(*id), label);
-                                }
-                            });
+                        crate::icons::reads_as(
+                            egui::ComboBox::from_id_salt("hyperlink-page")
+                                .selected_text(shown)
+                                .show_ui(ui, |ui| {
+                                    for (id, label) in &pages {
+                                        ui.selectable_value(&mut window.page, Some(*id), label);
+                                    }
+                                })
+                                .response,
+                            "Page",
+                            egui::WidgetType::ComboBox,
+                            None,
+                        );
                     });
                 }
             }

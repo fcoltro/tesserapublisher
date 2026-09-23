@@ -187,13 +187,19 @@ pub(crate) fn numbering_combo(ui: &mut Ui, numbering: &mut Numbering) {
         .iter()
         .find(|(n, _)| n == numbering)
         .map_or("1, 2, 3", |(_, label)| *label);
-    egui::ComboBox::from_id_salt("section-numbering")
-        .selected_text(shown)
-        .show_ui(ui, |ui| {
-            for (choice, label) in choices {
-                ui.selectable_value(numbering, choice, label);
-            }
-        });
+    crate::icons::reads_as(
+        egui::ComboBox::from_id_salt("section-numbering")
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                for (choice, label) in choices {
+                    ui.selectable_value(numbering, choice, label);
+                }
+            })
+            .response,
+        "Numbering",
+        egui::WidgetType::ComboBox,
+        None,
+    );
 }
 
 #[cfg(test)]
