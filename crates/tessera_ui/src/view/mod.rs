@@ -44,7 +44,6 @@ pub mod story_editor;
 pub mod styles;
 pub mod swatches;
 pub mod text_edit;
-pub mod tour;
 pub mod variables;
 pub mod vello_host;
 pub mod viewport;
@@ -107,10 +106,6 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     crate::theme::follow(ui.ctx(), state.prefs.theme);
     crate::theme::follow_density(ui.ctx(), state.prefs.density);
 
-    // Before any panel says where it is. A spot kept from the previous frame is
-    // a spot the tour still believes in after the panel has closed.
-    state.tour.forget_spots();
-
     accelerators(ui, state);
 
     Panel::top("menu").show(ui, |ui| menu_bar(ui, state));
@@ -121,13 +116,10 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     document_tabs::confirm_close(ui.ctx(), state);
     name_workspace(ui.ctx(), state);
 
-    let control_bar = Panel::top("control")
+    Panel::top("control")
         .exact_size(control::HEIGHT)
         .resizable(false)
         .show(ui, |ui| control::show(ui, state));
-    state
-        .tour
-        .mark(crate::tour::Spot::Control, control_bar.response.rect);
 
     // Above everything, so it can be reached from anywhere.
     palette::show(ui, state);
@@ -151,17 +143,14 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     styles::editor(ui.ctx(), state);
     find::show(ui.ctx(), state);
 
-    let status = Panel::bottom("status")
-        .exact_size(28.0)
+    Panel::bottom("status")
+        .exact_size(Theme::row())
         .resizable(false)
         .show(ui, |ui| panels::status_bar(ui, state));
-    state
-        .tour
-        .mark(crate::tour::Spot::Status, status.response.rect);
 
     // The tools, beside the page. **Not over it.** Chrome that floats over the
     // document is chrome that covers the thing being worked on.
-    let tools = Panel::left("tools")
+    Panel::left("tools")
         .exact_size(Theme::TOOL_SIZE + Theme::space_4())
         .frame(panel_frame())
         .resizable(false)
@@ -172,9 +161,6 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
                 .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                 .show(ui, |ui| panels::tool_strip(ui, state));
         });
-    state
-        .tour
-        .mark(crate::tour::Spot::Tools, tools.response.rect);
 
     // The rail. Every panel docks here; nothing floats *loose*. Collapsed, it is
     // a strip of icons rather than nothing at all: a panel you cannot see should
@@ -187,20 +173,13 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     } else {
         // Collapsed: a strip of icons rather than nothing at all. A panel you
         // cannot see should still be somewhere you can find.
-        let strip = Panel::right("rail-strip")
+        Panel::right("rail-strip")
             .exact_size(rail::STRIP)
             .resizable(false)
             .frame(panel_frame())
             .show(ui, |ui| {
                 rail::strip(ui, state);
             });
-        // Collapsed is still where the panels are, so the tour points at the
-        // strip rather than skipping the step. "Drag a tab" reads oddly at a
-        // column of icons, but a step that vanishes when somebody collapses the
-        // rail teaches them the panels are gone.
-        state
-            .tour
-            .mark(crate::tour::Spot::Rail, strip.response.rect);
     }
 
     // A newer version, if a check found one and nobody has put the notice away.
@@ -318,7 +297,6 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
             }
 
             let canvas = ui.available_rect_before_wrap();
-            state.tour.mark(crate::tour::Spot::Canvas, canvas);
             viewport::show(ui, frame, state);
 
             if state.screen_mode.shows_chrome() {
@@ -330,12 +308,6 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
             }
         });
 
-    // Last, because every spot it can point at has now said where it is. Earlier
-    // and it would be reading the previous frame's rectangles, which is a card
-    // that visibly lags the panel it is describing.
-    if !modal_open(state) {
-        tour::show(ui, state);
-    }
     quit::show(ui.ctx(), state);
 }
 

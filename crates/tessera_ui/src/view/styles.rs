@@ -540,12 +540,6 @@ fn paragraph_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
     // disagree with the first.
     // The rail's hint, not the editor's: in a window the person has already
     // double-clicked into, "double-click to edit" is noise.
-    if show.list() {
-        super::panel_ui::hint(
-            ui,
-            "Paragraph styles format whole paragraphs. Double-click a style to edit.",
-        );
-    }
 
     let selected = state.styles_window.paragraph;
 
@@ -784,6 +778,10 @@ fn paragraph_page(
             super::panels::hyphenation_editor(ui, &mut format.hyphenation, true);
         }
         StylePage::Justification => {
+            // Labelled here and not inside the editor: in the inspector it
+            // sits under a section already called "Justification", and said
+            // it twice.
+            super::panels::group_label(ui, "Justification");
             super::panels::justification_editor(ui, &mut format.justification, true);
         }
         StylePage::DropCapsAndLists => {
@@ -813,13 +811,6 @@ fn character_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
         .iter()
         .map(|(id, s)| (id, s.name.clone()))
         .collect();
-
-    if show.list() {
-        super::panel_ui::hint(
-            ui,
-            "Character styles format selected text. Double-click a style to edit.",
-        );
-    }
 
     let selected = state.styles_window.character;
 

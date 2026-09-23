@@ -5,7 +5,7 @@
 //! `IDC_SIZEALL` — which is why asking for "grab" while rotating produced a
 //! move cross instead. The set is also missing anything that means *rotate*.
 //!
-//! So the cursor is drawn, from the same Lucide geometry as the toolbar
+//! So the cursor is drawn, from the same Spectrum pictures as the toolbar
 //! ([`crate::icons`]), and the platform cursor is switched off over the
 //! canvas. That buys a cursor that says exactly what a drag will do, turns to
 //! follow a rotated frame's handles, and cannot silently change meaning on
@@ -16,7 +16,7 @@
 //! minus what was there. A first cut chose black on the page and white on the
 //! pasteboard, and vanished over a black rectangle on the page.
 
-use egui::epaint::{Mesh, TessellationOptions, Tessellator};
+use egui::epaint::Mesh;
 use egui::{Color32, Pos2, Rect};
 
 use crate::icons::{self, Icon};
@@ -44,7 +44,7 @@ impl Cursor {
     }
 }
 
-/// The box the icon's 24-unit grid must occupy for its hotspot to land on
+/// The box the icon's grid must occupy for its hotspot to land on
 /// `at`.
 ///
 /// The hotspot is a point in grid space, and the icon is rotated about the
@@ -53,9 +53,10 @@ impl Cursor {
 /// arrow's tip several pixels down and to the right of what a click hits.
 fn placement(at: Pos2, cursor: Cursor) -> Rect {
     let side = Theme::CURSOR_SIZE;
-    let scale = side / 24.0;
+    let grid = cursor.icon.grid();
+    let scale = side / grid;
     let (hx, hy) = cursor.icon.hotspot();
-    let offset = egui::vec2((hx - 12.0) * scale, (hy - 12.0) * scale);
+    let offset = egui::vec2((hx - grid / 2.0) * scale, (hy - grid / 2.0) * scale);
     let (sin, cos) = cursor.rotation.to_radians().sin_cos();
     let turned = egui::vec2(
         offset.x * cos - offset.y * sin,
@@ -64,31 +65,19 @@ fn placement(at: Pos2, cursor: Cursor) -> Rect {
     Rect::from_center_size(at - turned, egui::vec2(side, side))
 }
 
-/// `cursor` with its hotspot on `at`, in Lucide's own line weight, as the
-/// mesh the inverting pass draws.
+/// `cursor` with its hotspot on `at`, as the mesh the inverting pass draws:
+/// one square per pixel the picture covers.
 ///
 /// White at full coverage: through the blend, white *is* "the opposite", and
 /// the feathered edge's alpha is how much of the pixel turns over.
 pub fn mesh(at: Pos2, cursor: Cursor, pixels_per_point: f32) -> Mesh {
-    let shapes = icons::rotated_shapes(
+    icons::coverage_mesh(
         placement(at, cursor),
         cursor.icon,
         Color32::WHITE,
         cursor.rotation,
-        1.0,
         pixels_per_point,
-    );
-    let mut tessellator = Tessellator::new(
-        pixels_per_point,
-        TessellationOptions::default(),
-        [1, 1],
-        Vec::new(),
-    );
-    let mut mesh = Mesh::default();
-    for shape in shapes {
-        tessellator.tessellate_shape(shape, &mut mesh);
-    }
-    mesh
+    )
 }
 
 #[cfg(test)]
@@ -102,9 +91,10 @@ mod tests {
     /// Where the hotspot actually lands, given the box `placement` chose.
     fn hotspot_lands_at(at: Pos2, cursor: Cursor) -> Pos2 {
         let rect = placement(at, cursor);
-        let scale = Theme::CURSOR_SIZE / 24.0;
+        let grid = cursor.icon.grid();
+        let scale = Theme::CURSOR_SIZE / grid;
         let (hx, hy) = cursor.icon.hotspot();
-        let offset = egui::vec2((hx - 12.0) * scale, (hy - 12.0) * scale);
+        let offset = egui::vec2((hx - grid / 2.0) * scale, (hy - grid / 2.0) * scale);
         let (sin, cos) = cursor.rotation.to_radians().sin_cos();
         rect.center()
             + egui::vec2(

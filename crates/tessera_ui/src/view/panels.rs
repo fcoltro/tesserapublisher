@@ -172,7 +172,7 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
     // No heading: the rail draws one, and printing a second underneath it was
     // the word "Properties" twice in a column 292 points wide.
     if state.active().selection.is_empty() {
-        context_card(
+        context_heading(
             ui,
             "Document setup",
             "Page size, margins and output settings",
@@ -185,7 +185,7 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
     // value to show, and silently editing only the first would be worse than
     // saying so.
     let Some(id) = state.active().selection.single() else {
-        context_card(
+        context_heading(
             ui,
             &format!("{} objects selected", state.active().selection.len()),
             "Select one object to edit its properties. Use the Object menu to align or group this selection.",
@@ -207,7 +207,7 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
         FrameKind::Table(_) => "Table",
         FrameKind::Group(_) => "Group",
     };
-    context_card(
+    context_heading(
         ui,
         kind,
         "Position and size are in the toolbar above the page.",
@@ -253,24 +253,14 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
     }
 }
 
-fn context_card(ui: &mut Ui, title: &str, description: &str) {
-    egui::Frame::NONE
-        .fill(Theme::panel_bg_alt())
-        .corner_radius(Theme::RADIUS)
-        .inner_margin(Theme::space_3())
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.strong(title);
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(description)
-                        .small()
-                        .color(Theme::text_muted()),
-                )
-                .wrap(),
-            );
-        });
-    ui.add_space(Theme::space_2());
+/// What the panel is describing — "Text frame", "Document setup" — named as
+/// InDesign names it at the head of its Properties panel. The note that says
+/// where the rest lives is the name's tooltip rather than a paragraph under
+/// it on every selection.
+fn context_heading(ui: &mut Ui, title: &str, description: &str) {
+    ui.add(egui::Label::new(egui::RichText::new(title).strong()).selectable(false))
+        .on_hover_text(description);
+    ui.add_space(Theme::space_1());
 }
 
 /// The fill and stroke proxy: two overlapping swatches with their three keys.
@@ -349,8 +339,8 @@ fn fill_stroke_proxy(
 
 /// A small icon button, for the places a word would be worse than a picture.
 fn glyph_button(ui: &mut Ui, icon: crate::icons::Icon, tip: &str) -> egui::Response {
-    const SIZE: f32 = 24.0;
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(SIZE), Sense::click());
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::splat(Theme::control_height()), Sense::click());
     if response.hovered() {
         ui.painter()
             .rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
@@ -780,6 +770,11 @@ fn percent_bare(ui: &mut Ui, value: &mut f64) -> bool {
 
 /// An angle field, in degrees.
 fn angle<'a>(ui: &mut Ui, label: impl Into<FieldLabel<'a>>, value: &mut f64) -> bool {
+    // An unsheared frame's shear comes out of its matrix as -0.0, and the
+    // field would print the sign of nothing. `-0.0 == 0.0`, so this clears it.
+    if *value == 0.0 {
+        *value = 0.0;
+    }
     property_field(ui, label, |ui| {
         ui.add(egui::DragValue::new(value).speed(0.5).suffix("°"))
             .changed()
@@ -803,11 +798,19 @@ fn fill_section(
     // offering "gradient" and then a second control for its shape: there are
     // only two, and a person picking a fill is choosing between three things,
     // not between two and then a sub-question.
+    //
+    // None is among them because it is what a new shape has, and a panel
+    // that called it "Solid" over a half-checkered swatch was describing the
+    // storage rather than the page. The model keeps no-fill as a solid at no
+    // alpha (`command::NO_FILL`), so it is read off the alpha here, and the
+    // colour under it is what comes back when the fill is turned on.
+    let unfilled = matches!(&frame.fill, Paint::Solid(c) if c.to_rgb_f32()[3] <= 0.0);
     let chosen = match &frame.fill {
-        Paint::Solid(_) => 0,
+        Paint::Solid(_) if unfilled => 0,
+        Paint::Solid(_) => 1,
         Paint::Gradient(g) => match g.ramp {
-            Ramp::Linear { .. } => 1,
-            Ramp::Radial => 2,
+            Ramp::Linear { .. } => 2,
+            Ramp::Radial => 3,
         },
     };
     let mut want = chosen;
@@ -815,16 +818,27 @@ fn fill_section(
         ui,
         "Fill type",
         &mut want,
-        &[("Solid", 0), ("Linear", 1), ("Radial", 2)],
+        &[("None", 0), ("Solid", 1), ("Linear", 2), ("Radial", 3)],
     );
+    if want == 0 && chosen != 0 {
+        apply(state, Command::ClearFill(id));
+        return;
+    }
     if want != chosen {
         // Switching keeps whatever the other kind can carry: a gradient turned
         // solid takes a colour from its ramp, and a solid turned gradient ramps
         // from the colour it already was rather than from an unrelated black.
+        // Out of None, that colour comes back at full strength.
+        let base = if unfilled {
+            let [r, g, b, _] = frame.fill.representative().to_rgb_f32();
+            Color::Rgb { r, g, b, a: 1.0 }
+        } else {
+            frame.fill.representative()
+        };
         let paint = match want {
-            0 => Paint::Solid(frame.fill.representative()),
+            1 => Paint::Solid(base),
             other => {
-                let ramp = if other == 1 {
+                let ramp = if other == 2 {
                     Ramp::Linear { angle: 90.0 }
                 } else {
                     Ramp::Radial
@@ -840,7 +854,7 @@ fn fill_section(
                         vec![
                             tessera_document::paint::Stop {
                                 at: 0.0,
-                                colour: frame.fill.representative(),
+                                colour: base,
                             },
                             tessera_document::paint::Stop {
                                 at: 1.0,
@@ -856,6 +870,8 @@ fn fill_section(
     }
 
     match &frame.fill {
+        // Nothing to colour: the type row above is the whole of it.
+        Paint::Solid(_) if unfilled => {}
         Paint::Solid(colour) => {
             let [r, g, b, a] = colour.to_rgb_f32();
             let mut rgba = [r, g, b, a];
@@ -1447,7 +1463,7 @@ pub(crate) fn icon_button(
     tooltip: &str,
     active: bool,
 ) -> bool {
-    let size = Vec2::splat(24.0);
+    let size = Vec2::splat(Theme::control_height());
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
 
     if active || response.hovered() {
@@ -1789,7 +1805,6 @@ pub(crate) fn justification_editor(
     let mut changed = false;
     let mut inherit = false;
     let stated = value.is_some();
-    group_label(ui, "Justification");
     let j = value.get_or_insert_with(Default::default);
 
     if inheritable && stated && ui.small_button("Inherit").clicked() {
@@ -2789,22 +2804,18 @@ fn text_frame_controls(
     // a list: it is the same choice as horizontal alignment and reads the
     // same way, turned a quarter turn.
     text_label(ui, crate::icons::Icon::TextFrame, "Vertical alignment");
-    let button_width = text_toggle_width(ui, "Bottom");
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().interact_size.x = button_width;
-        use tessera_document::nodes::VerticalJustify as V;
-        for (icon, tip, which) in [
-            (crate::icons::Icon::AlignTop, "Top", V::Top),
-            (crate::icons::Icon::AlignMiddleV, "Centre", V::Centre),
-            (crate::icons::Icon::AlignBottom, "Bottom", V::Bottom),
-            (crate::icons::Icon::DistributeV, "Justify", V::Justify),
-        ] {
-            if text_toggle(ui, icon, tip, wanted.vertical == which) {
-                wanted.vertical = which;
-                changed = true;
-            }
-        }
-    });
+    use tessera_document::nodes::VerticalJustify as V;
+    let placements = [
+        (crate::icons::Icon::AlignTop, "Top", V::Top),
+        (crate::icons::Icon::AlignMiddleV, "Centre", V::Centre),
+        (crate::icons::Icon::AlignBottom, "Bottom", V::Bottom),
+        (crate::icons::Icon::DistributeV, "Justify", V::Justify),
+    ];
+    let toggles = placements.map(|(icon, name, which)| (icon, name, wanted.vertical == which));
+    if let Some(i) = icon_toggles(ui, &toggles) {
+        wanted.vertical = placements[i].2;
+        changed = true;
+    }
 
     if changed {
         apply(state, Command::SetTextLayout { id, layout: wanted });
@@ -2815,7 +2826,7 @@ fn text_frame_controls(
 ///
 /// Not a section heading: it does not collapse and it carries no icon. The
 /// difference in weight is what says one is a level above the other.
-fn group_label(ui: &mut Ui, text: &str) {
+pub(crate) fn group_label(ui: &mut Ui, text: &str) {
     ui.add_space(Theme::space_2());
     ui.add(egui::Label::new(group_text(text)).selectable(false));
 }
@@ -2836,7 +2847,8 @@ fn linked_group_heading(ui: &mut Ui, id: egui::Id, title: &str, default: bool) -
     ui.horizontal(|ui| {
         ui.add(egui::Label::new(group_text(title)).selectable(false));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let (rect, response) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), Sense::click());
+            let (rect, response) =
+                ui.allocate_exact_size(Vec2::splat(Theme::control_height()), Sense::click());
             if response.clicked() {
                 linked = !linked;
             }
@@ -2924,28 +2936,30 @@ fn linked_edges(
 }
 
 /// A quiet surface groups related controls without another heading icon.
+/// A group's fields, spaced as the panel spaces them.
+///
+/// **Flat**, as InDesign's Properties panel is. The groups were cards — a
+/// filled, bordered box each — and a panel of boxes inside a panel reads as
+/// clutter before it reads as structure. The heading and the rule under the
+/// group say where one ends and the next begins, and say it more quietly.
 fn property_body<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    egui::Frame::new()
-        .fill(Theme::panel_bg_alt())
-        .stroke(egui::Stroke::new(1.0, Theme::rule()))
-        .corner_radius(Theme::RADIUS)
-        .inner_margin(Theme::space_2())
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing = Vec2::splat(Theme::space_2());
-            ui.spacing_mut().interact_size.y = Theme::row();
-            add(ui)
-        })
-        .inner
+    ui.scope(|ui| {
+        ui.set_width(ui.available_width());
+        ui.spacing_mut().item_spacing = Vec2::splat(Theme::space_2());
+        ui.spacing_mut().interact_size.y = Theme::row();
+        add(ui)
+    })
+    .inner
 }
 
+/// A named group: its heading, its fields, and the rule that closes it.
 fn property_card(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui)) {
     property_body(ui, |ui| {
-        ui.strong(title);
-        ui.separator();
+        ui.add(egui::Label::new(egui::RichText::new(title).strong()).selectable(false));
         add(ui);
     });
-    ui.add_space(Theme::space_3());
+    ui.add_space(Theme::space_2());
+    ui.separator();
 }
 
 /// What names a field: a word, or a glyph with the word beside it.
@@ -3059,74 +3073,69 @@ fn text_field<R>(
     property_field(ui, (icon, label), add)
 }
 
-/// An icon and a permanent label, sharing a clear button boundary and focus ring.
-fn text_toggle_width(ui: &Ui, longest_label: &str) -> f32 {
-    let label = ui.painter().layout_no_wrap(
-        longest_label.to_owned(),
-        egui::TextStyle::Small.resolve(ui.style()),
-        Theme::text_primary(),
-    );
-    let minimum = label.size().x + Theme::ICON_SIZE + Theme::space_1() + 2.0 * Theme::space_2();
-    let half = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-    if half >= minimum {
-        half
+/// What every toggle in the panel draws behind its picture.
+///
+/// Flat until it matters, as InDesign's icon rows are: nothing around an idle
+/// choice, a filled square under the one that is on, a tint under the
+/// pointer, and the focus ring over any of them. A row of nine boxed buttons
+/// is nine borders to read past before the pictures.
+fn paint_toggle_frame(ui: &Ui, rect: egui::Rect, response: &egui::Response, on: bool) {
+    let painter = ui.painter_at(rect);
+    let fill = if on {
+        Some(Theme::selected_bg())
+    } else if response.hovered() {
+        Some(Theme::hover_bg())
     } else {
-        ui.available_width()
+        None
+    };
+    if let Some(fill) = fill {
+        painter.rect_filled(rect, Theme::RADIUS, fill);
+    }
+    if response.has_focus() {
+        painter.rect_stroke(
+            rect,
+            Theme::RADIUS,
+            egui::Stroke::new(1.0, Theme::focus()),
+            egui::StrokeKind::Inside,
+        );
     }
 }
 
-fn text_toggle(ui: &mut Ui, icon: crate::icons::Icon, label: &str, active: bool) -> bool {
-    let (rect, response) = ui.allocate_exact_size(
-        Vec2::new(ui.spacing().interact_size.x, Theme::row()),
-        Sense::click(),
+/// A row of icon-only toggles: bold, italic, underline, strike; the four
+/// alignments. These are the most learned pictures in any editor, so the word
+/// goes to the tooltip and the accessible name, as a glyph-captioned field's
+/// does. The index of the toggle clicked, if one was.
+///
+/// Packed from the left in cells a little wider than the icon, as InDesign's
+/// are — nine alignments fit its row that way. Spread across the panel, four
+/// icons sat a hand's width apart and read as four unrelated buttons rather
+/// than one choice.
+fn icon_toggles(ui: &mut Ui, toggles: &[(crate::icons::Icon, &str, bool)]) -> Option<usize> {
+    let cell = Vec2::new(
+        Theme::control_height() + Theme::space_1(),
+        Theme::control_height(),
     );
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(
-        rect,
-        Theme::RADIUS,
-        if active {
-            Theme::accent_soft()
-        } else if response.hovered() {
-            Theme::hover_bg()
-        } else {
-            Theme::field_bg()
-        },
-    );
-    painter.rect_stroke(
-        rect,
-        Theme::RADIUS,
-        egui::Stroke::new(
-            1.0,
-            if response.has_focus() {
-                Theme::focus()
-            } else if active {
-                Theme::accent()
-            } else {
-                Theme::border()
-            },
-        ),
-        egui::StrokeKind::Inside,
-    );
-    let glyph = egui::Rect::from_center_size(
-        egui::pos2(
-            rect.left() + Theme::space_2() + Theme::ICON_SIZE / 2.0,
-            rect.center().y,
-        ),
-        Vec2::splat(Theme::ICON_SIZE),
-    );
-    crate::icons::paint(&painter, glyph, icon, Theme::text_primary());
-    painter.text(
-        egui::pos2(glyph.right() + Theme::space_1(), rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::TextStyle::Small.resolve(ui.style()),
-        Theme::text_primary(),
-    );
-    crate::icons::named_toggle(response, label, egui::WidgetType::Button, active).clicked()
+    let mut clicked = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 1.0;
+        for (index, &(icon, name, on)) in toggles.iter().enumerate() {
+            let (rect, response) = ui.allocate_exact_size(cell, Sense::click());
+            paint_toggle_frame(ui, rect, &response, on);
+            crate::icons::paint(&ui.painter_at(rect), rect, icon, Theme::text_primary());
+            if crate::icons::named_toggle(response, name, egui::WidgetType::Button, on)
+                .on_hover_text(name)
+                .clicked()
+            {
+                clicked = Some(index);
+            }
+        }
+    });
+    clicked
 }
 
 fn property_disclosure(ui: &mut Ui, state: &mut TesseraApp, title: &'static str) -> bool {
-    ui.add_space(Theme::space_2());
+    // No gap above: the heading's own rule is the break between sections,
+    // and a gap as well spent a row's height on air for every closed one.
     let open = section_heading(ui, state, title);
     if open {
         ui.add_space(Theme::space_2());
@@ -3231,45 +3240,13 @@ fn icon_choices<T: PartialEq + Copy>(
                     Vec2::new(column.available_width(), Theme::row()),
                     Sense::click(),
                 );
+                paint_toggle_frame(column, rect, &response, selected);
                 let painter = column.painter_at(rect);
-                painter.rect_filled(
-                    rect,
-                    Theme::RADIUS,
-                    if selected {
-                        Theme::accent_soft()
-                    } else if response.hovered() {
-                        Theme::hover_bg()
-                    } else {
-                        Theme::field_bg()
-                    },
-                );
-                painter.rect_stroke(
-                    rect,
-                    Theme::RADIUS,
-                    egui::Stroke::new(
-                        1.0,
-                        if response.has_focus() {
-                            Theme::focus()
-                        } else if selected {
-                            Theme::accent()
-                        } else {
-                            Theme::border()
-                        },
-                    ),
-                    egui::StrokeKind::Inside,
-                );
                 let glyph = egui::Rect::from_center_size(
                     rect.center(),
                     Vec2::splat(Theme::ICON_SIZE.min(rect.width())),
                 );
-                crate::icons::paint_rotated(
-                    &painter,
-                    glyph,
-                    *icon,
-                    Theme::text_primary(),
-                    0.0,
-                    1.0,
-                );
+                crate::icons::paint_rotated(&painter, glyph, *icon, Theme::text_primary(), 0.0);
                 let response = crate::icons::reads_as(
                     response,
                     *name,
@@ -3464,6 +3441,15 @@ pub(crate) fn pair<'a, A, B>(
     fn cell<R>(ui: &mut Ui, label: FieldLabel<'_>, add: impl FnOnce(&mut Ui) -> R) -> R {
         label.field(ui, add)
     }
+    // Two to a row while each half has room for a glyph and a number. A dock
+    // dragged narrower than that stacks them rather than letting the second
+    // run past the edge — the glyphs stay the size they were drawn for.
+    // Room for a number with its unit, "12.70 mm", not just a bare value.
+    let half = Theme::FIELD_GLYPH_SIZE + Theme::space_1() + 64.0;
+    if ui.available_width() < 2.0 * half + ui.spacing().item_spacing.x {
+        let a = cell(ui, first.0.into(), first.1);
+        return (a, cell(ui, second.0.into(), second.1));
+    }
     ui.columns(2, |columns| {
         (
             cell(&mut columns[0], first.0.into(), first.1),
@@ -3495,7 +3481,7 @@ pub(crate) fn section_heading(ui: &mut Ui, state: &mut TesseraApp, title: &'stat
 /// can disagree, and on the first frame they did.
 pub(crate) fn section_heading_with(ui: &mut Ui, title: &str, open: bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(
-        Vec2::new(ui.available_width(), Theme::row()),
+        Vec2::new(ui.available_width(), Theme::control_height()),
         Sense::click(),
     );
     let painter = ui.painter_at(rect);
@@ -3519,6 +3505,8 @@ pub(crate) fn section_heading_with(ui: &mut Ui, title: &str, open: bool) -> bool
         );
     }
 
+    // Spectrum's ten-pixel chevron, at ten pixels: the twenty-pixel one
+    // halved was the softest thing in the panel.
     let caret = egui::Rect::from_min_size(
         egui::pos2(
             rect.right() - Theme::space_2() - 10.0,
@@ -3529,10 +3517,9 @@ pub(crate) fn section_heading_with(ui: &mut Ui, title: &str, open: bool) -> bool
     crate::icons::paint_rotated(
         &painter,
         caret,
-        crate::icons::Icon::ChevronRight,
+        crate::icons::Icon::Disclosure,
         Theme::text_muted(),
         if open { 90.0 } else { 0.0 },
-        1.0,
     );
 
     // The heading face at the body size: semibold where the theme installed
@@ -3741,8 +3728,11 @@ fn text_section(
         // These controls also work on a selected frame, before entering its text.
         // The same target and pending format as the other controls keep both
         // entry points in sync with the toolbar while typing.
-        text_label(ui, Icon::Text, "Font family");
-        if let Some(family) = family_menu(ui, state, shown.family.as_deref(), WIDEST_ROW) {
+        let family = text_field(ui, Icon::Text, "Font family", |ui| {
+            let width = ui.available_width().min(WIDEST_ROW);
+            family_menu(ui, state, shown.family.as_deref(), width)
+        });
+        if let Some(family) = family {
             set_character(
                 state,
                 story,
@@ -3755,28 +3745,27 @@ fn text_section(
         }
         let mut size = f64::from(shown.size.unwrap_or(12.0));
         let mut leading = f64::from(shown.line_height.unwrap_or(1.2));
-        let (size_changed, leading_changed) = ui.columns(2, |columns| {
-            (
-                text_field(&mut columns[0], Icon::TypeSize, "Size", |ui| {
-                    ui.add(
-                        egui::DragValue::new(&mut size)
-                            .speed(0.25)
-                            .range(0.1..=2000.0)
-                            .suffix(" pt"),
-                    )
-                    .changed()
-                }),
-                text_field(&mut columns[1], Icon::LineSpacing, "Line height", |ui| {
-                    ui.add(
-                        egui::DragValue::new(&mut leading)
-                            .speed(0.02)
-                            .range(0.5..=4.0)
-                            .suffix(" ×"),
-                    )
-                    .changed()
-                }),
-            )
-        });
+        let (size_changed, leading_changed) = pair(
+            ui,
+            ((Icon::TypeSize, "Size"), |ui: &mut Ui| {
+                ui.add(
+                    egui::DragValue::new(&mut size)
+                        .speed(0.25)
+                        .range(0.1..=2000.0)
+                        .suffix(" pt"),
+                )
+                .changed()
+            }),
+            ((Icon::LineSpacing, "Line height"), |ui: &mut Ui| {
+                ui.add(
+                    egui::DragValue::new(&mut leading)
+                        .speed(0.02)
+                        .range(0.5..=4.0)
+                        .suffix(" ×"),
+                )
+                .changed()
+            }),
+        );
         if size_changed || leading_changed {
             set_character(
                 state,
@@ -3799,88 +3788,78 @@ fn text_section(
         let shown_colour = shown.colour.clone().unwrap_or(Color::BLACK);
         let [r, g, b, a] = shown_colour.to_rgb_f32();
         let mut rgba = [r, g, b, a];
-        ui.horizontal_wrapped(|ui| {
-            let (spot, _) = ui.allocate_exact_size(Vec2::splat(Theme::ICON_SIZE), Sense::hover());
-            crate::icons::paint(
-                ui.painter(),
-                spot,
-                crate::icons::Icon::Palette,
-                Theme::text_muted(),
+        if text_field(ui, Icon::Palette, "Text colour", |ui| {
+            fill_picker(ui, &mut rgba)
+        }) {
+            set_character(
+                state,
+                story,
+                target.clone(),
+                CharacterFormat {
+                    colour: Some(Color::Rgb {
+                        r: rgba[0],
+                        g: rgba[1],
+                        b: rgba[2],
+                        a: rgba[3],
+                    }),
+                    ..CharacterFormat::default()
+                },
             );
-            ui.label("Text colour");
-            if fill_picker(ui, &mut rgba) {
-                set_character(
-                    state,
-                    story,
-                    target.clone(),
-                    CharacterFormat {
-                        colour: Some(Color::Rgb {
-                            r: rgba[0],
-                            g: rgba[1],
-                            b: rgba[2],
-                            a: rgba[3],
-                        }),
-                        ..CharacterFormat::default()
-                    },
-                );
-            }
-        });
+        }
 
         // Weight and slant on one row. Bold and Italic are toggles rather than a
         // list, because that is how they are used: the numbered weights stay for
         // the faces that have them, but the pair a person reaches for constantly
         // should be one click and recognisable without reading.
         let mut weight_change = None;
-        ui.label(egui::RichText::new("Font style").small());
-        let button_width = text_toggle_width(ui, "Underline");
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().interact_size.x = button_width;
-            let bold = shown.weight.is_some_and(|w| w >= 600);
-            if text_toggle(ui, Icon::Bold, "Bold", bold) {
-                // Off returns to 400 rather than to inherit: a toggle that cleared
-                // the property would leave a run bold whenever its style was.
-                weight_change = Some(if bold { 400 } else { 700 });
-            }
-            let italic = shown.italic == Some(true);
-            if text_toggle(ui, Icon::Italic, "Italic", italic) {
-                set_character(
-                    state,
-                    story,
-                    target.clone(),
-                    CharacterFormat {
-                        // `Some(false)`, not `None`: `None` means inherit and would
-                        // leave the text italic when its style says so.
-                        italic: Some(!italic),
-                        ..CharacterFormat::default()
-                    },
-                );
-            }
+        let bold = shown.weight.is_some_and(|w| w >= 600);
+        let italic = shown.italic == Some(true);
+        let underline = shown.underline.as_ref().is_some_and(|d| d.on);
+        let strike = shown.strikethrough.as_ref().is_some_and(|d| d.on);
+        match icon_toggles(
+            ui,
+            &[
+                (Icon::Bold, "Bold", bold),
+                (Icon::Italic, "Italic", italic),
+                (Icon::Underline, "Underline", underline),
+                (Icon::Strikethrough, "Strike", strike),
+            ],
+        ) {
+            // Off returns to 400 rather than to inherit: a toggle that cleared
+            // the property would leave a run bold whenever its style was.
+            Some(0) => weight_change = Some(if bold { 400 } else { 700 }),
+            Some(1) => set_character(
+                state,
+                story,
+                target.clone(),
+                CharacterFormat {
+                    // `Some(false)`, not `None`: `None` means inherit and would
+                    // leave the text italic when its style says so.
+                    italic: Some(!italic),
+                    ..CharacterFormat::default()
+                },
+            ),
             // Underline and strikethrough, the same way. Off keeps the
             // decoration's settings and states `on: false`, for the reason
             // italic states `Some(false)`.
-            for (icon, name, strike) in [
-                (crate::icons::Icon::Underline, "Underline", false),
-                (crate::icons::Icon::Strikethrough, "Strike", true),
-            ] {
-                let current = if strike {
-                    &shown.strikethrough
+            Some(which @ (2 | 3)) => {
+                let (current, on) = if which == 3 {
+                    (&shown.strikethrough, strike)
                 } else {
-                    &shown.underline
+                    (&shown.underline, underline)
                 };
-                let on = current.as_ref().is_some_and(|d| d.on);
-                if text_toggle(ui, icon, name, on) {
-                    let mut decoration = current.clone().unwrap_or_default();
-                    decoration.on = !on;
-                    let mut format = CharacterFormat::default();
-                    if strike {
-                        format.strikethrough = Some(decoration);
-                    } else {
-                        format.underline = Some(decoration);
-                    }
-                    set_character(state, story, target.clone(), format);
+                let mut decoration = current.clone().unwrap_or_default();
+                decoration.on = !on;
+                let mut format = CharacterFormat::default();
+                if which == 3 {
+                    format.strikethrough = Some(decoration);
+                } else {
+                    format.underline = Some(decoration);
                 }
+                set_character(state, story, target.clone(), format);
             }
-        });
+            _ => {}
+        }
         text_field(ui, Icon::Bold, "Font weight", |ui| {
             let current = shown.weight.unwrap_or(400);
             crate::icons::reads_as(
@@ -3927,36 +3906,15 @@ fn text_section(
     });
 
     property_card(ui, "Paragraph", |ui| {
-        ui.label(egui::RichText::new("Alignment").small());
-        let button_width = text_toggle_width(ui, "Centre");
-
-        let mut alignment_change = None;
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().interact_size.x = button_width;
-            for (icon, name, alignment) in [
-                (crate::icons::Icon::TextAlignLeft, "Left", Alignment::Left),
-                (
-                    crate::icons::Icon::TextAlignCentre,
-                    "Centre",
-                    Alignment::Centre,
-                ),
-                (
-                    crate::icons::Icon::TextAlignRight,
-                    "Right",
-                    Alignment::Right,
-                ),
-                (
-                    crate::icons::Icon::TextAlignJustify,
-                    "Justify",
-                    Alignment::Justify,
-                ),
-            ] {
-                if text_toggle(ui, icon, name, paragraph.alignment == Some(alignment)) {
-                    alignment_change = Some(alignment);
-                }
-            }
-        });
-        if let Some(alignment) = alignment_change {
+        let alignments = [
+            (Icon::TextAlignLeft, "Align left", Alignment::Left),
+            (Icon::TextAlignCentre, "Align centre", Alignment::Centre),
+            (Icon::TextAlignRight, "Align right", Alignment::Right),
+            (Icon::TextAlignJustify, "Justify", Alignment::Justify),
+        ];
+        let toggles = alignments
+            .map(|(icon, name, alignment)| (icon, name, paragraph.alignment == Some(alignment)));
+        if let Some(alignment) = icon_toggles(ui, &toggles).map(|i| alignments[i].2) {
             set_paragraph(
                 state,
                 story,
@@ -4346,9 +4304,11 @@ fn text_section(
     if property_disclosure(ui, state, "Drop caps") {
         // Drop cap. Zero lines is no drop cap, which is why the row reads as a
         // count rather than as a switch with a count beside it.
+        // "Lines" and "Letters", under a heading that already says "Drop
+        // caps": the full names wrapped to two lines in the label column.
         if let Some(lines) = optional_number(
             ui,
-            "Drop cap lines",
+            "Lines",
             Some(f32::from(paragraph.drop_cap_lines.unwrap_or(0))),
             1.0,
             0.0..=10.0,
@@ -4367,7 +4327,7 @@ fn text_section(
         if paragraph.drop_cap_lines.unwrap_or(0) > 0
             && let Some(chars) = optional_number(
                 ui,
-                "Drop cap letters",
+                "Letters",
                 Some(f32::from(paragraph.drop_cap_characters.unwrap_or(1))),
                 1.0,
                 1.0..=10.0,
@@ -4642,7 +4602,14 @@ fn frame_section(ui: &mut Ui, frame: &tessera_document::nodes::Frame) {
     );
 }
 
+/// A colour, as a swatch that opens a picker.
+///
+/// A swatch, not a bar: InDesign's is a chip beside its field. A black bar the
+/// width of the panel was the heaviest thing in it, and said no more than a
+/// chip does.
 fn fill_picker(ui: &mut Ui, rgba: &mut [f32; 4]) -> bool {
+    ui.spacing_mut().interact_size =
+        Vec2::new(2.0 * Theme::control_height(), Theme::control_height());
     let mut colour = egui::Rgba::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
     let changed = egui::widgets::color_picker::color_edit_button_rgba(
         ui,
@@ -6388,6 +6355,93 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Draw the fill section once and return the names it shows, clicking the
+    /// control named `click` first when there is one.
+    fn fill_section_names(
+        ctx: &egui::Context,
+        state: &mut TesseraApp,
+        id: tessera_document::ids::FrameId,
+        click: Option<&str>,
+    ) -> Vec<String> {
+        let raw = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(288.0, 2000.0),
+            )),
+            ..Default::default()
+        };
+        let draw = |state: &mut TesseraApp, input| {
+            let frame = state.active().document().frame(id).unwrap().clone();
+            crate::headless_frame::frame(ctx, input, |ui| fill_section(ui, state, id, &frame))
+                .platform_output
+                .accesskit_update
+                .unwrap()
+        };
+        let tree = draw(state, raw());
+        if let Some(label) = click {
+            let bounds = tree
+                .nodes
+                .iter()
+                .find(|(_, node)| node.label() == Some(label))
+                .and_then(|(_, node)| node.bounds())
+                .unwrap_or_else(|| panic!("no control named {label}"));
+            let pos = egui::pos2(
+                ((bounds.x0 + bounds.x1) / 2.0) as f32,
+                ((bounds.y0 + bounds.y1) / 2.0) as f32,
+            );
+            for pressed in [true, false] {
+                let mut input = raw();
+                input.events = vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ];
+                draw(state, input);
+            }
+        }
+        draw(state, raw())
+            .nodes
+            .iter()
+            .filter_map(|(_, node)| node.label().or(node.value()).map(str::to_owned))
+            .collect()
+    }
+
+    #[test]
+    fn no_fill_reads_as_none_and_solid_brings_the_colour_back() {
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx);
+        ctx.enable_accesskit();
+        let (mut state, id, _) = a_text_frame("Words");
+        let red = Color::Rgb {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        };
+        apply(
+            &mut state,
+            Command::SetFill {
+                id,
+                paint: Paint::Solid(red.clone()),
+            },
+        );
+        let fill = |state: &TesseraApp| state.active().document().frame(id).unwrap().fill.clone();
+
+        // None: the fill goes to no alpha, and there is no colour to pick.
+        let names = fill_section_names(&ctx, &mut state, id, Some("None"));
+        assert_eq!(fill(&state).representative().to_rgb_f32()[3], 0.0);
+        assert!(!names.iter().any(|n| n == "Fill colour"), "{names:?}");
+
+        // Solid: the red that was under it, at full strength.
+        let names = fill_section_names(&ctx, &mut state, id, Some("Solid"));
+        assert_eq!(fill(&state), Paint::Solid(red));
+        assert!(names.iter().any(|n| n == "Fill colour"), "{names:?}");
     }
 
     #[test]

@@ -260,7 +260,7 @@ pub enum Run {
     /// Type a character the keyboard has no key for, at the caret.
     Insert(Special),
     OpenSettings,
-    ShowTour,
+    ShowShortcuts,
     Package,
     TogglePreflight,
     ToggleConsole,
@@ -376,7 +376,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::Package
         | Run::Place
         | Run::OpenSettings
-        | Run::ShowTour
+        | Run::ShowShortcuts
         | Run::ChooseOutputIntent
         | Run::TogglePreflight
         | Run::ToggleConsole
@@ -1204,11 +1204,9 @@ pub fn all() -> &'static [Action] {
         // last in that menu because it is the one entry there that is not an
         // edit to the document.
         a("Preferences...", Some("Ctrl+,"), Group::Edit, OpenSettings),
-        // Under Help, and reachable always rather than only on a first run. A
-        // tour somebody skipped in their first minute is a tour they can never
-        // get back, and the minute they skipped it in is the one they knew least
-        // about whether they wanted it.
-        a("Take the tour", None, Group::Help, ShowTour),
+        // Where InDesign keeps it: the list of keys is something a person
+        // looks up, and Help is where looking things up lives.
+        a("Keyboard shortcuts...", None, Group::Help, ShowShortcuts),
         // Under View, because a soft proof is a way of *looking* at the document.
         // Choosing the press is under View too rather than under File: the
         // decision is inseparable from seeing its effect, and separating them
@@ -1337,7 +1335,10 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         Run::Print => state.print.open = true,
         Run::Place => crate::file_ops::place(state),
         Run::OpenSettings => state.settings.open = true,
-        Run::ShowTour => state.tour.begin(),
+        Run::ShowShortcuts => {
+            state.settings.page = crate::view::settings::Page::Shortcuts;
+            state.settings.open = true;
+        }
         Run::TogglePreflight => {
             state.preflight.open = !state.preflight.open;
             // Opening a panel in a collapsed rail would open nothing a person

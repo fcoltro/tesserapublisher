@@ -27,7 +27,7 @@ use crate::icons::Icon;
 use crate::theme::Theme;
 
 /// How tall one layer's row is, in screen points.
-const ROW: f32 = 32.0;
+const ROW: f32 = 26.0;
 
 /// How wide the eye and the padlock are.
 const SWITCH: f32 = 24.0;
@@ -132,10 +132,6 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
 
     ui.spacing_mut().item_spacing.y = Theme::space_1();
     ui.add_space(Theme::space_2());
-    super::panel_ui::hint(
-        ui,
-        "Draw on the highlighted layer. Double-click its name to rename; drag to reorder.",
-    );
 }
 
 fn actions(ui: &mut Ui, state: &mut TesseraApp) {
@@ -248,6 +244,8 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
     // guess made from pointer movement here.
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, ROW), Sense::click_and_drag());
+    let response = response
+        .on_hover_text("Click to draw on this layer. Double-click to rename; drag to reorder.");
     // The row's name is painted, so nothing in the widget tree carries it, and
     // "active" is the whole reason somebody clicks a layer row. Both said here.
     let response = crate::icons::reads_as(

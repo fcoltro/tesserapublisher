@@ -1,26 +1,30 @@
-//! Icons, as geometry rather than assets.
+//! Icons, as pictures drawn into the pixels they will cover.
 //!
-//! The shapes are [Lucide](https://lucide.dev) — drawn on a 24×24 grid with a
-//! round-capped stroke — stored here as SVG path data, parsed by `kurbo`
-//! (already a dependency), and painted through `egui::Painter`.
+//! Most are Adobe's **Spectrum 2** workflow icons — the set InDesign and
+//! Illustrator draw their own interface with — vendored as SVG under
+//! `assets/icons/` (Apache-2.0: the licence is beside them, and see
+//! `ATTRIBUTION.md`). Where Spectrum has no picture for a page-layout idea —
+//! a line cap, a text wrap, a paragraph indent, the I-beam — Tessera draws its
+//! own, as stroked path data in [`Icon::paths`], at Spectrum's line weight so
+//! the two read as one set.
 //!
-//! No image files, no SVG renderer, no icon font. The icons stay crisp at any
-//! DPI, re-tint with [`crate::theme`], and add nothing to the binary but a few
-//! hundred bytes of text.
-//!
-//! Lucide is ISC-licensed; icons inherited from Feather are MIT. See
-//! `ATTRIBUTION.md`.
+//! Both are rasterised by resvg at exactly the device pixels they cover and
+//! placed on whole pixels. That is what "pixel perfect" means here: an icon
+//! is drawn at the size it is shown, never resampled from another, and its
+//! edges land where its designer put them rather than straddling two pixels.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, PoisonError};
 
-use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke};
-use kurbo::{BezPath, PathEl};
+use egui::epaint::Mesh;
+use egui::{Color32, Painter, Pos2, Rect, Stroke};
 
-/// The grid Lucide draws on.
-const GRID: f32 = 24.0;
-/// Lucide's native stroke weight, legible at the interface's 18-point size.
-const STROKE: f32 = 2.0;
+/// The grid Tessera's own drawings are made on, Lucide's.
+const DRAWN_GRID: f32 = 24.0;
+/// Their stroke, in that grid: 1.5 units of Spectrum's 20-unit grid, so a
+/// drawn icon and a Spectrum one side by side have the same weight of line.
+const DRAWN_STROKE: f32 = 1.5 * DRAWN_GRID / 20.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Icon {
@@ -148,6 +152,9 @@ pub enum Icon {
     /// Navigation, and the disclosure a submenu shows.
     ChevronLeft,
     ChevronRight,
+    /// A section's open-and-shut mark: Spectrum's own small chevron, drawn
+    /// at ten pixels rather than a twenty-pixel one shrunk to half.
+    Disclosure,
     /// The layers panel, and what a layer's two switches look like.
     Layers,
     Eye,
@@ -170,150 +177,15 @@ pub enum Icon {
 }
 
 impl Icon {
-    /// SVG path data, in the 24×24 Lucide grid.
+    /// Tessera's own drawing, as SVG path data stroked on the 24-unit grid —
+    /// empty for an icon Spectrum draws (see [`Icon::spectrum`]).
     ///
-    /// Lucide's `<rect>` and `<circle>` primitives are written out as paths
-    /// here so that everything goes through one parser.
+    /// Only what Spectrum has no picture of is drawn here: the stroke's caps
+    /// and joins, the text wraps, the paragraph indents and spaces, the
+    /// pointer's I-beam and crosshair. `<rect>` and `<circle>` primitives are
+    /// written out as paths so everything goes through one parser.
     pub fn paths(self) -> &'static [&'static str] {
         match self {
-            Self::Sun => &[
-                "M16 12 A4 4 0 1 1 8 12 A4 4 0 1 1 16 12 Z",
-                "M12 2 V4 M12 20 V22 M2 12 H4 M20 12 H22 M4.93 4.93 L6.34 6.34 M17.66 17.66 L19.07 19.07 M4.93 19.07 L6.34 17.66 M17.66 6.34 L19.07 4.93",
-            ],
-            Self::Moon => &["M20.9 13 A9 9 0 0 1 11 3.1 A7 7 0 0 0 20.9 13 Z"],
-            // Tessera: an arrow selecting an individual anchor.
-            Self::DirectSelect => &[
-                "M4 3 L4 18 L8 14 L11 21 L14 19 L11 13 L17 13 Z",
-                "M18 3 H22 V7 H18 Z",
-            ],
-            // Publishing convention: an empty picture frame has diagonals.
-            Self::PictureFrame => &["M3 3 H21 V21 H3 Z", "M3 3 L21 21", "M21 3 L3 21"],
-            Self::Polygon => &["M12 2 L22 8 V16 L12 22 L2 16 V8 Z"],
-            // Lucide: scissors.
-            Self::Scissors => &[
-                "M9 6 A3 3 0 1 1 3 6 A3 3 0 1 1 9 6 Z",
-                "M9 18 A3 3 0 1 1 3 18 A3 3 0 1 1 9 18 Z",
-                "M8.12 8.12 L20 20",
-                "M14 10 L20 4",
-                "M8.12 15.88 L12 12",
-            ],
-            // Sliders, page sheets, a checklist and a swatch grid identify panels.
-            Self::Properties => &[
-                "M3 6 H8 M8 3 V9 M8 6 H21",
-                "M3 12 H16 M16 9 V15 M16 12 H21",
-                "M3 18 H10 M10 15 V21 M10 18 H21",
-            ],
-            // lucide: file-text
-            Self::Pages => &[
-                "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z",
-                "M14 2v4a2 2 0 0 0 2 2h4",
-                "M16 13H8",
-                "M16 17H8",
-                "M10 9H8",
-            ],
-            // A type specimen sheet: the panel contains text and object styles.
-            Self::Styles => &[
-                "M4 3 H20 V21 H4 Z",
-                "M8 14 L12 6 L16 14",
-                "M10 11 H14",
-                "M8 18 H16",
-            ],
-            Self::Close => &["M5 5 L19 19", "M19 5 L5 19"],
-            // lucide: square-terminal. The rect is written as a path, since
-            // the cache parses path data and nothing else.
-            Self::SquareTerminal => &[
-                "m7 11 2-2-2-2",
-                "M11 13h4",
-                "M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z",
-            ],
-            // lucide: list-checks
-            Self::Preflight => &[
-                "m3 17 2 2 4-4",
-                "m3 7 2 2 4-4",
-                "M13 6h8",
-                "M13 12h8",
-                "M13 18h8",
-            ],
-            Self::Swatches => &[
-                "M3 3 H9 V18 A3 3 0 0 1 3 18 Z",
-                "M9 8 L14 3 L19 8 L9 18",
-                "M13 15 H21 V21 H6",
-            ],
-            // lucide: mouse-pointer-2
-            Self::Select => &[
-                "M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z",
-            ],
-            // lucide: square — <rect width=18 height=18 x=3 y=3 rx=2>
-            Self::Rectangle => &[
-                "M5 3 h14 a2 2 0 0 1 2 2 v14 a2 2 0 0 1 -2 2 h-14 a2 2 0 0 1 -2 -2 v-14 a2 2 0 0 1 2 -2 z",
-            ],
-            // lucide: circle — <circle cx=12 cy=12 r=10>
-            Self::Ellipse => &["M22 12 A10 10 0 1 1 2 12 A10 10 0 1 1 22 12 Z"],
-            // lucide: image-plus — an image frame with a plus, which is
-            // placing art rather than the artwork itself. The <circle> is
-            // written as an arc pair, as everything else here is.
-            Self::PlaceImage => &[
-                "M16 5h6",
-                "M19 2v6",
-                "M21 11.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7.5",
-                "m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21",
-                "M11 9 A2 2 0 1 1 7 9 A2 2 0 1 1 11 9 Z",
-            ],
-            // lucide: slash
-            Self::Line => &["M22 2 2 22"],
-            // lucide: blend — two overlapping circles, which is compositing
-            // drawn rather than named.
-            Self::Blend => &[
-                "M16 9 A7 7 0 1 1 2 9 A7 7 0 1 1 16 9 Z",
-                "M22 15 A7 7 0 1 1 8 15 A7 7 0 1 1 22 15 Z",
-            ],
-            // lucide: pen-tool
-            Self::Pen => &[
-                "M15.707 21.293a1 1 0 0 1-1.414 0l-1.586-1.586a1 1 0 0 1 0-1.414l5.586-5.586a1 1 0 0 1 1.414 0l1.586 1.586a1 1 0 0 1 0 1.414z",
-                "m18 13-1.375-6.874a1 1 0 0 0-.746-.776L3.235 2.028a1 1 0 0 0-1.207 1.207L5.35 15.879a1 1 0 0 0 .776.746L13 18",
-                "m2.3 2.3 7.286 7.286",
-                "M13 11 A2 2 0 1 1 9 11 A2 2 0 1 1 13 11 Z",
-            ],
-            // lucide: type
-            Self::Text => &[
-                "M12 4v16",
-                "M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2",
-                "M9 20h6",
-            ],
-            // lucide: hand
-            Self::Hand => &[
-                "M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2",
-                "M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2",
-                "M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8",
-                "M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15",
-            ],
-            // lucide: grab — the closed-up hand a pan drag shows.
-            //
-            // Lucide writes the palm as one `d` with an implicit repeated arc
-            // command. It is split in two here rather than trusting every SVG
-            // parser to carry the command across.
-            Self::Grab => &[
-                "M18 11.5V9a2 2 0 0 0-2-2a2 2 0 0 0-2 2v1.4",
-                "M14 10V8a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2",
-                "M10 9.9V9a2 2 0 0 0-2-2a2 2 0 0 0-2 2v5",
-                "M6 14a2 2 0 0 0-2-2a2 2 0 0 0-2 2",
-                "M18 11a2 2 0 1 1 4 0v3a8 8 0 0 1-8 8h-4a8 8 0 0 1-8-8",
-                "M2 14a2 2 0 1 1 4 0",
-            ],
-            // lucide: rotate-cw
-            Self::Rotate => &[
-                "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8",
-                "M21 3v5h-5",
-            ],
-            // lucide: move
-            Self::Move => &[
-                "M12 2v20",
-                "M2 12h20",
-                "m15 19-3 3-3-3",
-                "m15 5-3-3-3 3",
-                "m19 9 3 3-3 3",
-                "m5 9-3 3 3 3",
-            ],
             // lucide: move-horizontal. Drawn along +x and rotated to the
             // handle's outward normal, so a rotated frame gets a cursor that
             // actually points the way the edge will travel.
@@ -324,19 +196,6 @@ impl Icon {
                 "M7 22h1a4 4 0 0 0 4-4v-1",
                 "M7 2h1a4 4 0 0 1 4 4v1",
             ],
-            // lucide: square-dashed-mouse-pointer
-            Self::TextFrame => &[
-                "M12.034 12.681a.498.498 0 0 1 .647-.647l9 3.5a.5.5 0 0 1-.033.943l-3.444 1.068a1 1 0 0 0-.66.66l-1.067 3.443a.5.5 0 0 1-.943.033z",
-                "M5 3a2 2 0 0 0-2 2",
-                "M19 3a2 2 0 0 1 2 2",
-                "M5 21a2 2 0 0 1-2-2",
-                "M9 3h1",
-                "M9 21h2",
-                "M14 3h1",
-                "M3 9v1",
-                "M21 9v2",
-                "M3 14v1",
-            ],
             // lucide: crosshair
             Self::Crosshair => &[
                 "M22 12 A10 10 0 1 1 2 12 A10 10 0 1 1 22 12 Z",
@@ -346,169 +205,10 @@ impl Icon {
                 "M12 18v4",
             ],
 
-            // lucide: pi
-            Self::Pi => &[
-                "M9 4v16",
-                "M4 7c0-1.7 1.3-3 3-3h13",
-                "M18 20c-1.7 0-3-1.3-3-3V4",
-            ],
-
-            // lucide: book
-            Self::Book => &["M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"],
-
-            // lucide: pipette
-            Self::Pipette => &[
-                "m2 22 1-1h3l9-9",
-                "M3 21v-3l9-9",
-                "m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z",
-            ],
-
-            // lucide: align-start-vertical
-            Self::AlignLeft => &[
-                "M8 14 h5 a2 2 0 0 1 2 2 v2 a2 2 0 0 1 -2 2 h-5 a2 2 0 0 1 -2 -2 v-2 a2 2 0 0 1 2 -2 z",
-                "M8 4 h12 a2 2 0 0 1 2 2 v2 a2 2 0 0 1 -2 2 h-12 a2 2 0 0 1 -2 -2 v-2 a2 2 0 0 1 2 -2 z",
-                "M2 2v20",
-            ],
-            // lucide: align-center-vertical
-            Self::AlignCentreH => &[
-                "M12 2v20",
-                "M8 10H4a2 2 0 0 1-2-2V6c0-1.1.9-2 2-2h4",
-                "M16 10h4a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-4",
-                "M8 20H7a2 2 0 0 1-2-2v-2c0-1.1.9-2 2-2h1",
-                "M16 14h1a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-1",
-            ],
-            // lucide: align-end-vertical
-            Self::AlignRight => &[
-                "M4 4 h12 a2 2 0 0 1 2 2 v2 a2 2 0 0 1 -2 2 h-12 a2 2 0 0 1 -2 -2 v-2 a2 2 0 0 1 2 -2 z",
-                "M11 14 h5 a2 2 0 0 1 2 2 v2 a2 2 0 0 1 -2 2 h-5 a2 2 0 0 1 -2 -2 v-2 a2 2 0 0 1 2 -2 z",
-                "M22 22V2",
-            ],
-            // lucide: align-start-horizontal
-            Self::AlignTop => &[
-                "M6 6 h2 a2 2 0 0 1 2 2 v12 a2 2 0 0 1 -2 2 h-2 a2 2 0 0 1 -2 -2 v-12 a2 2 0 0 1 2 -2 z",
-                "M16 6 h2 a2 2 0 0 1 2 2 v5 a2 2 0 0 1 -2 2 h-2 a2 2 0 0 1 -2 -2 v-5 a2 2 0 0 1 2 -2 z",
-                "M22 2H2",
-            ],
-            // lucide: align-center-horizontal
-            Self::AlignMiddleV => &[
-                "M2 12h20",
-                "M10 16v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-4",
-                "M10 8V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v4",
-                "M20 16v1a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2v-1",
-                "M14 8V7c0-1.1.9-2 2-2h2a2 2 0 0 1 2 2v1",
-            ],
-            // lucide: align-end-horizontal
-            Self::AlignBottom => &[
-                "M6 2 h2 a2 2 0 0 1 2 2 v12 a2 2 0 0 1 -2 2 h-2 a2 2 0 0 1 -2 -2 v-12 a2 2 0 0 1 2 -2 z",
-                "M16 9 h2 a2 2 0 0 1 2 2 v5 a2 2 0 0 1 -2 2 h-2 a2 2 0 0 1 -2 -2 v-5 a2 2 0 0 1 2 -2 z",
-                "M22 22H2",
-            ],
-            // lucide: align-horizontal-distribute-center
-            Self::DistributeH => &[
-                "M6 5 h2 a2 2 0 0 1 2 2 v10 a2 2 0 0 1 -2 2 h-2 a2 2 0 0 1 -2 -2 v-10 a2 2 0 0 1 2 -2 z",
-                "M16 7 h2 a2 2 0 0 1 2 2 v6 a2 2 0 0 1 -2 2 h-2 a2 2 0 0 1 -2 -2 v-6 a2 2 0 0 1 2 -2 z",
-                "M17 22v-5",
-                "M17 7V2",
-                "M7 22v-3",
-                "M7 5V2",
-            ],
-            // lucide: align-vertical-distribute-center
-            Self::DistributeV => &[
-                "M22 17h-3",
-                "M22 7h-5",
-                "M5 17H2",
-                "M7 7H2",
-                "M7 14 h10 a2 2 0 0 1 2 2 v2 a2 2 0 0 1 -2 2 h-10 a2 2 0 0 1 -2 -2 v-2 a2 2 0 0 1 2 -2 z",
-                "M9 4 h6 a2 2 0 0 1 2 2 v2 a2 2 0 0 1 -2 2 h-6 a2 2 0 0 1 -2 -2 v-2 a2 2 0 0 1 2 -2 z",
-            ],
-            // lucide: flip-horizontal
-            Self::FlipHorizontal => &[
-                "M8 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h3",
-                "M16 3h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-3",
-                "M12 20v2",
-                "M12 14v2",
-                "M12 8v2",
-                "M12 2v2",
-            ],
-            // lucide: flip-vertical
-            Self::FlipVertical => &[
-                "M21 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v3",
-                "M21 16v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3",
-                "M4 12H2",
-                "M10 12H8",
-                "M16 12h-2",
-                "M22 12h-2",
-            ],
-            // lucide: rotate-cw
-            Self::RotateCw => &[
-                "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8",
-                "M21 3v5h-5",
-            ],
-            // lucide: rotate-ccw
-            Self::RotateCcw => &[
-                "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8",
-                "M3 3v5h5",
-            ],
-            // lucide: arrow-left-right
-            // lucide: bold
-            Self::Bold => {
-                &["M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8"]
-            }
-            // lucide: italic — three <line> elements, written as paths
-            Self::Italic => &["M19 4 10 4", "M14 20 5 20", "M15 4 9 20"],
-            // lucide: underline
-            Self::Underline => &["M6 4v6a6 6 0 0 0 12 0V4", "M4 20h16"],
-            // lucide: strikethrough
-            Self::Strikethrough => &[
-                "M16 4H9a3 3 0 0 0-2.83 4",
-                "M14 12a4 4 0 0 1 0 8H6",
-                "M4 12h16",
-            ],
-            // lucide: align-justify
-            Self::AlignJustify => &["M3 5h18", "M3 12h18", "M3 19h18"],
-            // The paragraph alignments. **Not the object ones**, which is what
-            // was drawn here: `align-left` for an object is two bars pushed
-            // against a rule, and for text it is ragged lines of type. They
-            // mean different things and the panel was showing the wrong one.
-            // lucide: align-left
-            Self::TextAlignLeft => &["M15 12H3", "M17 18H3", "M21 6H3"],
-            // lucide: align-center
-            Self::TextAlignCentre => &["M17 12H7", "M19 18H5", "M21 6H3"],
-            // lucide: align-right
-            Self::TextAlignRight => &["M21 12H9", "M21 18H7", "M21 6H3"],
-            // lucide: align-justify
-            Self::TextAlignJustify => &["M3 12h18", "M3 18h18", "M3 6h18"],
-            // lucide: palette — four <circle> dots written as arc pairs
-            Self::Palette => &[
-                "M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z",
-                "M14 6.5 A0.5 0.5 0 1 1 13 6.5 A0.5 0.5 0 1 1 14 6.5 Z",
-                "M18 10.5 A0.5 0.5 0 1 1 17 10.5 A0.5 0.5 0 1 1 18 10.5 Z",
-                "M7 12.5 A0.5 0.5 0 1 1 6 12.5 A0.5 0.5 0 1 1 7 12.5 Z",
-                "M9 7.5 A0.5 0.5 0 1 1 8 7.5 A0.5 0.5 0 1 1 9 7.5 Z",
-            ],
-            // lucide: pilcrow
-            Self::Pilcrow => &["M13 4v16", "M17 4v16", "M19 4H9.5a4.5 4.5 0 0 0 0 9H13"],
-            // lucide: case-sensitive
-            Self::CaseSensitive => &[
-                "m2 16 4.039-9.69a.5.5 0 0 1 .923 0L11 16",
-                "M22 9v7",
-                "M3.304 13h6.392",
-                "M22 12.5 A3.5 3.5 0 1 1 15 12.5 A3.5 3.5 0 1 1 22 12.5 Z",
-            ],
-            // Tessera: publishing controls in the Lucide grid and stroke style.
-            Self::LineSpacing => &[
-                "M8 5 H21 M8 12 H18 M8 19 H21",
-                "M3 4 V20 M1 6 L3 4 L5 6 M1 18 L3 20 L5 18",
-            ],
             Self::LetterSpacing => &[
                 "M5 13 L9 3 L13 13 M7 9 H11 M17 3 V13 M15 3 H19",
                 "M3 19 H21 M6 16 L3 19 L6 22 M18 16 L21 19 L18 22",
             ],
-            Self::BaselineShift => &[
-                "M8 15 L12 5 L16 15 M10 11 H14 M7 20 H21",
-                "M3 16 V4 M1 6 L3 4 L5 6",
-            ],
-            Self::OpenType => &["M4 3 H20 V21 H4 Z M8 7 H16 M12 7 V17 M9 17 H15"],
             Self::Indent => &[
                 "M3 4 H21 M10 9 H21 M10 14 H18 M3 20 H21",
                 "M2 9 L5 12 L2 15 M2 12 H6",
@@ -517,11 +217,6 @@ impl Icon {
                 "M9 3 H21 M9 7 H18 M9 17 H21 M9 21 H18",
                 "M3 8 V16 M1 10 L3 8 L5 10 M1 14 L3 16 L5 14",
             ],
-            Self::List => &[
-                "M9 5 H21 M9 12 H21 M9 19 H21",
-                "M3 4 H5 V6 H3 Z M3 11 H5 V13 H3 Z M3 18 H5 V20 H3 Z",
-            ],
-            Self::TabStop => &["M3 6 H21 M3 18 H21 M18 9 V15 M4 12 H14 M11 9 L14 12 L11 15"],
             Self::DropCap => {
                 &["M2 18 L7 4 L12 18 M4 13 H10 M15 5 H22 M15 11 H22 M15 17 H22 M2 22 H22"]
             }
@@ -532,14 +227,7 @@ impl Icon {
             Self::JoinMiter => &["M4 20 V4 H20 V10 H10 V20 Z"],
             Self::JoinRound => &["M4 20 V10 A6 6 0 0 1 10 4 H20 V10 H10 V20 Z"],
             Self::JoinBevel => &["M4 20 V10 L10 4 H20 V10 H10 V20 Z"],
-            Self::StrokeSolid => &["M3 12 H21"],
             Self::StrokeDashed => &["M3 12 H7 M10 12 H14 M17 12 H21"],
-            Self::StrokeDotted => &[
-                "M5 12 A1 1 0 1 1 3 12 A1 1 0 1 1 5 12 Z",
-                "M10 12 A1 1 0 1 1 8 12 A1 1 0 1 1 10 12 Z",
-                "M15 12 A1 1 0 1 1 13 12 A1 1 0 1 1 15 12 Z",
-                "M20 12 A1 1 0 1 1 18 12 A1 1 0 1 1 20 12 Z",
-            ],
             // Tessera: field glyphs. A box with the arrow of the axis it scales
             // on; a leaning box for shear; two rays and an arc for an angle.
             Self::ScaleX => &[
@@ -550,7 +238,6 @@ impl Icon {
                 "M3 5 H21 V19 H3 Z",
                 "M12 7 V17 M9 10 L12 7 L15 10 M9 14 L12 17 L15 14",
             ],
-            Self::Shear => &["M8 5 H21 L16 19 H3 Z"],
             Self::Angle => &["M4 20 H21 M4 20 L17 6", "M13 20 A9 9 0 0 0 10.1 13.4"],
             // Lines of text with the arrow on the side that moves; the first
             // and last lines stay put so the indent reads against them.
@@ -568,25 +255,6 @@ impl Icon {
                 "M3 4 H21 M3 8 H18 M3 12 H21",
                 "M12 21 V15 M9 18 L12 15 L15 18",
             ],
-            Self::CornerRadius => &["M4 20 V12 A8 8 0 0 1 12 4 H20"],
-            // A square with the one corner in question rounded.
-            Self::CornerTopLeft => &["M4 20 V10 A6 6 0 0 1 10 4 H20 V20 Z"],
-            Self::CornerTopRight => &["M4 4 H14 A6 6 0 0 1 20 10 V20 H4 Z"],
-            Self::CornerBottomLeft => &["M4 4 H20 V20 H10 A6 6 0 0 1 4 14 Z"],
-            Self::CornerBottomRight => &["M4 4 H20 V14 A6 6 0 0 1 14 20 H4 Z"],
-            // A disc half solid and half hatched; a disc with a soft edge.
-            Self::Opacity => &[
-                "M12 3 A9 9 0 1 1 12 21 A9 9 0 1 1 12 3 Z",
-                "M12 3 V21",
-                "M12 8 H16.5 M12 12 H20 M12 16 H16.5",
-            ],
-            Self::Blur => &[
-                "M12 5 A7 7 0 1 1 12 19 A7 7 0 1 1 12 5 Z",
-                "M12 2 V3 M12 21 V22 M2 12 H3 M21 12 H22",
-                "M4.9 4.9 L5.6 5.6 M18.4 18.4 L19.1 19.1 M4.9 19.1 L5.6 18.4 M18.4 5.6 L19.1 4.9",
-            ],
-            Self::PagePortrait => &["M6 3 H18 V21 H6 Z"],
-            Self::PageLandscape => &["M3 6 H21 V18 H3 Z"],
             Self::Columns => &["M3 5 H21 V19 H3 Z", "M12 5 V19"],
             Self::Gutter => &["M3 5 H9 V19 H3 Z M15 5 H21 V19 H15 Z", "M10 12 H14"],
             // Lines of text and the object they meet: through it, stopping at
@@ -604,99 +272,101 @@ impl Icon {
                 "M12 8 A4 4 0 1 1 12 16 A4 4 0 1 1 12 8 Z",
             ],
             Self::WrapJump => &["M3 5 H21 M3 19 H21", "M8 8 H16 V16 H8 Z"],
-            // lucide: a-large-small
-            Self::TypeSize => &[
-                "m15 16 2.536-7.328a1.02 1.02 1 0 1 1.928 0L22 16",
-                "M15.697 14h5.606",
-                "m2 16 4.039-9.69a.5.5 0 0 1 .923 0L11 16",
-                "M3.304 13h6.392",
-            ],
-            // lucide: plus
-            Self::Plus => &["M5 12h14", "M12 5v14"],
-            // lucide: copy — <rect width=14 height=14 x=8 y=8 rx=2> as a path
-            Self::Duplicate => &[
-                "M10 8 h10 a2 2 0 0 1 2 2 v10 a2 2 0 0 1 -2 2 h-10 a2 2 0 0 1 -2 -2 v-10 a2 2 0 0 1 2 -2 z",
-                "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2",
-            ],
-            // lucide: chevron-left
-            Self::ChevronLeft => &["m15 18-6-6 6-6"],
-            // lucide: chevron-right
-            Self::ChevronRight => &["m9 18 6-6-6-6"],
-            // lucide: layers
-            Self::Layers => &[
-                "M12 3 L21 7.5 L12 12 L3 7.5 Z",
-                "M3 12 L12 16.5 L21 12",
-                "M3 16.5 L12 21 L21 16.5",
-            ],
-            // lucide: eye
-            Self::Eye => &[
-                "M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0",
-                "M15 12 A3 3 0 1 1 9 12 A3 3 0 1 1 15 12 Z",
-            ],
-            // lucide: eye-off
-            Self::EyeOff => &[
-                "M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49",
-                "M14.084 14.158a3 3 0 0 1-4.242-4.242",
-                "M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143",
-                "m2 2 20 20",
-            ],
-            // lucide: lock — <rect width=18 height=11 x=3 y=11 rx=2> as a path
-            Self::Lock => &[
-                "M5 11 h14 a2 2 0 0 1 2 2 v7 a2 2 0 0 1 -2 2 h-14 a2 2 0 0 1 -2 -2 v-7 a2 2 0 0 1 2 -2 z",
-                "M7 11V7a5 5 0 0 1 10 0v4",
-            ],
-            // lucide: lock-open
-            Self::Unlock => &[
-                "M5 11 h14 a2 2 0 0 1 2 2 v7 a2 2 0 0 1 -2 2 h-14 a2 2 0 0 1 -2 -2 v-7 a2 2 0 0 1 2 -2 z",
-                "M7 11V7a5 5 0 0 1 9.9-1",
-            ],
-            // lucide: link-2
-            Self::Link2 => &[
-                "M9 17H7A5 5 0 0 1 7 7h2",
-                "M15 7h2a5 5 0 1 1 0 10h-2",
-                "M8 12 H16",
-            ],
-            // lucide: unlink-2 — link-2 without the bar joining the two rings.
-            Self::Unlink2 => &["M9 17H7A5 5 0 0 1 7 7h2", "M15 7h2a5 5 0 1 1 0 10h-2"],
-            // lucide: trash-2
-            Self::Trash => &[
-                "M10 11v6",
-                "M14 11v6",
-                "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6",
-                "M3 6h18",
-                "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
-            ],
-            Self::Swap => &["M8 3 4 7l4 4", "M4 7h16", "m16 21 4-4-4-4", "M20 17H4"],
-            // lucide: ban — the universal "none", and what a swatch of no
-            // colour has been in every drawing tool since MacPaint.
-            Self::NoFill => &[
-                "M22 12 A10 10 0 1 1 2 12 A10 10 0 1 1 22 12 Z",
-                "M4.929 4.929 19.07 19.071",
-            ],
-            // lucide: zoom-in
-            Self::ZoomIn => &[
-                "M19 11 A8 8 0 1 1 3 11 A8 8 0 1 1 19 11 Z",
-                "M21 21 L16.65 16.65",
-                "M11 8 L11 14",
-                "M8 11 L14 11",
-            ],
-            // lucide: zoom-out
-            Self::ZoomOut => &[
-                "M19 11 A8 8 0 1 1 3 11 A8 8 0 1 1 19 11 Z",
-                "M21 21 L16.65 16.65",
-                "M8 11 L14 11",
-            ],
-            // lucide: maximize
-            Self::ZoomFit => &[
-                "M8 3H5a2 2 0 0 0-2 2v3",
-                "M21 8V5a2 2 0 0 0-2-2h-3",
-                "M3 16v3a2 2 0 0 0 2 2h3",
-                "M16 21h3a2 2 0 0 0 2-2v-3",
-            ],
+            // Drawn by Spectrum; see [`Icon::spectrum`].
+            Self::Sun
+            | Self::Moon
+            | Self::Select
+            | Self::DirectSelect
+            | Self::PictureFrame
+            | Self::Polygon
+            | Self::Scissors
+            | Self::Properties
+            | Self::Pages
+            | Self::Preflight
+            | Self::Swatches
+            | Self::Styles
+            | Self::Close
+            | Self::SquareTerminal
+            | Self::Rectangle
+            | Self::Ellipse
+            | Self::Line
+            | Self::Pen
+            | Self::Text
+            | Self::Hand
+            | Self::Grab
+            | Self::Rotate
+            | Self::Move
+            | Self::TextFrame
+            | Self::Pipette
+            | Self::Book
+            | Self::Pi
+            | Self::AlignLeft
+            | Self::AlignCentreH
+            | Self::AlignRight
+            | Self::AlignTop
+            | Self::AlignMiddleV
+            | Self::AlignBottom
+            | Self::DistributeH
+            | Self::DistributeV
+            | Self::FlipHorizontal
+            | Self::FlipVertical
+            | Self::RotateCw
+            | Self::RotateCcw
+            | Self::Bold
+            | Self::Italic
+            | Self::Underline
+            | Self::Strikethrough
+            | Self::AlignJustify
+            | Self::TextAlignLeft
+            | Self::TextAlignCentre
+            | Self::TextAlignRight
+            | Self::TextAlignJustify
+            | Self::Palette
+            | Self::Pilcrow
+            | Self::CaseSensitive
+            | Self::TypeSize
+            | Self::LineSpacing
+            | Self::BaselineShift
+            | Self::OpenType
+            | Self::List
+            | Self::TabStop
+            | Self::StrokeSolid
+            | Self::StrokeDotted
+            | Self::Shear
+            | Self::CornerRadius
+            | Self::CornerTopLeft
+            | Self::CornerTopRight
+            | Self::CornerBottomLeft
+            | Self::CornerBottomRight
+            | Self::Opacity
+            | Self::Blur
+            | Self::PagePortrait
+            | Self::PageLandscape
+            | Self::Plus
+            | Self::Duplicate
+            | Self::PlaceImage
+            | Self::Trash
+            | Self::ChevronLeft
+            | Self::ChevronRight
+            | Self::Disclosure
+            | Self::Layers
+            | Self::Eye
+            | Self::EyeOff
+            | Self::Lock
+            | Self::Unlock
+            | Self::Link2
+            | Self::Unlink2
+            | Self::Swap
+            | Self::NoFill
+            | Self::Blend
+            | Self::ZoomIn
+            | Self::ZoomOut
+            | Self::ZoomFit => &[],
         }
     }
 
-    /// The point in the 24-unit grid that must sit under the pointer.
+    /// The point in the icon's own grid ([`Icon::grid`]) that must sit
+    /// under the pointer.
     ///
     /// A cursor is not its bounding box: an arrow points from its tip, a
     /// crosshair from its centre, a text bar from the middle of its stem.
@@ -704,16 +374,14 @@ impl Icon {
     /// down and to the right of what the click actually hits.
     pub fn hotspot(self) -> (f32, f32) {
         match self {
-            // The arrow's tip, where `mouse-pointer-2` starts its outline.
-            Self::Select => (4.3, 4.3),
-            Self::DirectSelect => (4.0, 3.0),
-            // The nib, not the barrel — and Lucide's `pen-tool` points up and
-            // to the LEFT, where its outline turns the sharp corner at about
-            // (2.3, 2.3). Reading the nib as the bottom-left corner put the
-            // whole icon a full grid away from the point it draws from.
-            Self::Pen => (2.3, 2.3),
-            // The pipette's tip, at the bottom-left of Lucide's outline.
-            Self::Pipette => (2.0, 22.0),
+            // The arrow's tip, at the top left of Spectrum's outline.
+            Self::Select => (4.4, 2.4),
+            // The small arrow's tip, beside the path whose point it picks.
+            Self::DirectSelect => (10.3, 8.5),
+            // The nib, at the bottom left of `VectorDraw`.
+            Self::Pen => (1.9, 18.1),
+            // The pipette's tip, at the bottom left of `Eyedropper`.
+            Self::Pipette => (2.0, 18.0),
             Self::Rectangle
             | Self::Ellipse
             | Self::Line
@@ -808,6 +476,7 @@ impl Icon {
             | Self::Trash
             | Self::ChevronLeft
             | Self::ChevronRight
+            | Self::Disclosure
             | Self::Layers
             | Self::Eye
             | Self::EyeOff
@@ -828,81 +497,206 @@ impl Icon {
             | Self::Styles
             | Self::Close
             | Self::Sun
-            | Self::Moon => (12.0, 12.0),
+            | Self::Moon => {
+                let centre = self.grid() / 2.0;
+                (centre, centre)
+            }
         }
     }
 }
 
-/// Parsed path data, built on first use and shared thereafter.
-///
-/// The paths are static text and never change, so parsing them per paint was
-/// pure waste — one allocation per icon per frame, and the tool strip alone
-/// draws a dozen.
-static GEOMETRY: OnceLock<HashMap<Icon, Vec<BezPath>>> = OnceLock::new();
-
-/// Icons that were not in [`ALL`], parsed when first asked for.
-///
-/// The safety net for the bug this file already had: an icon missing from
-/// `ALL` used to draw nothing at all, silently, and the tests iterate `ALL` so
-/// they could not see it either. Parsing on demand costs one parse per icon
-/// for the life of the process and turns an invisible button into a correct
-/// one.
-static STRAGGLERS: Mutex<Option<HashMap<Icon, &'static [BezPath]>>> = Mutex::new(None);
-
 impl Icon {
-    /// This icon's outlines, in the 24×24 Lucide grid.
-    pub fn geometry(self) -> &'static [BezPath] {
-        GEOMETRY
-            .get_or_init(|| {
-                ALL.into_iter()
-                    .map(|icon| {
-                        let parsed = icon
-                            .paths()
-                            .iter()
-                            .map(|data| {
-                                BezPath::from_svg(data).unwrap_or_else(|error| {
-                                    // Path data is a compile-time constant in
-                                    // this file, so a failure here is a typo
-                                    // in the source rather than a runtime
-                                    // condition. `every_icon_parses` catches
-                                    // it first; naming the icon makes it
-                                    // findable if it somehow does not.
-                                    panic!("icon {icon:?} has malformed path data: {error}")
-                                })
-                            })
-                            .collect();
-                        (icon, parsed)
-                    })
-                    .collect()
-            })
-            .get(&self)
-            .map(Vec::as_slice)
-            .unwrap_or_else(|| self.parsed_late())
+    /// Adobe's picture of this, when Spectrum 2 has one: the SVG as vendored,
+    /// on its 20-unit grid.
+    pub fn spectrum(self) -> Option<&'static str> {
+        macro_rules! s2 {
+            ($name:literal) => {
+                Some(include_str!(concat!("../assets/icons/", $name, ".svg")))
+            };
+        }
+        match self {
+            Self::Sun => s2!("Lighten"),
+            Self::Moon => s2!("Contrast"),
+            Self::Select => s2!("Select"),
+            Self::DirectSelect => s2!("DirectSelect"),
+            Self::PictureFrame => s2!("Image"),
+            Self::Polygon => s2!("Polygon6"),
+            Self::Scissors => s2!("Cut"),
+            Self::Properties => s2!("Properties"),
+            Self::Pages => s2!("Files"),
+            Self::Preflight => s2!("CheckmarkCircle"),
+            Self::Swatches => s2!("ColorHarmony"),
+            Self::Styles => s2!("TextParagraph"),
+            Self::Close => s2!("Close"),
+            Self::SquareTerminal => s2!("Prompt"),
+            Self::Rectangle => s2!("Polygon4"),
+            Self::Ellipse => s2!("Circle"),
+            Self::Line => s2!("Line"),
+            Self::Pen => s2!("VectorDraw"),
+            Self::Text => s2!("Text"),
+            Self::Hand => s2!("Hand"),
+            Self::Grab => s2!("Hand"),
+            Self::Rotate => s2!("RotateCW"),
+            Self::Move => s2!("Move"),
+            Self::TextFrame => s2!("Layout"),
+            Self::Pipette => s2!("Eyedropper"),
+            Self::Book => s2!("Bookmark"),
+            Self::Pi => s2!("FontPicker"),
+            Self::AlignLeft => s2!("AlignLeft"),
+            Self::AlignCentreH => s2!("AlignCenter"),
+            Self::AlignRight => s2!("AlignRight"),
+            Self::AlignTop => s2!("AlignTop"),
+            Self::AlignMiddleV => s2!("AlignMiddle"),
+            Self::AlignBottom => s2!("AlignBottom"),
+            Self::DistributeH => s2!("DistributeSpaceHorizontally"),
+            Self::DistributeV => s2!("DistributeSpaceVertically"),
+            Self::FlipHorizontal => s2!("FlipHorizontal"),
+            Self::FlipVertical => s2!("FlipVertical"),
+            Self::RotateCw => s2!("RotateCW"),
+            Self::RotateCcw => s2!("RotateCCW"),
+            Self::Bold => s2!("TextBold"),
+            Self::Italic => s2!("TextItalic"),
+            Self::Underline => s2!("TextUnderline"),
+            Self::Strikethrough => s2!("TextStrikeThrough"),
+            Self::AlignJustify => s2!("TextAlignJustify"),
+            Self::TextAlignLeft => s2!("TextAlignLeft"),
+            Self::TextAlignCentre => s2!("TextAlignCenter"),
+            Self::TextAlignRight => s2!("TextAlignRight"),
+            Self::TextAlignJustify => s2!("TextAlignJustify"),
+            Self::Palette => s2!("Color"),
+            Self::Pilcrow => s2!("TextParagraph"),
+            Self::CaseSensitive => s2!("TextCapsSmall"),
+            Self::TypeSize => s2!("TextSize"),
+            Self::LineSpacing => s2!("LineHeight"),
+            Self::BaselineShift => s2!("TextSuperscript"),
+            Self::OpenType => s2!("TextVariableFontSettings"),
+            Self::List => s2!("ListBulleted"),
+            Self::TabStop => s2!("Ruler"),
+            Self::StrokeSolid => s2!("StrokeSolid"),
+            Self::StrokeDotted => s2!("StrokeDotted"),
+            Self::Shear => s2!("TransformSkew"),
+            Self::CornerRadius => s2!("CornerRadius"),
+            Self::CornerTopLeft => s2!("CornerRadiusTopLeft"),
+            Self::CornerTopRight => s2!("CornerRadiusTopRight"),
+            Self::CornerBottomLeft => s2!("CornerRadiusBottomLeft"),
+            Self::CornerBottomRight => s2!("CornerRadiusBottomRight"),
+            Self::Opacity => s2!("ViewTransparency"),
+            Self::Blur => s2!("Blur"),
+            Self::PagePortrait => s2!("OrientationPortrait"),
+            Self::PageLandscape => s2!("OrientationLandscape"),
+            Self::Plus => s2!("Add"),
+            Self::Duplicate => s2!("Duplicate"),
+            Self::PlaceImage => s2!("ImageAdd"),
+            Self::Trash => s2!("Delete"),
+            Self::ChevronLeft => s2!("ChevronLeft"),
+            Self::ChevronRight => s2!("ChevronRight"),
+            Self::Disclosure => s2!("ChevronSize100"),
+            Self::Layers => s2!("Layers"),
+            Self::Eye => s2!("Visibility"),
+            Self::EyeOff => s2!("VisibilityOff"),
+            Self::Lock => s2!("Lock"),
+            Self::Unlock => s2!("LockOpen"),
+            Self::Link2 => s2!("Link"),
+            Self::Unlink2 => s2!("UnLink"),
+            Self::Swap => s2!("Switch"),
+            Self::NoFill => s2!("Cancel"),
+            Self::Blend => s2!("Effects"),
+            Self::ZoomIn => s2!("ZoomIn"),
+            Self::ZoomOut => s2!("ZoomOut"),
+            Self::ZoomFit => s2!("ZoomFitToScreen"),
+            // Page-layout ideas Spectrum has no picture of: drawn here.
+            Self::Scale
+            | Self::TextCursor
+            | Self::Crosshair
+            | Self::LetterSpacing
+            | Self::Indent
+            | Self::ParagraphSpacing
+            | Self::DropCap
+            | Self::CapButt
+            | Self::CapRound
+            | Self::CapSquare
+            | Self::JoinMiter
+            | Self::JoinRound
+            | Self::JoinBevel
+            | Self::StrokeDashed
+            | Self::ScaleX
+            | Self::ScaleY
+            | Self::Angle
+            | Self::IndentLeft
+            | Self::IndentRight
+            | Self::SpaceBefore
+            | Self::SpaceAfter
+            | Self::Columns
+            | Self::Gutter
+            | Self::WrapNone
+            | Self::WrapBounds
+            | Self::WrapContour
+            | Self::WrapJump => None,
+        }
     }
 
-    /// Geometry for an icon that was left out of [`ALL`].
-    ///
-    /// Parsed once and kept, so forgetting the list costs a first draw rather
-    /// than the icon. `no_icon_is_missing_from_all` says it should never come
-    /// to this.
-    fn parsed_late(self) -> &'static [BezPath] {
-        let mut cache = STRAGGLERS.lock().expect("the icon cache is not poisoned");
-        let cache = cache.get_or_insert_with(HashMap::new);
-        cache.entry(self).or_insert_with(|| {
-            let parsed: Vec<BezPath> = self
-                .paths()
-                .iter()
-                .filter_map(|data| BezPath::from_svg(data).ok())
-                .collect();
-            Box::leak(parsed.into_boxed_slice())
-        })
+    /// The side of the grid this icon's picture is drawn on — Spectrum's
+    /// workflow icons are 20, its small UI marks 10, Tessera's drawings 24 —
+    /// which is also the one size it is exact at.
+    pub fn grid(self) -> f32 {
+        if self.spectrum().is_some() {
+            self.tree().size().width().round()
+        } else {
+            DRAWN_GRID
+        }
+    }
+
+    /// The picture as SVG text: Spectrum's own, or Tessera's paths stroked.
+    fn svg(self) -> Cow<'static, str> {
+        match self.spectrum() {
+            Some(svg) => Cow::Borrowed(svg),
+            None => {
+                let mut svg = format!(
+                    r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="#000" stroke-width="{DRAWN_STROKE}" stroke-linecap="round" stroke-linejoin="round">"##
+                );
+                for data in self.paths() {
+                    svg.push_str(&format!(r#"<path d="{data}"/>"#));
+                }
+                svg.push_str("</g></svg>");
+                Cow::Owned(svg)
+            }
+        }
+    }
+
+    /// The parsed picture, built on first use and shared thereafter.
+    fn tree(self) -> Arc<usvg::Tree> {
+        static TREES: Mutex<Option<HashMap<Icon, Arc<usvg::Tree>>>> = Mutex::new(None);
+        let mut trees = TREES.lock().unwrap_or_else(PoisonError::into_inner);
+        trees
+            .get_or_insert_with(HashMap::new)
+            .entry(self)
+            .or_insert_with(|| {
+                let tree = usvg::Tree::from_str(&self.svg(), &usvg::Options::default())
+                    // The pictures are compile-time constants, so a failure is
+                    // a typo in this file or a bad vendored SVG rather than a
+                    // runtime condition; `every_icon_draws` catches it first.
+                    .unwrap_or_else(|error| panic!("icon {self:?} does not parse: {error}"));
+                Arc::new(tree)
+            })
+            .clone()
+    }
+
+    /// How much of each pixel the picture covers, row by row, drawn `side`
+    /// pixels square and turned `degrees` clockwise about its middle.
+    pub fn coverage(self, side: u32, degrees: f32) -> Vec<u8> {
+        let tree = self.tree();
+        let Some(mut pixmap) = tiny_skia::Pixmap::new(side, side) else {
+            return Vec::new();
+        };
+        let scale = side as f32 / tree.size().width();
+        let middle = side as f32 / 2.0;
+        let transform =
+            tiny_skia::Transform::from_scale(scale, scale).post_rotate_at(degrees, middle, middle);
+        resvg::render(&tree, transform, &mut pixmap.as_mut());
+        pixmap.pixels().iter().map(|p| p.alpha()).collect()
     }
 }
 
-/// Paint `icon` to fill `rect`, stroked in `color`.
-///
-/// The icon is scaled uniformly from its 24-unit grid, so the stroke stays
-/// proportional and the shape never distorts.
 /// Give an icon-only control the name it is known by.
 ///
 /// **The tooltip and the accessible name are one fact.** An icon says nothing
@@ -1027,119 +821,131 @@ pub fn reads_as(
     response
 }
 
+/// Paint `icon` centred in `rect`, at the interface's icon size, in `color`.
 pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
     let side = crate::theme::Theme::ICON_SIZE
         .min(rect.width())
         .min(rect.height());
     let rect = Rect::from_center_size(rect.center(), egui::Vec2::splat(side));
-    paint_rotated(painter, rect, icon, color, 0.0, 1.0);
+    paint_rotated(painter, rect, icon, color, 0.0);
 }
 
-/// Paint `icon` turned `degrees` clockwise about the centre of `rect`, with
-/// its stroke multiplied by `weight`.
+/// Paint `icon` to fill `rect`, turned `degrees` clockwise about its middle.
 ///
-/// The rotation is what lets one `Scale` icon serve all eight resize handles
-/// on a frame at any angle; the weight is what lets a cursor be painted twice,
-/// a dark casing under a light stroke, so it reads on both the pasteboard and
-/// a white page.
-pub fn paint_rotated(
-    painter: &Painter,
-    rect: Rect,
-    icon: Icon,
-    color: Color32,
-    degrees: f32,
-    weight: f32,
-) {
-    painter.extend(rotated_shapes(
-        rect,
-        icon,
+/// Drawn from a texture rasterised at exactly the pixels it covers and laid
+/// on whole pixels, so nothing is resampled on the way to the screen. The
+/// turn is rasterised too rather than applied to the texture: a section's
+/// disclosure turned a quarter is as crisp as one that was not.
+pub fn paint_rotated(painter: &Painter, rect: Rect, icon: Icon, color: Color32, degrees: f32) {
+    let ctx = painter.ctx();
+    let ppp = ctx.pixels_per_point();
+    let side = device_side(rect.width().min(rect.height()), ppp);
+    let target = pixel_box(rect.center(), side, ppp);
+    let texture = texture(ctx, icon, side, degrees);
+    painter.image(
+        texture,
+        target,
+        Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0)),
         color,
-        degrees,
-        weight,
-        painter.ctx().pixels_per_point(),
-    ));
+    );
 }
 
-/// The shapes [`paint_rotated`] paints, as a list — for a caller that draws
-/// them some other way than through a painter, such as the pointer, which
-/// is tessellated and drawn through a blend egui does not have.
-pub fn rotated_shapes(
+/// `icon` as a mesh with one square per pixel it covers, the square's colour
+/// `color` scaled by that coverage — for a pass that draws triangles and no
+/// textures, which is the pointer's inverting blend
+/// ([`crate::view::invert_host`]). The same pixels [`paint_rotated`] would
+/// show, so the pointer and the toolbar are one set.
+pub fn coverage_mesh(
     rect: Rect,
     icon: Icon,
     color: Color32,
     degrees: f32,
-    weight: f32,
     pixels_per_point: f32,
-) -> Vec<Shape> {
-    let side = rect.width().min(rect.height());
-    let scale = side / GRID;
-    let origin = rect.center() - egui::vec2(side / 2.0, side / 2.0);
-    let stroke = Stroke::new(STROKE * scale * weight, color);
-    let (sin, cos) = degrees.to_radians().sin_cos();
-    let pivot = rect.center();
-    let mut shapes = Vec::new();
-
-    // Flatten in grid units, then scale — so the tolerance means the same
-    // thing regardless of how large the icon is drawn.
-    let tolerance = 0.1 / f64::from((scale * pixels_per_point).max(f32::EPSILON));
-
-    for path in icon.geometry() {
-        let mut run: Vec<Pos2> = Vec::new();
-        let flush = |shapes: &mut Vec<Shape>, run: &mut Vec<Pos2>, closed: bool| {
-            if run.len() > 1 {
-                if closed {
-                    shapes.push(Shape::closed_line(std::mem::take(run), stroke));
-                } else {
-                    let first = run[0];
-                    let last = *run.last().unwrap();
-                    shapes.push(Shape::line(std::mem::take(run), stroke));
-                    // egui paths have butt caps; add the round caps the icon
-                    // geometry was designed for, using the same coverage AA.
-                    shapes.push(Shape::circle_filled(first, stroke.width / 2.0, color));
-                    shapes.push(Shape::circle_filled(last, stroke.width / 2.0, color));
-                }
-            } else {
-                run.clear();
-            }
-        };
-
-        kurbo::flatten(path.iter(), tolerance, |el| {
-            let at = |p: kurbo::Point| {
-                let flat = origin + egui::vec2(p.x as f32 * scale, p.y as f32 * scale);
-                let d = flat - pivot;
-                pivot + egui::vec2(d.x * cos - d.y * sin, d.x * sin + d.y * cos)
-            };
-            match el {
-                PathEl::MoveTo(p) => {
-                    flush(&mut shapes, &mut run, false);
-                    run.push(at(p));
-                }
-                PathEl::LineTo(p) => run.push(at(p)),
-                PathEl::ClosePath => {
-                    if run.first() == run.last() {
-                        run.pop();
-                    }
-                    flush(&mut shapes, &mut run, true);
-                }
-                // `flatten` emits only MoveTo, LineTo and ClosePath.
-                PathEl::QuadTo(..) | PathEl::CurveTo(..) => {}
-            }
-        });
-        flush(&mut shapes, &mut run, false);
+) -> Mesh {
+    let ppp = pixels_per_point.max(f32::EPSILON);
+    let side = device_side(rect.width().min(rect.height()), ppp);
+    let target = pixel_box(rect.center(), side, ppp);
+    let step = 1.0 / ppp;
+    let mut mesh = Mesh::default();
+    for (at, &covered) in icon.coverage(side, degrees).iter().enumerate() {
+        if covered == 0 {
+            continue;
+        }
+        let (x, y) = ((at as u32 % side) as f32, (at as u32 / side) as f32);
+        let pixel = Rect::from_min_size(
+            target.min + egui::vec2(x * step, y * step),
+            egui::Vec2::splat(step),
+        );
+        mesh.add_colored_rect(pixel, color.gamma_multiply(f32::from(covered) / 255.0));
     }
-    shapes
+    mesh
 }
 
-/// Every icon, for exhaustive tests and for building a palette.
-/// Every icon, which is what the geometry cache is built from.
+/// The whole number of device pixels `side` points covers, never none.
+fn device_side(side: f32, pixels_per_point: f32) -> u32 {
+    (side * pixels_per_point).round().max(1.0) as u32
+}
+
+/// A square `side` device pixels across, centred as near `centre` as whole
+/// pixels allow. Off the pixel grid, every edge of the icon would be shared
+/// between two pixels and read as grey.
+fn pixel_box(centre: Pos2, side: u32, pixels_per_point: f32) -> Rect {
+    let points = side as f32 / pixels_per_point;
+    let min = centre - egui::Vec2::splat(points / 2.0);
+    let min = egui::pos2(
+        (min.x * pixels_per_point).round() / pixels_per_point,
+        (min.y * pixels_per_point).round() / pixels_per_point,
+    );
+    Rect::from_min_size(min, egui::Vec2::splat(points))
+}
+
+/// Rasterised icons, kept per context: a texture belongs to the context
+/// that made it, and the tests make many.
+#[derive(Clone, Default)]
+struct Textures(Arc<Mutex<HashMap<TextureKey, egui::TextureHandle>>>);
+
+/// An icon, its side in device pixels, and its turn in whole degrees.
+type TextureKey = (Icon, u32, i32);
+
+/// The texture for `icon` at `side` device pixels and `degrees` of turn,
+/// made on first use. The turn is kept to whole degrees, which a handle
+/// following a rotated frame cannot tell from exact.
+fn texture(ctx: &egui::Context, icon: Icon, side: u32, degrees: f32) -> egui::TextureId {
+    let turn = (degrees.round() as i32).rem_euclid(360);
+    let cache = ctx.data_mut(|data| {
+        data.get_temp_mut_or_default::<Textures>(egui::Id::new("tessera-icon-textures"))
+            .clone()
+    });
+    let mut textures = cache.0.lock().unwrap_or_else(PoisonError::into_inner);
+    textures
+        .entry((icon, side, turn))
+        .or_insert_with(|| {
+            let rgba: Vec<u8> = icon
+                .coverage(side, turn as f32)
+                .into_iter()
+                .flat_map(|a| [a, a, a, a])
+                .collect();
+            let image =
+                egui::ColorImage::from_rgba_premultiplied([side as usize, side as usize], &rgba);
+            ctx.load_texture(
+                format!("icon-{icon:?}-{side}-{turn}"),
+                image,
+                egui::TextureOptions::LINEAR,
+            )
+        })
+        .id()
+}
+
+/// Every icon, for the tests that must cover all of them.
 ///
-/// **An icon missing from this list draws nothing.** Seventeen were once, and
-/// the tests could not see it either — they iterate this list, so an icon
-/// absent from it was absent from them as well. `geometry` now parses a missing
-/// icon rather than returning nothing, so the cost of forgetting is a slower
-/// first draw instead of an invisible button; this list is the fast path, not
-/// the only one.
-pub const ALL: [Icon; 112] = [
+/// **An icon missing from this list is missing from its own tests.** Seventeen
+/// were once, and three more — `Book`, `Pipette`, `Pi` — until the move to
+/// Spectrum, when a count taken by hand matched a list that was short.
+pub const ALL: [Icon; 116] = [
+    Icon::Disclosure,
+    Icon::Book,
+    Icon::Pipette,
+    Icon::Pi,
     Icon::Sun,
     Icon::Moon,
     Icon::DirectSelect,
@@ -1257,99 +1063,47 @@ pub const ALL: [Icon; 112] = [
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kurbo::Shape as _;
+    use kurbo::BezPath;
 
-    #[test]
-    fn every_icon_parses() {
-        // `paint` relies on this, so it must be checked rather than assumed.
-        for icon in ALL {
-            for data in icon.paths() {
-                assert!(
-                    BezPath::from_svg(data).is_ok(),
-                    "{icon:?} has an unparseable path: {data}"
-                );
-            }
-        }
+    /// How much ink the picture has at `side` pixels: the sum of coverage.
+    fn ink(icon: Icon, side: u32) -> u32 {
+        icon.coverage(side, 0.0).iter().map(|&a| u32::from(a)).sum()
     }
 
     #[test]
-    fn the_cache_parses_every_icon_to_at_least_one_subpath() {
+    fn every_icon_draws() {
+        // The picture parses and puts real ink on the pixels: a Spectrum SVG
+        // whose fill did not resolve would parse and draw nothing.
         for icon in ALL {
-            let geometry = icon.geometry();
             assert!(
-                !geometry.is_empty(),
-                "{icon:?} produced no geometry — its path data is malformed"
+                ink(icon, 20) > 255 * 8,
+                "{icon:?} draws next to nothing at 20 pixels"
             );
-            for path in geometry {
-                assert!(
-                    path.elements().len() > 1,
-                    "{icon:?} produced an empty subpath"
-                );
-            }
         }
     }
 
     #[test]
-    fn the_same_icon_hands_back_the_same_allocation() {
-        // Parsing on every paint is what this cache exists to stop, so the
-        // test pins the pointer rather than the contents.
-        let first = Icon::Select.geometry().as_ptr();
-        let second = Icon::Select.geometry().as_ptr();
-        assert_eq!(first, second);
-    }
-
-    #[test]
-    fn every_icon_produces_real_geometry() {
+    fn every_icon_has_exactly_one_source() {
+        // Spectrum's picture or Tessera's paths, never both and never neither:
+        // an icon with both would be carrying a drawing nothing shows.
         for icon in ALL {
-            let segments: usize = icon
-                .paths()
-                .iter()
-                .map(|d| BezPath::from_svg(d).expect("parses").segments().count())
-                .sum();
-            assert!(segments > 0, "{icon:?} draws nothing");
+            assert_ne!(
+                icon.spectrum().is_some(),
+                !icon.paths().is_empty(),
+                "{icon:?} has {} sources",
+                if icon.spectrum().is_some() { 2 } else { 0 }
+            );
         }
     }
 
     #[test]
-    fn the_panel_icons_are_the_lucide_glyphs_they_claim_to_be() {
-        // Pinned by shape rather than by name, because the name is what was
-        // wrong: `Pages` drew two offset sheets, which reads as "duplicate",
-        // and `Preflight` drew one tick on a sheet rather than a checklist.
-        // file-text has a folded corner and three lines of copy; list-checks
-        // has two ticks and three rules and no enclosing box at all.
-        assert_eq!(Icon::Pages.paths().len(), 5, "file-text has five subpaths");
-        assert_eq!(
-            Icon::Preflight.paths().len(),
-            5,
-            "list-checks has five subpaths"
-        );
-        assert!(
-            Icon::Preflight
-                .paths()
-                .iter()
-                .all(|d| !d.contains("H20 V21")),
-            "list-checks is not drawn inside a sheet"
-        );
-    }
-
-    #[test]
-    fn a_link_and_a_broken_link_differ_by_the_bar_between_them() {
-        // The whole of what distinguishes them, and the reason unlink-2 is
-        // derived from link-2 rather than drawn separately: the two rings are
-        // the same, and only the join says whether the fields move together.
-        let linked = Icon::Link2.paths();
-        let broken = Icon::Unlink2.paths();
-        assert_eq!(linked.len(), broken.len() + 1);
-        assert_eq!(&linked[..2], broken, "the rings are shared");
-        assert!(linked[2].contains("M8 12"), "the bar is the difference");
-    }
-
-    #[test]
-    fn every_icon_stays_inside_the_lucide_grid() {
-        // A path outside 0..24 would be clipped or mis-scaled when painted.
+    fn every_drawn_path_parses_and_stays_on_its_grid() {
+        use kurbo::Shape as _;
         for icon in ALL {
             for data in icon.paths() {
-                let b = BezPath::from_svg(data).expect("parses").bounding_box();
+                let b = BezPath::from_svg(data)
+                    .unwrap_or_else(|e| panic!("{icon:?} has an unparseable path: {e}"))
+                    .bounding_box();
                 assert!(
                     b.x0 >= -0.5 && b.y0 >= -0.5 && b.x1 <= 24.5 && b.y1 <= 24.5,
                     "{icon:?} escapes the 24x24 grid: {b:?}"
@@ -1358,129 +1112,131 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_spectrum_pictures_are_square_on_their_own_grid() {
+        for icon in ALL {
+            if icon.spectrum().is_some() {
+                // Within a hair: Adobe's `AlignBottom` says 20.00001.
+                let size = icon.tree().size();
+                let want = if icon == Icon::Disclosure { 10.0 } else { 20.0 };
+                assert!(
+                    (size.width() - want).abs() < 0.01 && (size.height() - want).abs() < 0.01,
+                    "{icon:?} is {size:?}"
+                );
+                assert_eq!(icon.grid(), want, "{icon:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_drawn_icon_weighs_what_a_spectrum_one_does() {
+        // One set to the eye: a stroke sample beside a text-alignment picture
+        // must not look bolder or fainter. Compared by ink per unit of line —
+        // a line and a line, drawn by each.
+        let drawn = ink(Icon::StrokeDashed, 40);
+        let spectrum = ink(Icon::StrokeSolid, 40);
+        let ratio = f64::from(drawn) / f64::from(spectrum);
+        assert!(
+            (0.4..=1.2).contains(&ratio),
+            "a dashed line should carry a little less ink than a solid one, got {ratio}"
+        );
+    }
+
+    #[test]
+    fn turning_a_picture_moves_its_ink() {
+        let upright = Icon::ChevronRight.coverage(20, 0.0);
+        let turned = Icon::ChevronRight.coverage(20, 90.0);
+        assert_ne!(upright, turned);
+        let total = |c: &[u8]| c.iter().map(|&a| u32::from(a)).sum::<u32>();
+        let (a, b) = (total(&upright), total(&turned));
+        assert!(
+            a.abs_diff(b) * 10 < a,
+            "a quarter turn keeps the ink: {a} vs {b}"
+        );
+    }
+
     /// The icons that point with a tip rather than with their middle.
-    const POINTED: [Icon; 3] = [Icon::Select, Icon::DirectSelect, Icon::Pen];
+    const POINTED: [Icon; 4] = [Icon::Select, Icon::DirectSelect, Icon::Pen, Icon::Pipette];
 
     #[test]
     fn a_pointed_icon_has_its_hotspot_on_its_own_ink() {
-        // The bug this pins: the pen's hotspot was read off the wrong corner —
-        // inside the icon's bounding box, but nowhere near the nib — so the
-        // cursor drew a whole grid away from the point it drew from.
-        use kurbo::ParamCurveNearest as _;
-
+        // The bug this pins, from the Lucide days: the pen's hotspot was read
+        // off the wrong corner, so the cursor drew a whole grid away from the
+        // point it drew from. Checked against the rendered pixels, which is
+        // what the person sees, at four pixels to the unit.
         for icon in POINTED {
             let (hx, hy) = icon.hotspot();
-            let at = kurbo::Point::new(f64::from(hx), f64::from(hy));
-            // Collected first: `segments` borrows the path it walks, so
-            // parsing inline would leave it dangling.
-            let paths: Vec<BezPath> = icon
-                .paths()
-                .iter()
-                .map(|d| BezPath::from_svg(d).expect("parses"))
-                .collect();
-            let nearest = paths
-                .iter()
-                .flat_map(|path| path.segments())
-                .map(|seg| seg.nearest(at, 0.01).distance_sq)
-                .fold(f64::MAX, f64::min);
-            assert!(
-                nearest.sqrt() < 1.5,
-                "{icon:?} points from ({hx}, {hy}), which is {} units from any ink",
-                nearest.sqrt()
-            );
+            let per_unit = 4.0;
+            let side = (icon.grid() * per_unit) as u32;
+            let coverage = icon.coverage(side, 0.0);
+            let near = (0..side * side).any(|at| {
+                let (x, y) = ((at % side) as f32 + 0.5, (at / side) as f32 + 0.5);
+                let d = ((x / per_unit - hx).powi(2) + (y / per_unit - hy).powi(2)).sqrt();
+                d < 1.0 && coverage[at as usize] > 128
+            });
+            assert!(near, "{icon:?} points from ({hx}, {hy}), which has no ink");
         }
     }
 
     #[test]
     fn every_other_icon_points_from_its_middle() {
-        // A cursor that aims from somewhere other than its centre needs a
-        // reason, and a test above proving it lands on the ink.
         for icon in ALL {
             if POINTED.contains(&icon) {
                 continue;
             }
+            let centre = icon.grid() / 2.0;
             assert_eq!(
                 icon.hotspot(),
-                (12.0, 12.0),
+                (centre, centre),
                 "{icon:?} aims off-centre without being listed as pointed"
             );
         }
     }
 
     #[test]
-    fn the_arc_based_icons_really_close_into_a_ring() {
-        // The circle and the pen's nib are written as SVG arcs. If kurbo's arc
-        // handling were wrong they would parse but draw an open sliver, so
-        // check the ellipse spans the full grid in both axes.
-        let b = BezPath::from_svg(Icon::Ellipse.paths()[0])
-            .expect("parses")
-            .bounding_box();
-        assert!((b.width() - 20.0).abs() < 0.5, "width was {}", b.width());
-        assert!((b.height() - 20.0).abs() < 0.5, "height was {}", b.height());
+    fn a_link_and_a_broken_link_are_different_pictures() {
+        assert_ne!(Icon::Link2.spectrum(), Icon::Unlink2.spectrum());
     }
 
     #[test]
-    fn no_icon_is_missing_from_all() {
-        // Seventeen were, and nothing noticed: `ALL` feeds the geometry cache
-        // *and* every test in this file, so an icon absent from it drew nothing
-        // and was absent from its own coverage. The tests were checking the
-        // icons that worked.
-        //
-        // Rust cannot enumerate an enum's variants without a derive, so the
-        // count is what is checked. Adding a variant and not adding it here
-        // fails this rather than shipping an invisible button.
-        assert_eq!(
-            ALL.len(),
-            112,
-            "an icon was added to the enum without being added to ALL"
-        );
-    }
-
-    #[test]
-    fn the_icons_added_for_typography_and_pages_all_draw() {
-        // The ones that were missing, named so the failure says which.
-        for icon in [
-            Icon::Bold,
-            Icon::Italic,
-            Icon::Underline,
-            Icon::Strikethrough,
-            Icon::AlignJustify,
-            Icon::Palette,
-            Icon::Pilcrow,
-            Icon::CaseSensitive,
-            Icon::TypeSize,
-            Icon::LineSpacing,
-            Icon::LetterSpacing,
-            Icon::BaselineShift,
-            Icon::OpenType,
-            Icon::Indent,
-            Icon::ParagraphSpacing,
-            Icon::List,
-            Icon::TabStop,
-            Icon::DropCap,
-            Icon::Plus,
-            Icon::Duplicate,
-            Icon::Trash,
-            Icon::ChevronLeft,
-            Icon::ChevronRight,
-            Icon::Layers,
-            Icon::Eye,
-            Icon::EyeOff,
-            Icon::Lock,
-            Icon::Unlock,
-        ] {
-            assert!(
-                !icon.geometry().is_empty(),
-                "{icon:?} has no geometry, so it draws nothing"
-            );
-            assert!(ALL.contains(&icon), "{icon:?} is not in ALL");
+    fn a_painted_icon_lands_on_whole_pixels() {
+        // Off the grid, every edge is shared by two pixels and reads grey.
+        for ppp in [1.0, 1.25, 1.5, 2.0] {
+            let rect = pixel_box(egui::pos2(10.3, 7.77), device_side(20.0, ppp), ppp);
+            for v in [rect.min.x, rect.min.y, rect.max.x, rect.max.y] {
+                let device = v * ppp;
+                assert!(
+                    (device - device.round()).abs() < 1e-3,
+                    "{v} is not on a pixel at {ppp}"
+                );
+            }
         }
     }
 
     #[test]
-    fn an_icon_left_out_of_all_still_draws() {
-        // The safety net, exercised directly: geometry comes back even when the
-        // cache built from `ALL` does not have it.
-        assert!(!Icon::Bold.parsed_late().is_empty());
+    fn the_cursor_mesh_is_one_square_per_covered_pixel() {
+        let mesh = coverage_mesh(
+            Rect::from_min_size(Pos2::ZERO, egui::vec2(20.0, 20.0)),
+            Icon::Select,
+            Color32::WHITE,
+            0.0,
+            1.0,
+        );
+        let covered = Icon::Select
+            .coverage(20, 0.0)
+            .iter()
+            .filter(|&&a| a > 0)
+            .count();
+        assert_eq!(mesh.vertices.len(), covered * 4);
+        assert_eq!(mesh.indices.len(), covered * 6);
+    }
+
+    #[test]
+    fn no_icon_is_missing_from_all() {
+        // Rust cannot enumerate an enum's variants without a derive, so the
+        // count is what is checked, and it is the enum's own count.
+        let unique: std::collections::HashSet<_> = ALL.iter().collect();
+        assert_eq!(unique.len(), ALL.len(), "an icon is listed twice");
+        assert_eq!(ALL.len(), 116);
     }
 }

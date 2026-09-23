@@ -24,7 +24,7 @@ use egui::{Color32, Context};
 /// | 9–10 | The solid accent and its hover |
 /// | 11–12 | Text: labels, then values |
 ///
-/// The dark chrome uses the restrained charcoal surfaces of the UI prototype.
+/// The dark palette is InDesign's medium dark, measured off its window.
 /// Printing previews retain their separate, neutral proof surround.
 ///
 /// Both palettes are defined here and both are contrast-tested, so a light
@@ -142,45 +142,42 @@ impl Palette {
         self.steps[n - 1]
     }
 
-    // Radix Colors' *gray* scale, dark, with the roles as published: 1 and 2
-    // the app backgrounds, 3 to 5 the component states (rest, hover,
-    // pressed), 6 to 8 the lines (subtle, control, focus), 9 and 10 the
-    // solid accent, 11 and 12 the text (low and high contrast). The first
-    // cut of this scale was compressed — steps 2 to 7 spanned 0x16 to 0x30,
-    // where the published scale spans 0x19 to 0x48 — and every surface sat
-    // on every other: a field, a band and the panel behind them within a few
-    // levels of grey. The user's word was a heap. The scale as published is
-    // what gives a control an edge and a section a ground without any line
-    // getting louder. Two levels of blue over the neutral, as the charcoal
-    // test allows, and step 8 held a little above published so the focus
-    // ring keeps 3:1 on the lighter panel.
+    // InDesign's own "medium dark", measured off its window on 2026-09-22 at
+    // the user's asking — "be inspired by InDesign and Illustrator" — and
+    // laid onto the scale's roles: the tab strip's 0x26 as the deepest ground,
+    // the panel's 0x32, a field's 0x2A with its 0x52 border, the pasteboard's
+    // 0x3E. The charcoal it replaces (panels at 0x19) put near-black chrome
+    // around a mid-grey pasteboard, and the chrome read as heavier than the
+    // work. InDesign's greys sit a few levels apart, so the panel and the
+    // pasteboard are one quiet field and the page is the brightest thing on
+    // screen. Neutral, as the proof-surround test requires; step 8 held where
+    // the focus ring clears 3:1 on the panel.
     pub const DARK: Self = Self {
         steps: [
-            Color32::from_rgb(0x11, 0x11, 0x13),
-            Color32::from_rgb(0x19, 0x19, 0x1B),
-            Color32::from_rgb(0x22, 0x22, 0x25),
-            Color32::from_rgb(0x2A, 0x2A, 0x2D),
-            Color32::from_rgb(0x31, 0x31, 0x34),
-            Color32::from_rgb(0x3A, 0x3A, 0x3E),
-            Color32::from_rgb(0x48, 0x48, 0x4D),
-            Color32::from_rgb(0x6A, 0x6A, 0x6E),
+            Color32::from_rgb(0x26, 0x26, 0x26),
+            Color32::from_rgb(0x32, 0x32, 0x32),
+            Color32::from_rgb(0x3A, 0x3A, 0x3A),
+            Color32::from_rgb(0x40, 0x40, 0x40),
+            Color32::from_rgb(0x46, 0x46, 0x46),
+            Color32::from_rgb(0x4A, 0x4A, 0x4A),
+            Color32::from_rgb(0x52, 0x52, 0x52),
+            Color32::from_rgb(0x7C, 0x7C, 0x7C),
             Color32::from_rgb(0x5B, 0x8D, 0xEF),
             Color32::from_rgb(0x7A, 0xA3, 0xF4),
-            Color32::from_rgb(0xB2, 0xB4, 0xB8),
-            Color32::from_rgb(0xED, 0xEE, 0xF0),
+            Color32::from_rgb(0xB8, 0xB8, 0xB8),
+            Color32::from_rgb(0xE8, 0xE8, 0xE8),
         ],
-        // Lifted off the deepest step on 2026-09-20, at the user's asking: a
-        // new shape is a black hairline now, and on a near-black ground it
-        // could not be found. Held where the accent still clears 3:1, which
-        // is the ceiling — a saturated hue sits at about the luminance of a
-        // mid grey, so a paler ground and a blue selection edge cannot both
-        // be had.
-        canvas_bg: Color32::from_rgb(0x3A, 0x3A, 0x3C),
-        // Flat, recessed inputs, separated from the panel by a subtle border.
-        field_bg: Color32::from_rgb(0x11, 0x11, 0x13),
+        // InDesign's pasteboard, a step above its panels. Held where the
+        // accent still clears 3:1, which is the ceiling — a saturated hue sits
+        // at about the luminance of a mid grey, so a paler ground and a blue
+        // selection edge cannot both be had.
+        canvas_bg: Color32::from_rgb(0x3E, 0x3E, 0x3E),
+        // A field a shade under the panel it sits in, with step 7's border
+        // round it: InDesign's 0x2A inside 0x52.
+        field_bg: Color32::from_rgb(0x2A, 0x2A, 0x2A),
         // Desaturated from the blue this used to be. A saturated blue on a
-        // near-black ground vibrates at small sizes, and step 9 is what a
-        // one-pixel selection edge is drawn in.
+        // dark ground vibrates at small sizes, and step 9 is what a one-pixel
+        // selection edge is drawn in.
         accent: Color32::from_rgb(0x5B, 0x8D, 0xEF),
         accent_hover: Color32::from_rgb(0x7A, 0xA3, 0xF4),
         error: Color32::from_rgb(0xF0, 0x8C, 0x82),
@@ -440,36 +437,43 @@ impl Theme {
         (points * density().factor()).round()
     }
 
+    // The standard spacing is InDesign's, measured off its Properties panel
+    // on 2026-09-22: 21-point fields on a 25-point pitch, three points
+    // between an icon and its field. The 4-8-12-16 scale this replaces left
+    // a quarter of every panel as air — the user's word was "too much space
+    // for buttons, icons" — and a panel that scrolls for what InDesign shows
+    // in one screen is a panel that hides its lower half.
+
     /// Inside a control: between an icon and its label.
     pub fn space_1() -> f32 {
-        Self::step_of_scale(4.0)
+        Self::step_of_scale(3.0)
     }
     /// Between controls in a row.
     pub fn space_2() -> f32 {
-        Self::step_of_scale(8.0)
+        Self::step_of_scale(6.0)
     }
     /// Between groups of controls.
     pub fn space_3() -> f32 {
-        Self::step_of_scale(12.0)
+        Self::step_of_scale(10.0)
     }
     /// Inside a region: the padding around a panel's contents.
     pub fn space_4() -> f32 {
-        Self::step_of_scale(16.0)
+        Self::step_of_scale(12.0)
     }
     /// Between regions.
     pub fn space_5() -> f32 {
-        Self::step_of_scale(20.0)
+        Self::step_of_scale(16.0)
     }
 
     /// Every list row — layers, styles, swatches, links. One height, so a
     /// column of them scans as a column.
     pub fn row() -> f32 {
-        Self::step_of_scale(28.0)
+        Self::step_of_scale(24.0)
     }
 
     /// The height of anything you can click: a button, a field, a tab.
     pub fn control_height() -> f32 {
-        Self::step_of_scale(24.0)
+        Self::step_of_scale(22.0)
     }
 
     /// The fixed column every labelled field aligns its label to. Without
@@ -488,13 +492,18 @@ impl Theme {
     pub const RADIUS: f32 = 3.0;
 
     /// Side of a tool button in the left strip.
-    pub const TOOL_SIZE: f32 = 32.0;
+    pub const TOOL_SIZE: f32 = 28.0;
     /// Shared icon grid size, independent of the surrounding click target.
-    pub const ICON_SIZE: f32 = 18.0;
-    /// A glyph standing in for a field's caption. Smaller than a button's
-    /// icon: it sits beside a number at the body size and must not outweigh
-    /// it.
-    pub const FIELD_GLYPH_SIZE: f32 = 14.0;
+    ///
+    /// Twenty, the one size Spectrum 2's workflow icons are exact at. Tried
+    /// at eighteen on 2026-09-22 to make the panels smaller, and the user
+    /// called it at once: "it became blurry again". A drawing made on a
+    /// twenty-pixel grid, scaled by nine tenths, puts every edge between two
+    /// pixels. The panels are made compact by their spacing instead.
+    pub const ICON_SIZE: f32 = 20.0;
+    /// A glyph standing in for a field's caption: the same twenty, for the
+    /// same reason — at sixteen it went soft.
+    pub const FIELD_GLYPH_SIZE: f32 = 20.0;
     /// Side of a selection handle.
     pub const HANDLE_SIZE: f32 = 7.0;
 

@@ -25,6 +25,10 @@ serde_json.workspace = true
 egui.workspace = true
 image.workspace = true
 kurbo.workspace = true
+# The icons: Spectrum's SVGs, rasterised at the pixels they cover.
+resvg.workspace = true
+usvg.workspace = true
+tiny-skia.workspace = true
 eframe.workspace = true
 egui-wgpu.workspace = true
 vello.workspace = true

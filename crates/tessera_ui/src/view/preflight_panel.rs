@@ -51,7 +51,6 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
     }
 
     ui.separator();
-    super::panel_ui::hint(ui, "Click an issue to locate its object on the page.");
 
     // Grouped by rule, because ten low-resolution images are one decision about
     // resolution rather than ten separate discoveries. Errors first, which the
@@ -59,25 +58,51 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
     let mut heading: Option<Rule> = None;
     let mut jump_to = None;
 
+    // And within a rule, one row per *message*: the same sentence ten times
+    // over, one for each RGB fill, is a list nobody reads to the end of. The
+    // row says how many objects it is about, and each click on it goes to the
+    // next of them, as InDesign's preflight walks its own list.
+    let mut groups: Vec<(Rule, &str, Vec<&Where>)> = Vec::new();
+    for problem in &report.problems {
+        match groups.last_mut() {
+            Some((rule, message, places))
+                if *rule == problem.rule && *message == problem.message =>
+            {
+                places.push(&problem.at);
+            }
+            _ => groups.push((problem.rule, &problem.message, vec![&problem.at])),
+        }
+    }
+
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            for problem in &report.problems {
-                if heading != Some(problem.rule) {
+            for (rule, message, places) in &groups {
+                if heading != Some(*rule) {
+                    let severity = rule.severity();
                     ui.add_space(Theme::space_2());
                     ui.horizontal(|ui| {
-                        ui.colored_label(
-                            severity_colour(problem.severity()),
-                            marker(problem.severity()),
-                        );
-                        ui.colored_label(Theme::text_primary(), problem.rule.title());
+                        ui.colored_label(severity_colour(severity), marker(severity));
+                        ui.colored_label(Theme::text_primary(), rule.title());
                     });
-                    heading = Some(problem.rule);
+                    heading = Some(*rule);
                 }
 
+                let frames: Vec<_> = places
+                    .iter()
+                    .filter_map(|at| match at {
+                        Where::Frame(id) => Some(*id),
+                        Where::Page(_) | Where::Document => None,
+                    })
+                    .collect();
+                let text = if places.len() > 1 {
+                    format!("{message} ({} objects)", places.len())
+                } else {
+                    (*message).to_owned()
+                };
                 let row = ui.add(
                     egui::Label::new(
-                        egui::RichText::new(&problem.message)
+                        egui::RichText::new(text)
                             .size(Theme::TYPE_SM)
                             .color(Theme::text_muted()),
                     )
@@ -85,17 +110,24 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
                     .sense(egui::Sense::click()),
                 );
 
-                match problem.at {
-                    Where::Frame(id) => {
-                        if row.on_hover_text("Go to this object").clicked() {
-                            jump_to = Some(id);
-                        }
-                    }
+                if frames.is_empty() {
                     // Nothing to jump to, and saying so beats jumping somewhere
                     // arbitrary to seem responsive.
-                    Where::Page(_) | Where::Document => {
-                        row.on_hover_text("About the document as a whole");
-                    }
+                    row.on_hover_text("About the document as a whole");
+                    continue;
+                }
+                let hint = if frames.len() > 1 {
+                    "Go to the next of these objects"
+                } else {
+                    "Go to this object"
+                };
+                if row.on_hover_text(hint).clicked() {
+                    // Which of them is next, remembered per row between clicks.
+                    let key = egui::Id::new(("preflight-next", *rule, *message));
+                    let next = ui.ctx().data_mut(|d| *d.get_temp_mut_or(key, 0usize));
+                    jump_to = Some(frames[next % frames.len()]);
+                    ui.ctx()
+                        .data_mut(|d| d.insert_temp(key, (next + 1) % frames.len()));
                 }
             }
         });

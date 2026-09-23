@@ -1964,8 +1964,11 @@ milestone the layout is fixed: a tool strip, one inspector, and the canvas.
   client and the decisions have tests. It tells and never installs. The
   preference had existed since milestone 7 with nothing reading it, which is a
   switch that lies about what it does.
-- [ ] User documentation and a first-run tour. `docs/USING.md` is written and
-  the tour is built — five cards about *where things are*, in
+- [x] **The first-run tour is removed (2026-09-22)**, at the user's word: "we
+  don't need a tour thing, it is just time lost." `docs/USING.md` stays. What
+  follows is the record of what it was.
+- [ ] ~~User documentation and a first-run tour.~~ `docs/USING.md` is written and
+  the tour was built — five cards about *where things are*, in
   `crates/tessera_ui/src/tour.rs` with its card in `view/tour.rs`, offered once
   on a first run and available from Help ever after. Each step names a place and
   the panels say where they are as they draw, so a rearranged rail moves the
@@ -2814,6 +2817,21 @@ the way ExtendScript sits outside InDesign.
   it said, and what it said was wrong.
 - [ ] Not yet: ids inside `describe_shapes` objects are in the document's
   own `{idx, version}` form rather than numbers.
+- [x] **A tool call cannot move the assistant's endpoint (2026-09-22).** The
+  key was refused to `set_preferences`, but `base_url` and `provider` —
+  which decide where the key is *sent* — were not, so text in a document a
+  model was asked to read could redirect the next turn's key. The whole
+  `assistant` member is refused now, since a field list is one a new field
+  can be missing from.
+- [ ] **Deferred until the core features are done: the socket takes no
+  secret.** "The same trust a local script has" does not hold twice over.
+  A web page can post to loopback; each HTTP header line draws a parse
+  error, the connection stays open, and a JSON line in the body runs, which
+  can mean `save` or `export_pdf` to any path. The port is random but can be
+  scanned, and only some browsers ask first. And every account on the
+  machine shares loopback. The fix: a random token written into
+  `bridge.port`, which only its owner can read, and sent by the relay as
+  its first line, plus dropping a connection whose line looks like HTTP.
 
 ---
 

@@ -37,7 +37,7 @@ pub fn action(ui: &mut Ui, icon: Icon, label: &str) -> Response {
         &painter,
         egui::Rect::from_center_size(
             egui::pos2(rect.left() + 16.0, rect.center().y),
-            egui::Vec2::splat(18.0),
+            egui::Vec2::splat(Theme::ICON_SIZE),
         ),
         icon,
         color,
@@ -67,10 +67,17 @@ pub fn empty(ui: &mut Ui, title: &str, detail: &str) {
     ui.add_space(Theme::space_2());
 }
 
+/// A row in a list of named things — styles, swatches, a book's chapters.
+///
+/// Read from the left: names are scanned down their first letters, which is
+/// how every list in InDesign sits and why a centred column of style names
+/// read as a menu of buttons rather than a list.
 pub fn entry(ui: &mut Ui, selected: bool, label: &str) -> Response {
+    // The growing atom after the text takes the rest of the row, which is
+    // what holds the name at the left inside a row of fixed size.
     ui.add_sized(
         [ui.available_width(), Theme::row()],
-        egui::Button::selectable(selected, label).truncate(),
+        egui::Button::selectable(selected, (label, egui::Atom::grow())).truncate(),
     )
     .on_hover_text(label)
 }
@@ -78,9 +85,8 @@ pub fn entry(ui: &mut Ui, selected: bool, label: &str) -> Response {
 /// A row naming a thing, read from the left, with `reserved` points kept
 /// clear on its right for whatever the caller paints there.
 ///
-/// `entry` centres its label and truncates it against the whole width, which
-/// is right for a style's name and wrong for a file's: names are scanned
-/// down the left edge, and a long one would run under the marks beside it.
+/// Keeps `reserved` clear so a long name stops short of the marks painted
+/// beside it rather than running under them.
 pub fn named_row(ui: &mut Ui, selected: bool, label: &str, reserved: f32) -> Response {
     let width = ui.available_width();
     let text_width = (width - reserved - 2.0 * Theme::space_2()).max(0.0);

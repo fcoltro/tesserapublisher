@@ -850,10 +850,8 @@ mod tests {
         // changed and never put back.
         //
         // Not every field of `Preferences` is a setting. Some record what
-        // happened — when a version check last ran, what it found, whether the
-        // tour has been offered — and "restore defaults" must not touch those:
-        // un-seeing a tour or forgetting this morning's check are not things
-        // anybody asks for by pressing a button labelled "put things back to
+        // happened — when a version check last ran, what it found — and "restore defaults" must not touch those:
+        // forgetting this morning's check is not a thing anybody asks for by pressing a button labelled "put things back to
         // normal". Those fields are set to non-defaults below and expected to
         // survive, which is what makes the rest of this assertion mean
         // something.
@@ -877,7 +875,6 @@ mod tests {
                 last_checked: 1_700_000_000,
                 seen: Some("9.9.9".to_string()),
             },
-            tour_seen: true,
             polygon_sides: 6,
             polygon_inset: 0.0,
             shortcuts: crate::keys::Bindings::default(),
@@ -900,7 +897,6 @@ mod tests {
                     last_checked: 1_700_000_000,
                     seen: Some("9.9.9".to_string()),
                 },
-                tour_seen: true,
                 ..Preferences::default()
             },
             "a setting is reachable but not restorable, so it is on no page"

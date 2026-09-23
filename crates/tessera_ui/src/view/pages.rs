@@ -56,8 +56,6 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
         .max_height(LIST)
         .auto_shrink([false, true])
         .show(ui, |ui| body(ui, state));
-
-    super::panel_ui::hint(ui, "Click a page to navigate. Drag pages to reorder.");
 }
 
 /// The parent pages, listed above the document's own.
@@ -246,6 +244,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
         let (rect, _) =
             ui.allocate_exact_size(egui::vec2(slot.x, slot.y + LABEL), egui::Sense::hover());
         let sheet = egui::Rect::from_min_size(rect.min, slot);
+        let first_slot = slots.len();
 
         for (column, page) in state
             .active()
@@ -261,11 +260,13 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
             );
             slots.push(at);
 
-            let response = ui.interact(
-                at,
-                egui::Id::new(("page", *page)),
-                egui::Sense::click_and_drag(),
-            );
+            let response = ui
+                .interact(
+                    at,
+                    egui::Id::new(("page", *page)),
+                    egui::Sense::click_and_drag(),
+                )
+                .on_hover_text("Click to go to this page. Drag to reorder.");
 
             thumbnail(ui, state, *page, at, index == current);
 
@@ -281,10 +282,17 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
             }
         }
 
-        // The page numbers this spread holds, under it.
+        // The page numbers this spread holds, under the pages it holds - not
+        // under the slot, which is two columns wide even when the first
+        // spread is one right-hand page, and left its "1" under nothing.
         let numbers = page_numbers(state, *spread).unwrap_or_else(|| format!("{}", index + 1));
+        let under = slots[first_slot..]
+            .iter()
+            .copied()
+            .reduce(|a, b| a.union(b))
+            .unwrap_or(sheet);
         ui.painter().text(
-            egui::pos2(sheet.center().x, sheet.bottom() + LABEL / 2.0),
+            egui::pos2(under.center().x, sheet.bottom() + LABEL / 2.0),
             egui::Align2::CENTER_CENTER,
             numbers,
             egui::TextStyle::Small.resolve(ui.style()),

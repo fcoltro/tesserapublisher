@@ -21,7 +21,7 @@ use crate::theme::Theme;
 /// small enough that hitting the wrong one is easy and noticing that you did
 /// is not. Not bigger than a row: making the bar tall enough for more would
 /// put a band of chrome across the window.
-pub const PROXY: f32 = 30.0;
+pub const PROXY: f32 = 26.0;
 
 /// The padding above and below the row's tallest thing.
 const PADDING: f32 = 5.0;

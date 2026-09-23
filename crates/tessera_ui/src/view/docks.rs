@@ -86,7 +86,7 @@ fn side(ui: &mut Ui, state: &mut TesseraApp, region: Region) {
         Region::Right => Panel::right(id),
     };
 
-    let showing_panel = panel
+    panel
         .default_size(WIDTH + tab_strip_width())
         .min_size(NARROWEST + tab_strip_width())
         .frame(crate::view::panel_frame())
@@ -110,13 +110,6 @@ fn side(ui: &mut Ui, state: &mut TesseraApp, region: Region) {
 
             edge_target(ui, state, region);
         });
-
-    // The tour points at whichever side is open, and the last one drawn wins if
-    // both are. One rect for "the panels": a tour that ringed two things at once
-    // would be pointing at nothing in particular.
-    state
-        .tour
-        .mark(crate::tour::Spot::Rail, showing_panel.response.rect);
 }
 
 /// Whether anything in this stack is open, and so worth room.
@@ -285,18 +278,17 @@ fn stack(ui: &mut Ui, state: &mut TesseraApp, region: Region, at: usize) {
         return;
     };
 
+    // A tab's label, as InDesign's panels have, and nothing under it. The
+    // sentence saying what each panel is for is its tooltip now: found by a
+    // person who needs it, and not read again by one who works here all day.
     egui::Frame::NONE
-        .inner_margin(Theme::space_3())
+        .inner_margin(egui::Margin::symmetric(
+            Theme::space_3() as i8,
+            Theme::space_2() as i8,
+        ))
         .show(ui, |ui| {
-            ui.heading(&title);
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(dock.description())
-                        .small()
-                        .color(Theme::text_muted()),
-                )
-                .wrap(),
-            );
+            ui.add(egui::Label::new(egui::RichText::new(&title).strong()).selectable(false))
+                .on_hover_text(dock.description());
         });
     ui.separator();
 
@@ -374,12 +366,13 @@ mod tests {
         // icon did not resolve would be a blank clickable square, which is
         // worse than a name that does not fit.
         for dock in Dock::ALL {
-            let outlines = dock.icon().paths();
-            assert!(
-                !outlines.is_empty(),
-                "{} has no icon to be a tab with",
-                dock.title()
-            );
+            let ink: u32 = dock
+                .icon()
+                .coverage(20, 0.0)
+                .iter()
+                .map(|&a| u32::from(a))
+                .sum();
+            assert!(ink > 0, "{} has no icon to be a tab with", dock.title());
         }
     }
 

@@ -3,11 +3,27 @@
 Tessera Publisher is licensed under the GNU General Public License v3.0 or
 later. Third-party material included in the source is listed here.
 
+## Adobe Spectrum 2 workflow icons
+
+Most of the interface's icons are Adobe's Spectrum 2 workflow icons, from
+[React Spectrum](https://github.com/adobe/react-spectrum)
+(`packages/@react-spectrum/s2/s2wf-icons`, commit `f1cee83`). They are
+vendored as SVG in `crates/tessera_ui/assets/icons/`, with their colour
+variable replaced by a plain fill so the rasteriser reads them; the shapes are
+unchanged. Each is compiled into the binary and rasterised at runtime.
+
+They are licensed under the Apache License, Version 2.0, a copy of which is in
+`crates/tessera_ui/assets/icons/LICENSE`.
+
+> Copyright 2020 Adobe. All rights reserved.
+
 ## Lucide icons
 
-The tool icons in `crates/tessera_ui/src/icons.rs` are drawn from
-[Lucide](https://lucide.dev). They are stored as SVG path data and painted at
-runtime; no image files are distributed.
+The icons Spectrum has no picture of — line caps and joins, text wraps,
+paragraph indents and spacing, the pointer's I-beam and crosshair — are drawn
+in `crates/tessera_ui/src/icons.rs` in the manner of
+[Lucide](https://lucide.dev), and some are Lucide's own. They are stored as
+SVG path data and rendered at runtime; no image files are distributed.
 
 Lucide is ISC-licensed:
 

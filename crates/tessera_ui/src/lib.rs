@@ -33,7 +33,6 @@ pub mod selection;
 pub mod softproof;
 pub mod theme;
 pub mod tools;
-pub mod tour;
 pub mod transform;
 pub mod ui_fonts;
 pub mod update;
