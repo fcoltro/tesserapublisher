@@ -59,7 +59,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), IoError> {
         return Err(error);
     }
 
-    std::fs::rename(&temp, path).map_err(|source| {
+    rename_patiently(&temp, path).map_err(|source| {
         // Best effort: do not leave litter behind after a failed rename.
         let _ = std::fs::remove_file(&temp);
         IoError::Rename {
@@ -69,9 +69,67 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), IoError> {
     })
 }
 
+/// How many times the final rename is tried before its failure is reported.
+const RENAME_ATTEMPTS: u32 = 6;
+
+/// Rename `from` over `to`, waiting out a moment when something else holds `to`.
+///
+/// Windows refuses to replace a file another process has open without
+/// sharing its deletion — a virus scan of the last save, the search indexer,
+/// OneDrive uploading it — and each of those holds it for milliseconds. Failing
+/// the save on the first refusal told somebody their document could not be
+/// written because the machine glanced at it. Five retries, doubling from ten
+/// milliseconds, wait a third of a second at most; a refusal that outlasts that
+/// is a real one and is reported as such.
+fn rename_patiently(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut attempt = 1;
+    let mut wait = std::time::Duration::from_millis(10);
+    loop {
+        match std::fs::rename(from, to) {
+            Err(error) if attempt < RENAME_ATTEMPTS && held_by_another(&error) => {
+                std::thread::sleep(wait);
+                attempt += 1;
+                wait *= 2;
+            }
+            result => return result,
+        }
+    }
+}
+
+/// Whether a rename failed because another process has the file open: access
+/// denied, or Windows' sharing and lock violations (32 and 33).
+fn held_by_another(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::PermissionDenied
+        || matches!(error.raw_os_error(), Some(32 | 33))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn a_save_waits_out_another_process_holding_the_file() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let path = case_dir("held").join("e.bin");
+        std::fs::write(&path, b"original").expect("seed");
+        // Opened sharing nothing, as a scanner might: the rename is refused
+        // for as long as this handle lives.
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&path)
+            .expect("hold");
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(40));
+            drop(held);
+        });
+
+        write_atomic(&path, b"saved").expect("the save waits and then lands");
+        release.join().expect("the holder lets go");
+        assert_eq!(std::fs::read(&path).expect("read"), b"saved");
+    }
 
     fn case_dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join("tessera_atomic").join(name);
