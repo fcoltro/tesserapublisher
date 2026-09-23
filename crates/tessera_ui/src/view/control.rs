@@ -150,12 +150,7 @@ pub fn show(ui: &mut Ui, state: &mut TesseraApp) {
                 match subject {
                     Subject::Object => object(ui, state),
                     Subject::Text => crate::view::panels::type_row(ui, state),
-                    Subject::Several(n) => {
-                        ui.colored_label(
-                            Theme::text_muted(),
-                            format!("{n} selected — no single geometry between them"),
-                        );
-                    }
+                    Subject::Several(_) => several(ui, state),
                     Subject::Document => crate::view::panels::page_row(ui, state),
                 }
             });
@@ -179,6 +174,78 @@ fn object(ui: &mut Ui, state: &mut TesseraApp) {
 }
 
 /// A muted caption naming what follows.
+/// A multiple selection's row: InDesign's align and distribute buttons, one
+/// click each. There is no single geometry between several objects to show,
+/// and lining them up is what a multiple selection is usually made for; the
+/// canvas offers the same verbs a menu away, and this is where the eye already
+/// is.
+fn several(ui: &mut Ui, state: &mut TesseraApp) {
+    use crate::align::{AlignTo, Edge};
+    use crate::icons::Icon;
+    use tessera_document::nodes::Axis;
+
+    enum Verb {
+        Align(Edge),
+        Distribute(Axis),
+    }
+    let buttons = [
+        (Icon::AlignLeft, "Align left edges", Verb::Align(Edge::Left)),
+        (
+            Icon::AlignCentreH,
+            "Align horizontal centres",
+            Verb::Align(Edge::HCentre),
+        ),
+        (
+            Icon::AlignRight,
+            "Align right edges",
+            Verb::Align(Edge::Right),
+        ),
+        (Icon::AlignTop, "Align top edges", Verb::Align(Edge::Top)),
+        (
+            Icon::AlignMiddleV,
+            "Align vertical centres",
+            Verb::Align(Edge::VCentre),
+        ),
+        (
+            Icon::AlignBottom,
+            "Align bottom edges",
+            Verb::Align(Edge::Bottom),
+        ),
+        (
+            Icon::DistributeH,
+            "Distribute horizontally",
+            Verb::Distribute(Axis::Horizontal),
+        ),
+        (
+            Icon::DistributeV,
+            "Distribute vertically",
+            Verb::Distribute(Axis::Vertical),
+        ),
+    ];
+    let mut chosen = None;
+    for (at, (icon, name, verb)) in buttons.into_iter().enumerate() {
+        if at == 6 {
+            separator(ui);
+        }
+        if crate::view::panels::icon_button(ui, icon, name, false) {
+            chosen = Some(verb);
+        }
+    }
+    match chosen {
+        Some(Verb::Align(edge)) => crate::command::apply(
+            state,
+            crate::command::Command::Align {
+                edge,
+                to: AlignTo::Selection,
+            },
+        ),
+        Some(Verb::Distribute(axis)) => {
+            crate::command::apply(state, crate::command::Command::Distribute(axis))
+        }
+        None => {}
+    }
+}
+
 pub fn label(ui: &mut Ui, text: &str) {
     ui.add(
         egui::Label::new(
