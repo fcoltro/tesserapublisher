@@ -1,6 +1,6 @@
 //! The zip-of-XML both formats are, and the handful of readings both need.
 
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 use std::path::Path;
 
 use crate::ImportError;
@@ -33,16 +33,18 @@ impl Package {
         let name = self
             .find(entry)
             .ok_or_else(|| ImportError::Missing(entry.to_owned()))?;
-        let mut out = String::new();
-        self.zip
+        let file = self
+            .zip
             .by_name(&name)
-            .map_err(|_| ImportError::Missing(entry.to_owned()))?
-            .read_to_string(&mut out)
-            .map_err(|e| ImportError::Parse {
+            .map_err(|_| ImportError::Missing(entry.to_owned()))?;
+        // Capped: a package is somebody else's file, and an entry can expand
+        // to anything it likes.
+        tessera_io::capped::read_to_string_capped(file, tessera_io::capped::ENTRY_LIMIT).map_err(
+            |e| ImportError::Parse {
                 entry: entry.to_owned(),
                 message: e.to_string(),
-            })?;
-        Ok(out)
+            },
+        )
     }
 
     pub(crate) fn has(&mut self, entry: &str) -> bool {

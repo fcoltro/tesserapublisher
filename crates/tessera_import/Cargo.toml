@@ -9,6 +9,7 @@ publish = false
 workspace = true
 
 [dependencies]
+tessera_io.workspace = true
 tessera_document.workspace = true
 tessera_text.workspace = true
 tessera_color.workspace = true

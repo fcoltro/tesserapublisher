@@ -18,7 +18,7 @@
 
 pub mod meta;
 
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Write};
 use std::path::Path;
 
 pub use meta::Meta;
@@ -737,12 +737,13 @@ fn read_json<T: serde::de::DeserializeOwned>(
     zip: &mut zip::ZipArchive<Cursor<Vec<u8>>>,
     entry: &'static str,
 ) -> Result<T, FormatError> {
-    let mut file = zip
+    let file = zip
         .by_name(entry)
         .map_err(|_| FormatError::MissingEntry(entry))?;
-    let mut text = String::new();
-    file.read_to_string(&mut text)
-        .map_err(|_| FormatError::MissingEntry(entry))?;
+    // Capped: a document can come from anyone, and a deflated entry can
+    // claim to be small and expand past what the machine has.
+    let text = tessera_io::capped::read_to_string_capped(file, tessera_io::capped::ENTRY_LIMIT)
+        .map_err(|e| FormatError::Archive(format!("{entry} {e}")))?;
     serde_json::from_str(&text).map_err(|source| FormatError::Parse { entry, source })
 }
 

@@ -7,5 +7,6 @@
 //! crate.
 
 pub mod atomic;
+pub mod capped;
 
 pub use atomic::{IoError, write_atomic};
