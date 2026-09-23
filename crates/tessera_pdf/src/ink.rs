@@ -92,6 +92,16 @@ impl Ink {
 
             other => {
                 let [r, g, b, _] = other.to_rgb_f32();
+                // **Pure black is one ink.** Through the press profile RGB
+                // black came out as four — 84/75/60/100 on CRPC6 — so every
+                // line of default black type was a rich black, and small type
+                // in four inks fringes the moment the plates are a hair out of
+                // register. Acrobat's Output Preview showed it on every plate.
+                // Preserving pure black is what Adobe's own conversions do: the
+                // one RGB colour with an exact ink meaning keeps it.
+                if r.max(g).max(b) <= 0.0 {
+                    return [0.0, 0.0, 0.0, 1.0];
+                }
                 conversion.apply([r, g, b])
             }
         }
@@ -142,6 +152,31 @@ impl Components {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rgb_black_is_written_as_black_ink_alone() {
+        let conversion = tessera_color::managed::OutputProfile::screen()
+            .expect("a profile")
+            .ink_for_screen_colour(tessera_color::managed::Rendering::default())
+            .expect("a conversion");
+        let ink = Ink::Cmyk(Box::new(conversion));
+        assert_eq!(
+            ink.components(&Color::BLACK),
+            Components::Cmyk([0.0, 0.0, 0.0, 1.0]),
+            "default black type must print on the black plate only"
+        );
+        // Anything else still goes through the press profile.
+        let grey = Color::Rgb {
+            r: 0.5,
+            g: 0.5,
+            b: 0.5,
+            a: 1.0,
+        };
+        assert_ne!(
+            ink.components(&grey),
+            Components::Cmyk([0.0, 0.0, 0.0, 0.5])
+        );
+    }
 
     #[test]
     fn a_document_with_no_press_is_written_in_rgb() {
