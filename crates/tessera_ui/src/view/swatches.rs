@@ -61,6 +61,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
         }
     });
     ui.add_space(Theme::space_2());
+    builtins(ui, state);
     if swatches.is_empty() {
         super::panel_ui::empty(
             ui,
@@ -71,6 +72,86 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
     for swatch in &swatches {
         ui.push_id(&swatch.name, |ui| row(ui, state, swatch));
     }
+}
+
+/// The three every document has, as InDesign lists them first: [None],
+/// [Paper] and [Black]. Always there, so a new document's panel is a palette
+/// and not an empty box, and one click puts one on the selected object's fill.
+///
+/// Paper is CMYK nothing and Black is solid K, as a press means them — not
+/// RGB white and a four-colour black, which separate differently.
+fn builtins(ui: &mut Ui, state: &mut TesseraApp) {
+    use tessera_document::paint::Paint;
+    let paper = Color::Cmyk {
+        c: 0.0,
+        m: 0.0,
+        y: 0.0,
+        k: 0.0,
+        a: 1.0,
+    };
+    let black = Color::Cmyk {
+        c: 0.0,
+        m: 0.0,
+        y: 0.0,
+        k: 1.0,
+        a: 1.0,
+    };
+    let selected = state.active().selection.single();
+    let mut chosen: Option<Option<Color>> = None;
+    ui.horizontal(|ui| {
+        for (name, colour) in [
+            ("[None]", None),
+            ("[Paper]", Some(paper)),
+            ("[Black]", Some(black)),
+        ] {
+            let (spot, response) =
+                ui.allocate_exact_size(egui::Vec2::new(BLOCK, BLOCK), egui::Sense::click());
+            let painter = ui.painter();
+            match &colour {
+                Some(c) => {
+                    let [r, g, b, _] = c.to_rgb_f32();
+                    painter.rect_filled(spot, 2.0, egui::Rgba::from_rgb(r, g, b));
+                }
+                None => {
+                    // No fill, as every Adobe palette draws it: white, struck
+                    // through in red.
+                    painter.rect_filled(spot, 2.0, egui::Color32::WHITE);
+                    painter.line_segment(
+                        [spot.left_bottom(), spot.right_top()],
+                        egui::Stroke::new(1.5, egui::Color32::from_rgb(0xE0, 0x30, 0x30)),
+                    );
+                }
+            }
+            painter.rect_stroke(
+                spot,
+                2.0,
+                egui::Stroke::new(1.0, Theme::border()),
+                egui::StrokeKind::Inside,
+            );
+            let hint = if selected.is_some() {
+                format!("{name}: fill the selected object")
+            } else {
+                format!("{name}: select an object to fill it")
+            };
+            let response = crate::icons::named(response, name).on_hover_text(hint);
+            if response.clicked() {
+                chosen = Some(colour);
+            }
+        }
+    });
+    if let (Some(id), Some(colour)) = (selected, chosen) {
+        match colour {
+            None => apply(state, Command::ClearFill(id)),
+            Some(colour) => apply(
+                state,
+                Command::SetFill {
+                    id,
+                    paint: Paint::Solid(colour),
+                },
+            ),
+        }
+    }
+    ui.add_space(Theme::space_2());
 }
 
 /// One swatch: its colour, its name, whether it is a spot, and what removing it
@@ -298,6 +379,33 @@ mod tests {
         );
 
         assert_eq!(fresh(&state).colour, teal);
+    }
+
+    #[test]
+    fn the_built_in_black_is_solid_k_and_paper_is_no_ink() {
+        // What a press means by them; RGB white and a four-colour black would
+        // separate onto plates they have no business on.
+        let black = Color::Cmyk {
+            c: 0.0,
+            m: 0.0,
+            y: 0.0,
+            k: 1.0,
+            a: 1.0,
+        };
+        let [r, g, b, _] = black.to_rgb_f32();
+        assert!(
+            r < 0.3 && g < 0.3 && b < 0.3,
+            "black reads dark: {r} {g} {b}"
+        );
+        let paper = Color::Cmyk {
+            c: 0.0,
+            m: 0.0,
+            y: 0.0,
+            k: 0.0,
+            a: 1.0,
+        };
+        let [r, g, b, _] = paper.to_rgb_f32();
+        assert!(r > 0.95 && g > 0.95 && b > 0.95, "paper reads white");
     }
 
     #[test]
