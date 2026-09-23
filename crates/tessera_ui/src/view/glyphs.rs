@@ -54,6 +54,23 @@ pub struct GlyphsPanel {
     /// The character under the pointer, for the code point read out under
     /// the grid rather than as a tooltip per cell.
     hovered: Option<char>,
+    /// What was inserted lately, the latest first: InDesign's "Recently
+    /// Used", because an en dash or a section sign wanted once is wanted
+    /// again in the same sitting, and finding it in three thousand was the
+    /// whole cost the first time.
+    recent: Vec<char>,
+}
+
+/// How many recently inserted characters the panel keeps.
+const RECENT: usize = 12;
+
+impl GlyphsPanel {
+    /// Remember `c` as the latest inserted, once.
+    fn used(&mut self, c: char) {
+        self.recent.retain(|&r| r != c);
+        self.recent.insert(0, c);
+        self.recent.truncate(RECENT);
+    }
 }
 
 /// The cell each character sits in, and the size it is drawn at: a
@@ -256,6 +273,26 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
         }
     });
 
+    // The recent ones, above the grid, one click from being typed again.
+    let mut insert: Option<char> = None;
+    if !state.glyphs.recent.is_empty() {
+        let font = FontId::new(DRAWN_AT, FontFamily::Name(egui_family.clone().into()));
+        ui.horizontal_wrapped(|ui| {
+            ui.colored_label(Theme::text_muted(), "Recent");
+            ui.spacing_mut().item_spacing.x = 1.0;
+            for &c in &state.glyphs.recent.clone() {
+                let response = ui.add_sized(
+                    egui::vec2(CELL, CELL),
+                    egui::Button::new(egui::RichText::new(c.to_string()).font(font.clone()))
+                        .frame(false),
+                );
+                if crate::icons::named(response, format!("U+{:04X}", u32::from(c))).clicked() {
+                    insert = Some(c);
+                }
+            }
+        });
+    }
+
     // What is shown: everything, or the characters whose code point
     // contains what was typed — `20` finds U+2026 and U+2020 alike.
     let shown: Vec<char> = shown(&mut state.glyphs).to_vec();
@@ -287,7 +324,6 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
     let rows = shown.len().div_ceil(columns);
     let room = (ui.ctx().content_rect().bottom() - ui.cursor().top() - FOOT).max(CELL * 4.0);
     let font = FontId::new(DRAWN_AT, FontFamily::Name(egui_family.into()));
-    let mut insert: Option<char> = None;
     let mut hovered: Option<char> = None;
     egui::ScrollArea::vertical()
         .id_salt("glyphs-grid")
@@ -358,6 +394,7 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
     if let Some(c) = insert {
         if typing {
             crate::view::viewport::type_text(state, &c.to_string());
+            state.glyphs.used(c);
         } else {
             state.status = Some(crate::app::Status::info(
                 "put the caret in some text, then click a character",
@@ -369,6 +406,25 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_recent_row_keeps_the_latest_first_once_each_and_no_more_than_it_holds() {
+        let mut panel = GlyphsPanel::default();
+        for c in "abc".chars() {
+            panel.used(c);
+        }
+        panel.used('a');
+        assert_eq!(
+            panel.recent,
+            vec!['a', 'c', 'b'],
+            "used again moves to the front"
+        );
+        for c in "defghijklmnop".chars() {
+            panel.used(c);
+        }
+        assert_eq!(panel.recent.len(), RECENT);
+        assert_eq!(panel.recent[0], 'p');
+    }
 
     #[test]
     fn the_default_face_maps_the_letters_and_not_the_space() {
