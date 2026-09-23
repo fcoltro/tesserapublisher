@@ -545,6 +545,11 @@ pub enum Command {
         id: LayerId,
         visible: bool,
     },
+    /// The colour a layer's selections are drawn in.
+    SetLayerColour {
+        id: LayerId,
+        colour: tessera_document::nodes::LayerColour,
+    },
     SetLayerLocked {
         id: LayerId,
         locked: bool,
@@ -1833,6 +1838,13 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             // was standing on one has to let go — otherwise handles float over
             // nothing and a drag moves what cannot be seen.
             drop_the_untouchable(state);
+        }
+
+        Command::SetLayerColour { id, colour } => {
+            if let Some(layer) = state.active_mut().document_mut().layers.get_mut(id) {
+                layer.colour = colour;
+            }
+            state.active_mut().document_mut().touch();
         }
 
         Command::SetLayerLocked { id, locked } => {

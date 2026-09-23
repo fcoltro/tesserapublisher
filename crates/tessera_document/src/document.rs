@@ -325,7 +325,11 @@ impl Document {
     /// Above, because that is where a new layer is wanted: you add one to put
     /// something in front of what is already there.
     pub fn add_layer(&mut self, name: impl Into<String>) -> LayerId {
-        let id = self.layers.insert(Layer::named(name));
+        // The next colour in turn, as InDesign gives a new layer one, so two
+        // layers' selections can be told apart on the page.
+        let mut layer = Layer::named(name);
+        layer.colour = crate::nodes::LayerColour::nth(self.layers.len());
+        let id = self.layers.insert(layer);
         self.layer_order.push(id);
         self.active_layer = Some(id);
         self.revision += 1;
@@ -5082,6 +5086,18 @@ mod tests {
     }
 
     // --- naming, adding and removing layers ---------------------------------
+
+    #[test]
+    fn each_new_layer_takes_the_next_colour() {
+        use crate::nodes::LayerColour;
+        let mut doc = Document::new();
+        let second = doc.add_layer("Layer 2");
+        let third = doc.add_layer("Layer 3");
+        let first = doc.layer_order[0];
+        assert_eq!(doc.layers[first].colour, LayerColour::Blue);
+        assert_eq!(doc.layers[second].colour, LayerColour::Red);
+        assert_eq!(doc.layers[third].colour, LayerColour::Green);
+    }
 
     #[test]
     fn a_new_layer_goes_on_top_and_becomes_active() {

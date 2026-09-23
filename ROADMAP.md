@@ -2823,8 +2823,9 @@ the way ExtendScript sits outside InDesign.
   model was asked to read could redirect the next turn's key. The whole
   `assistant` member is refused now, since a field list is one a new field
   can be missing from.
-- [ ] **Deferred until the core features are done: the socket takes no
-  secret.** "The same trust a local script has" does not hold twice over.
+- [x] **The socket takes a secret (2026-09-22, overnight), deferred until the
+  core list was done.** Was: the socket takes no
+  secret. "The same trust a local script has" does not hold twice over.
   A web page can post to loopback; each HTTP header line draws a parse
   error, the connection stays open, and a JSON line in the body runs, which
   can mean `save` or `export_pdf` to any path. The port is random but can be

@@ -3075,6 +3075,26 @@ fn selection_screen_rect(state: &TesseraApp, rect: Rect) -> Option<Rect> {
     ))
 }
 
+/// The colour a selection of `frames` is drawn in: their layer's, when they
+/// share one, and the accent when they do not or have none.
+fn layer_edge(state: &TesseraApp, frames: impl IntoIterator<Item = FrameId>) -> Color32 {
+    let doc = state.active().document();
+    let mut colours = frames.into_iter().map(|id| {
+        doc.layer_of_frame(id)
+            .and_then(|l| doc.layers.get(l))
+            .map(|l| l.colour)
+    });
+    let Some(Some(first)) = colours.next() else {
+        return Theme::accent_edge();
+    };
+    if colours.all(|c| c == Some(first)) {
+        let [r, g, b] = first.rgb();
+        Color32::from_rgb(r, g, b)
+    } else {
+        Theme::accent_edge()
+    }
+}
+
 fn draw_overlays(
     ui: &Ui,
     rect: Rect,
@@ -3140,11 +3160,13 @@ fn draw_overlays(
     thread_connectors(state, rect, &painter);
 
     // Every selected frame gets an outline of its own, so you can see which
-    // of them are in the selection and not only how far it reaches.
+    // of them are in the selection and not only how far it reaches — each in
+    // its own layer's colour, as InDesign draws it.
     for id in state.active().selection.iter() {
         let Some((bounds, placement)) = presented(state, id) else {
             continue;
         };
+        let edge = layer_edge(state, [id]);
         let corners: Vec<egui::Pos2> = [
             crate::transform::Handle::TopLeft,
             crate::transform::Handle::TopRight,
@@ -3154,11 +3176,13 @@ fn draw_overlays(
         .into_iter()
         .map(|h| handle_screen_pos(state, rect, bounds, placement, h))
         .collect();
-        painter.add(egui::Shape::closed_line(
-            corners,
-            Stroke::new(1.0, Theme::accent_edge()),
-        ));
+        painter.add(egui::Shape::closed_line(corners, Stroke::new(1.0, edge)));
     }
+
+    // The handles, the box round several and the reference mark take the
+    // selection's layer colour when it has one layer, and the accent when
+    // it spans several — no one layer speaks for it then.
+    let edge = layer_edge(state, state.active().selection.iter());
 
     // The handles go on the box the gesture will really use: one frame's own
     // box, or the upright box around a multiple selection. Read from
@@ -3178,10 +3202,7 @@ fn draw_overlays(
             .into_iter()
             .map(|h| handle_screen_pos(state, rect, bounds, placement, h))
             .collect();
-            painter.add(egui::Shape::closed_line(
-                corners,
-                Stroke::new(1.0, Theme::accent_edge()),
-            ));
+            painter.add(egui::Shape::closed_line(corners, Stroke::new(1.0, edge)));
         }
 
         // Handles ride the rotation too, so they stay on the frame's own
@@ -3191,11 +3212,7 @@ fn draw_overlays(
         // selection was the faintest thing on the page.
         let h = Theme::HANDLE_SIZE;
         for (_, pos) in handle_positions(state, rect) {
-            painter.rect_filled(
-                Rect::from_center_size(pos, egui::vec2(h, h)),
-                0.0,
-                Theme::accent_edge(),
-            );
+            painter.rect_filled(Rect::from_center_size(pos, egui::vec2(h, h)), 0.0, edge);
         }
 
         // The reference point every transform resolves about: a small thin x.
@@ -3208,7 +3225,7 @@ fn draw_overlays(
         // safe place to show a mode is where the user is already looking.
         let c = to_screen(placement.apply(state.anchor.in_rect(bounds)));
         let arm = Theme::REFERENCE_MARK;
-        let hair = Stroke::new(1.0, Theme::accent_edge());
+        let hair = Stroke::new(1.0, edge);
         painter.line_segment([c - egui::vec2(arm, arm), c + egui::vec2(arm, arm)], hair);
         painter.line_segment([c - egui::vec2(arm, -arm), c + egui::vec2(arm, -arm)], hair);
     }

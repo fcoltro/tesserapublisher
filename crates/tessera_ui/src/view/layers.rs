@@ -32,6 +32,9 @@ const ROW: f32 = 26.0;
 /// How wide the eye and the padlock are.
 const SWITCH: f32 = 24.0;
 
+/// The side of a layer's colour chip.
+const CHIP: f32 = 10.0;
+
 /// Room kept at the right for the object count.
 const COUNT: f32 = 62.0;
 
@@ -377,6 +380,7 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
         return out;
     };
     let (visible, locked, name) = (layer.visible, layer.locked, layer.name.clone());
+    let colour = layer.colour;
     let count = layer.frames.len();
     let renaming = state.layers_window.renaming == Some(id);
 
@@ -399,10 +403,16 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
     // The zones, laid out left to right.
     let eye = Rect::from_min_size(rect.min, Vec2::new(SWITCH, ROW));
     let lock = eye.translate(Vec2::new(SWITCH, 0.0));
+    // The layer's colour, the one its selections are drawn in: a chip before
+    // the name, as InDesign has it, and a click steps to the next colour.
+    let chip = Rect::from_center_size(
+        egui::pos2(lock.right() + CHIP / 2.0 + 2.0, rect.center().y),
+        Vec2::splat(CHIP),
+    );
     let text = Rect::from_min_max(
-        egui::pos2(lock.right() + 4.0, rect.top()),
+        egui::pos2(chip.right() + 6.0, rect.top()),
         egui::pos2(
-            (rect.right() - COUNT).max(lock.right() + 24.0),
+            (rect.right() - COUNT).max(chip.right() + 24.0),
             rect.bottom(),
         ),
     );
@@ -476,6 +486,17 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
         };
         crate::icons::paint(&painter, zone, icon, tint);
     }
+
+    let [r, g, b] = colour.rgb();
+    painter.rect_filled(chip, 2.0, egui::Color32::from_rgb(r, g, b));
+    let chip_node = ui.interact(chip, response.id.with("colour"), egui::Sense::empty());
+    chip_node.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            ui.is_enabled(),
+            format!("Layer colour: {}", colour.label()),
+        )
+    });
 
     if !renaming {
         painter.with_clip_rect(text).text(
@@ -562,6 +583,12 @@ fn row(ui: &mut Ui, state: &mut TesseraApp, id: LayerId, active: bool) -> Outcom
                 Some(Touched::Command(Box::new(Command::SetLayerLocked {
                     id,
                     locked: !locked,
+                })))
+            }
+            Some(p) if chip.expand(3.0).contains(p) => {
+                Some(Touched::Command(Box::new(Command::SetLayerColour {
+                    id,
+                    colour: colour.next(),
                 })))
             }
             _ => Some(Touched::Activate),

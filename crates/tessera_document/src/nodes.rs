@@ -289,6 +289,10 @@ impl Frame {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Layer {
     pub name: String,
+    /// The colour its selections are drawn in. `serde(default)`: a layer
+    /// saved before layers had colours is the first one, blue.
+    #[serde(default)]
+    pub colour: LayerColour,
     pub visible: bool,
     /// A locked layer's frames cannot be selected or moved. Hiding a layer
     /// makes its frames unselectable too: a frame you cannot see but can still
@@ -298,11 +302,90 @@ pub struct Layer {
     pub frames: Vec<FrameId>,
 }
 
+/// The colour a layer's selections are drawn in.
+///
+/// InDesign gives every layer one, so a selected frame says which layer it is
+/// on without the Layers panel being open — the one question a selection on a
+/// page of several layers leaves unanswered. New layers take them in turn.
+///
+/// Every one clears 3:1 against white paper, where selections are mostly
+/// drawn: InDesign's own yellow and light cyan do not, and a selection that
+/// cannot be seen on the page is the one thing it must not be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum LayerColour {
+    #[default]
+    Blue,
+    Red,
+    Green,
+    Violet,
+    Orange,
+    Magenta,
+    Teal,
+    Brown,
+    Grey,
+}
+
+impl LayerColour {
+    pub const ALL: [Self; 9] = [
+        Self::Blue,
+        Self::Red,
+        Self::Green,
+        Self::Violet,
+        Self::Orange,
+        Self::Magenta,
+        Self::Teal,
+        Self::Brown,
+        Self::Grey,
+    ];
+
+    /// The `n`th in turn, round again after the last.
+    pub fn nth(n: usize) -> Self {
+        Self::ALL[n % Self::ALL.len()]
+    }
+
+    /// The one after this, for stepping through them.
+    pub fn next(self) -> Self {
+        let at = Self::ALL.iter().position(|c| *c == self).unwrap_or(0);
+        Self::nth(at + 1)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Blue => "Blue",
+            Self::Red => "Red",
+            Self::Green => "Green",
+            Self::Violet => "Violet",
+            Self::Orange => "Orange",
+            Self::Magenta => "Magenta",
+            Self::Teal => "Teal",
+            Self::Brown => "Brown",
+            Self::Grey => "Grey",
+        }
+    }
+
+    /// As sRGB bytes. Blue is the interface's own accent, so a one-layer
+    /// document looks as it always did.
+    pub fn rgb(self) -> [u8; 3] {
+        match self {
+            Self::Blue => [0x5B, 0x8D, 0xEF],
+            Self::Red => [0xD9, 0x30, 0x25],
+            Self::Green => [0x1E, 0x8E, 0x3E],
+            Self::Violet => [0x8E, 0x44, 0xD8],
+            Self::Orange => [0xC4, 0x5A, 0x0A],
+            Self::Magenta => [0xC2, 0x18, 0x5B],
+            Self::Teal => [0x00, 0x80, 0x7A],
+            Self::Brown => [0x8D, 0x5A, 0x33],
+            Self::Grey => [0x6E, 0x6E, 0x6E],
+        }
+    }
+}
+
 impl Layer {
     /// A new, empty, visible, unlocked layer.
     pub fn named(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            colour: LayerColour::default(),
             visible: true,
             locked: false,
             frames: Vec::new(),
@@ -870,6 +953,46 @@ pub struct Spread {
 
 #[cfg(test)]
 mod tests {
+
+    /// WCAG relative luminance of an sRGB colour.
+    fn luminance([r, g, b]: [u8; 3]) -> f64 {
+        let channel = |c: u8| {
+            let c = f64::from(c) / 255.0;
+            if c <= 0.03928 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+    }
+
+    #[test]
+    fn every_layer_colour_can_be_seen_on_white_paper() {
+        // Selections are drawn on the page, and a selection that cannot be
+        // seen is the one thing it must not be: 3:1, the line-art minimum.
+        for colour in LayerColour::ALL {
+            let ratio = 1.05 / (luminance(colour.rgb()) + 0.05);
+            assert!(ratio >= 3.0, "{} is {ratio:.2}:1 on white", colour.label());
+        }
+    }
+
+    #[test]
+    fn stepping_through_the_colours_comes_round_again() {
+        let mut colour = LayerColour::default();
+        for _ in 0..LayerColour::ALL.len() {
+            colour = colour.next();
+        }
+        assert_eq!(colour, LayerColour::default());
+    }
+
+    #[test]
+    fn a_layer_saved_before_layers_had_colours_is_blue() {
+        let layer: Layer =
+            serde_json::from_str(r#"{"name":"Old","visible":true,"locked":false,"frames":[]}"#)
+                .expect("reads");
+        assert_eq!(layer.colour, LayerColour::Blue);
+    }
 
     #[test]
     fn no_two_paper_sizes_are_the_same_paper() {
