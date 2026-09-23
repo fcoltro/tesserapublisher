@@ -3,13 +3,13 @@
 //! Thumbnails are **schematic**, drawn with egui's painter from the document:
 //! each frame becomes a filled rectangle in its own colour. A real thumbnail
 //! would mean rendering every spread to a texture and keeping those textures in
-//! step with the document, which is a cache with an invalidation rule — and at
+//! step with the document, which is a cache with an invalidation rule â€” and at
 //! the size these are drawn, the schematic says the same thing. It also costs
 //! no GPU and cannot fall behind, because it is redrawn from the document the
 //! canvas is drawn from.
 //!
 //! **A page is drawn as a page, not a spread as a rectangle.** Every spread
-//! occupies the same slot — two page-widths across when pages face — and each
+//! occupies the same slot â€” two page-widths across when pages face â€” and each
 //! page is painted in its own column with a gap at the fold. That makes three
 //! things legible that were not: how many pages a spread holds, which side of
 //! the fold each one is on, and that page one is a recto sitting to the right
@@ -23,14 +23,24 @@ use crate::app::TesseraApp;
 use crate::command::{Command, apply};
 use crate::theme::Theme;
 
-/// How wide one page is drawn, in screen points.
-const PAGE: f32 = 46.0;
+/// How wide one page is drawn, in screen points: sixty, now that a page
+/// shows what is on it rather than boxes, so a line of type can be told
+/// from a picture at a glance.
+const PAGE: f32 = 60.0;
 
 /// The gap at the fold, so two facing pages read as two sheets.
 const FOLD: f32 = 2.0;
 
 /// How much room the label under a spread takes.
 const LABEL: f32 = 16.0;
+
+/// Where [`crate::view::show`] leaves the GPU for the thumbnails.
+pub(crate) const GPU: &str = "tessera-gpu";
+
+/// How many thumbnails may be rendered in one frame. The rest keep the one
+/// they had and are drawn again on the next, so a keystroke in a hundred-page
+/// document redraws two pages' previews, not a hundred.
+const RENDERS_PER_FRAME: u8 = 2;
 
 /// How thick the line marking where a dragged page would land is.
 const MARKER: f32 = 2.0;
@@ -41,7 +51,7 @@ const LIST: f32 = 260.0;
 /// The section, as it sits in the rail.
 ///
 /// The buttons come last but take a fixed height of their own, so the list
-/// above them can grow without the strip growing with it — the waste the
+/// above them can grow without the strip growing with it â€” the waste the
 /// floating panel was reported for.
 pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
     actions(ui, state);
@@ -62,7 +72,7 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
 ///
 /// InDesign's arrangement: parents are their own short list at the top of the
 /// panel, with the document's pages under them. A parent is **edited in
-/// isolation** — double-clicking one opens it on its own canvas — rather than
+/// isolation** â€” double-clicking one opens it on its own canvas â€” rather than
 /// sitting in the scroll a person is trying to lay out in.
 fn masters(ui: &mut Ui, state: &mut TesseraApp) {
     let masters = state.active().document().master_order.clone();
@@ -234,6 +244,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
     // Decided while drawing, acted on afterwards: moving a page mid-walk would
     // renumber what is still being drawn.
     let mut turn_to: Option<usize> = None;
+    let mut budget = RENDERS_PER_FRAME;
     let mut dragging: Option<PageId> = None;
     let mut dropped = false;
 
@@ -246,13 +257,10 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
         let sheet = egui::Rect::from_min_size(rect.min, slot);
         let first_slot = slots.len();
 
-        for (column, page) in state
-            .active()
-            .document()
-            .pages_of(*spread)
-            .iter()
-            .enumerate()
-        {
+        // Collected first: a thumbnail may lay the document out, which needs
+        // the application while the loop would otherwise still hold it.
+        let pages: Vec<PageId> = state.active().document().pages_of(*spread).to_vec();
+        for (column, page) in pages.iter().enumerate() {
             let side = column_of(state, *spread, column, facing);
             let at = egui::Rect::from_min_size(
                 sheet.min + egui::vec2(side * (PAGE + FOLD), 0.0),
@@ -268,7 +276,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
                 )
                 .on_hover_text("Click to go to this page. Drag to reorder.");
 
-            thumbnail(ui, state, *page, at, index == current);
+            thumbnail(ui, state, *page, at, index == current, &mut budget);
 
             if response.dragged() {
                 dragging = Some(*page);
@@ -363,7 +371,7 @@ fn marker(at: usize, slots: &[egui::Rect]) -> Option<egui::Rect> {
 /// A spread of one page is not a spread of two with a hole in it: page one is
 /// a recto and belongs on the right of the fold, a final lone page is a verso
 /// and belongs on the left. The document already positions them that way, so
-/// this reads the answer off the geometry rather than deciding it again — two
+/// this reads the answer off the geometry rather than deciding it again â€” two
 /// places deciding the same thing is two places to disagree.
 fn column_of(state: &TesseraApp, spread: SpreadId, column: usize, facing: bool) -> f32 {
     if !facing {
@@ -380,14 +388,126 @@ fn column_of(state: &TesseraApp, spread: SpreadId, column: usize, facing: bool) 
 }
 
 /// One page, drawn as its contents blocked in.
-fn thumbnail(ui: &Ui, state: &TesseraApp, page: PageId, at: egui::Rect, current: bool) {
-    let doc = state.active().document();
-    let Some(bounds) = doc.pages.get(page).map(|p| p.bounds) else {
+/// A page in the panel: the page itself, drawn by the canvas's renderer, at
+/// its own proportions and as large as the slot allows â€” InDesign's
+/// thumbnail, what is on the page rather than boxes where things are. Without
+/// a GPU (a test, a machine with none) the boxes are drawn instead.
+fn thumbnail(
+    ui: &Ui,
+    state: &mut TesseraApp,
+    page: PageId,
+    at: egui::Rect,
+    current: bool,
+    budget: &mut u8,
+) {
+    let Some(bounds) = state.active().document().pages.get(page).map(|p| p.bounds) else {
         return;
     };
-    let scale = f64::from(at.width()) / bounds.width.max(1.0);
-
+    let fit = (f64::from(at.width()) / bounds.width.max(1.0))
+        .min(f64::from(at.height()) / bounds.height.max(1.0));
+    let sheet = egui::Rect::from_min_size(
+        at.min,
+        egui::vec2((bounds.width * fit) as f32, (bounds.height * fit) as f32),
+    );
     let painter = ui.painter_at(at);
+    if !rendered(ui, state, page, bounds, sheet, budget, &painter) {
+        schematic(&painter, state, page, bounds, sheet);
+    }
+    painter.rect_stroke(
+        sheet,
+        1.0,
+        egui::Stroke::new(
+            if current { 2.0 } else { 1.0 },
+            if current {
+                Theme::accent()
+            } else {
+                Theme::border()
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+}
+
+/// The page, rendered, into `sheet`. `false` when there is no GPU to render
+/// on, and nothing was drawn.
+fn rendered(
+    ui: &Ui,
+    state: &mut TesseraApp,
+    page: PageId,
+    bounds: tessera_geometry::DocRect,
+    sheet: egui::Rect,
+    budget: &mut u8,
+    painter: &egui::Painter,
+) -> bool {
+    use std::hash::{Hash, Hasher};
+    let Some(gpu) = ui
+        .ctx()
+        .data(|d| d.get_temp::<eframe::egui_wgpu::RenderState>(egui::Id::new(GPU)))
+    else {
+        return false;
+    };
+    let ppp = ui.ctx().pixels_per_point();
+    let size = (
+        (sheet.width() * ppp).round().max(1.0) as u32,
+        (sheet.height() * ppp).round().max(1.0) as u32,
+    );
+    // Per document and page: two open documents can hold pages with the same
+    // key, and one's thumbnail must not stand in for the other's.
+    let key = {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (state.active, page).hash(&mut hasher);
+        hasher.finish()
+    };
+    let revision = state.active().document().revision();
+    let zoom = f64::from(size.0) / bounds.width.max(1.0);
+    let drawn = crate::view::vello_host::thumbnail(&gpu, key, revision, size, *budget > 0, || {
+        let resolved = state.resolve_active().clone();
+        tessera_render::scene::build_scene_with_images(
+            &resolved,
+            tessera_geometry::ViewTransform {
+                pan: tessera_geometry::DocPoint {
+                    x: bounds.x,
+                    y: bounds.y,
+                },
+                zoom,
+            },
+            tessera_render::scene::SceneOptions {
+                rules: false,
+                clip: Some(vec![bounds]),
+            },
+            &mut state.images,
+        )
+    });
+    let Some(drawn) = drawn else {
+        return false;
+    };
+    if drawn.rendered {
+        *budget = budget.saturating_sub(1);
+    }
+    if !drawn.current {
+        // Its turn comes on a later frame; ask for one.
+        ui.ctx().request_repaint();
+    }
+    painter.image(
+        drawn.texture,
+        sheet,
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        egui::Color32::WHITE,
+    );
+    true
+}
+
+/// The page as boxes: each object a block of its fill colour, for when there
+/// is no GPU to draw the page itself.
+fn schematic(
+    painter: &egui::Painter,
+    state: &TesseraApp,
+    page: PageId,
+    bounds: tessera_geometry::DocRect,
+    at: egui::Rect,
+) {
+    let doc = state.active().document();
+    let scale = f64::from(at.width()) / bounds.width.max(1.0);
     painter.rect_filled(at, 1.0, egui::Color32::WHITE);
 
     // What stands on the page, in paint order. Layers span the document, so
@@ -430,20 +550,6 @@ fn thumbnail(ui: &Ui, state: &TesseraApp, page: PageId, at: egui::Rect, current:
             ),
         );
     }
-
-    painter.rect_stroke(
-        at,
-        1.0,
-        egui::Stroke::new(
-            if current { 2.0 } else { 1.0 },
-            if current {
-                Theme::accent()
-            } else {
-                Theme::border()
-            },
-        ),
-        egui::StrokeKind::Inside,
-    );
 }
 
 /// Add, duplicate and delete: a strip of fixed height at the foot.
@@ -471,12 +577,12 @@ fn actions(ui: &mut Ui, state: &mut TesseraApp) {
     });
 }
 
-/// "4" or "2–3", by where the spread's pages fall in the reading order.
+/// "4" or "2â€“3", by where the spread's pages fall in the reading order.
 fn page_numbers(state: &TesseraApp, spread: SpreadId) -> Option<String> {
     let doc = state.active().document();
     let pages = doc.pages_of(spread);
 
-    // As the section writes it — "iv", "A-12" — because that is what the
+    // As the section writes it â€” "iv", "A-12" â€” because that is what the
     // folio on the page says, and a panel that said "4" under a page printed
     // "iv" would be describing a different book.
     let first = doc.page_label(*pages.first()?)?;
@@ -484,7 +590,7 @@ fn page_numbers(state: &TesseraApp, spread: SpreadId) -> Option<String> {
         return Some(first);
     }
     let last = doc.page_label(*pages.last()?)?;
-    Some(format!("{first}–{last}"))
+    Some(format!("{first}â€“{last}"))
 }
 
 #[cfg(test)]
@@ -509,7 +615,7 @@ mod tests {
     #[test]
     fn the_window_menu_lists_the_panels_there_are() {
         // The menu bar is generated from the action list, so this is what
-        // proves a Window menu appears at all — it was the last of the three
+        // proves a Window menu appears at all â€” it was the last of the three
         // milestone 1.5 named as absent for having no commands. Exact, so a
         // panel cannot be added to the menu without being added here: an entry
         // for an unbuilt panel is the lie the previous codebase told often.
@@ -553,7 +659,7 @@ mod tests {
         assert_eq!(page_numbers(&state, order[0]).as_deref(), Some("1"));
         assert_eq!(
             page_numbers(&state, order[1]).as_deref(),
-            Some("2–3"),
+            Some("2â€“3"),
             "the pair reads as a range"
         );
     }

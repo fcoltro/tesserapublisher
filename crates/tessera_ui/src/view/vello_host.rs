@@ -115,6 +115,125 @@ pub fn prepare_target(
         .map(|r| r.texture_id)
 }
 
+/// The page thumbnails: small targets of their own, drawn by the canvas's
+/// renderer on the canvas's device, each kept until its document moves on.
+#[derive(Default)]
+pub struct Thumbnails {
+    held: std::collections::HashMap<u64, Thumb>,
+}
+
+struct Thumb {
+    // Held so they stay valid: egui samples them until they are replaced.
+    _texture: wgpu::Texture,
+    _view: wgpu::TextureView,
+    id: egui::TextureId,
+    size: (u32, u32),
+    revision: u64,
+}
+
+/// What [`thumbnail`] has to show.
+pub struct Thumbnail {
+    pub texture: egui::TextureId,
+    /// Drawn from the document as it is now.
+    pub current: bool,
+    /// Drawn on this call, which is what the caller's budget counts.
+    pub rendered: bool,
+}
+
+/// The thumbnail named `key`, `size` device pixels, for document `revision`.
+///
+/// Rendered from `scene` — built only if it is needed — when what is held is
+/// of another revision or size and `may_render` allows; otherwise the one held
+/// is handed back as it is, stale or not, so a page never goes blank while it
+/// waits its turn. `None` when there is nothing held and no render allowed, or
+/// no renderer.
+pub fn thumbnail(
+    state: &egui_wgpu::RenderState,
+    key: u64,
+    revision: u64,
+    size: (u32, u32),
+    may_render: bool,
+    scene: impl FnOnce() -> Scene,
+) -> Option<Thumbnail> {
+    let mut egui_renderer = state.renderer.write();
+    let mut thumbnails = egui_renderer
+        .callback_resources
+        .remove::<Thumbnails>()
+        .unwrap_or_default();
+    let answer = (|| {
+        let held = thumbnails.held.get(&key);
+        if let Some(t) = held
+            && t.size == size
+            && t.revision == revision
+        {
+            return Some(Thumbnail {
+                texture: t.id,
+                current: true,
+                rendered: false,
+            });
+        }
+        if !may_render {
+            return held.map(|t| Thumbnail {
+                texture: t.id,
+                current: false,
+                rendered: false,
+            });
+        }
+        let (texture, view) = create_target(&state.device, size.0, size.1);
+        let id = match held {
+            Some(t) => {
+                egui_renderer.update_egui_texture_from_wgpu_texture(
+                    &state.device,
+                    &view,
+                    wgpu::FilterMode::Linear,
+                    t.id,
+                );
+                t.id
+            }
+            None => egui_renderer.register_native_texture(
+                &state.device,
+                &view,
+                wgpu::FilterMode::Linear,
+            ),
+        };
+        let scene = scene();
+        let vello = egui_renderer.callback_resources.get::<VelloResources>()?;
+        let mut renderer = vello.renderer.lock().ok()?;
+        if let Err(e) = renderer.render_to_texture(
+            &state.device,
+            &state.queue,
+            &scene,
+            &view,
+            &RenderParams {
+                base_color: vello::peniko::color::AlphaColor::new([1.0, 1.0, 1.0, 1.0]),
+                width: size.0,
+                height: size.1,
+                antialiasing_method: AaConfig::Area,
+            },
+        ) {
+            eprintln!("tessera: thumbnail render failed: {e:?}");
+        }
+        drop(renderer);
+        thumbnails.held.insert(
+            key,
+            Thumb {
+                _texture: texture,
+                _view: view,
+                id,
+                size,
+                revision,
+            },
+        );
+        Some(Thumbnail {
+            texture: id,
+            current: true,
+            rendered: true,
+        })
+    })();
+    egui_renderer.callback_resources.insert(thumbnails);
+    answer
+}
+
 pub struct VelloCallback {
     pub scene: Scene,
     pub width: u32,

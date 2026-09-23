@@ -101,6 +101,12 @@ pub(crate) fn modal_open(state: &TesseraApp) -> bool {
 
 /// The whole window, outermost first.
 pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
+    // The GPU, where a panel can reach it: the page thumbnails render on the
+    // canvas's device, and a panel is given a `Ui`, not the frame.
+    if let Some(render_state) = frame.wgpu_render_state() {
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(egui::Id::new(pages::GPU), render_state.clone()));
+    }
     // Before anything is drawn, so a theme changed in the preferences window
     // takes effect on the frame it was changed in rather than the one after.
     crate::theme::follow(ui.ctx(), state.prefs.theme);
