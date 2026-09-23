@@ -16,9 +16,14 @@
 //! and the socket's thread writes the answer back. A request wakes the
 //! window, so a still canvas is not a silent one.
 //!
-//! Loopback only, and no secret: any process on this machine that can
-//! reach the port can drive the document, which is the same trust a local
-//! script has always had over a running application's files.
+//! Loopback only, **and a secret**. The file holds the port and a random
+//! token made when the window starts, and a connection's first line must be
+//! that token or it is closed unanswered. "The same trust a local script
+//! has" was the argument for none, and it did not hold twice over: a web
+//! page can post to a loopback port, its HTTP headers drawing parse errors
+//! while the JSON in its body ran; and every account on the machine shares
+//! loopback. The file is in its owner's own settings folder, which is what
+//! makes knowing the token mean being them.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -43,6 +48,28 @@ pub struct Listener {
     port_file: PathBuf,
 }
 
+/// A secret for this window's socket: 128 bits, as hex.
+///
+/// From the standard library's randomly keyed hasher rather than a new
+/// dependency: its keys come from the operating system's random source once
+/// per process, and hashing the moment and the process through them gives a
+/// value no other process can reproduce.
+fn fresh_token() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let half = |salt: u64| {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u64(salt);
+        hasher.write_u128(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos()),
+        );
+        hasher.write_u32(std::process::id());
+        hasher.finish()
+    };
+    format!("{:016x}{:016x}", half(1), half(2))
+}
+
 impl Listener {
     /// Listen on a loopback port the system picks, record it in `port_file`,
     /// and call `wake` whenever a request arrives so the frame loop runs.
@@ -52,12 +79,13 @@ impl Listener {
     ) -> std::io::Result<Self> {
         let socket = TcpListener::bind("127.0.0.1:0")?;
         let port = socket.local_addr()?.port();
+        let token = fresh_token();
         if let Some(dir) = port_file.parent() {
             std::fs::create_dir_all(dir)?;
         }
         {
             let _registry = registry_lock(&port_file)?;
-            std::fs::write(&port_file, port.to_string())?;
+            std::fs::write(&port_file, format!("{port}\n{token}\n"))?;
         }
 
         let (tx, requests) = channel::<Pending>();
@@ -69,7 +97,8 @@ impl Listener {
                     let Ok(stream) = stream else { continue };
                     let tx = tx.clone();
                     let wake = wake.clone();
-                    std::thread::spawn(move || serve_connection(stream, &tx, &*wake));
+                    let token = token.clone();
+                    std::thread::spawn(move || serve_connection(stream, &token, &tx, &*wake));
                 }
             })?;
         Ok(Self {
@@ -123,13 +152,21 @@ fn registry_lock(port_file: &Path) -> std::io::Result<std::fs::File> {
     Ok(lock)
 }
 
-/// One client on the window's socket: each line crosses to the UI thread
-/// and its reply comes back, in order, until the client hangs up.
-fn serve_connection(stream: TcpStream, tx: &Sender<Pending>, wake: &dyn Fn()) {
+/// One client on the window's socket: its first line must be the token, and
+/// then each line crosses to the UI thread and its reply comes back, in
+/// order, until the client hangs up. A wrong first line — an HTTP request
+/// line, anything — closes the connection with nothing said.
+fn serve_connection(stream: TcpStream, token: &str, tx: &Sender<Pending>, wake: &dyn Fn()) {
     let Ok(mut out) = stream.try_clone() else {
         return;
     };
-    let reader = BufReader::new(stream);
+    let mut reader = BufReader::new(stream);
+    let mut first = String::new();
+    // Read at most a token's worth and a little: a peer that sends one
+    // endless line is not given the memory to hold it.
+    if (&mut reader).take(256).read_line(&mut first).is_err() || first.trim() != token {
+        return;
+    }
     for line in reader.lines() {
         let Ok(line) = line else { break };
         let (reply_tx, reply_rx) = channel();
@@ -157,24 +194,47 @@ fn serve_connection(stream: TcpStream, tx: &Sender<Pending>, wake: &dyn Fn()) {
 
 /// The port a running window recorded, if the file is there and readable.
 pub fn recorded_port(port_file: &Path) -> Option<u16> {
+    recorded(port_file).map(|(port, _)| port)
+}
+
+/// The port and the token a running window recorded.
+pub fn recorded(port_file: &Path) -> Option<(u16, String)> {
     let _registry = registry_lock(port_file).ok()?;
-    read_port(port_file)
+    let text = std::fs::read_to_string(port_file).ok()?;
+    let mut lines = text.lines();
+    let port = lines.next()?.trim().parse().ok()?;
+    let token = lines.next()?.trim().to_string();
+    Some((port, token))
 }
 
 fn read_port(port_file: &Path) -> Option<u16> {
-    std::fs::read_to_string(port_file).ok()?.trim().parse().ok()
+    std::fs::read_to_string(port_file)
+        .ok()?
+        .lines()
+        .next()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 /// Carry lines from `input` to the window on `port` and its replies to
-/// `output`, until either end closes. `false` — with nothing consumed —
-/// when nothing answers on the port.
-pub fn relay(port: u16, input: impl Read + Send + 'static, output: impl Write) -> bool {
+/// `output`, until either end closes, having first said `token`. `false` —
+/// with nothing consumed — when nothing answers on the port.
+pub fn relay(
+    port: u16,
+    token: &str,
+    input: impl Read + Send + 'static,
+    output: impl Write,
+) -> bool {
     let Ok(stream) = TcpStream::connect(("127.0.0.1", port)) else {
         return false;
     };
     let Ok(mut to_window) = stream.try_clone() else {
         return false;
     };
+    if writeln!(to_window, "{token}").is_err() || to_window.flush().is_err() {
+        return false;
+    }
     // Up: the client's lines to the window, on a thread of their own, so a
     // slow reply never blocks the next request from being sent.
     std::thread::spawn(move || {
@@ -206,8 +266,8 @@ pub fn relay(port: u16, input: impl Read + Send + 'static, output: impl Write) -
 /// `tessera_app --mcp`: relay to the window named in `port_file` when one
 /// answers, and serve a headless Tessera on stdio otherwise.
 pub fn serve_or_relay_stdio(port_file: &Path) {
-    if let Some(port) = recorded_port(port_file)
-        && relay(port, std::io::stdin(), std::io::stdout())
+    if let Some((port, token)) = recorded(port_file)
+        && relay(port, &token, std::io::stdin(), std::io::stdout())
     {
         return;
     }
@@ -262,10 +322,12 @@ mod tests {
 
         let mut state = TesseraApp::headless();
         let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (_, token) = recorded(&file).expect("the file names a port and a token");
         let client = {
             let (port, done) = (listener.port(), done.clone());
             std::thread::spawn(move || {
                 let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+                writeln!(stream, "{token}").unwrap();
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
                 let mut reply = String::new();
                 for (i, request) in [
@@ -314,7 +376,8 @@ mod tests {
     #[test]
     fn the_relay_carries_lines_both_ways_and_says_when_nothing_answers() {
         let file = port_file();
-        let listener = Listener::start(file, || {}).expect("a port");
+        let listener = Listener::start(file.clone(), || {}).expect("a port");
+        let (_, token) = recorded(&file).expect("a token");
         let mut state = TesseraApp::headless();
         let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
@@ -325,7 +388,7 @@ mod tests {
                 b"{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"ping\"}\n".to_vec(),
             );
             let mut output = Vec::new();
-            let ok = relay(port, input, &mut output);
+            let ok = relay(port, &token, input, &mut output);
             done_flag.store(true, Ordering::SeqCst);
             (ok, String::from_utf8(output).unwrap())
         });
@@ -339,6 +402,56 @@ mod tests {
             let s = TcpListener::bind("127.0.0.1:0").unwrap();
             s.local_addr().unwrap().port()
         };
-        assert!(!relay(dead, std::io::Cursor::new(Vec::new()), Vec::new()));
+        assert!(!relay(
+            dead,
+            "",
+            std::io::Cursor::new(Vec::new()),
+            Vec::new()
+        ));
+    }
+
+    /// Send `first` and then a request that would make a frame, and report
+    /// whether any reply came and whether the frame was made.
+    fn stranger(first: &str) -> (String, usize) {
+        let file = port_file();
+        let listener = Listener::start(file, || {}).expect("a port");
+        let mut state = TesseraApp::headless();
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (port, done_flag) = (listener.port(), done.clone());
+        let first = first.to_string();
+        let client = std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+            let request = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add_rectangle","arguments":{"x":0,"y":0,"width":10,"height":10}}}"#;
+            let _ = writeln!(stream, "{first}{request}");
+            let _ = stream.flush();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_millis(300)))
+                .unwrap();
+            let mut reply = String::new();
+            let _ = BufReader::new(stream).read_line(&mut reply);
+            done_flag.store(true, Ordering::SeqCst);
+            reply
+        });
+        pump_until(&listener, &mut state, &done);
+        let reply = client.join().expect("the client thread");
+        (reply, state.active().document().frames.len())
+    }
+
+    #[test]
+    fn a_connection_without_the_token_is_closed_unanswered() {
+        let (reply, frames) = stranger("");
+        assert!(reply.is_empty(), "a stranger was answered: {reply}");
+        assert_eq!(frames, 0, "a stranger's request ran");
+    }
+
+    #[test]
+    fn a_web_page_posting_to_the_port_runs_nothing() {
+        // What a browser sends for a text/plain fetch: headers, a blank
+        // line, and a body that is one JSON line. Before the token, each
+        // header drew a parse error and the body ran.
+        let (reply, frames) =
+            stranger("POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: text/plain\r\n\r\n");
+        assert!(reply.is_empty(), "the page was answered: {reply}");
+        assert_eq!(frames, 0, "the page's request ran");
     }
 }
