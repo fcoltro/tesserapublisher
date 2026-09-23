@@ -213,7 +213,7 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
         "Position and size are in the toolbar above the page.",
     );
     ui.horizontal(|ui| {
-        fill_stroke_proxy(ui, state, id, &frame);
+        fill_stroke_proxy(ui, state, id, &frame, 36.0);
         ui.label(
             egui::RichText::new("Fill & stroke")
                 .small()
@@ -263,21 +263,57 @@ fn context_heading(ui: &mut Ui, title: &str, description: &str) {
     ui.add_space(Theme::space_1());
 }
 
-/// The fill and stroke proxy: two overlapping swatches with their three keys.
-///
-/// The arrangement every drawing tool since MacDraw has used, and the one
-/// place InDesign's design is worth copying exactly — a shape so familiar that
-/// it needs no label.
-fn fill_stroke_proxy(
+/// The control bar's appearance: the fill and stroke proxy, then the object's
+/// opacity — what InDesign's control bar carries after the geometry, and what
+/// LayoutPro's bar ends with. Edits go through the same commands as the
+/// panel's, so the two cannot disagree about what a change means.
+pub(crate) fn appearance_row(
     ui: &mut Ui,
     state: &mut TesseraApp,
     id: tessera_document::ids::FrameId,
     frame: &tessera_document::nodes::Frame,
 ) {
-    const SWATCH: f32 = 26.0;
-    const OFFSET: f32 = 10.0;
+    fill_stroke_proxy(ui, state, id, frame, crate::view::control::PROXY);
+    crate::view::control::separator(ui);
+    crate::view::control::glyph(ui, crate::icons::Icon::Opacity, "Opacity");
+    let mut blend = frame.blend;
+    let mut percent = blend.alpha() * 100.0;
+    if ui
+        .add(
+            egui::DragValue::new(&mut percent)
+                .range(0.0..=100.0)
+                .speed(0.5)
+                .suffix("%")
+                .fixed_decimals(0),
+        )
+        .changed()
+    {
+        blend.opacity = percent / 100.0;
+        apply(state, Command::SetBlending { id, blend });
+    }
+}
 
-    let (rect, _) = ui.allocate_exact_size(Vec2::splat(SWATCH + OFFSET), Sense::hover());
+/// The fill and stroke proxy: two overlapping swatches with their three keys.
+///
+/// The arrangement every drawing tool since MacDraw has used, and the one
+/// place InDesign's design is worth copying exactly — a shape so familiar that
+/// it needs no label.
+///
+/// `side` is the whole proxy's height: the panel has room for 36 points, the
+/// control bar for its own row.
+fn fill_stroke_proxy(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::FrameId,
+    frame: &tessera_document::nodes::Frame,
+    side: f32,
+) {
+    // The stroke square sits down and right of the fill by a little over a
+    // third of its side, which is what reads as "behind" at any size.
+    let offset = (side * 0.28).round();
+    let swatch = side - offset;
+
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(swatch + offset), Sense::hover());
     let painter = ui.painter();
 
     let to_colour = |c: &Color| {
@@ -293,8 +329,8 @@ fn fill_stroke_proxy(
     // Stroke behind, fill in front — the stroke's swatch is a ring, so the
     // fill sitting over it still shows both.
     let stroke_rect =
-        egui::Rect::from_min_size(rect.min + Vec2::splat(OFFSET), Vec2::splat(SWATCH));
-    let fill_rect = egui::Rect::from_min_size(rect.min, Vec2::splat(SWATCH));
+        egui::Rect::from_min_size(rect.min + Vec2::splat(offset), Vec2::splat(swatch));
+    let fill_rect = egui::Rect::from_min_size(rect.min, Vec2::splat(swatch));
 
     let stroke_colour = frame
         .stroke

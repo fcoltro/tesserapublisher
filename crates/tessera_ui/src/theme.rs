@@ -1068,6 +1068,8 @@ mod tests {
 
     #[test]
     fn applying_the_theme_sets_the_panel_background() {
+        // Held: another test may be switching the palette this reads.
+        let _screen = hold_the_screen();
         let ctx = Context::default();
         apply(&ctx);
         assert_eq!(ctx.global_style().visuals.panel_fill, Theme::panel_bg());
@@ -1075,6 +1077,8 @@ mod tests {
 
     #[test]
     fn applying_the_theme_sets_the_text_colour() {
+        // Held: another test may be switching the palette this reads.
+        let _screen = hold_the_screen();
         let ctx = Context::default();
         apply(&ctx);
         assert_eq!(

@@ -170,6 +170,12 @@ fn object(ui: &mut Ui, state: &mut TesseraApp) {
         return;
     };
     crate::view::panels::transform_row(ui, state, id, &frame);
+    separator(ui);
+    // Read again: a geometry edit above has already been applied this frame.
+    let Some(frame) = state.active().document().frame(id).cloned() else {
+        return;
+    };
+    crate::view::panels::appearance_row(ui, state, id, &frame);
 }
 
 /// A muted caption naming what follows.
