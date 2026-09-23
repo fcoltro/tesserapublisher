@@ -1770,7 +1770,18 @@ licence to pass the font on. See the packaging item.
     cut through by the trim.
   - No colour bar in an RGB export. There are no plates to measure, and a
     printer seeing one would reasonably assume the file was separated.
-- [ ] **Acrobat's output preview**: separations, trim and bleed boxes, and the
+- [x] **Done 2026-09-23, in Acrobat DC's Output Preview, by eye — and it
+  found three faults, fixed the same day.** The output intent reads as
+  CGATS21_CRPC6; trim and bleed boxes stand where they should; no overprint or
+  transparency where there is none. The faults: a spot swatch separated onto
+  no plate (`7e4d6b8`); the printer's marks were a page out, the top edge's on
+  the bottom and the bottom's off the sheet (`4f1c28e`); and default black type
+  was a four-ink rich black (`4947a98`). Re-exported and looked at again:
+  five plates with the spot among them, marks on all four sides, and the type
+  gone with the black plate turned off. Acrobat's own "Font Capture" helper
+  crashed on opening each file (0xc06d007e, a missing library of its own); it
+  is Acrobat's, and was left alone.
+- [x] ~~Acrobat's output preview~~, as it was owed: separations, trim and bleed boxes, and the
   embedded output intent, confirmed by eye. Named in the acceptance sentence
   above and, until now, tracked by nothing — the prose said it was owed and no
   box counted it, so it did not appear anywhere as outstanding. Needs Acrobat
