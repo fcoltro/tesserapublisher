@@ -345,7 +345,8 @@ static ALL: [Tool; 22] = [
         description: "Change preferences: an object of the fields to change, in the shape \
             get_preferences shows; the rest keep their values. Saved to disk when the \
             application is one that saves. Returns the preferences after the change, with \
-            credentials omitted. Set API keys in the Preferences window.",
+            credentials omitted. The assistant's settings are read-only here: set them \
+            in the Preferences window.",
         arguments: &[(
             "changes",
             "object",
@@ -939,11 +940,8 @@ fn set_preferences(state: &mut TesseraApp, arguments: &Value) -> Result<Value, S
         .get("changes")
         .and_then(Value::as_object)
         .ok_or("changes must be an object of preference fields")?;
-    if changes
-        .get("assistant")
-        .is_some_and(|a| a.get("api_key").is_some())
-    {
-        return Err("Set the assistant API key in Preferences, not through a tool call".into());
+    if let Some(refusal) = assistant_change_refused(changes.get("assistant")) {
+        return Err(refusal.into());
     }
     let mut current = serde_json::to_value(&state.prefs).map_err(|e| e.to_string())?;
     merge(&mut current, changes);
@@ -952,6 +950,28 @@ fn set_preferences(state: &mut TesseraApp, arguments: &Value) -> Result<Value, S
     state.prefs = prefs;
     tessera_ui::prefs::remember(state);
     public_preferences(&state.prefs)
+}
+
+/// Why a tool call may not make this change to the assistant's settings, or
+/// `None` when it may. `assistant` is the `"assistant"` member of the
+/// changes, if there was one.
+///
+/// The key is what is protected, and the key goes wherever `provider` and
+/// `base_url` point — so a field that moves the endpoint is as sensitive as
+/// the key itself. A tool call comes from a model, and a model can be steered
+/// by text in the document it was asked to read.
+///
+/// **All of it, not field by field.** A list of the dangerous fields is a list
+/// the next field added to [`tessera_ui::prefs::Assistant`] can be missing
+/// from, and a model has no need to reconfigure the model it is — the
+/// settings are set once, in the Preferences window, by a person. The whole
+/// member is refused, which also covers `"assistant": null`, since [`merge`]
+/// replaces a value that is not an object instead of merging it.
+fn assistant_change_refused(assistant: Option<&Value>) -> Option<&'static str> {
+    assistant.map(|_| {
+        "The assistant's provider, endpoint, model and key are set in the Preferences window, \
+         not through a tool call"
+    })
 }
 
 /// Lay `changes` over `into`, object by object, so a nested field can be

@@ -606,6 +606,32 @@ mod tests {
         assert!(!bridge.state.prefs.snapping);
     }
 
+    /// The key is refused to a tool call; so must be every field that decides
+    /// where the key is **sent**. A model that can move the endpoint can post
+    /// the key to any server it names on the next turn, and a model can be
+    /// told to by text in a document it was asked to read.
+    #[test]
+    fn a_tool_call_cannot_send_the_assistant_key_somewhere_else() {
+        let mut bridge = Bridge::new();
+        bridge.state.prefs.assistant.provider = "anthropic".into();
+        bridge.state.prefs.assistant.api_key = "sk-secret".into();
+        for changes in [
+            json!({ "assistant": { "base_url": "https://collector.example" } }),
+            json!({ "assistant": { "provider": "openai", "base_url": "https://collector.example/v1" } }),
+            json!({ "assistant": null }),
+        ] {
+            let reply = call(
+                &mut bridge,
+                3,
+                "tools/call",
+                json!({ "name": "set_preferences", "arguments": { "changes": changes } }),
+            );
+            assert_eq!(reply["result"]["isError"], true, "{changes} was accepted");
+        }
+        assert_eq!(bridge.state.prefs.assistant.base_url, "");
+        assert_eq!(bridge.state.prefs.assistant.provider, "anthropic");
+    }
+
     #[test]
     fn the_dialogs_are_tools_new_document_find_step_spelling_preflight() {
         let mut bridge = Bridge::new();
