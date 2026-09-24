@@ -278,7 +278,12 @@ pub fn zero_point(ui: &mut Ui, state: &mut TesseraApp) {
         hair,
     );
 
-    if response.double_clicked() {
+    // Enter on the focused square does what a double-click does: there is no
+    // dragging from the keyboard, so putting it back is all a key can mean.
+    let reset_by_key = response.has_focus()
+        && ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Space));
+    let response = crate::icons::reads_as(response, "Zero point", egui::WidgetType::Button, None);
+    if response.double_clicked() || reset_by_key {
         state.ruler_origin = None;
         return;
     }

@@ -110,6 +110,23 @@ fn side(ui: &mut Ui, state: &mut TesseraApp, region: Region) {
 
             edge_target(ui, state, region);
         });
+
+    // egui's splitter takes keyboard focus like any draggable widget and
+    // gives a screen reader nothing to say for it, so NVDA announced it as
+    // "unknown". It is registered under the panel's id with egui's own
+    // suffix; the docked-panel screen reader test notices if that
+    // ever stops being where it is.
+    let handle = egui::Id::new(id).with("__resize");
+    if ui.ctx().read_response(handle).is_some() {
+        let name = match region {
+            Region::Left => "Left dock width",
+            Region::Right => "Right dock width",
+        };
+        ui.ctx().accesskit_node_builder(handle, |node| {
+            node.set_role(egui::accesskit::Role::Splitter);
+            node.set_label(name);
+        });
+    }
 }
 
 /// Whether anything in this stack is open, and so worth room.

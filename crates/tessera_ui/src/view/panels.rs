@@ -5866,13 +5866,22 @@ mod tests {
             .nodes
             .iter()
             .map(|(_, node)| {
-                (
-                    format!("{:?}", node.role()),
-                    node.label().map(ToString::to_string),
-                )
+                // A node Tab can land on whose role egui never set: NVDA says
+                // "unknown" for it, named or not.
+                let role = if node.role() == egui::accesskit::Role::Unknown
+                    && node.supports_action(egui::accesskit::Action::Focus)
+                {
+                    FOCUSABLE_UNKNOWN.to_string()
+                } else {
+                    format!("{:?}", node.role())
+                };
+                (role, node.label().map(ToString::to_string))
             })
             .collect()
     }
+
+    /// What [`accessibility_tree`] calls a focusable node with no role.
+    const FOCUSABLE_UNKNOWN: &str = "focusable, unknown";
 
     /// The roles a person can reach, focus and act on.
     ///
@@ -6041,7 +6050,28 @@ mod tests {
             tool_strip(ui, state);
             crate::view::control::show(ui, state);
             status_bar(ui, state);
+            crate::view::rulers::zero_point(ui, state);
+            crate::view::rulers::unit_selector(ui, state);
         });
+
+        // NVDA found two of these: the docks' splitter and the rulers' zero
+        // point, each announced as "unknown" and nothing else.
+        let unknown: Vec<_> = named
+            .iter()
+            .filter(|(role, _)| role == FOCUSABLE_UNKNOWN)
+            .collect();
+        assert!(
+            unknown.is_empty(),
+            "Tab lands on {} control(s) a screen reader can only call unknown: {unknown:?}",
+            unknown.len()
+        );
+        assert!(
+            named
+                .iter()
+                .any(|(role, label)| role == "Splitter"
+                    && label.as_deref() == Some("Right dock width")),
+            "the dock's splitter is not named, or egui's handle id moved: {named:?}"
+        );
 
         let interactive: Vec<_> = named
             .iter()
