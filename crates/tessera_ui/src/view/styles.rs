@@ -30,8 +30,10 @@ use tessera_text::story::{
     ParagraphStyleId, Styles as _,
 };
 
+use super::style_ui;
 use crate::app::{StyleKind, TesseraApp};
 use crate::command::{Command, apply};
+use crate::icons::Icon;
 use crate::theme::Theme;
 use tessera_document::object_style::ObjectFormat;
 
@@ -88,17 +90,23 @@ pub enum StylePage {
 }
 
 impl StylePage {
-    /// The pages a kind of style has, in the order the column lists them.
+    /// The pages a kind of style has, in the order the sidebar lists them.
     ///
-    /// InDesign's order, colour included: its Character Color page sits after
-    /// the lists and before the OpenType features, and somebody who knows
-    /// where it is there should find it in the same place here.
+    /// Grouped by what they format — the letters, then the paragraph — where
+    /// InDesign interleaves the two: its Character Color page sits between
+    /// the lists and the OpenType features, eleven pages down from the rest
+    /// of the character formatting. Under two headings, each page is found by
+    /// knowing which half of the formatting it is, and a paragraph style's
+    /// twelve pages read as two short lists rather than one long one.
     pub fn for_kind(kind: StyleKind) -> &'static [StylePage] {
         match kind {
             StyleKind::Paragraph => &[
                 StylePage::General,
                 StylePage::BasicCharacter,
                 StylePage::AdvancedCharacter,
+                StylePage::CharacterColour,
+                StylePage::OpenType,
+                StylePage::Decorations,
                 StylePage::IndentsAndSpacing,
                 StylePage::Tabs,
                 StylePage::ParagraphRules,
@@ -106,9 +114,6 @@ impl StylePage {
                 StylePage::Hyphenation,
                 StylePage::Justification,
                 StylePage::DropCapsAndLists,
-                StylePage::CharacterColour,
-                StylePage::OpenType,
-                StylePage::Decorations,
             ],
             StyleKind::Character => &[
                 StylePage::General,
@@ -151,10 +156,87 @@ impl StylePage {
             StylePage::TextWrap => "Text wrap",
         }
     }
+
+    /// The heading the sidebar lists the page under; General has none.
+    pub fn group(self) -> Option<&'static str> {
+        match self {
+            StylePage::General => None,
+            StylePage::BasicCharacter
+            | StylePage::AdvancedCharacter
+            | StylePage::CharacterColour
+            | StylePage::OpenType
+            | StylePage::Decorations => Some("Character"),
+            StylePage::IndentsAndSpacing
+            | StylePage::Tabs
+            | StylePage::ParagraphRules
+            | StylePage::KeepOptions
+            | StylePage::Hyphenation
+            | StylePage::Justification
+            | StylePage::DropCapsAndLists => Some("Paragraph"),
+            StylePage::Fill
+            | StylePage::Stroke
+            | StylePage::Transparency
+            | StylePage::Shadow
+            | StylePage::TextWrap => Some("Appearance"),
+        }
+    }
+
+    /// The page's picture, the one the inspector uses for the same thing
+    /// wherever it has one.
+    pub fn icon(self) -> Icon {
+        match self {
+            StylePage::General => Icon::Styles,
+            StylePage::BasicCharacter => Icon::CaseSensitive,
+            StylePage::AdvancedCharacter => Icon::BaselineShift,
+            StylePage::CharacterColour => Icon::Palette,
+            StylePage::OpenType => Icon::OpenType,
+            StylePage::Decorations => Icon::Underline,
+            StylePage::IndentsAndSpacing => Icon::Indent,
+            StylePage::Tabs => Icon::TabStop,
+            StylePage::ParagraphRules => Icon::StrokeWeight,
+            StylePage::KeepOptions => Icon::Link2,
+            StylePage::Hyphenation => Icon::Scissors,
+            StylePage::Justification => Icon::TextAlignJustify,
+            StylePage::DropCapsAndLists => Icon::DropCap,
+            StylePage::Fill => Icon::Swatches,
+            StylePage::Stroke => Icon::StrokeSolid,
+            StylePage::Transparency => Icon::Opacity,
+            StylePage::Shadow => Icon::Blur,
+            StylePage::TextWrap => Icon::WrapBounds,
+        }
+    }
+
+    /// One line under the page's name on what it is for.
+    pub fn description(self) -> &'static str {
+        match self {
+            StylePage::General => "Its name, what it is based on, and everything it states.",
+            StylePage::BasicCharacter => "The face, its size and its fit.",
+            StylePage::AdvancedCharacter => "The baseline, and the language the text is read in.",
+            StylePage::CharacterColour => "The colour the type is printed in.",
+            StylePage::OpenType => "What the font can do beyond its letters, where it can.",
+            StylePage::Decorations => "Lines under and through the text.",
+            StylePage::IndentsAndSpacing => {
+                "Where the lines sit in the column, and the room around the paragraph."
+            }
+            StylePage::Tabs => "Where a tab goes, and what fills the gap.",
+            StylePage::ParagraphRules => "Lines above and below the paragraph that move with it.",
+            StylePage::KeepOptions => "What a column break may not separate.",
+            StylePage::Hyphenation => "Whether words may be broken, and where.",
+            StylePage::Justification => {
+                "Which breaker chooses the lines, and how far spacing may give."
+            }
+            StylePage::DropCapsAndLists => "A large first letter, and bullets or numbers.",
+            StylePage::Fill => "What the object is filled with.",
+            StylePage::Stroke => "The line round its edge.",
+            StylePage::Transparency => "How much of what is behind shows through.",
+            StylePage::Shadow => "Whether it casts one.",
+            StylePage::TextWrap => "How text in other frames runs round it.",
+        }
+    }
 }
 
-/// How wide the column of page names is.
-const PAGES_WIDTH: f32 = 176.0;
+/// How wide the sidebar of pages is.
+const SIDEBAR_WIDTH: f32 = 212.0;
 
 /// The section, as it sits in the rail: the names, and nothing else.
 pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
@@ -171,55 +253,580 @@ pub fn editor(ctx: &egui::Context, state: &mut TesseraApp) {
     if !state.styles_window.editing {
         return;
     }
-    let kind = match state.styles_window.kind {
-        StyleKind::Paragraph => "Paragraph style",
-        StyleKind::Character => "Character style",
-        StyleKind::Object => "Object style",
-    };
-    // The style's name in the title, as InDesign's "Paragraph Style Options"
-    // does not have it: the window floats beside the page, and a window
-    // saying only "Paragraph style" leaves which one to the list in the rail.
-    let title = match edited_name(state) {
-        Some(name) => format!("{kind}: {name}"),
-        None => kind.to_string(),
-    };
     let stated = stated_terms(state);
     let mut open = true;
-    egui::Window::new(title)
-        // Named by its id rather than its title, which now changes with the
+    // One frame for the whole window, with no margin of its own: the header,
+    // the sidebar and the page each bring their own, so the sidebar's ground
+    // runs to the window's edge and its corner rounds with the window's.
+    let frame = egui::Frame::window(&ctx.style_of(ctx.theme()))
+        .fill(Theme::panel_bg())
+        .stroke(egui::Stroke::new(1.0, Theme::border()))
+        .corner_radius(WINDOW_RADIUS)
+        .inner_margin(0);
+    egui::Window::new(window_title(state))
+        // Named by its id rather than its title, which changes with the
         // style: a window keyed on its title would jump back to where it
         // first opened every time another style was chosen.
         .id(egui::Id::new("style-editor"))
-        .open(&mut open)
+        // The header below is the title bar: the kind, the style's name in
+        // a size that reads as a name, and whose child it is. The window is
+        // dragged by it, as by any ground in it that is not a control.
+        .title_bar(false)
+        .frame(frame)
         .resizable(true)
-        .default_width(680.0)
-        .default_height(520.0)
+        .default_size([820.0, 720.0])
+        .min_size([640.0, 440.0])
         .show(ctx, |ui| {
+            ui.spacing_mut().item_spacing.y = Theme::space_2();
+            header(ui, state, &mut open);
+            let rule = ui.min_rect().bottom();
+            ui.painter().hline(
+                ui.max_rect().x_range(),
+                rule,
+                egui::Stroke::new(1.0, Theme::rule()),
+            );
             // The pages down the left, the chosen one on the right: what the
-            // column is for is finding a property, and what the right side is
-            // for is changing it. One list of everything did neither well.
+            // sidebar is for is finding a property, and what the page is for
+            // is changing it. One list of everything did neither well.
             ui.horizontal_top(|ui| {
-                ui.vertical(|ui| {
-                    ui.set_width(PAGES_WIDTH);
-                    let current = state.styles_window.current_page();
-                    for page in StylePage::for_kind(state.styles_window.kind) {
-                        let count = stated.iter().filter(|(p, _)| p == page).count();
-                        if page_entry(ui, current == *page, page.title(), count).clicked() {
-                            state.styles_window.page = *page;
-                        }
-                    }
-                });
-                ui.separator();
-                ui.vertical(|ui| {
-                    ui.set_width(ui.available_width());
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| body(ui, state, Show::Editor));
-                });
+                ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+                sidebar(ui, state, &stated);
+                content(ui, state, &stated);
             });
         });
     if !open {
         state.styles_window.editing = false;
+    }
+}
+
+/// How far the window's corners round.
+const WINDOW_RADIUS: u8 = 12;
+
+/// What the window is called to the platform and a screen reader, which
+/// has no header to see.
+fn window_title(state: &TesseraApp) -> String {
+    let kind = kind_name(state.styles_window.kind);
+    match edited_name(state) {
+        Some(name) => format!("{kind}: {name}"),
+        None => kind.to_string(),
+    }
+}
+
+fn kind_name(kind: StyleKind) -> &'static str {
+    match kind {
+        StyleKind::Paragraph => "Paragraph style",
+        StyleKind::Character => "Character style",
+        StyleKind::Object => "Object style",
+    }
+}
+
+/// The top of the window: the kind of style and its name, the styles it is
+/// based on, and what can be done with it from any page.
+///
+/// The trail is the lineage every greyed value on every page comes from,
+/// written out once — "[Basic Paragraph] › Body › Heading 1" — and each
+/// style in it is a step up: clicking Body edits Body.
+fn header(ui: &mut Ui, state: &mut TesseraApp, open: &mut bool) {
+    let kind = state.styles_window.kind;
+    let icon = match kind {
+        StyleKind::Paragraph => Icon::Pilcrow,
+        StyleKind::Character => Icon::CaseSensitive,
+        StyleKind::Object => Icon::Rectangle,
+    };
+    let name = edited_name(state);
+    let trail = lineage_trail(state);
+    let apply_to = apply_commands(state).is_some();
+    let mut go_to = None;
+    let mut apply_now = false;
+    egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: 18,
+            right: 12,
+            top: 14,
+            bottom: 14,
+        })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let (tile, _) =
+                    ui.allocate_exact_size(egui::Vec2::splat(44.0), egui::Sense::hover());
+                ui.painter().rect_filled(tile, 10.0, Theme::accent_soft());
+                crate::icons::paint(ui.painter(), tile, icon, Theme::text_primary());
+                ui.add_space(4.0);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    style_ui::overline(ui, kind_name(kind));
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(name.as_deref().unwrap_or("No style chosen"))
+                                .font(style_ui::heading_font(20.0))
+                                .color(Theme::text_primary()),
+                        )
+                        .truncate()
+                        .selectable(false),
+                    );
+                    if name.is_some() {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            for (i, (step, label)) in trail.iter().enumerate() {
+                                if i > 0 {
+                                    ui.label(
+                                        egui::RichText::new("\u{203A}")
+                                            .size(Theme::TYPE_SM)
+                                            .color(Theme::text_muted()),
+                                    );
+                                }
+                                let last = i + 1 == trail.len();
+                                let text = egui::RichText::new(label.as_str())
+                                    .size(Theme::TYPE_SM)
+                                    .color(if last {
+                                        Theme::text_primary()
+                                    } else {
+                                        Theme::text_muted()
+                                    });
+                                match step {
+                                    Some(step) if !last => {
+                                        if ui
+                                            .add(egui::Button::new(text).frame(false))
+                                            .on_hover_text(format!("Edit {label}"))
+                                            .clicked()
+                                        {
+                                            go_to = Some(*step);
+                                        }
+                                    }
+                                    _ => {
+                                        ui.add(egui::Label::new(text).selectable(false));
+                                    }
+                                }
+                            }
+                        });
+                    }
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if super::panels::icon_button(ui, Icon::Close, "Close", false) {
+                        *open = false;
+                    }
+                    ui.add_space(Theme::space_2());
+                    if name.is_some() {
+                        let (enabled_hint, disabled_hint) = match kind {
+                            StyleKind::Paragraph => (
+                                "Set the selected paragraphs in this style",
+                                "Select a text frame, or some of its text, first",
+                            ),
+                            StyleKind::Character => (
+                                "Set the selected text in this style",
+                                "Select some text, or a text frame, first",
+                            ),
+                            StyleKind::Object => (
+                                "Give the selected objects this style",
+                                "Select an object first",
+                            ),
+                        };
+                        apply_now = ui
+                            .add_enabled(
+                                apply_to,
+                                super::primary_button("Apply to selection")
+                                    .min_size(egui::Vec2::new(0.0, 28.0))
+                                    .corner_radius(6),
+                            )
+                            .on_hover_text(enabled_hint)
+                            .on_disabled_hover_text(disabled_hint)
+                            .clicked();
+                    }
+                });
+            });
+        });
+    if let Some(step) = go_to {
+        match step {
+            Step::Paragraph(id) => state.styles_window.paragraph = Some(id),
+            Step::Character(id) => state.styles_window.character = Some(id),
+            Step::Object(id) => state.styles_window.object = Some(id),
+        }
+    }
+    if apply_now && let Some(commands) = apply_commands(state) {
+        for command in commands {
+            apply(state, command);
+        }
+    }
+}
+
+/// A style in the header's trail that can be stepped up to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Step {
+    Paragraph(ParagraphStyleId),
+    Character(CharacterStyleId),
+    Object(tessera_document::ids::ObjectStyleId),
+}
+
+/// The style being edited and every style it is based on, root first: the
+/// floor, which cannot be stepped to, then each ancestor, then itself.
+fn lineage_trail(state: &TesseraApp) -> Vec<(Option<Step>, String)> {
+    let doc = state.active().document();
+    let window = &state.styles_window;
+    let mut trail = Vec::new();
+    let mut seen = Vec::new();
+    let floor = match window.kind {
+        StyleKind::Paragraph => {
+            let mut next = window.paragraph;
+            while let Some(id) = next
+                && !seen.contains(&Step::Paragraph(id))
+            {
+                seen.push(Step::Paragraph(id));
+                let Some(style) = doc.paragraph_styles.get(id) else {
+                    break;
+                };
+                trail.push((Some(Step::Paragraph(id)), style.name.clone()));
+                next = style.based_on;
+            }
+            BASIC_PARAGRAPH
+        }
+        StyleKind::Character => {
+            let mut next = window.character;
+            while let Some(id) = next
+                && !seen.contains(&Step::Character(id))
+            {
+                seen.push(Step::Character(id));
+                let Some(style) = doc.character_styles.get(id) else {
+                    break;
+                };
+                trail.push((Some(Step::Character(id)), style.name.clone()));
+                next = style.based_on;
+            }
+            "[None]"
+        }
+        StyleKind::Object => {
+            let mut next = window.object;
+            while let Some(id) = next
+                && !seen.contains(&Step::Object(id))
+            {
+                seen.push(Step::Object(id));
+                let Some(style) = doc.object_styles.get(id) else {
+                    break;
+                };
+                trail.push((Some(Step::Object(id)), style.name.clone()));
+                next = style.based_on;
+            }
+            "[None]"
+        }
+    };
+    trail.push((None, floor.to_string()));
+    trail.reverse();
+    trail
+}
+
+/// What "Apply to selection" would do now, or `None` when there is nothing
+/// selected for the style to go on.
+fn apply_commands(state: &TesseraApp) -> Option<Vec<Command>> {
+    let window = &state.styles_window;
+    match window.kind {
+        StyleKind::Paragraph => {
+            let id = window.paragraph?;
+            let (story, range) = super::panels::text_in_hand(state)?;
+            Some(vec![Command::SetParagraphStyleOf {
+                story,
+                range,
+                style: Some(id),
+            }])
+        }
+        StyleKind::Character => {
+            let id = window.character?;
+            let (story, range) = super::panels::text_in_hand(state)?;
+            // A caret with nothing selected has no characters to style.
+            if range.is_empty() {
+                return None;
+            }
+            Some(vec![Command::SetCharacterStyleOf {
+                story,
+                range,
+                style: Some(id),
+            }])
+        }
+        StyleKind::Object => {
+            let id = window.object?;
+            let frames = state.active().selection.as_slice();
+            if frames.is_empty() {
+                return None;
+            }
+            Some(
+                frames
+                    .iter()
+                    .map(|frame| Command::ApplyObjectStyle {
+                        id: *frame,
+                        style: id,
+                    })
+                    .collect(),
+            )
+        }
+    }
+}
+
+/// The sidebar: every page of the kind, under the heading of what it
+/// formats, each with a count of what the style states there.
+///
+/// So what a style *is* can be read down the sidebar: a heading style that
+/// sets a size, a space above and keep-with-next shows three badges, and
+/// every other page plainly leaves everything to its parent.
+fn sidebar(ui: &mut Ui, state: &mut TesseraApp, stated: &[(StylePage, String)]) {
+    egui::Frame::new()
+        .fill(style_ui::sidebar_fill())
+        .corner_radius(egui::CornerRadius {
+            sw: WINDOW_RADIUS,
+            ..egui::CornerRadius::ZERO
+        })
+        .inner_margin(egui::Margin::symmetric(10, 12))
+        .show(ui, |ui| {
+            // A frame lays its contents out as its parent does, and the
+            // parent here is the row that holds the sidebar and the page:
+            // without this the pages ran along the top in a line.
+            ui.set_width(SIDEBAR_WIDTH);
+            ui.set_min_height(ui.available_height());
+            // Scrolls when the window is made shorter than a paragraph
+            // style's thirteen pages, rather than holding the window open.
+            egui::ScrollArea::vertical()
+                .id_salt("style-editor-sidebar")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.vertical(|ui| sidebar_pages(ui, state, stated));
+                });
+        });
+}
+
+fn sidebar_pages(ui: &mut Ui, state: &mut TesseraApp, stated: &[(StylePage, String)]) {
+    ui.spacing_mut().item_spacing.y = 2.0;
+    let current = state.styles_window.current_page();
+    let mut group = None;
+    for page in StylePage::for_kind(state.styles_window.kind) {
+        if page.group() != group {
+            group = page.group();
+            if let Some(heading) = group {
+                ui.add_space(Theme::space_3());
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    style_ui::overline(ui, heading);
+                });
+                ui.add_space(2.0);
+            }
+        }
+        let count = stated.iter().filter(|(p, _)| p == page).count();
+        if style_ui::nav_entry(ui, page.icon(), page.title(), count, current == *page).clicked() {
+            state.styles_window.page = *page;
+        }
+    }
+}
+
+/// The page: the preview pinned at the top, where every change shows as it
+/// is made, and the chosen page's properties scrolling under it.
+fn content(ui: &mut Ui, state: &mut TesseraApp, stated: &[(StylePage, String)]) {
+    ui.vertical(|ui| {
+        ui.set_width(ui.available_width());
+        if edited_name(state).is_none() {
+            ui.add_space(80.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    egui::RichText::new("No style chosen")
+                        .font(style_ui::heading_font(16.0))
+                        .color(Theme::text_primary()),
+                );
+                ui.colored_label(
+                    Theme::text_muted(),
+                    "Choose one in the Styles panel, or make a new one there.",
+                );
+            });
+            return;
+        }
+        let kind = state.styles_window.kind;
+        if kind != StyleKind::Object {
+            egui::Frame::new()
+                .inner_margin(egui::Margin {
+                    left: 20,
+                    right: 20,
+                    top: 16,
+                    bottom: 0,
+                })
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    match kind {
+                        StyleKind::Paragraph => {
+                            if let Some(id) = state.styles_window.paragraph {
+                                super::specimen::paragraph(ui, state, id);
+                            }
+                        }
+                        StyleKind::Character => {
+                            if let Some(id) = state.styles_window.character {
+                                super::specimen::character(ui, state, id);
+                            }
+                        }
+                        StyleKind::Object => {}
+                    }
+                });
+        }
+        let page = state.styles_window.current_page();
+        let count = stated.iter().filter(|(p, _)| *p == page).count();
+        let mut reset = false;
+        egui::ScrollArea::vertical()
+            .id_salt("style-editor-page")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                egui::Frame::new()
+                    .inner_margin(egui::Margin {
+                        left: 20,
+                        right: 20,
+                        top: 12,
+                        bottom: 20,
+                    })
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.spacing_mut().item_spacing = egui::Vec2::splat(Theme::space_2());
+                        style_ui::page_header(
+                            ui,
+                            page.icon(),
+                            page.title(),
+                            page.description(),
+                            |ui| {
+                                if page != StylePage::General && count > 0 {
+                                    reset = ui
+                                        .add(egui::Button::new("Reset page").corner_radius(6))
+                                        .on_hover_text(
+                                            "Clear what this style states on this page, \
+                                             so it takes all of it from what it is based on",
+                                        )
+                                        .clicked();
+                                }
+                            },
+                        );
+                        body(ui, state, Show::Editor);
+                    });
+            });
+        if reset {
+            reset_page(state, page);
+        }
+    });
+}
+
+/// Clear everything the style states on `page`: one undo step, and the
+/// page's rows all go back to inheriting.
+fn reset_page(state: &mut TesseraApp, page: StylePage) {
+    let doc = state.active().document();
+    let window = &state.styles_window;
+    let command = match window.kind {
+        StyleKind::Paragraph => window.paragraph.and_then(|id| {
+            let mut style = doc.paragraph_styles.get(id)?.clone();
+            clear_paragraph_page(page, &mut style.format);
+            Some(Command::EditParagraphStyle { id, style })
+        }),
+        StyleKind::Character => window.character.and_then(|id| {
+            let mut style = doc.character_styles.get(id)?.clone();
+            clear_character_page(page, &mut style.format);
+            Some(Command::EditCharacterStyle { id, style })
+        }),
+        StyleKind::Object => window.object.and_then(|id| {
+            let mut format = doc.object_styles.get(id)?.format.clone();
+            clear_object_page(page, &mut format);
+            Some(Command::RestyleObjectStyle {
+                id,
+                format: Box::new(format),
+            })
+        }),
+    };
+    if let Some(command) = command {
+        apply(state, command);
+    }
+}
+
+/// Clear what a character format states on `page`. The same division as
+/// [`character_terms`]: what a page counts is what its reset clears.
+fn clear_character_page(page: StylePage, f: &mut CharacterFormat) {
+    match page {
+        StylePage::BasicCharacter => {
+            f.family = None;
+            f.size = None;
+            f.line_height = None;
+            f.tracking = None;
+            f.kerning = None;
+            f.weight = None;
+            f.italic = None;
+            f.case = None;
+        }
+        StylePage::AdvancedCharacter => {
+            f.baseline_shift = None;
+            f.language = None;
+            f.kern = None;
+            f.link = None;
+        }
+        StylePage::CharacterColour => f.colour = None,
+        StylePage::OpenType => {
+            f.ligatures = None;
+            f.discretionary_ligatures = None;
+            f.figure_case = None;
+            f.figure_width = None;
+            f.fractions = None;
+            f.stylistic_sets = None;
+        }
+        StylePage::Decorations => {
+            f.underline = None;
+            f.strikethrough = None;
+        }
+        StylePage::General
+        | StylePage::IndentsAndSpacing
+        | StylePage::Tabs
+        | StylePage::ParagraphRules
+        | StylePage::KeepOptions
+        | StylePage::Hyphenation
+        | StylePage::Justification
+        | StylePage::DropCapsAndLists
+        | StylePage::Fill
+        | StylePage::Stroke
+        | StylePage::Transparency
+        | StylePage::Shadow
+        | StylePage::TextWrap => {}
+    }
+}
+
+/// As above, for a paragraph format, whose character half is cleared by the
+/// character pages.
+fn clear_paragraph_page(page: StylePage, f: &mut ParagraphFormat) {
+    clear_character_page(page, &mut f.character);
+    match page {
+        StylePage::IndentsAndSpacing => {
+            f.alignment = None;
+            f.indent_left = None;
+            f.indent_right = None;
+            f.indent_first = None;
+            f.space_before = None;
+            f.space_after = None;
+        }
+        StylePage::Tabs => f.tab_stops = None,
+        StylePage::ParagraphRules => {
+            f.rule_above = None;
+            f.rule_below = None;
+        }
+        StylePage::KeepOptions => f.keep = None,
+        StylePage::Hyphenation => {
+            f.hyphenate = None;
+            f.hyphenation = None;
+        }
+        StylePage::Justification => {
+            f.composer = None;
+            f.justification = None;
+        }
+        StylePage::DropCapsAndLists => {
+            f.drop_cap_lines = None;
+            f.drop_cap_characters = None;
+            f.list = None;
+        }
+        _ => {}
+    }
+}
+
+/// As above, for an object format.
+fn clear_object_page(page: StylePage, f: &mut ObjectFormat) {
+    match page {
+        StylePage::Fill => f.fill = None,
+        StylePage::Stroke => f.stroke = None,
+        StylePage::Transparency => f.blend = None,
+        StylePage::Shadow => f.shadow = None,
+        StylePage::TextWrap => f.wrap = None,
+        _ => {}
     }
 }
 
@@ -264,42 +871,6 @@ fn stated_terms(state: &TesseraApp) -> Vec<(StylePage, String)> {
             .map(|s| object_terms(&s.format))
             .unwrap_or_default(),
     }
-}
-
-/// A page in the editor's left column, with how many properties the style
-/// states on it.
-///
-/// So what a style *is* can be read down the column: a heading style that
-/// sets a size, a space above and keep-with-next shows three pages with a
-/// number, and the other nine plainly leave everything to its parent. Before
-/// this, finding what a style said meant opening every page in turn.
-fn page_entry(ui: &mut Ui, selected: bool, title: &str, stated: usize) -> egui::Response {
-    let button = if stated == 0 {
-        egui::Button::selectable(selected, (title, egui::Atom::grow()))
-    } else {
-        egui::Button::selectable(
-            selected,
-            (
-                title,
-                egui::Atom::grow(),
-                egui::RichText::new(stated.to_string())
-                    .small()
-                    .color(Theme::text_muted()),
-            ),
-        )
-    };
-    let response = ui.add_sized([ui.available_width(), Theme::row()], button.truncate());
-    let name = match stated {
-        0 => title.to_string(),
-        1 => format!("{title}, 1 property stated"),
-        n => format!("{title}, {n} properties stated"),
-    };
-    crate::icons::reads_as(
-        response,
-        name,
-        egui::WidgetType::SelectableLabel,
-        Some(selected),
-    )
 }
 
 fn body(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
@@ -438,12 +1009,14 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
 
     let page = state.styles_window.current_page();
 
-    // What it states. Each row is a switch and, when it is on, the value.
+    // What it states. Each row is a dot and, when it is stated, the value.
     let mut format = style.format.clone();
     let mut changed = false;
 
     if page != StylePage::General {
-        object_page(ui, page, &mut format, &mut changed);
+        style_ui::card(ui, None, |ui| {
+            object_page(ui, page, &mut format, &mut changed)
+        });
         if changed {
             apply(
                 state,
@@ -458,52 +1031,55 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
 
     // The name, and what it is based on.
     let mut name = style.name.clone();
-    if crate::view::panels::field(ui, "Name", |ui| {
-        ui.text_edit_singleline(&mut name).changed()
-    }) {
-        apply(
-            state,
-            Command::NameObjectStyle {
-                id,
-                name,
-                based_on: style.based_on,
-            },
-        );
-        return;
-    }
-
     let mut based_on = style.based_on;
     let based_label = based_on
         .and_then(|base| state.active().document().object_styles.get(base))
         .map(|s| s.name.clone())
         .unwrap_or_else(|| "Nothing".to_string());
-    crate::view::panels::field(ui, "Based on", |ui| {
-        crate::icons::reads_as(
-            egui::ComboBox::from_id_salt(("object-style-base", id))
-                .selected_text(based_label)
-                .width(ui.available_width())
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut based_on, None, "Nothing");
-                    for (other, other_name) in &listed {
-                        if *other == id {
-                            continue;
+    style_ui::card(ui, Some("Style"), |ui| {
+        name_field(ui, &mut name);
+        named_row(ui, "Based on", |ui| {
+            crate::icons::reads_as(
+                egui::ComboBox::from_id_salt(("object-style-base", id))
+                    .selected_text(based_label.as_str())
+                    .width(ui.available_width().min(BASED_ON_WIDTH))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut based_on, None, "Nothing");
+                        for (other, other_name) in &listed {
+                            if *other == id {
+                                continue;
+                            }
+                            ui.selectable_value(&mut based_on, Some(*other), other_name);
                         }
-                        ui.selectable_value(&mut based_on, Some(*other), other_name);
-                    }
-                })
-                .response,
-            "Based on",
-            egui::WidgetType::ComboBox,
-            None,
-        );
+                    })
+                    .response,
+                "Based on",
+                egui::WidgetType::ComboBox,
+                None,
+            );
+        });
     });
-    if based_on != style.based_on {
+    let looks_like = if style.based_on.is_some() {
+        based_label.clone()
+    } else {
+        "an object with no style".to_string()
+    };
+    let reset = settings_summary(
+        ui,
+        state,
+        StyleKind::Object,
+        &looks_like,
+        &object_terms(&style.format),
+    );
+    if name != style.name || based_on != style.based_on {
+        apply(state, Command::NameObjectStyle { id, name, based_on });
+    }
+    if reset {
         apply(
             state,
-            Command::NameObjectStyle {
+            Command::RestyleObjectStyle {
                 id,
-                name: style.name.clone(),
-                based_on,
+                format: Box::new(ObjectFormat::default()),
             },
         );
     }
@@ -582,44 +1158,50 @@ fn object_fill(ui: &mut Ui, format: &mut ObjectFormat, changed: &mut bool) {
         tessera_document::paint::Paint::Solid(Color::BLACK)
     });
     if let Some(fill) = &mut format.fill {
-        let [r, g, b, a] = fill.representative().to_rgb_f32();
-        let mut rgba = [r, g, b, a];
-        if crate::view::panels::swatch_picker(ui, &mut rgba) {
-            *fill = tessera_document::paint::Paint::Solid(Color::Rgb {
-                r: rgba[0],
-                g: rgba[1],
-                b: rgba[2],
-                a: rgba[3],
-            });
-            *changed = true;
-        }
+        named_row(ui, "Colour", |ui| {
+            let [r, g, b, a] = fill.representative().to_rgb_f32();
+            let mut rgba = [r, g, b, a];
+            if crate::view::panels::swatch_picker(ui, &mut rgba) {
+                *fill = tessera_document::paint::Paint::Solid(Color::Rgb {
+                    r: rgba[0],
+                    g: rgba[1],
+                    b: rgba[2],
+                    a: rgba[3],
+                });
+                *changed = true;
+            }
+        });
     }
 }
 
 fn object_stroke(ui: &mut Ui, format: &mut ObjectFormat, changed: &mut bool) {
     // The nesting shows here, and it is the point: "no stroke" is a value a
-    // style has to be able to state, so the switch turns the *statement* on and
-    // a second control chooses between a stroke and none.
+    // style has to be able to state, so the dot states *something* and the
+    // switch says whether that something is a stroke or none.
     *changed |= states(ui, "Stroke", &mut format.stroke, || None);
     if let Some(stroke) = &mut format.stroke {
-        let mut has = stroke.is_some();
-        if ui.checkbox(&mut has, "Has a stroke").changed() {
-            *stroke = if has {
-                Some(tessera_document::nodes::Stroke::new(Color::BLACK, 1.0))
-            } else {
-                None
-            };
-            *changed = true;
-        }
+        named_row(ui, "Has a stroke", |ui| {
+            let mut has = stroke.is_some();
+            if style_ui::switch(ui, &mut has, "Has a stroke", false) {
+                *stroke = if has {
+                    Some(tessera_document::nodes::Stroke::new(Color::BLACK, 1.0))
+                } else {
+                    None
+                };
+                *changed = true;
+            }
+        });
         if let Some(s) = stroke {
-            *changed |= crate::view::panels::field(ui, "Width", |ui| {
-                ui.add(
-                    egui::DragValue::new(&mut s.width)
-                        .speed(0.1)
-                        .range(0.0..=144.0)
-                        .suffix(" pt"),
-                )
-                .changed()
+            named_row(ui, "Width", |ui| {
+                ui.spacing_mut().interact_size.x = style_ui::NUMBER_WIDTH;
+                *changed |= ui
+                    .add(
+                        egui::DragValue::new(&mut s.width)
+                            .speed(0.1)
+                            .range(0.0..=144.0)
+                            .suffix(" pt"),
+                    )
+                    .changed();
             });
         }
     }
@@ -630,18 +1212,21 @@ fn object_transparency(ui: &mut Ui, format: &mut ObjectFormat, changed: &mut boo
         tessera_document::blending::Blending::PLAIN
     });
     if let Some(blend) = &mut format.blend {
-        let mut percent = blend.alpha() * 100.0;
-        if crate::view::panels::slider_field(ui, "Opacity", |ui| {
-            ui.add(
-                egui::Slider::new(&mut percent, 0.0..=100.0)
-                    .suffix("%")
-                    .fixed_decimals(0),
-            )
-            .changed()
-        }) {
-            blend.opacity = percent / 100.0;
-            *changed = true;
-        }
+        named_row(ui, "Amount", |ui| {
+            let mut percent = blend.alpha() * 100.0;
+            style_ui::slider_look(ui);
+            if ui
+                .add(
+                    egui::Slider::new(&mut percent, 0.0..=100.0)
+                        .suffix("%")
+                        .fixed_decimals(0),
+                )
+                .changed()
+            {
+                blend.opacity = percent / 100.0;
+                *changed = true;
+            }
+        });
     }
 }
 
@@ -650,34 +1235,39 @@ fn object_shadow(ui: &mut Ui, format: &mut ObjectFormat, changed: &mut bool) {
         Some(tessera_document::shadow::Shadow::TYPICAL)
     });
     if let Some(shadow) = &mut format.shadow {
-        let mut casts = shadow.is_some();
-        if ui.checkbox(&mut casts, "Casts a shadow").changed() {
-            *shadow = if casts {
-                Some(tessera_document::shadow::Shadow::TYPICAL)
-            } else {
-                None
-            };
-            *changed = true;
-        }
+        named_row(ui, "Casts a shadow", |ui| {
+            let mut casts = shadow.is_some();
+            if style_ui::switch(ui, &mut casts, "Casts a shadow", false) {
+                *shadow = if casts {
+                    Some(tessera_document::shadow::Shadow::TYPICAL)
+                } else {
+                    None
+                };
+                *changed = true;
+            }
+        });
     }
 }
 
-/// A switch for whether a format states a property at all.
+/// Whether a format states a property at all: the row's dot.
 ///
-/// Returns whether the switch moved. `fresh` supplies the value the property
-/// takes when it is first stated, so turning a statement on never leaves the
-/// format holding something meaningless.
+/// Returns whether it moved. `fresh` supplies the value the property takes
+/// when it is first stated, so stating it never leaves the format holding
+/// something meaningless.
 fn states<T>(ui: &mut Ui, label: &str, slot: &mut Option<T>, fresh: impl FnOnce() -> T) -> bool {
-    let mut on = slot.is_some();
-    if ui
-        .checkbox(&mut on, label)
-        .on_hover_text("Off means the style leaves this alone")
-        .changed()
-    {
-        *slot = if on { Some(fresh()) } else { None };
-        return true;
-    }
-    false
+    let mut changed = false;
+    style_ui::row(ui, |ui| {
+        let stated = slot.is_some();
+        if style_ui::state_dot(ui, stated, label).clicked() {
+            *slot = if stated { None } else { Some(fresh()) };
+            changed = true;
+        }
+        style_ui::name_cell(ui, label, slot.is_some());
+        if slot.is_none() {
+            ui.colored_label(Theme::text_muted(), "left to the object");
+        }
+    });
+    changed
 }
 
 // --- what a style inherits ---------------------------------------------------
@@ -1182,60 +1772,68 @@ fn colour_name(colour: &Color) -> String {
 
 // --- the General page ---------------------------------------------------------
 
-/// A row of the editor: the name in the column every page lines its names up
-/// in, then the control.
-///
-/// The General page's rows start where a property row's control does, past
-/// the room a property's switch takes, so the window reads as one column of
-/// names and one of values whichever page is showing.
-fn named_row<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
-    ui.horizontal(|ui| {
-        switch_cell(ui, |_| ());
-        name_cell(ui, label, true, NAME_COLUMN);
-        add(ui)
-    })
-    .inner
-}
-
 /// A style's settings as InDesign's Style Settings box gives them, but
-/// sorted: under each page's name, what the style states there. The page
-/// name goes to that page.
+/// sorted: under each page's name, what the style states there, as tags.
+/// The page's name goes to that page. Returns whether "Reset to base",
+/// which empties the list, was pressed.
 fn settings_summary(
     ui: &mut Ui,
     state: &mut TesseraApp,
     kind: StyleKind,
     base: &str,
     terms: &[(StylePage, String)],
-) {
-    super::panels::group_label(ui, "Style settings");
-    if terms.is_empty() {
-        super::panel_ui::hint(
-            ui,
-            &format!("States nothing of its own, so it looks exactly like {base}."),
-        );
-        return;
-    }
-    super::panel_ui::hint(ui, &format!("Based on {base}, and states:"));
-    for page in StylePage::for_kind(kind) {
-        let said: Vec<&str> = terms
-            .iter()
-            .filter(|(p, _)| p == page)
-            .map(|(_, t)| t.as_str())
-            .collect();
-        if said.is_empty() {
-            continue;
-        }
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .link(page.title())
-                .on_hover_text("Go to this page")
-                .clicked()
-            {
-                state.styles_window.page = *page;
+) -> bool {
+    let mut reset = false;
+    style_ui::card_with_action(
+        ui,
+        "Style settings",
+        |ui| {
+            reset = ui
+                .add_enabled(
+                    !terms.is_empty(),
+                    egui::Button::new("Reset to base").corner_radius(6),
+                )
+                .on_hover_text(format!(
+                    "Clear everything this style states, so it looks exactly like {base}"
+                ))
+                .on_disabled_hover_text(format!("It already looks exactly like {base}"))
+                .clicked();
+        },
+        |ui| {
+            if terms.is_empty() {
+                ui.colored_label(
+                    Theme::text_muted(),
+                    format!("States nothing of its own, so it looks exactly like {base}."),
+                );
+                return;
             }
-            ui.label(said.join(", "));
-        });
-    }
+            ui.colored_label(Theme::text_muted(), format!("Based on {base}, and states:"));
+            ui.add_space(2.0);
+            for page in StylePage::for_kind(kind) {
+                let said: Vec<&str> = terms
+                    .iter()
+                    .filter(|(p, _)| p == page)
+                    .map(|(_, t)| t.as_str())
+                    .collect();
+                if said.is_empty() {
+                    continue;
+                }
+                ui.horizontal_top(|ui| {
+                    if style_ui::page_link(ui, page.icon(), page.title(), 200.0).clicked() {
+                        state.styles_window.page = *page;
+                    }
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::Vec2::new(4.0, 4.0);
+                        ui.add_space(0.0);
+                        for term in &said {
+                            style_ui::tag(ui, term);
+                        }
+                    });
+                });
+            }
+        },
+    );
+    reset
 }
 
 /// How many paragraphs are set in a style, and how many of those carry
@@ -1463,13 +2061,6 @@ fn paragraph_fields(
         return;
     }
 
-    named_row(ui, "Name", |ui| {
-        crate::icons::speak_as(
-            ui.add(egui::TextEdit::singleline(&mut edited.name).desired_width(f32::INFINITY)),
-            "Name",
-        );
-    });
-
     // Based On. Candidates that would close a loop are not offered, so the
     // answer is "not available" rather than "rejected after the fact".
     let base = existing
@@ -1478,74 +2069,69 @@ fn paragraph_fields(
         .map_or(BASIC_PARAGRAPH, |(_, name)| name.as_str())
         .to_string();
     let mut chosen_parent = None;
-    named_row(ui, "Based on", |ui| {
-        crate::icons::reads_as(
-            egui::ComboBox::from_id_salt("paragraph-based-on")
-                .selected_text(base.as_str())
-                .width(ui.available_width())
-                .show_ui(ui, |ui| {
-                    if ui
-                        .selectable_label(existing.based_on.is_none(), BASIC_PARAGRAPH)
-                        .clicked()
-                    {
-                        chosen_parent = Some(None);
-                    }
-                    for (candidate, name) in styles {
-                        if *candidate == id
-                            || state
-                                .active()
-                                .document()
-                                .paragraph_based_on_would_cycle(id, *candidate)
-                        {
-                            continue;
-                        }
+    style_ui::card(ui, Some("Style"), |ui| {
+        name_field(ui, &mut edited.name);
+        named_row(ui, "Based on", |ui| {
+            crate::icons::reads_as(
+                egui::ComboBox::from_id_salt("paragraph-based-on")
+                    .selected_text(base.as_str())
+                    .width(ui.available_width().min(BASED_ON_WIDTH))
+                    .show_ui(ui, |ui| {
                         if ui
-                            .selectable_label(existing.based_on == Some(*candidate), name)
+                            .selectable_label(existing.based_on.is_none(), BASIC_PARAGRAPH)
                             .clicked()
                         {
-                            chosen_parent = Some(Some(*candidate));
+                            chosen_parent = Some(None);
                         }
-                    }
-                })
-                .response,
-            "Based on",
-            egui::WidgetType::ComboBox,
-            None,
-        );
+                        for (candidate, name) in styles {
+                            if *candidate == id
+                                || state
+                                    .active()
+                                    .document()
+                                    .paragraph_based_on_would_cycle(id, *candidate)
+                            {
+                                continue;
+                            }
+                            if ui
+                                .selectable_label(existing.based_on == Some(*candidate), name)
+                                .clicked()
+                            {
+                                chosen_parent = Some(Some(*candidate));
+                            }
+                        }
+                    })
+                    .response,
+                "Based on",
+                egui::WidgetType::ComboBox,
+                None,
+            );
+        });
     });
 
-    // What the style is for, done from where it is described: InDesign's
-    // "Apply Style to Selection" and "Reset To Base", as buttons, because in
-    // a window that edits live there is no OK for a checkbox to wait for.
-    let in_hand = super::panels::text_in_hand(state);
-    let mut apply_to_selection = false;
-    let mut reset = false;
-    // Under the fields rather than at the window's edge, so the page reads
-    // as one form: what the style is called, what it is based on, what can
-    // be done with it.
-    named_row(ui, "", |ui| {
-        apply_to_selection = ui
-            .add_enabled(in_hand.is_some(), egui::Button::new("Apply to selection"))
-            .on_hover_text("Set the selected paragraphs in this style")
-            .on_disabled_hover_text("Select a text frame, or some of its text, first")
-            .clicked();
-        reset = ui
-            .add_enabled(
-                !existing.format.is_empty(),
-                egui::Button::new("Reset to base"),
-            )
-            .on_hover_text(format!(
-                "Clear everything this style states, so it looks exactly like {base}"
-            ))
-            .on_disabled_hover_text(format!("It already looks exactly like {base}"))
-            .clicked();
-    });
+    // How much of the document hangs on the style, before anybody changes
+    // it: two numbers, read at a glance, rather than a sentence to parse.
     let (used, own) = paragraph_usage(state, id);
-    named_row(ui, "", |ui| {
-        super::panel_ui::hint(ui, &usage_sentence(used, own))
+    style_ui::card(ui, Some("In this document"), |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 28.0;
+            style_ui::stat(
+                ui,
+                used,
+                if used == 1 {
+                    "paragraph uses it"
+                } else {
+                    "paragraphs use it"
+                },
+            )
+            .on_hover_text(usage_sentence(used, own));
+            style_ui::stat(ui, own, "with formatting of their own (+)")
+                .on_hover_text(usage_sentence(used, own));
+        });
     });
 
-    settings_summary(
+    // InDesign's "Reset To Base", as a button on the summary it empties:
+    // in a window that edits live there is no OK for a checkbox to wait for.
+    let reset = settings_summary(
         ui,
         state,
         StyleKind::Paragraph,
@@ -1570,16 +2156,23 @@ fn paragraph_fields(
                 },
             },
         );
-    } else if apply_to_selection && let Some((story, range)) = in_hand {
-        apply(
-            state,
-            Command::SetParagraphStyleOf {
-                story,
-                range,
-                style: Some(id),
-            },
-        );
     }
+}
+
+/// How wide the Based on drop-down grows.
+const BASED_ON_WIDTH: f32 = 280.0;
+
+/// The style's name, in a field as wide as the drop-down under it.
+fn name_field(ui: &mut Ui, name: &mut String) {
+    named_row(ui, "Name", |ui| {
+        crate::icons::speak_as(
+            ui.add(
+                egui::TextEdit::singleline(name)
+                    .desired_width(ui.available_width().min(BASED_ON_WIDTH)),
+            ),
+            "Name",
+        );
+    });
 }
 
 /// One page of a paragraph style's properties, General aside.
@@ -1605,131 +2198,150 @@ fn paragraph_page(
         StylePage::OpenType => character_opentype(ui, &mut format.character, &characters),
         StylePage::Decorations => character_decorations(ui, &mut format.character),
         StylePage::IndentsAndSpacing => {
-            optional_choice(
-                ui,
-                "Alignment",
-                &mut format.alignment,
-                &lineage.find(|f| f.alignment),
-                Alignment::Left,
-                &[
-                    ("Left", Alignment::Left),
-                    ("Centre", Alignment::Centre),
-                    ("Right", Alignment::Right),
-                    ("Justify", Alignment::Justify),
-                ],
-            );
-            super::panels::group_label(ui, "Indents");
+            style_ui::card(ui, None, |ui| {
+                optional_icons(
+                    ui,
+                    "Alignment",
+                    &mut format.alignment,
+                    &lineage.find(|f| f.alignment),
+                    Alignment::Left,
+                    &[
+                        (Icon::TextAlignLeft, "Left", Alignment::Left),
+                        (Icon::TextAlignCentre, "Centre", Alignment::Centre),
+                        (Icon::TextAlignRight, "Right", Alignment::Right),
+                        (Icon::TextAlignJustify, "Justify", Alignment::Justify),
+                    ],
+                );
+            });
             // InDesign's order: the two edges of the measure, with the first
             // line between them because it is measured from the left one.
-            for (label, value, get) in [
-                (
-                    "Left indent",
-                    &mut format.indent_left,
-                    (|f: &ParagraphFormat| f.indent_left) as fn(&ParagraphFormat) -> Option<f32>,
-                ),
-                ("First line indent", &mut format.indent_first, |f| {
-                    f.indent_first
-                }),
-                ("Right indent", &mut format.indent_right, |f| f.indent_right),
-            ] {
-                optional_number(
-                    ui,
-                    label,
-                    value,
-                    &lineage.find(get),
-                    0.0,
-                    0.25,
-                    -720.0..=720.0,
-                    " pt",
-                );
-            }
-            super::panels::group_label(ui, "Spacing");
-            for (label, value, get) in [
-                (
-                    "Space before",
-                    &mut format.space_before,
-                    (|f: &ParagraphFormat| f.space_before) as fn(&ParagraphFormat) -> Option<f32>,
-                ),
-                ("Space after", &mut format.space_after, |f| f.space_after),
-            ] {
-                optional_number(
-                    ui,
-                    label,
-                    value,
-                    &lineage.find(get),
-                    0.0,
-                    0.25,
-                    -720.0..=720.0,
-                    " pt",
-                );
-            }
+            style_ui::card(ui, Some("Indents"), |ui| {
+                for (label, value, get) in [
+                    (
+                        "Left indent",
+                        &mut format.indent_left,
+                        (|f: &ParagraphFormat| f.indent_left)
+                            as fn(&ParagraphFormat) -> Option<f32>,
+                    ),
+                    ("First line indent", &mut format.indent_first, |f| {
+                        f.indent_first
+                    }),
+                    ("Right indent", &mut format.indent_right, |f| f.indent_right),
+                ] {
+                    optional_number(
+                        ui,
+                        label,
+                        value,
+                        &lineage.find(get),
+                        0.0,
+                        0.25,
+                        -720.0..=720.0,
+                        " pt",
+                    );
+                }
+            });
+            style_ui::card(ui, Some("Spacing"), |ui| {
+                for (label, value, get) in [
+                    (
+                        "Space before",
+                        &mut format.space_before,
+                        (|f: &ParagraphFormat| f.space_before)
+                            as fn(&ParagraphFormat) -> Option<f32>,
+                    ),
+                    ("Space after", &mut format.space_after, |f| f.space_after),
+                ] {
+                    optional_number(
+                        ui,
+                        label,
+                        value,
+                        &lineage.find(get),
+                        0.0,
+                        0.25,
+                        -720.0..=720.0,
+                        " pt",
+                    );
+                }
+            });
         }
         // The whole list is one value: the caller's `edited != existing`
         // sees a change to any stop, and "Inherit" puts `None` back.
         StylePage::Tabs => {
-            super::panels::tab_stops_editor(ui, &mut format.tab_stops, true);
+            style_ui::card(ui, None, |ui| {
+                super::panels::tab_stops_editor(ui, &mut format.tab_stops, true);
+            });
         }
         StylePage::ParagraphRules => {
-            super::panels::paragraph_rule_editor(ui, "Rule above", &mut format.rule_above, true);
-            super::panels::paragraph_rule_editor(ui, "Rule below", &mut format.rule_below, true);
+            for (label, rule) in [
+                ("Rule above", &mut format.rule_above),
+                ("Rule below", &mut format.rule_below),
+            ] {
+                style_ui::card(ui, None, |ui| {
+                    super::panels::paragraph_rule_editor(ui, label, rule, true);
+                });
+            }
         }
         StylePage::KeepOptions => {
-            super::panels::keep_options_editor(ui, &mut format.keep, true);
+            style_ui::card(ui, None, |ui| {
+                super::panels::keep_options_editor(ui, &mut format.keep, true);
+            });
         }
         StylePage::Hyphenation => {
             // English only: `hypher` holds patterns per language and a story
             // has no language to choose between them yet.
-            optional_flag(
-                ui,
-                "Hyphenate",
-                &mut format.hyphenate,
-                &lineage.find(|f| f.hyphenate),
-            );
-            super::panels::hyphenation_editor(ui, &mut format.hyphenation, true);
+            style_ui::card(ui, None, |ui| {
+                optional_flag(
+                    ui,
+                    "Hyphenate",
+                    &mut format.hyphenate,
+                    &lineage.find(|f| f.hyphenate),
+                );
+                super::panels::hyphenation_editor(ui, &mut format.hyphenation, true);
+            });
         }
         StylePage::Justification => {
             // InDesign keeps the composer in its Justification dialog, and so
             // does this page: which breaker chooses the lines is half of how a
-            // justified column looks. The inspector could set it and a style
-            // could not, so a book's body text had to be set paragraph by
-            // paragraph.
-            optional_choice(
-                ui,
-                "Composer",
-                &mut format.composer,
-                &lineage.find(|f| f.composer),
-                Composer::SingleLine,
-                &[
-                    ("Single-line", Composer::SingleLine),
-                    ("Paragraph", Composer::Paragraph),
-                ],
-            );
-            // Labelled here and not inside the editor: in the inspector it
-            // sits under a section already called "Justification", and said
-            // it twice.
-            super::panels::group_label(ui, "Justification");
-            super::panels::justification_editor(ui, &mut format.justification, true);
+            // justified column looks.
+            style_ui::card(ui, None, |ui| {
+                optional_choice(
+                    ui,
+                    "Composer",
+                    &mut format.composer,
+                    &lineage.find(|f| f.composer),
+                    Composer::SingleLine,
+                    &[
+                        ("Single-line", Composer::SingleLine),
+                        ("Paragraph", Composer::Paragraph),
+                    ],
+                );
+            });
+            style_ui::card(ui, Some("Spacing limits"), |ui| {
+                super::panels::justification_editor(ui, &mut format.justification, true);
+            });
         }
         StylePage::DropCapsAndLists => {
-            optional_count(
-                ui,
-                "Drop cap lines",
-                &mut format.drop_cap_lines,
-                &lineage.find(|f| f.drop_cap_lines),
-                3,
-            );
-            optional_count(
-                ui,
-                "Drop cap letters",
-                &mut format.drop_cap_characters,
-                &lineage.find(|f| f.drop_cap_characters),
-                1,
-            );
-            ui.separator();
-            super::panels::list_editor(ui, &mut format.list, true);
+            style_ui::card(ui, Some("Drop cap"), |ui| {
+                optional_count(
+                    ui,
+                    "Lines deep",
+                    &mut format.drop_cap_lines,
+                    &lineage.find(|f| f.drop_cap_lines),
+                    3,
+                );
+                optional_count(
+                    ui,
+                    "Letters",
+                    &mut format.drop_cap_characters,
+                    &lineage.find(|f| f.drop_cap_characters),
+                    1,
+                );
+            });
+            style_ui::card(ui, Some("List"), |ui| {
+                super::panels::list_editor(ui, &mut format.list, true);
+            });
         }
         // Listed rather than caught by a wildcard, so a page added to the
-        // column has to say what it draws.
+        // sidebar has to say what it draws.
         StylePage::General
         | StylePage::Fill
         | StylePage::Stroke
@@ -1883,53 +2495,49 @@ fn character_fields(
         return;
     }
 
-    named_row(ui, "Name", |ui| {
-        crate::icons::speak_as(
-            ui.add(egui::TextEdit::singleline(&mut edited.name).desired_width(f32::INFINITY)),
-            "Name",
-        );
-    });
-
     let base = existing
         .based_on
         .and_then(|p| styles.iter().find(|(s, _)| *s == p))
         .map_or("[None]", |(_, name)| name.as_str())
         .to_string();
     let mut chosen_parent = None;
-    named_row(ui, "Based on", |ui| {
-        crate::icons::reads_as(
-            egui::ComboBox::from_id_salt("character-based-on")
-                .selected_text(base.as_str())
-                .width(ui.available_width())
-                .show_ui(ui, |ui| {
-                    if ui
-                        .selectable_label(existing.based_on.is_none(), "[None]")
-                        .clicked()
-                    {
-                        chosen_parent = Some(None);
-                    }
-                    for (candidate, name) in styles {
-                        if *candidate == id
-                            || state
-                                .active()
-                                .document()
-                                .character_based_on_would_cycle(id, *candidate)
-                        {
-                            continue;
-                        }
+    style_ui::card(ui, Some("Style"), |ui| {
+        name_field(ui, &mut edited.name);
+        named_row(ui, "Based on", |ui| {
+            crate::icons::reads_as(
+                egui::ComboBox::from_id_salt("character-based-on")
+                    .selected_text(base.as_str())
+                    .width(ui.available_width().min(BASED_ON_WIDTH))
+                    .show_ui(ui, |ui| {
                         if ui
-                            .selectable_label(existing.based_on == Some(*candidate), name)
+                            .selectable_label(existing.based_on.is_none(), "[None]")
                             .clicked()
                         {
-                            chosen_parent = Some(Some(*candidate));
+                            chosen_parent = Some(None);
                         }
-                    }
-                })
-                .response,
-            "Based on",
-            egui::WidgetType::ComboBox,
-            None,
-        );
+                        for (candidate, name) in styles {
+                            if *candidate == id
+                                || state
+                                    .active()
+                                    .document()
+                                    .character_based_on_would_cycle(id, *candidate)
+                            {
+                                continue;
+                            }
+                            if ui
+                                .selectable_label(existing.based_on == Some(*candidate), name)
+                                .clicked()
+                            {
+                                chosen_parent = Some(Some(*candidate));
+                            }
+                        }
+                    })
+                    .response,
+                "Based on",
+                egui::WidgetType::ComboBox,
+                None,
+            );
+        });
     });
 
     // A character style based on nothing looks like the text it is put on,
@@ -1939,20 +2547,7 @@ fn character_fields(
     } else {
         "the text it is put on".to_string()
     };
-    let mut reset = false;
-    named_row(ui, "", |ui| {
-        reset = ui
-            .add_enabled(
-                existing.format != CharacterFormat::default(),
-                egui::Button::new("Reset to base"),
-            )
-            .on_hover_text(format!(
-                "Clear everything this style states, so it looks exactly like {looks_like}"
-            ))
-            .on_disabled_hover_text("It states nothing of its own already")
-            .clicked();
-    });
-    settings_summary(
+    let reset = settings_summary(
         ui,
         state,
         StyleKind::Character,
@@ -1987,102 +2582,105 @@ fn character_basic(
     format: &mut CharacterFormat,
     lineage: &Lineage<CharacterFormat>,
 ) {
-    // The family list is built inside the combo's closure, so a closed menu
-    // does not pay for the font scan every frame.
-    stated_row(
-        ui,
-        "Family",
-        &mut format.family,
-        &lineage.find(|f| f.family.clone()),
-        || "sans-serif".to_string(),
-        String::clone,
-        |ui, family| {
-            crate::icons::reads_as(
-                egui::ComboBox::from_id_salt("style-family")
-                    .selected_text(family.as_str())
-                    .show_ui(ui, |ui| {
-                        for candidate in state.shaper.families() {
-                            if ui
-                                .selectable_label(family == candidate, candidate)
-                                .clicked()
-                            {
-                                *family = candidate.clone();
+    style_ui::card(ui, Some("Typeface"), |ui| {
+        // The family list is built inside the combo's closure, so a closed
+        // menu does not pay for the font scan every frame.
+        stated_row(
+            ui,
+            "Family",
+            &mut format.family,
+            &lineage.find(|f| f.family.clone()),
+            || "sans-serif".to_string(),
+            |ui, family, _| {
+                crate::icons::reads_as(
+                    egui::ComboBox::from_id_salt("style-family")
+                        .selected_text(family.as_str())
+                        .width(220.0)
+                        .show_ui(ui, |ui| {
+                            for candidate in state.shaper.families() {
+                                if ui
+                                    .selectable_label(family == candidate, candidate)
+                                    .clicked()
+                                {
+                                    *family = candidate.clone();
+                                }
                             }
-                        }
-                    })
-                    .response,
-                "Family",
-                egui::WidgetType::ComboBox,
-                None,
-            );
-        },
-    );
-
-    optional_number(
-        ui,
-        "Size",
-        &mut format.size,
-        &lineage.find(|f| f.size),
-        12.0,
-        0.25,
-        1.0..=1440.0,
-        " pt",
-    );
-    optional_number(
-        ui,
-        "Leading",
-        &mut format.line_height,
-        &lineage.find(|f| f.line_height),
-        1.2,
-        0.01,
-        0.5..=4.0,
-        "×",
-    );
-    optional_number(
-        ui,
-        "Tracking",
-        &mut format.tracking,
-        &lineage.find(|f| f.tracking),
-        0.0,
-        1.0,
-        -200.0..=800.0,
-        "/1000 em",
-    );
-    optional_choice(
-        ui,
-        "Kerning",
-        &mut format.kerning,
-        &lineage.find(|f| f.kerning),
-        Kerning::Metrics,
-        &[("Metrics", Kerning::Metrics), ("Optical", Kerning::Optical)],
-    );
-    optional_choice(
-        ui,
-        "Weight",
-        &mut format.weight,
-        &lineage.find(|f| f.weight),
-        400u16,
-        WEIGHTS,
-    );
-    optional_flag(
-        ui,
-        "Italic",
-        &mut format.italic,
-        &lineage.find(|f| f.italic),
-    );
-    optional_choice(
-        ui,
-        "Case",
-        &mut format.case,
-        &lineage.find(|f| f.case),
-        Case::Normal,
-        &[
-            ("Normal", Case::Normal),
-            ("UPPER", Case::Upper),
-            ("lower", Case::Lower),
-            ("Small caps", Case::SmallCaps),
-        ],
-    );
+                        })
+                        .response,
+                    "Family",
+                    egui::WidgetType::ComboBox,
+                    None,
+                );
+            },
+        );
+        optional_choice(
+            ui,
+            "Weight",
+            &mut format.weight,
+            &lineage.find(|f| f.weight),
+            400u16,
+            WEIGHTS,
+        );
+        optional_flag(
+            ui,
+            "Italic",
+            &mut format.italic,
+            &lineage.find(|f| f.italic),
+        );
+        optional_choice(
+            ui,
+            "Case",
+            &mut format.case,
+            &lineage.find(|f| f.case),
+            Case::Normal,
+            &[
+                ("Normal", Case::Normal),
+                ("UPPER", Case::Upper),
+                ("lower", Case::Lower),
+                ("Small caps", Case::SmallCaps),
+            ],
+        );
+    });
+    style_ui::card(ui, Some("Size and spacing"), |ui| {
+        optional_number(
+            ui,
+            "Size",
+            &mut format.size,
+            &lineage.find(|f| f.size),
+            12.0,
+            0.25,
+            1.0..=1440.0,
+            " pt",
+        );
+        optional_number(
+            ui,
+            "Leading",
+            &mut format.line_height,
+            &lineage.find(|f| f.line_height),
+            1.2,
+            0.01,
+            0.5..=4.0,
+            "×",
+        );
+        optional_number(
+            ui,
+            "Tracking",
+            &mut format.tracking,
+            &lineage.find(|f| f.tracking),
+            0.0,
+            1.0,
+            -200.0..=800.0,
+            "/1000 em",
+        );
+        optional_choice(
+            ui,
+            "Kerning",
+            &mut format.kerning,
+            &lineage.find(|f| f.kerning),
+            Kerning::Metrics,
+            &[("Metrics", Kerning::Metrics), ("Optical", Kerning::Optical)],
+        );
+    });
 }
 
 /// Underline and strikethrough, each with a weight, an offset and a colour.
@@ -2093,7 +2691,7 @@ fn character_decorations(ui: &mut Ui, format: &mut CharacterFormat) {
         } else {
             &mut format.underline
         };
-        decoration_editor(ui, label, slot);
+        style_ui::card(ui, None, |ui| decoration_editor(ui, label, slot));
     }
 }
 
@@ -2103,69 +2701,75 @@ fn character_advanced(
     format: &mut CharacterFormat,
     lineage: &Lineage<CharacterFormat>,
 ) {
-    optional_number(
-        ui,
-        "Baseline shift",
-        &mut format.baseline_shift,
-        &lineage.find(|f| f.baseline_shift),
-        0.0,
-        0.25,
-        -200.0..=200.0,
-        " pt",
-    );
-    stated_row(
-        ui,
-        "Language",
-        &mut format.language,
-        &lineage.find(|f| f.language.clone()),
-        || "en".to_string(),
-        |code| language_name(code).to_string(),
-        |ui, language| {
-            use tessera_text::story::LANGUAGES;
-            crate::icons::reads_as(
-                egui::ComboBox::from_id_salt("style-language")
-                    .selected_text(language_name(language))
-                    .show_ui(ui, |ui| {
-                        for (code, name) in LANGUAGES {
-                            if ui.selectable_label(language == code, *name).clicked() {
-                                *language = (*code).to_string();
+    style_ui::card(ui, None, |ui| {
+        optional_number(
+            ui,
+            "Baseline shift",
+            &mut format.baseline_shift,
+            &lineage.find(|f| f.baseline_shift),
+            0.0,
+            0.25,
+            -200.0..=200.0,
+            " pt",
+        );
+        stated_row(
+            ui,
+            "Language",
+            &mut format.language,
+            &lineage.find(|f| f.language.clone()),
+            || "en".to_string(),
+            |ui, language, _| {
+                use tessera_text::story::LANGUAGES;
+                crate::icons::reads_as(
+                    egui::ComboBox::from_id_salt("style-language")
+                        .selected_text(language_name(language))
+                        .width(220.0)
+                        .show_ui(ui, |ui| {
+                            for (code, name) in LANGUAGES {
+                                if ui.selectable_label(language == code, *name).clicked() {
+                                    *language = (*code).to_string();
+                                }
                             }
-                        }
-                    })
-                    .response,
-                "Language",
-                egui::WidgetType::ComboBox,
-                None,
-            );
-        },
-    );
+                        })
+                        .response,
+                    "Language",
+                    egui::WidgetType::ComboBox,
+                    None,
+                );
+            },
+        );
+    });
 
     // Two things a style can hold without a row of its own: a kern, which is
     // about one pair of letters, and a link, which is about one place. Both
     // arrive in a style made from text that had them. Named here, where
     // they can be taken out, rather than riding along unseen.
-    for (held, what) in [
-        (format.kern.is_some(), "a manual kern"),
-        (format.link.is_some(), "a hyperlink"),
-    ] {
-        if !held {
-            continue;
-        }
-        let mut remove = false;
-        ui.horizontal(|ui| {
-            super::panel_ui::hint(
-                ui,
-                &format!("Also states {what}, from the text it was made from."),
-            );
-            remove = ui.small_button("Remove").clicked();
-        });
-        if remove {
-            match what {
-                "a manual kern" => format.kern = None,
-                _ => format.link = None,
+    if format.kern.is_none() && format.link.is_none() {
+        return;
+    }
+    style_ui::card(ui, Some("Also stated"), |ui| {
+        for (held, what) in [
+            (format.kern.is_some(), "A manual kern"),
+            (format.link.is_some(), "A hyperlink"),
+        ] {
+            if !held {
+                continue;
+            }
+            let mut remove = false;
+            named_row(ui, what, |ui| {
+                ui.colored_label(Theme::text_muted(), "from the text it was made from");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    remove = ui.button("Remove").clicked();
+                });
+            });
+            if remove {
+                match what {
+                    "A manual kern" => format.kern = None,
+                    _ => format.link = None,
+                }
             }
         }
-    }
+    });
 }
 
 /// What the font can do beyond its glyphs, when it can.
@@ -2174,87 +2778,88 @@ fn character_opentype(
     format: &mut CharacterFormat,
     lineage: &Lineage<CharacterFormat>,
 ) {
-    optional_flag(
-        ui,
-        "Ligatures",
-        &mut format.ligatures,
-        &lineage.find(|f| f.ligatures),
-    );
-    optional_flag(
-        ui,
-        "Discretionary ligatures",
-        &mut format.discretionary_ligatures,
-        &lineage.find(|f| f.discretionary_ligatures),
-    );
-    optional_choice(
-        ui,
-        "Figures",
-        &mut format.figure_case,
-        &lineage.find(|f| f.figure_case),
-        FigureCase::Lining,
-        &[
-            ("Lining", FigureCase::Lining),
-            ("Old-style", FigureCase::OldStyle),
-        ],
-    );
-    optional_choice(
-        ui,
-        "Figure width",
-        &mut format.figure_width,
-        &lineage.find(|f| f.figure_width),
-        FigureWidth::Proportional,
-        &[
-            ("Proportional", FigureWidth::Proportional),
-            ("Tabular", FigureWidth::Tabular),
-        ],
-    );
-    optional_flag(
-        ui,
-        "Fractions",
-        &mut format.fractions,
-        &lineage.find(|f| f.fractions),
-    );
-    stated_row(
-        ui,
-        "Stylistic sets",
-        &mut format.stylistic_sets,
-        &lineage.find(|f| f.stylistic_sets.clone()),
-        Vec::new,
-        |sets| {
-            if sets.is_empty() {
-                "none".to_string()
-            } else {
-                sets.iter().map(u8::to_string).collect::<Vec<_>>().join(" ")
-            }
-        },
-        |ui, sets| {
-            // The text is kept while the field has the caret. Rebuilt from
-            // the numbers every frame, as it was, the space between "1" and
-            // "3" was parsed away the moment it was typed and a second set
-            // could never be entered.
-            let draft = ui.id().with("stylistic-sets-draft");
-            let mut text = ui
-                .data_mut(|d| d.get_temp::<String>(draft))
-                .unwrap_or_else(|| sets.iter().map(u8::to_string).collect::<Vec<_>>().join(" "));
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut text)
-                    .desired_width(80.0)
-                    .hint_text("1 3 7"),
-            );
-            crate::icons::named(response.clone(), "Stylistic sets, by number");
-            if response.changed() {
-                let parsed = super::panels::parse_sets(&text);
-                if parsed != *sets {
-                    *sets = parsed;
+    style_ui::card(ui, Some("Ligatures"), |ui| {
+        optional_flag(
+            ui,
+            "Ligatures",
+            &mut format.ligatures,
+            &lineage.find(|f| f.ligatures),
+        );
+        optional_flag(
+            ui,
+            "Discretionary",
+            &mut format.discretionary_ligatures,
+            &lineage.find(|f| f.discretionary_ligatures),
+        );
+    });
+    style_ui::card(ui, Some("Figures"), |ui| {
+        optional_choice(
+            ui,
+            "Figures",
+            &mut format.figure_case,
+            &lineage.find(|f| f.figure_case),
+            FigureCase::Lining,
+            &[
+                ("Lining", FigureCase::Lining),
+                ("Old-style", FigureCase::OldStyle),
+            ],
+        );
+        optional_choice(
+            ui,
+            "Figure width",
+            &mut format.figure_width,
+            &lineage.find(|f| f.figure_width),
+            FigureWidth::Proportional,
+            &[
+                ("Proportional", FigureWidth::Proportional),
+                ("Tabular", FigureWidth::Tabular),
+            ],
+        );
+        optional_flag(
+            ui,
+            "Fractions",
+            &mut format.fractions,
+            &lineage.find(|f| f.fractions),
+        );
+    });
+    style_ui::card(ui, Some("Alternates"), |ui| {
+        stated_row(
+            ui,
+            "Stylistic sets",
+            &mut format.stylistic_sets,
+            &lineage.find(|f| f.stylistic_sets.clone()),
+            Vec::new,
+            |ui, sets, _| {
+                // The text is kept while the field has the caret. Rebuilt from
+                // the numbers every frame, as it was, the space between "1" and
+                // "3" was parsed away the moment it was typed and a second set
+                // could never be entered.
+                let draft = ui.id().with("stylistic-sets-draft");
+                let mut text = ui
+                    .data_mut(|d| d.get_temp::<String>(draft))
+                    .unwrap_or_else(|| {
+                        sets.iter().map(u8::to_string).collect::<Vec<_>>().join(" ")
+                    });
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut text)
+                        .desired_width(style_ui::NUMBER_WIDTH)
+                        .hint_text("1 3 7"),
+                );
+                crate::icons::named(response.clone(), "Stylistic sets, by number");
+                if response.changed() {
+                    let parsed = super::panels::parse_sets(&text);
+                    if parsed != *sets {
+                        *sets = parsed;
+                    }
                 }
-            }
-            if response.has_focus() {
-                ui.data_mut(|d| d.insert_temp(draft, text));
-            } else {
-                ui.data_mut(|d| d.remove::<String>(draft));
-            }
-        },
-    );
+                if response.has_focus() {
+                    ui.data_mut(|d| d.insert_temp(draft, text));
+                } else {
+                    ui.data_mut(|d| d.remove::<String>(draft));
+                }
+            },
+        );
+    });
 }
 
 // --- character colour -------------------------------------------------------
@@ -2307,40 +2912,16 @@ impl Palette {
     }
 }
 
-/// How big a colour chip is.
-const CHIP: f32 = 22.0;
-
-/// A colour as a chip: the colour on an opaque ground, outlined in the
-/// accent when it is the one chosen.
-///
-/// Only a picture. The name beside it is what is clicked and what a screen
-/// reader reads, so the chip takes no focus of its own for Tab to land on.
-fn chip(ui: &mut Ui, rgba: [f32; 4], chosen: bool) {
-    let (spot, _) = ui.allocate_exact_size(egui::Vec2::splat(CHIP), egui::Sense::hover());
+/// A colour as a small chip beside its name.
+fn chip(ui: &mut Ui, rgba: [f32; 4]) {
+    let (spot, _) = ui.allocate_exact_size(egui::Vec2::new(28.0, 18.0), egui::Sense::hover());
     let painter = ui.painter();
-    painter.rect_filled(spot, 2.0, Theme::panel_bg_solid());
-    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-    painter.rect_filled(
-        spot,
-        2.0,
-        egui::Color32::from_rgba_unmultiplied(
-            byte(rgba[0]),
-            byte(rgba[1]),
-            byte(rgba[2]),
-            byte(rgba[3]),
-        ),
-    );
+    painter.rect_filled(spot, 4.0, Theme::panel_bg_solid());
+    painter.rect_filled(spot, 4.0, style_ui::srgb(rgba));
     painter.rect_stroke(
         spot,
-        2.0,
-        egui::Stroke::new(
-            if chosen { 2.0 } else { 1.0 },
-            if chosen {
-                Theme::accent()
-            } else {
-                Theme::border()
-            },
-        ),
+        4.0,
+        egui::Stroke::new(1.0, Theme::border()),
         egui::StrokeKind::Inside,
     );
 }
@@ -2357,209 +2938,252 @@ fn character_colour(
     format: &mut CharacterFormat,
     lineage: &Lineage<CharacterFormat>,
 ) {
-    stated_row(
-        ui,
-        "Colour",
-        &mut format.colour,
-        &lineage.find(|f| f.colour.clone()),
-        || BLACK_INK,
-        colour_name,
-        |ui, colour| {
-            chip(ui, palette.shown(colour), false);
-            ui.label(colour_name(colour));
-        },
-    );
+    style_ui::card(ui, None, |ui| {
+        stated_row(
+            ui,
+            "Colour",
+            &mut format.colour,
+            &lineage.find(|f| f.colour.clone()),
+            || BLACK_INK,
+            |ui, colour, ghost| {
+                chip(ui, palette.shown(colour));
+                ui.label(egui::RichText::new(colour_name(colour)).color(if ghost {
+                    Theme::text_muted()
+                } else {
+                    Theme::text_primary()
+                }));
+            },
+        );
+    });
     let Some(colour) = &mut format.colour else {
         return;
     };
 
-    // A list of names, as InDesign's Character Color page has it: a row of
-    // bare chips made "Brand red" and "Brand red dark" a matter of hovering
-    // over each until the right one said so.
-    super::panels::group_label(ui, "Swatches");
-    for (name, value, shown) in &palette.entries {
-        // A swatch is chosen whatever its tint: the tint is a second
-        // question, asked below.
-        let chosen = match (&*colour, value) {
-            (Color::Swatch { name: a, .. }, Color::Swatch { name: b, .. }) => a == b,
-            (a, b) => a == b,
-        };
-        let clicked = ui
-            .horizontal(|ui| {
-                switch_cell(ui, |_| ());
-                chip(ui, *shown, chosen);
-                super::panel_ui::entry(ui, chosen, name).clicked()
-            })
-            .inner;
-        if clicked && !chosen {
-            let tint = match &*colour {
-                Color::Swatch { tint, .. } => *tint,
-                _ => 1.0,
-            };
-            *colour = match value {
-                Color::Swatch { name, .. } => Color::Swatch {
-                    name: name.clone(),
-                    tint,
-                },
-                other => other.clone(),
-            };
+    // Tiles rather than a list: a colour is found by its colour first and
+    // its name second, and a grid shows a dozen swatches in the room a list
+    // shows four.
+    style_ui::card(ui, Some("Swatches"), |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::Vec2::splat(4.0);
+            for (name, value, shown) in &palette.entries {
+                // A swatch is chosen whatever its tint: the tint is a second
+                // question, asked below.
+                let chosen = match (&*colour, value) {
+                    (Color::Swatch { name: a, .. }, Color::Swatch { name: b, .. }) => a == b,
+                    (a, b) => a == b,
+                };
+                if style_ui::swatch_tile(ui, *shown, name, chosen).clicked() && !chosen {
+                    let tint = match &*colour {
+                        Color::Swatch { tint, .. } => *tint,
+                        _ => 1.0,
+                    };
+                    *colour = match value {
+                        Color::Swatch { name, .. } => Color::Swatch {
+                            name: name.clone(),
+                            tint,
+                        },
+                        other => other.clone(),
+                    };
+                }
+            }
+        });
+        if palette.entries.len() == 2 {
+            super::panel_ui::hint(
+                ui,
+                "The document has no swatches of its own yet. A swatch named here \
+                 recolours every style using it when it is edited.",
+            );
         }
-    }
-    if palette.entries.len() == 2 {
-        super::panel_ui::hint(
-            ui,
-            "The document has no swatches of its own yet. A swatch named here \
-             recolours every style using it when it is edited.",
-        );
-    }
+    });
 
-    if let Color::Swatch { tint, .. } = colour {
-        named_row(ui, "Tint", |ui| {
-            let mut percent = f64::from(*tint) * 100.0;
+    style_ui::card(ui, Some("Adjust"), |ui| {
+        if let Color::Swatch { tint, .. } = colour {
+            named_row(ui, "Tint", |ui| {
+                let mut percent = f64::from(*tint) * 100.0;
+                style_ui::slider_look(ui);
+                if crate::icons::speak_as(
+                    ui.add(
+                        egui::Slider::new(&mut percent, 0.0..=100.0)
+                            .suffix("%")
+                            .fixed_decimals(0),
+                    ),
+                    "Tint",
+                )
+                .changed()
+                {
+                    *tint = (percent / 100.0) as f32;
+                }
+            });
+        }
+        named_row(ui, "Custom", |ui| {
+            // In sRGB, which is what the page and the tiles above draw a
+            // colour's numbers as. egui's `Rgba` picker takes them as linear
+            // light and showed Brand red as a pink beside its own tile.
+            let mut picked = style_ui::srgb(palette.shown(colour));
+            picked = egui::Color32::from_rgb(picked.r(), picked.g(), picked.b());
             if crate::icons::speak_as(
-                ui.add(
-                    egui::DragValue::new(&mut percent)
-                        .speed(1.0)
-                        .range(0.0..=100.0)
-                        .custom_formatter(|v, _| format!("{v:.0}%")),
+                egui::widgets::color_picker::color_edit_button_srgba(
+                    ui,
+                    &mut picked,
+                    egui::widgets::color_picker::Alpha::Opaque,
                 ),
-                "Tint",
+                "Custom colour",
             )
             .changed()
             {
-                *tint = (percent / 100.0) as f32;
+                *colour = Color::Rgb {
+                    r: f32::from(picked.r()) / 255.0,
+                    g: f32::from(picked.g()) / 255.0,
+                    b: f32::from(picked.b()) / 255.0,
+                    a: 1.0,
+                };
             }
+            ui.colored_label(Theme::text_muted(), "a colour of its own, not a swatch");
         });
-    }
-    named_row(ui, "Custom", |ui| {
-        // In sRGB, which is what the page and the chips above draw a colour's
-        // numbers as. egui's `Rgba` picker takes them as linear light and
-        // showed Brand red as a pink beside its own chip.
-        let [r, g, b, _] = palette.shown(colour);
-        let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-        let mut picked = egui::Color32::from_rgb(byte(r), byte(g), byte(b));
-        if crate::icons::speak_as(
-            egui::widgets::color_picker::color_edit_button_srgba(
-                ui,
-                &mut picked,
-                egui::widgets::color_picker::Alpha::Opaque,
-            ),
-            "Custom colour",
-        )
-        .changed()
-        {
-            *colour = Color::Rgb {
-                r: f32::from(picked.r()) / 255.0,
-                g: f32::from(picked.g()) / 255.0,
-                b: f32::from(picked.b()) / 255.0,
-                a: 1.0,
-            };
-        }
     });
 }
 
 // --- property rows ----------------------------------------------------------
 
-const INHERIT_HINT: &str = "Ticked, this style states it. Unticked, it takes \
-                            what it is based on, shown greyed.";
-
-/// How wide the column of property names is. Wider than the inspector's,
-/// because the window has the room and "Discretionary ligatures" is a name.
-const NAME_COLUMN: f32 = 150.0;
-
-/// The room a property's switch takes at the start of its row: a cell the
-/// width egui gives a checkbox with no words. A row without a switch keeps
-/// the same cell empty, so names and controls line up down every page.
-fn switch_cell<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    let side = ui.spacing().interact_size.y.max(ui.spacing().icon_width);
-    ui.allocate_ui_with_layout(
-        egui::vec2(side, side),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.set_min_width(side);
-            add(ui)
-        },
-    )
-    .inner
-}
-
-/// A name in the column, clipped rather than allowed to push the control
-/// along. Stated properties are drawn in the text colour and the rest muted,
-/// so what a style says stands out from what it leaves alone.
-fn name_cell(ui: &mut Ui, label: &str, stated: bool, width: f32) {
-    let height = ui.spacing().interact_size.y;
-    ui.allocate_ui_with_layout(
-        egui::vec2(width, height),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.set_min_width(width);
-            ui.set_max_width(width);
-            if label.is_empty() {
-                return;
-            }
-            let colour = if stated {
-                Theme::text_primary()
-            } else {
-                Theme::text_muted()
-            };
-            ui.add(
-                egui::Label::new(egui::RichText::new(label).color(colour))
-                    .truncate()
-                    .selectable(false),
-            );
-        },
-    );
+/// A row with no dot, lined up with the rows that have one: the General
+/// page's name and base, a decoration's colour, a tint.
+fn named_row<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+    style_ui::row(ui, |ui| {
+        ui.allocate_exact_size(
+            egui::Vec2::new(style_ui::DOT_COLUMN, style_ui::ROW),
+            egui::Sense::hover(),
+        );
+        style_ui::name_cell(ui, label, true);
+        add(ui)
+    })
 }
 
 /// One property a style may state or leave alone.
 ///
-/// The switch is the point. Every field of a format is an `Option`, and
-/// `None` means inherit — so a window that always wrote a value would make
-/// every style pin every property, and a style meaning only "bold" would also
-/// fix the family, the size and the colour. The cascade would collapse into a
-/// flat list of complete descriptions.
+/// Every field of a format is an `Option`, and `None` means inherit — so a
+/// window that always wrote a value would make every style pin every
+/// property, and a style meaning only "bold" would also fix the family, the
+/// size and the colour. The dot at the row's start is that choice.
 ///
-/// Unticked, the row shows what the property inherits and from whom, greyed:
-/// the property exists, has a value, and this style is deliberately not the
-/// one giving it. Ticked, it starts from that same value, so ticking alone
-/// never moves the text; `fresh` is only for a property nothing above states.
-fn stated_row<T: Clone>(
+/// Inherited, the control is still there, drawn greyed with the value the
+/// property takes and whose it is at the row's end — and it still works:
+/// editing it is how a value comes to be stated, so nobody has to find the
+/// dot first. Clicking the dot states the inherited value as it is, which
+/// changes nothing on the page until the value is changed. `fresh` is only
+/// for a property nothing above states.
+fn stated_row<T: Clone + PartialEq>(
     ui: &mut Ui,
     label: &str,
     value: &mut Option<T>,
     inherited: &Inherited<T>,
     fresh: impl FnOnce() -> T,
-    reads: impl Fn(&T) -> String,
-    control: impl FnOnce(&mut Ui, &mut T),
+    control: impl FnOnce(&mut Ui, &mut T, bool),
 ) {
-    ui.horizontal(|ui| {
-        let mut on = value.is_some();
-        let switched = switch_cell(ui, |ui| {
-            crate::icons::speak_as(ui.checkbox(&mut on, ""), label)
-                .on_hover_text(INHERIT_HINT)
-                .changed()
-        });
-        if switched {
-            *value = on.then(|| inherited.value.clone().unwrap_or_else(fresh));
+    style_ui::row(ui, |ui| {
+        let stated = value.is_some();
+        if style_ui::state_dot(ui, stated, label).clicked() {
+            *value = if stated {
+                None
+            } else {
+                Some(inherited.value.clone().unwrap_or_else(fresh))
+            };
+            style_ui::name_cell(ui, label, value.is_some());
+            return;
         }
-        name_cell(ui, label, value.is_some(), NAME_COLUMN);
+        style_ui::name_cell(ui, label, stated);
         match value {
-            Some(v) => control(ui, v),
+            Some(v) => control(ui, v, false),
             None => match &inherited.value {
-                Some(v) => {
-                    ui.colored_label(Theme::text_muted(), reads(v));
-                    ui.label(
-                        egui::RichText::new(format!("from {}", inherited.from))
-                            .small()
-                            .color(Theme::text_muted()),
-                    );
+                Some(was) => {
+                    let mut shown = was.clone();
+                    ui.scope(|ui| {
+                        style_ui::ghostly(ui);
+                        control(ui, &mut shown, true);
+                    });
+                    if shown != *was {
+                        *value = Some(shown);
+                    } else {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(format!("from {}", inherited.from))
+                                        .size(Theme::TYPE_SM)
+                                        .color(Theme::text_muted()),
+                                )
+                                .truncate()
+                                .selectable(false),
+                            );
+                        });
+                    }
                 }
+                // Nothing above states it, and no number would be true: a
+                // character style's size is the size of whatever text it is
+                // put on. Said in words, and a click states it.
                 None => {
-                    ui.colored_label(Theme::text_muted(), &inherited.from);
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new(&inherited.from).color(Theme::text_muted()),
+                            )
+                            .fill(egui::Color32::TRANSPARENT)
+                            .stroke(egui::Stroke::new(1.0, Theme::rule()))
+                            .corner_radius(6),
+                        )
+                        .on_hover_text(
+                            "Nothing this style is based on states it. Click to state it here.",
+                        )
+                        .clicked()
+                    {
+                        *value = Some(fresh());
+                    }
                 }
             },
         }
     });
+}
+
+/// A number and its unit, written as a person writes them: "18 pt", not
+/// "18.00 pt". Typing "18", "18pt" or "18 pt" all mean eighteen.
+fn number_field(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut f32,
+    speed: f64,
+    range: std::ops::RangeInclusive<f64>,
+    suffix: &str,
+) -> bool {
+    let mut edited = f64::from(*value);
+    let unit = suffix.to_string();
+    ui.spacing_mut().interact_size.x = style_ui::NUMBER_WIDTH;
+    let changed = crate::icons::speak_as(
+        ui.add(
+            egui::DragValue::new(&mut edited)
+                .speed(speed)
+                .range(range)
+                // Drawing a value must never change it: an inherited number
+                // outside the field's range would otherwise be clamped on
+                // sight, and stated by nobody.
+                .clamp_existing_to_range(false)
+                .custom_formatter(move |n, _| format!("{}{unit}", number(n as f32)))
+                .custom_parser(leading_number),
+        ),
+        label,
+    )
+    .changed();
+    if changed {
+        *value = edited as f32;
+    }
+    changed
+}
+
+/// The number a field's text starts with, its unit ignored.
+fn leading_number(text: &str) -> Option<f64> {
+    let digits: String = text
+        .trim()
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || matches!(c, '.' | ',' | '-' | '+'))
+        .collect();
+    digits.replace(',', ".").parse().ok()
 }
 
 /// A number a style may state or leave alone.
@@ -2574,35 +3198,19 @@ fn optional_number(
     range: std::ops::RangeInclusive<f64>,
     suffix: &str,
 ) {
-    let shown = |n: &f32| format!("{n:.2}{suffix}");
     stated_row(
         ui,
         label,
         value,
         inherited,
         || default,
-        shown,
-        |ui, v| {
-            let mut edited = f64::from(*v);
-            let suffix = suffix.to_string();
-            if crate::icons::speak_as(
-                ui.add(
-                    egui::DragValue::new(&mut edited)
-                        .speed(speed)
-                        .range(range)
-                        .custom_formatter(move |n, _| format!("{n:.2}{suffix}")),
-                ),
-                label,
-            )
-            .changed()
-            {
-                *v = edited as f32;
-            }
+        |ui, v, _| {
+            number_field(ui, label, v, speed, range, suffix);
         },
     );
 }
 
-/// One of a fixed set of choices, or nothing.
+/// One of a few choices, or nothing: a segmented control of words.
 fn optional_choice<T: PartialEq + Copy>(
     ui: &mut Ui,
     label: &str,
@@ -2611,26 +3219,43 @@ fn optional_choice<T: PartialEq + Copy>(
     default: T,
     options: &[(&str, T)],
 ) {
-    let reads = |v: &T| {
-        options
-            .iter()
-            .find(|(_, candidate)| candidate == v)
-            .map_or("—", |(text, _)| *text)
-            .to_string()
-    };
+    let segments: Vec<(style_ui::Segment<'_>, T)> = options
+        .iter()
+        .map(|(text, v)| (style_ui::Segment::Text(text), *v))
+        .collect();
     stated_row(
         ui,
         label,
         value,
         inherited,
         || default,
-        reads,
-        |ui, v| {
-            for (text, candidate) in options {
-                if ui.selectable_label(*v == *candidate, *text).clicked() {
-                    *v = *candidate;
-                }
-            }
+        |ui, v, ghost| {
+            style_ui::segmented(ui, label, v, &segments, ghost);
+        },
+    );
+}
+
+/// One of a few choices drawn as pictures, the word kept for the tooltip.
+fn optional_icons<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut Option<T>,
+    inherited: &Inherited<T>,
+    default: T,
+    options: &[(Icon, &str, T)],
+) {
+    let segments: Vec<(style_ui::Segment<'_>, T)> = options
+        .iter()
+        .map(|(icon, name, v)| (style_ui::Segment::Icon(*icon, name), *v))
+        .collect();
+    stated_row(
+        ui,
+        label,
+        value,
+        inherited,
+        || default,
+        |ui, v, ghost| {
+            style_ui::segmented(ui, label, v, &segments, ghost);
         },
     );
 }
@@ -2649,11 +3274,16 @@ fn optional_count(
         value,
         inherited,
         || default,
-        u8::to_string,
-        |ui, v| {
+        |ui, v, _| {
             let mut edited = i32::from(*v);
+            ui.spacing_mut().interact_size.x = 64.0;
             if crate::icons::speak_as(
-                ui.add(egui::DragValue::new(&mut edited).speed(1.0).range(0..=10)),
+                ui.add(
+                    egui::DragValue::new(&mut edited)
+                        .speed(0.1)
+                        .range(0..=10)
+                        .clamp_existing_to_range(false),
+                ),
                 label,
             )
             .changed()
@@ -2668,30 +3298,27 @@ fn optional_count(
 ///
 /// Three states rather than two, because "this style does not mention italic"
 /// and "this style says not italic" are different instructions to the cascade:
-/// the first inherits italic from a parent, the second overrules it. Stated,
-/// the flag is a pair of words rather than a second checkbox, which beside
-/// the switch was two boxes on one row and no way to tell which was which.
+/// the first inherits italic from a parent, the second overrules it. The dot
+/// is the first question and the switch the second.
 fn optional_flag(ui: &mut Ui, label: &str, value: &mut Option<bool>, inherited: &Inherited<bool>) {
-    let reads = |on: &bool| if *on { "On" } else { "Off" }.to_string();
     stated_row(
         ui,
         label,
         value,
         inherited,
         || true,
-        reads,
-        |ui, on| {
-            for (text, choice) in [("On", true), ("Off", false)] {
-                let response = crate::icons::reads_as(
-                    ui.selectable_label(*on == choice, text),
-                    format!("{label} {}", text.to_lowercase()),
-                    egui::WidgetType::SelectableLabel,
-                    Some(*on == choice),
-                );
-                if response.clicked() {
-                    *on = choice;
-                }
-            }
+        |ui, on, ghost| {
+            style_ui::switch(ui, on, &format!("{label} switch"), ghost);
+            ui.add(
+                egui::Label::new(egui::RichText::new(if *on { "On" } else { "Off" }).color(
+                    if ghost {
+                        Theme::text_muted()
+                    } else {
+                        Theme::text_primary()
+                    },
+                ))
+                .selectable(false),
+            );
         },
     );
 }
@@ -2701,25 +3328,35 @@ fn optional_flag(ui: &mut Ui, label: &str, value: &mut Option<bool>, inherited: 
 /// stated).
 fn decoration_editor(ui: &mut Ui, label: &str, value: &mut Option<Decoration>) {
     named_row(ui, label, |ui| {
-        let state = match value {
-            None => 0,
+        let mut choice = match value {
+            None => 0u8,
             Some(d) if !d.on => 1,
             Some(_) => 2,
         };
-        for (choice, text) in [(0, "Inherit"), (1, "Off"), (2, "On")] {
-            if ui.selectable_label(state == choice, text).clicked() && state != choice {
-                *value = match choice {
-                    0 => None,
-                    1 => Some(Decoration {
-                        on: false,
-                        ..value.clone().unwrap_or_default()
-                    }),
-                    _ => Some(Decoration {
-                        on: true,
-                        ..value.clone().unwrap_or_default()
-                    }),
-                };
-            }
+        let inheriting = choice == 0;
+        if style_ui::segmented(
+            ui,
+            label,
+            &mut choice,
+            &[
+                (style_ui::Segment::Text("Inherit"), 0),
+                (style_ui::Segment::Text("Off"), 1),
+                (style_ui::Segment::Text("On"), 2),
+            ],
+            // Inheriting is not stating, so it is marked in grey.
+            inheriting,
+        ) {
+            *value = match choice {
+                0 => None,
+                1 => Some(Decoration {
+                    on: false,
+                    ..value.clone().unwrap_or_default()
+                }),
+                _ => Some(Decoration {
+                    on: true,
+                    ..value.clone().unwrap_or_default()
+                }),
+            };
         }
     });
     let Some(d) = value.as_mut().filter(|d| d.on) else {
@@ -2728,7 +3365,7 @@ fn decoration_editor(ui: &mut Ui, label: &str, value: &mut Option<Decoration>) {
     let font = Inherited::unstated("the font's own");
     optional_number(
         ui,
-        &format!("{label} weight"),
+        "Weight",
         &mut d.weight,
         &font,
         1.0,
@@ -2738,7 +3375,7 @@ fn decoration_editor(ui: &mut Ui, label: &str, value: &mut Option<Decoration>) {
     );
     optional_number(
         ui,
-        &format!("{label} offset"),
+        "Offset",
         &mut d.offset,
         &font,
         0.0,
@@ -2746,24 +3383,40 @@ fn decoration_editor(ui: &mut Ui, label: &str, value: &mut Option<Decoration>) {
         -50.0..=50.0,
         " pt",
     );
-    named_row(ui, &format!("{label} colour"), |ui| {
-        let own = d.colour.is_some();
-        if ui.selectable_label(!own, "Text").clicked() && own {
-            d.colour = None;
+    named_row(ui, "Colour", |ui| {
+        let mut own = d.colour.is_some();
+        if style_ui::segmented(
+            ui,
+            &format!("{label} colour"),
+            &mut own,
+            &[
+                (style_ui::Segment::Text("The text's"), false),
+                (style_ui::Segment::Text("Its own"), true),
+            ],
+            false,
+        ) {
+            d.colour = own.then_some(Color::BLACK);
         }
-        let [r, g, b, a] = d
-            .colour
-            .clone()
-            .unwrap_or(tessera_color::Color::BLACK)
-            .to_rgb_f32();
-        let mut rgba = [r, g, b, a];
-        if super::panels::swatch_picker(ui, &mut rgba) {
-            d.colour = Some(tessera_color::Color::Rgb {
-                r: rgba[0],
-                g: rgba[1],
-                b: rgba[2],
-                a: rgba[3],
-            });
+        if let Some(colour) = &mut d.colour {
+            ui.add_space(Theme::space_2());
+            let mut picked = style_ui::srgb(colour.to_rgb_f32());
+            if crate::icons::speak_as(
+                egui::widgets::color_picker::color_edit_button_srgba(
+                    ui,
+                    &mut picked,
+                    egui::widgets::color_picker::Alpha::Opaque,
+                ),
+                &format!("{label} colour"),
+            )
+            .changed()
+            {
+                *colour = Color::Rgb {
+                    r: f32::from(picked.r()) / 255.0,
+                    g: f32::from(picked.g()) / 255.0,
+                    b: f32::from(picked.b()) / 255.0,
+                    a: 1.0,
+                };
+            }
         }
     });
 }
@@ -3049,12 +3702,31 @@ mod tests {
     /// Click the control a screen reader knows as `label`, skipping plain
     /// text that happens to say the same thing.
     fn click(ctx: &egui::Context, state: &mut TesseraApp, label: &str) {
+        click_as(ctx, state, label, None);
+    }
+
+    /// The dot at the start of a property's row, which shares its name with
+    /// the control after it.
+    fn click_dot(ctx: &egui::Context, state: &mut TesseraApp, label: &str) {
+        click_as(ctx, state, label, Some(egui::accesskit::Role::CheckBox));
+    }
+
+    fn click_as(
+        ctx: &egui::Context,
+        state: &mut TesseraApp,
+        label: &str,
+        role: Option<egui::accesskit::Role>,
+    ) {
         // A window's first frame measures it and takes no clicks.
         draw(ctx, state, Vec::new());
         let nodes = draw(ctx, state, Vec::new());
         let (_, _, rect) = nodes
             .iter()
-            .find(|(name, role, _)| name == label && *role != egui::accesskit::Role::Label)
+            .find(|(name, found, _)| {
+                name == label
+                    && *found != egui::accesskit::Role::Label
+                    && role.is_none_or(|role| *found == role)
+            })
             .unwrap_or_else(|| panic!("no control called {label:?} in {nodes:#?}"));
         let at = rect.center();
         for pressed in [true, false] {
@@ -3153,19 +3825,19 @@ mod tests {
         let (mut state, _, child) = two_styles();
         editing(&mut state, child, StylePage::BasicCharacter);
         let ctx = window();
-        click(&ctx, &mut state, "Size");
+        click_dot(&ctx, &mut state, "Size");
         assert_eq!(style(&state, child).format.character.size, Some(18.0));
 
         // And alignment, on another page, from the same parent.
         state.styles_window.page = StylePage::IndentsAndSpacing;
-        click(&ctx, &mut state, "Alignment");
+        click_dot(&ctx, &mut state, "Alignment");
         assert_eq!(
             style(&state, child).format.alignment,
             Some(Alignment::Centre)
         );
 
-        // Unticked again, it goes back to saying nothing.
-        click(&ctx, &mut state, "Alignment");
+        // Clicked again, it goes back to saying nothing.
+        click_dot(&ctx, &mut state, "Alignment");
         assert_eq!(style(&state, child).format.alignment, None);
     }
 
@@ -3212,7 +3884,7 @@ mod tests {
     }
 
     #[test]
-    fn the_title_names_the_style_and_the_column_counts_what_each_page_states() {
+    fn the_header_names_the_style_and_the_sidebar_counts_what_each_page_states() {
         let (mut state, parent, _) = two_styles();
         editing(&mut state, parent, StylePage::General);
         let ctx = window();
@@ -3221,6 +3893,8 @@ mod tests {
             .into_iter()
             .map(|(name, ..)| name)
             .collect();
+        // The header draws the name; the window carries it for a screen
+        // reader, which has no header to see.
         assert!(
             names.iter().any(|n| n == "Paragraph style: Parent"),
             "{names:#?}"
@@ -3492,7 +4166,7 @@ mod tests {
         );
         editing(&mut state, child, StylePage::CharacterColour);
         let ctx = window();
-        click(&ctx, &mut state, "Colour");
+        click_dot(&ctx, &mut state, "Colour");
         assert_eq!(
             style(&state, child).format.character.colour,
             Some(Color::BLACK),
@@ -3561,5 +4235,132 @@ mod tests {
         assert_eq!(points(10.5), "10.5 pt");
         assert_eq!(number(-0.001), "0");
         assert_eq!(number(1.25), "1.25");
+    }
+
+    #[test]
+    fn changing_an_inherited_value_states_it() {
+        // The control is there on an inherited row, greyed, and works: a
+        // person changing Child's alignment does not have to find the dot
+        // first.
+        let (mut state, _, child) = two_styles();
+        editing(&mut state, child, StylePage::IndentsAndSpacing);
+        assert_eq!(style(&state, child).format.alignment, None);
+        click(&window(), &mut state, "Right");
+        assert_eq!(
+            style(&state, child).format.alignment,
+            Some(Alignment::Right)
+        );
+    }
+
+    #[test]
+    fn reset_page_clears_that_page_and_nothing_else() {
+        let (mut state, _, child) = two_styles();
+        let base = style(&state, child);
+        apply(
+            &mut state,
+            Command::EditParagraphStyle {
+                id: child,
+                style: ParagraphStyle {
+                    format: ParagraphFormat {
+                        alignment: Some(Alignment::Right),
+                        space_after: Some(6.0),
+                        character: CharacterFormat {
+                            size: Some(9.0),
+                            ..CharacterFormat::default()
+                        },
+                        ..ParagraphFormat::default()
+                    },
+                    ..base
+                },
+            },
+        );
+        editing(&mut state, child, StylePage::IndentsAndSpacing);
+        click(&window(), &mut state, "Reset page");
+        let reset = style(&state, child).format;
+        assert_eq!((reset.alignment, reset.space_after), (None, None));
+        assert_eq!(
+            reset.character.size,
+            Some(9.0),
+            "the size is on another page"
+        );
+    }
+
+    #[test]
+    fn what_a_page_counts_is_what_its_reset_clears() {
+        // The badge in the sidebar and the Reset page button are two views of
+        // one division of the properties; if they disagreed, a page could
+        // show a count its reset leaves behind.
+        let full = ParagraphFormat {
+            alignment: Some(Alignment::Justify),
+            indent_left: Some(1.0),
+            indent_right: Some(1.0),
+            indent_first: Some(1.0),
+            space_before: Some(1.0),
+            space_after: Some(1.0),
+            hyphenate: Some(true),
+            drop_cap_lines: Some(2),
+            drop_cap_characters: Some(1),
+            tab_stops: Some(Vec::new()),
+            rule_above: Some(Default::default()),
+            rule_below: Some(Default::default()),
+            keep: Some(Default::default()),
+            list: Some(Default::default()),
+            justification: Some(Default::default()),
+            hyphenation: Some(Default::default()),
+            composer: Some(Composer::Paragraph),
+            character: every_character_property(),
+        };
+        let mut emptied = full.clone();
+        for page in StylePage::for_kind(StyleKind::Paragraph) {
+            let before = paragraph_terms(&full);
+            let mut cleared = full.clone();
+            clear_paragraph_page(*page, &mut cleared);
+            let after = paragraph_terms(&cleared);
+            assert!(
+                !after.iter().any(|(p, _)| p == page),
+                "{page:?} still counts something after its reset"
+            );
+            assert_eq!(
+                after.len(),
+                before.len() - before.iter().filter(|(p, _)| p == page).count(),
+                "{page:?}'s reset cleared another page's property"
+            );
+            clear_paragraph_page(*page, &mut emptied);
+        }
+        assert!(
+            emptied.is_empty(),
+            "every property is cleared by some page: {emptied:?}"
+        );
+    }
+
+    #[test]
+    fn the_trail_runs_from_the_floor_to_the_style_and_steps_up_it() {
+        let (mut state, parent, child) = two_styles();
+        editing(&mut state, child, StylePage::BasicCharacter);
+        let names: Vec<String> = lineage_trail(&state)
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect();
+        assert_eq!(names, [BASIC_PARAGRAPH, "Parent", "Child"]);
+        click(&window(), &mut state, "Parent");
+        assert_eq!(
+            state.styles_window.paragraph,
+            Some(parent),
+            "clicking a style in the trail edits it"
+        );
+        assert_eq!(
+            state.styles_window.page,
+            StylePage::BasicCharacter,
+            "on the same page"
+        );
+    }
+
+    #[test]
+    fn a_number_is_read_whatever_unit_is_typed_after_it() {
+        assert_eq!(leading_number("18 pt"), Some(18.0));
+        assert_eq!(leading_number("18pt"), Some(18.0));
+        assert_eq!(leading_number(" 1,5×"), Some(1.5));
+        assert_eq!(leading_number("-3 pt"), Some(-3.0));
+        assert_eq!(leading_number("pt"), None);
     }
 }

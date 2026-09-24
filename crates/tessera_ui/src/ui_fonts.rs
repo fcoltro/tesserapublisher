@@ -48,6 +48,88 @@ pub(crate) fn definitions() -> FontDefinitions {
     fonts
 }
 
+/// The faces of the document installed in egui, so a panel can draw text in
+/// the fonts the page is set in: the Glyphs panel's grid, the style window's
+/// specimen.
+///
+/// **One registry, because `set_fonts` replaces the whole set.** Two panels
+/// each installing their own face would evict each other's on every frame —
+/// a glyph atlas rebuilt per frame — and a panel drawing in a family egui
+/// has just dropped is a panic in epaint. So faces are added here and never
+/// replaced by a caller, and every install carries all of them.
+#[derive(Clone, Default)]
+struct DocumentFaces {
+    faces: Vec<DocumentFace>,
+}
+
+#[derive(Clone)]
+struct DocumentFace {
+    key: (u64, u32),
+    name: String,
+    data: std::sync::Arc<FontData>,
+    /// The pass that installed it. egui binds new fonts at the start of the
+    /// *next* pass, and drawing in one before then is the panic above.
+    installed_in: u64,
+}
+
+/// How many document faces egui holds at once. Each is a whole font file
+/// in memory and in the atlas; a panel showing more than this at a time
+/// would be a panel of specimens, which nothing here is.
+const MOST_DOCUMENT_FACES: usize = 12;
+
+/// The egui family a document face is drawn in.
+pub(crate) fn document_face_name(key: (u64, u32)) -> String {
+    format!("Tessera document face {}/{}", key.0, key.1)
+}
+
+/// The egui family to draw `face` in, installing it if egui does not have
+/// it yet.
+///
+/// `None` until the pass after the one that installed it — so a caller
+/// draws a placeholder for one frame, and asks again on the next, which this
+/// requests. Never cache the answer across frames: a face can be evicted to
+/// make room, and asking again is what reinstalls it.
+pub(crate) fn document_face(ctx: &Context, face: &tessera_text::FontData) -> Option<String> {
+    let registry = egui::Id::new("tessera-document-faces");
+    let key = (face.data.id(), face.index);
+    let pass = ctx.cumulative_pass_nr();
+    let mut reinstall = None;
+    let name = ctx.data_mut(|data| {
+        let faces = data.get_temp_mut_or_default::<DocumentFaces>(registry);
+        if let Some(known) = faces.faces.iter().find(|f| f.key == key) {
+            return (pass > known.installed_in).then(|| known.name.clone());
+        }
+        let mut bytes = FontData::from_owned(face.data.as_ref().to_vec());
+        bytes.index = face.index;
+        faces.faces.push(DocumentFace {
+            key,
+            name: document_face_name(key),
+            data: std::sync::Arc::new(bytes),
+            installed_in: pass,
+        });
+        if faces.faces.len() > MOST_DOCUMENT_FACES {
+            faces.faces.remove(0);
+        }
+        reinstall = Some(faces.clone());
+        None
+    });
+    if let Some(faces) = reinstall {
+        let mut fonts = definitions();
+        for face in &faces.faces {
+            fonts
+                .font_data
+                .insert(face.name.clone(), std::sync::Arc::clone(&face.data));
+            fonts.families.insert(
+                FontFamily::Name(face.name.clone().into()),
+                vec![face.name.clone()],
+            );
+        }
+        ctx.set_fonts(fonts);
+        ctx.request_repaint();
+    }
+    name
+}
+
 /// Install once at startup; theme changes must not rebuild the glyph atlas.
 pub fn install(ctx: &Context) {
     let installed = egui::Id::new("tessera-ui-fonts-installed");

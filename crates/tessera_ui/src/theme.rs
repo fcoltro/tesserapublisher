@@ -302,6 +302,16 @@ impl Theme {
     // pair of regions is a border nowhere, and it was why the window read as
     // one undifferentiated field.
 
+    /// Whether the light palette is the one showing.
+    ///
+    /// For the few surfaces whose depth has to be said differently in each:
+    /// a card sits above its ground in both, which is a step lighter in the
+    /// dark palette and white paper in the light one, where the scale's next
+    /// step would sink it instead.
+    pub fn is_light() -> bool {
+        ACTIVE.load(std::sync::atomic::Ordering::Relaxed) == 1
+    }
+
     /// Panels: the rail, the tool strip, the status bar. Step 2.
     pub fn panel_bg() -> Color32 {
         palette().step(2)

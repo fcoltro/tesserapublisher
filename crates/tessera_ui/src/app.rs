@@ -239,6 +239,8 @@ pub struct StylesWindow {
     pub editing: bool,
     /// Which page of the editor is showing: the left column's choice.
     pub page: crate::view::styles::StylePage,
+    /// The faces the preview has resolved each style's type to.
+    pub faces: crate::view::specimen::Faces,
 }
 
 impl StylesWindow {

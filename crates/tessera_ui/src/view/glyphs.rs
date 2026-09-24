@@ -125,42 +125,36 @@ fn face_of(state: &mut TesseraApp, family: Option<&str>) -> Option<tessera_text:
     shaped.fonts.first().cloned()
 }
 
-/// Make sure egui can draw `face`, installing it if it is not the one
-/// installed; and read its characters. Returns the egui family name —
-/// or `None` on the frame that installed it, because egui binds new
-/// fonts at the start of the *next* pass, and drawing in a family it has
-/// not bound yet is a panic in epaint. Found by opening the panel in the
-/// window: the first frame took the application down. So that frame asks
-/// for another and draws nothing in the face.
+/// Make sure egui can draw `face`, and read its characters when it is a
+/// face the panel has not shown before. Returns the egui family name — or
+/// `None` on the frame that installed it, because egui binds new fonts at
+/// the start of the *next* pass, and drawing in a family it has not bound
+/// yet is a panic in epaint. Found by opening the panel in the window: the
+/// first frame took the application down. So that frame asks for another
+/// and draws nothing in the face.
+///
+/// The installing is the shared registry's, not this panel's own: the style
+/// window draws its specimen in document faces too, and two panels calling
+/// `set_fonts` each for itself would take each other's face away.
 fn install(
     ctx: &egui::Context,
     panel: &mut GlyphsPanel,
     face: &tessera_text::shape::FontData,
 ) -> Option<String> {
     let key = (face.data.id(), face.index);
-    if let Some((installed, name)) = &panel.installed
-        && *installed == key
+    if panel
+        .installed
+        .as_ref()
+        .is_none_or(|(known, _)| *known != key)
     {
-        return Some(name.clone());
+        panel.characters = characters_of(face)
+            .into_iter()
+            .map(|c| (c, format!("{:04X}", u32::from(c))))
+            .collect();
+        panel.shown_for = None;
+        panel.installed = Some((key, crate::ui_fonts::document_face_name(key)));
     }
-    let name = format!("Tessera document face {}/{}", key.0, key.1);
-    let mut definitions = crate::ui_fonts::definitions();
-    let mut data = egui::FontData::from_owned(face.data.as_ref().to_vec());
-    data.index = face.index;
-    definitions.font_data.insert(name.clone(), data.into());
-    definitions
-        .families
-        .insert(FontFamily::Name(name.clone().into()), vec![name.clone()]);
-    ctx.set_fonts(definitions);
-
-    panel.characters = characters_of(face)
-        .into_iter()
-        .map(|c| (c, format!("{:04X}", u32::from(c))))
-        .collect();
-    panel.shown_for = None;
-    panel.installed = Some((key, name));
-    ctx.request_repaint();
-    None
+    crate::ui_fonts::document_face(ctx, face)
 }
 
 /// Every character the face maps to a glyph, in code-point order, without
@@ -491,6 +485,56 @@ mod tests {
             !state.glyphs.characters.is_empty(),
             "and the grid has characters to draw"
         );
+    }
+
+    #[test]
+    fn another_panel_installing_a_face_does_not_take_this_one_s_away() {
+        // The style window's specimen draws in document faces too. Each
+        // `set_fonts` replaces the whole set, so before the registry a second
+        // panel's face evicted the first's, and drawing in the evicted
+        // family is a panic in epaint.
+        let mut state = TesseraApp::headless();
+        let mut faces: Vec<tessera_text::shape::FontData> = Vec::new();
+        for family in [None, Some("serif"), Some("monospace"), Some("sans-serif")] {
+            if let Some(face) = face_of(&mut state, family)
+                && !faces
+                    .iter()
+                    .any(|f| (f.data.id(), f.index) == (face.data.id(), face.index))
+            {
+                faces.push(face);
+            }
+        }
+        assert!(
+            faces.len() >= 2,
+            "{} resolved serif, sans and mono to one face",
+            std::env::consts::OS
+        );
+        let (first, second) = (&faces[0], &faces[1]);
+
+        let ctx = egui::Context::default();
+        let mut name = None;
+        for _ in 0..2 {
+            let _ = crate::headless_frame::frame(&ctx, egui::RawInput::default(), |ui| {
+                name = crate::ui_fonts::document_face(ui.ctx(), first);
+            });
+        }
+        let first_name = name.expect("bound on the pass after it was installed");
+        let _ = crate::headless_frame::frame(&ctx, egui::RawInput::default(), |ui| {
+            assert!(
+                crate::ui_fonts::document_face(ui.ctx(), second).is_none(),
+                "the second face installs this pass"
+            );
+        });
+        let _ = crate::headless_frame::frame(&ctx, egui::RawInput::default(), |ui| {
+            assert_eq!(
+                crate::ui_fonts::document_face(ui.ctx(), first).as_deref(),
+                Some(first_name.as_str()),
+                "and the first is still there"
+            );
+            assert!(crate::ui_fonts::document_face(ui.ctx(), second).is_some());
+            // Drawing in both is what panicked when one had been evicted.
+            ui.label(egui::RichText::new("Ag").family(FontFamily::Name(first_name.clone().into())));
+        });
     }
 
     #[test]
