@@ -3058,7 +3058,7 @@ fn propagate_linked_edit(values: &mut [f64; 4], edited: [bool; 4], linked: bool)
     true
 }
 
-fn linked_edges(
+pub(crate) fn linked_edges(
     ui: &mut Ui,
     id: egui::Id,
     title: &str,
@@ -3184,7 +3184,7 @@ impl FieldLabel<'_> {
     }
 }
 
-fn property_field<'a, R>(
+pub(crate) fn property_field<'a, R>(
     ui: &mut Ui,
     label: impl Into<FieldLabel<'a>>,
     add: impl FnOnce(&mut Ui) -> R,
@@ -3236,7 +3236,7 @@ fn text_field<R>(
 /// choice, a filled square under the one that is on, a tint under the
 /// pointer, and the focus ring over any of them. A row of nine boxed buttons
 /// is nine borders to read past before the pictures.
-fn paint_toggle_frame(ui: &Ui, rect: egui::Rect, response: &egui::Response, on: bool) {
+pub(crate) fn paint_toggle_frame(ui: &Ui, rect: egui::Rect, response: &egui::Response, on: bool) {
     let painter = ui.painter_at(rect);
     let fill = if on {
         Some(Theme::selected_bg())
@@ -3380,7 +3380,7 @@ fn property_choice<T: PartialEq + Copy>(
 /// its name at the left in the label column, as InDesign's Stroke panel
 /// writes "Cap" and "Join", and the pictures packed after it. The name above
 /// the row cost a line per choice for a word the row could carry.
-fn icon_choices<T: PartialEq + Copy>(
+pub(crate) fn icon_choices<T: PartialEq + Copy>(
     ui: &mut Ui,
     label: &str,
     value: &mut T,

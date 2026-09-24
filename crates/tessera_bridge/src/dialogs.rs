@@ -225,7 +225,7 @@ fn new_document(state: &mut TesseraApp, arguments: &Value) -> Result<Value, Stri
         settings.pages = n.max(1) as u32;
     }
     if let Some(m) = f("margin") {
-        settings.margin = m;
+        settings.margins = tessera_document::nodes::Margins::uniform(m);
     }
     if let Some(m) = f("bleed") {
         settings.bleed = m;
