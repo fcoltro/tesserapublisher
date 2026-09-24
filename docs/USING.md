@@ -98,6 +98,14 @@ page, and General lists everything, with **Reset to base**. Character colour
 can name one of the document's swatches, so editing the swatch recolours every
 style that uses it.
 
+General also counts where the style is used. The arrows beside the count
+select each use on the page in turn, and the window stays open. A character
+style is previewed where the document first uses it, among the words around
+it. It is set in a paragraph style that you choose under the preview
+("Shown in"); by default that is the paragraph style of that first use. What
+the character style leaves alone shows as that paragraph has it: "13 pt, as in
+Body".
+
 **Tabs.** Press Tab in a frame and the text after it goes to the next stop.
 The stops are in the inspector's Paragraph section: a position from the left
 edge of the column, whether the text sits left, centred, right or on its

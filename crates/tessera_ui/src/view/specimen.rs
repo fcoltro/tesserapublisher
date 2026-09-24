@@ -239,25 +239,49 @@ pub(crate) fn paragraph(ui: &mut Ui, state: &mut TesseraApp, id: ParagraphStyleI
     });
 }
 
-/// The character style `id`, set in a sentence of the document's default
-/// text, so it shows against what it will usually sit in.
+/// The character style `id`, set in its own words where the document has
+/// any, inside the paragraph style it is shown in.
+///
+/// A character style says only what it changes, so a preview of it alone
+/// shows almost nothing: "italic, Ocean" is a style whose size and face are
+/// whatever it lands in. So it is shown landed: the first place the
+/// document uses it, with the words either side, set in the paragraph style
+/// chosen under the preview — by default the one that first use sits in.
 pub(crate) fn character(ui: &mut Ui, state: &mut TesseraApp, id: CharacterStyleId) {
+    let context = super::styles::shown_in(state, id);
+    let (before, words, after) =
+        super::styles::first_use_in_context(state, id).unwrap_or_else(|| {
+            (
+                "Text around it sits in the paragraph's own type, ".to_string(),
+                "and these words take the style".to_string(),
+                ", and then the sentence goes on.".to_string(),
+            )
+        });
     let doc = state.active().document();
-    let base = doc.document_default();
+    let base = match context {
+        Some(p) => doc
+            .paragraph_chain(p)
+            .character
+            .over(&doc.document_default()),
+        None => doc.document_default(),
+    };
     let styled = doc.character_chain(id).over(&base);
+    let mut contexts: Vec<(Option<ParagraphStyleId>, String)> =
+        vec![(None, super::styles::BASIC_PARAGRAPH.to_string())];
+    contexts.extend(
+        doc.paragraph_styles
+            .iter()
+            .map(|(p, style)| (Some(p), style.name.clone())),
+    );
     let base_colour = ink(state, &base);
     let styled_colour = ink(state, &styled);
     let largest = base.size.unwrap_or(12.0).max(styled.size.unwrap_or(12.0));
     let scale = (LARGEST / largest).min(1.0);
     let base_family = family(ui, state, &base);
     let styled_family = family(ui, state, &styled);
+    let base_slant = slanted(state, &base);
     let styled_slant = slanted(state, &styled);
-    let mut words = "and these words take the style".to_string();
-    match styled.case {
-        Some(Case::Upper | Case::SmallCaps) => words = words.to_uppercase(),
-        Some(Case::Lower) => words = words.to_lowercase(),
-        _ => {}
-    }
+    let mut chosen = None;
 
     frame(ui, |ui| {
         let width = ui.available_width();
@@ -267,18 +291,14 @@ pub(crate) fn character(ui: &mut Ui, state: &mut TesseraApp, id: CharacterStyleI
             return;
         };
         let mut job = egui::text::LayoutJob::default();
-        let plain = text_format(&base, base_family.clone(), base_colour, scale, false);
+        let plain = text_format(&base, base_family.clone(), base_colour, scale, base_slant);
+        job.append(&cased(&before, base.case), 0.0, plain.clone());
         job.append(
-            "Text around it sits in the document's default, ",
-            0.0,
-            plain.clone(),
-        );
-        job.append(
-            &words,
+            &cased(&words, styled.case),
             0.0,
             text_format(&styled, styled_family, styled_colour, scale, styled_slant),
         );
-        job.append(", and then the sentence goes on.", 0.0, plain);
+        job.append(&cased(&after, base.case), 0.0, plain);
         job.wrap.max_width = measure;
         job.wrap.max_rows = 3;
         let galley = ui.painter().layout_job(job);
@@ -292,8 +312,63 @@ pub(crate) fn character(ui: &mut Ui, state: &mut TesseraApp, id: CharacterStyleI
             galley,
             base_colour,
         );
-        caption(ui, &describe(&styled), scale);
+        caption_with(
+            ui,
+            &describe(&styled),
+            &format!("at {:.0}%", scale * 100.0),
+            |ui| {
+                let shown = contexts
+                    .iter()
+                    .find(|(p, _)| *p == context)
+                    .map_or(super::styles::BASIC_PARAGRAPH, |(_, name)| name.as_str());
+                crate::icons::reads_as(
+                    egui::ComboBox::from_id_salt(("character-shown-in", id))
+                        .selected_text(
+                            egui::RichText::new(shown)
+                                .size(Theme::TYPE_SM)
+                                .color(Theme::text_primary()),
+                        )
+                        .truncate()
+                        .width(150.0)
+                        .show_ui(ui, |ui| {
+                            for (p, name) in &contexts {
+                                if ui.selectable_label(*p == context, name).clicked() {
+                                    chosen = Some(*p);
+                                }
+                            }
+                        })
+                        .response,
+                    "Shown in",
+                    egui::WidgetType::ComboBox,
+                    None,
+                )
+                .on_hover_text(
+                    "The paragraph style the sample sits in. What the character \
+                 style leaves alone is shown as it is in this paragraph.",
+                );
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new("Shown in")
+                            .size(Theme::TYPE_SM)
+                            .color(Theme::text_muted()),
+                    )
+                    .selectable(false),
+                );
+            },
+        );
     });
+    if let Some(p) = chosen {
+        state.styles_window.shown_in = Some((id, p));
+    }
+}
+
+/// Text as a case asks for it to be drawn.
+fn cased(text: &str, case: Option<Case>) -> String {
+    match case {
+        Some(Case::Upper | Case::SmallCaps) => text.to_uppercase(),
+        Some(Case::Lower) => text.to_lowercase(),
+        _ => text.to_string(),
+    }
 }
 
 /// The preview's card: a raised ground holding the paper and its caption.
@@ -485,6 +560,12 @@ fn describe(format: &CharacterFormat) -> String {
 
 /// Under the paper: what it is set in, and at what scale.
 fn caption(ui: &mut Ui, said: &str, scale: f32) {
+    caption_with(ui, said, &format!("Shown at {:.0}%", scale * 100.0), |_| {});
+}
+
+/// As above, with a control of the preview's own before the scale: added
+/// right to left, so its last widget sits furthest left.
+fn caption_with(ui: &mut Ui, said: &str, scale: &str, control: impl FnOnce(&mut Ui)) {
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.add(
@@ -499,12 +580,13 @@ fn caption(ui: &mut Ui, said: &str, scale: f32) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add(
                 egui::Label::new(
-                    egui::RichText::new(format!("Shown at {:.0}%", scale * 100.0))
+                    egui::RichText::new(scale)
                         .size(Theme::TYPE_SM)
                         .color(Theme::text_muted()),
                 )
                 .selectable(false),
             );
+            control(ui);
         });
     });
 }

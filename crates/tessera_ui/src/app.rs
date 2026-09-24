@@ -241,6 +241,31 @@ pub struct StylesWindow {
     pub page: crate::view::styles::StylePage,
     /// The faces the preview has resolved each style's type to.
     pub faces: crate::view::specimen::Faces,
+    /// Where the style's uses were last found. Found again only when the
+    /// style, the document or its revision changes, because finding them
+    /// walks every run of every story.
+    pub uses: Option<FoundUses>,
+    /// The use last gone to with Previous and Next, so the next press goes
+    /// on from there.
+    pub visited: Option<(crate::view::styles::UsedStyle, usize)>,
+    /// The paragraph style a character style is being shown in, when it
+    /// has been chosen: `None` inside is [Basic Paragraph]. Unchosen, it is
+    /// the paragraph style of the first place the style is used.
+    pub shown_in: Option<(
+        tessera_text::story::CharacterStyleId,
+        Option<tessera_text::story::ParagraphStyleId>,
+    )>,
+}
+
+/// A style's uses as last found: the style, the document and the revision
+/// they were found at, and each place with whether it carries formatting of
+/// its own.
+#[derive(Debug, Clone)]
+pub struct FoundUses {
+    pub style: crate::view::styles::UsedStyle,
+    pub document: DocumentKey,
+    pub revision: u64,
+    pub uses: Vec<(crate::find::Hit, bool)>,
 }
 
 impl StylesWindow {

@@ -74,8 +74,123 @@ pub fn search(doc: &Document, query: &Query) -> Vec<Hit> {
     if !query.is_runnable() {
         return Vec::new();
     }
-
     let mut hits = Vec::new();
+    for (story, frame, cell) in shown_stories(doc) {
+        let Some(text) = doc.story(story) else {
+            continue;
+        };
+        for range in ranges_in(&text.text, query) {
+            hits.push(Hit {
+                story,
+                frame,
+                cell,
+                range,
+            });
+        }
+    }
+    hits
+}
+
+/// Every place text is set in a character style, in reading order, each
+/// with whether any of it carries formatting of its own on top — the `+`.
+///
+/// A place is a stretch of the style, not a run: formatting a word inside it
+/// splits one run into three, and a person who applied the style once sees
+/// one place, not three.
+pub fn uses_of_character_style(
+    doc: &Document,
+    id: tessera_text::story::CharacterStyleId,
+) -> Vec<(Hit, bool)> {
+    let mut uses: Vec<(Hit, bool)> = Vec::new();
+    for (story, frame, cell) in shown_stories(doc) {
+        let Some(text) = doc.story(story) else {
+            continue;
+        };
+        let mut open: Option<(Range<usize>, bool)> = None;
+        for run in &text.runs {
+            if run.style == Some(id) && !run.range.is_empty() {
+                let own = !run.local.is_empty();
+                open = Some(match open {
+                    Some((range, was)) if range.end == run.range.start => {
+                        (range.start..run.range.end, was || own)
+                    }
+                    Some(done) => {
+                        uses.push((hit(story, frame, cell, done.0), done.1));
+                        (run.range.clone(), own)
+                    }
+                    None => (run.range.clone(), own),
+                });
+            } else if let Some((range, own)) = open.take() {
+                uses.push((hit(story, frame, cell, range), own));
+            }
+        }
+        if let Some((range, own)) = open {
+            uses.push((hit(story, frame, cell, range), own));
+        }
+    }
+    uses
+}
+
+/// Every paragraph set in a paragraph style, in reading order, each with
+/// whether it carries formatting of its own on top.
+///
+/// Paragraphs, not runs: two neighbouring paragraphs in the same style fold
+/// into one run, and counting runs would say one where a reader sees two.
+/// The range stops short of the paragraph's newline, so going to it selects
+/// the words and not the break after them.
+pub fn uses_of_paragraph_style(
+    doc: &Document,
+    id: tessera_text::story::ParagraphStyleId,
+) -> Vec<(Hit, bool)> {
+    let mut uses = Vec::new();
+    for (story, frame, cell) in shown_stories(doc) {
+        let Some(text) = doc.story(story) else {
+            continue;
+        };
+        // Both lists are in text order, so one pass over each.
+        let mut runs = text.paragraphs.iter().peekable();
+        for range in text.paragraph_ranges() {
+            while let Some(run) = runs.peek()
+                && run.range.end <= range.start
+            {
+                runs.next();
+            }
+            if let Some(run) = runs.peek()
+                && run.range.start <= range.start
+                && run.style == Some(id)
+            {
+                let end = if text.text[range.clone()].ends_with('\n') {
+                    range.end - 1
+                } else {
+                    range.end
+                };
+                uses.push((
+                    hit(story, frame, cell, range.start..end),
+                    !run.local.is_empty(),
+                ));
+            }
+        }
+    }
+    uses
+}
+
+fn hit(story: StoryId, frame: FrameId, cell: Option<(usize, usize)>, range: Range<usize>) -> Hit {
+    Hit {
+        story,
+        frame,
+        cell,
+        range,
+    }
+}
+
+/// A story, the first frame showing it, and the cell it fills if a table's.
+type ShownStory = (StoryId, FrameId, Option<(usize, usize)>);
+
+/// Every story a frame shows, once each, in reading order: a text frame's,
+/// and each cell's of a table. With the first frame showing it, which is
+/// where going to it starts.
+fn shown_stories(doc: &Document) -> Vec<ShownStory> {
+    let mut shown = Vec::new();
     let mut seen: Vec<StoryId> = Vec::new();
 
     for frame in doc.paint_order() {
@@ -98,20 +213,10 @@ pub fn search(doc: &Document, query: &Query) -> Vec<Hit> {
                 continue;
             }
             seen.push(story);
-            let Some(text) = doc.story(story) else {
-                continue;
-            };
-            for range in ranges_in(&text.text, query) {
-                hits.push(Hit {
-                    story,
-                    frame,
-                    cell,
-                    range,
-                });
-            }
+            shown.push((story, frame, cell));
         }
     }
-    hits
+    shown
 }
 
 /// Every occurrence within one string, left to right and non-overlapping.

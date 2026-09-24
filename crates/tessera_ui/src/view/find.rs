@@ -205,7 +205,7 @@ fn select_hit(state: &mut TesseraApp, hits: &[find::Hit], next: usize) {
 }
 
 /// Select the frame the hit is in and put the caret on the text.
-fn reveal(state: &mut TesseraApp, hit: &find::Hit) {
+pub(crate) fn reveal(state: &mut TesseraApp, hit: &find::Hit) {
     state.edit_master(None);
     let chain = state.active().document().thread_of(hit.frame);
     let frame = state.resolve_active().items.iter().find(|item| {

@@ -594,11 +594,18 @@ fn sidebar(ui: &mut Ui, state: &mut TesseraApp, stated: &[(StylePage, String)]) 
 fn sidebar_pages(ui: &mut Ui, state: &mut TesseraApp, stated: &[(StylePage, String)]) {
     ui.spacing_mut().item_spacing.y = 2.0;
     let current = state.styles_window.current_page();
+    let pages = StylePage::for_kind(state.styles_window.kind);
+    // A heading is there to tell two lists apart. A character style's pages
+    // are all character formatting, and "Character" over the lot of them
+    // named the window rather than a group in it.
+    let mut groups: Vec<&str> = pages.iter().filter_map(|p| p.group()).collect();
+    groups.dedup();
+    let headed = groups.len() > 1;
     let mut group = None;
-    for page in StylePage::for_kind(state.styles_window.kind) {
+    for page in pages {
         if page.group() != group {
             group = page.group();
-            if let Some(heading) = group {
+            if let Some(heading) = group.filter(|_| headed) {
                 ui.add_space(Theme::space_3());
                 ui.horizontal(|ui| {
                     ui.add_space(8.0);
@@ -1274,7 +1281,7 @@ fn states<T>(ui: &mut Ui, label: &str, slot: &mut Option<T>, fresh: impl FnOnce(
 
 /// The name the document's default text goes by in the paragraph style
 /// lists: the style every paragraph style is based on in the end.
-const BASIC_PARAGRAPH: &str = "[Basic Paragraph]";
+pub(crate) const BASIC_PARAGRAPH: &str = "[Basic Paragraph]";
 
 /// Solid K and no ink, as a press means black and paper: the two colours
 /// every document's palette starts with. Not RGB black and white, which
@@ -1303,7 +1310,11 @@ const PAPER: Color = Color::Cmyk {
 /// rather than inventing a number.
 struct Lineage<F> {
     ancestors: Vec<(String, F)>,
-    floor: Option<(&'static str, F)>,
+    /// The floor's name and format, and the word a row puts before its
+    /// name: "from" for [Basic Paragraph], which a paragraph style is based
+    /// on; "as in" for the paragraph a character style is shown in, which it
+    /// is not based on but lands in.
+    floor: Option<(String, F, &'static str)>,
     /// What a row says when nothing in the lineage states the property.
     unstated: &'static str,
 }
@@ -1314,6 +1325,9 @@ struct Inherited<T> {
     /// The style it comes from, or — with no value — a phrase that stands
     /// for one: "the font's own".
     from: String,
+    /// "from" a style it is based on, or "as in" the paragraph it is shown
+    /// in.
+    how: &'static str,
 }
 
 impl<T> Inherited<T> {
@@ -1322,7 +1336,13 @@ impl<T> Inherited<T> {
         Self {
             value: None,
             from: from.to_string(),
+            how: "from",
         }
+    }
+
+    /// Where the value comes from, as the row's end says it.
+    fn source(&self) -> String {
+        format!("{} {}", self.how, self.from)
     }
 }
 
@@ -1334,14 +1354,16 @@ impl<F> Lineage<F> {
                 return Inherited {
                     value: Some(value),
                     from: name.clone(),
+                    how: "from",
                 };
             }
         }
         match &self.floor {
-            Some((name, format)) => match get(format) {
+            Some((name, format, how)) => match get(format) {
                 Some(value) => Inherited {
                     value: Some(value),
-                    from: (*name).to_string(),
+                    from: name.clone(),
+                    how,
                 },
                 None => Inherited::unstated(self.unstated),
             },
@@ -1361,7 +1383,7 @@ impl<F> Lineage<F> {
             floor: self
                 .floor
                 .as_ref()
-                .map(|(name, format)| (*name, part(format))),
+                .map(|(name, format, how)| (name.clone(), part(format), *how)),
             unstated: self.unstated,
         }
     }
@@ -1390,15 +1412,22 @@ fn paragraph_lineage(
     }
     Lineage {
         ancestors,
-        floor: Some((BASIC_PARAGRAPH, basic_paragraph(state))),
+        floor: Some((BASIC_PARAGRAPH.to_string(), basic_paragraph(state), "from")),
         unstated: "the font's own",
     }
 }
 
 /// What a character style based on `based_on` inherits.
+///
+/// Its floor is the paragraph style it is shown in: a character style is
+/// based on no paragraph, but it always lands in one, and what it leaves
+/// alone is whatever that paragraph says. So a row reads "10.5 pt, as in
+/// Body" — a number somebody can use — where it used to read "the text's
+/// own", which was true and told nobody anything.
 fn character_lineage(
     state: &TesseraApp,
     based_on: Option<CharacterStyleId>,
+    shown_in: Option<ParagraphStyleId>,
 ) -> Lineage<CharacterFormat> {
     let doc = state.active().document();
     let mut seen = Vec::new();
@@ -1414,11 +1443,83 @@ fn character_lineage(
         ancestors.push((style.name.clone(), style.format.clone()));
         next = style.based_on;
     }
+    let basic = basic_paragraph(state).character;
+    let (name, floor) = match shown_in.and_then(|p| doc.paragraph_styles.get(p).map(|s| (p, s))) {
+        Some((p, style)) => (
+            style.name.clone(),
+            doc.paragraph_chain(p).character.over(&basic),
+        ),
+        None => (BASIC_PARAGRAPH.to_string(), basic),
+    };
     Lineage {
         ancestors,
-        floor: None,
-        unstated: "the text's own",
+        floor: Some((name, floor, "as in")),
+        unstated: "the font's own",
     }
+}
+
+/// The paragraph style a character style is shown in: the one chosen on
+/// its preview, or the one its first use sits in, or [Basic Paragraph].
+pub(crate) fn shown_in(state: &mut TesseraApp, id: CharacterStyleId) -> Option<ParagraphStyleId> {
+    if let Some((for_style, chosen)) = state.styles_window.shown_in
+        && for_style == id
+        && chosen.is_none_or(|p| state.active().document().paragraph_styles.contains_key(p))
+    {
+        return chosen;
+    }
+    let first = style_uses(state, UsedStyle::Character(id))
+        .into_iter()
+        .next()?;
+    let doc = state.active().document();
+    doc.story(first.0.story)?
+        .paragraph_run_at(first.0.range.start)?
+        .style
+        .filter(|p| doc.paragraph_styles.contains_key(*p))
+}
+
+/// The words the character style is first used on, and those either side
+/// of them in their paragraph: a sample of the document's own, cut short at
+/// word boundaries.
+pub(crate) fn first_use_in_context(
+    state: &mut TesseraApp,
+    id: CharacterStyleId,
+) -> Option<(String, String, String)> {
+    const SIDE: usize = 56;
+    let (first, _) = style_uses(state, UsedStyle::Character(id))
+        .into_iter()
+        .next()?;
+    let story = state.active().document().story(first.story)?;
+    let paragraph = story.paragraph_bounds(first.range.clone());
+    let clean = |text: &str| -> String {
+        text.chars()
+            .filter(|c| !c.is_control() && tessera_text::variables::Marker::of(*c).is_none())
+            .collect()
+    };
+    let before = clean(&story.text[paragraph.start..first.range.start]);
+    let styled = clean(&story.text[first.range.clone()]);
+    let after = clean(&story.text[first.range.end..paragraph.end]);
+    if styled.trim().is_empty() {
+        return None;
+    }
+    // At most SIDE characters either side, broken at a space, with an
+    // ellipsis where the paragraph goes on.
+    let before = match before.char_indices().rev().nth(SIDE) {
+        Some((cut, _)) => {
+            let rest = &before[cut..];
+            let word = rest.find(' ').map_or(rest, |i| &rest[i + 1..]);
+            format!("\u{2026}{word}")
+        }
+        None => before,
+    };
+    let after = match after.char_indices().nth(SIDE) {
+        Some((cut, _)) => {
+            let head = &after[..cut];
+            let word = head.rfind(' ').map_or(head, |i| &head[..i]);
+            format!("{word}\u{2026}")
+        }
+        None => after,
+    };
+    Some((before, styled, after))
 }
 
 /// [Basic Paragraph], stated in full: the document's default text, and what
@@ -1836,35 +1937,91 @@ fn settings_summary(
     reset
 }
 
-/// How many paragraphs are set in a style, and how many of those carry
-/// formatting of their own — the `+` the list shows, counted.
-///
-/// Paragraphs, not runs: two neighbouring paragraphs in the same style fold
-/// into one run, and counting runs would say one where a reader sees two.
-fn paragraph_usage(state: &TesseraApp, id: ParagraphStyleId) -> (usize, usize) {
-    let mut used = 0;
-    let mut own = 0;
-    for story in state.active().document().stories.values() {
-        // Both lists are in text order, so one pass over each.
-        let mut runs = story.paragraphs.iter().peekable();
-        for range in story.paragraph_ranges() {
-            while let Some(run) = runs.peek()
-                && run.range.end <= range.start
-            {
-                runs.next();
-            }
-            if let Some(run) = runs.peek()
-                && run.range.start <= range.start
-                && run.style == Some(id)
-            {
-                used += 1;
-                if !run.local.is_empty() {
-                    own += 1;
-                }
-            }
-        }
+/// A style whose uses can be counted and gone to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UsedStyle {
+    Paragraph(ParagraphStyleId),
+    Character(CharacterStyleId),
+}
+
+/// Every place `which` is used, in reading order, each with whether it
+/// carries formatting of its own: found again only when the document has
+/// changed since, or the window is asking about another style.
+fn style_uses(state: &mut TesseraApp, which: UsedStyle) -> Vec<(crate::find::Hit, bool)> {
+    let document = state.active;
+    let revision = state.active().document().revision();
+    if let Some(found) = &state.styles_window.uses
+        && found.style == which
+        && found.document == document
+        && found.revision == revision
+    {
+        return found.uses.clone();
     }
-    (used, own)
+    let doc = state.active().document();
+    let found = match which {
+        UsedStyle::Paragraph(id) => crate::find::uses_of_paragraph_style(doc, id),
+        UsedStyle::Character(id) => crate::find::uses_of_character_style(doc, id),
+    };
+    state.styles_window.uses = Some(crate::app::FoundUses {
+        style: which,
+        document,
+        revision,
+        uses: found.clone(),
+    });
+    found
+}
+
+/// How much of the document hangs on the style, and a way to visit each
+/// place: two numbers read at a glance, and Previous and Next, which select
+/// each use on the page in turn while the window stays open.
+///
+/// For a character style this is most of what there is to know before
+/// changing it. Its uses are words scattered through the text, and "which
+/// words, and where" had no answer short of reading the document.
+fn uses_card(ui: &mut Ui, state: &mut TesseraApp, which: UsedStyle) {
+    let uses = style_uses(state, which);
+    let used = uses.len();
+    let own = uses.iter().filter(|(_, own)| *own).count();
+    let at = state
+        .styles_window
+        .visited
+        .filter(|(style, i)| *style == which && *i < used)
+        .map(|(_, i)| i);
+    let (one, many) = match which {
+        UsedStyle::Paragraph(_) => ("paragraph uses it", "paragraphs use it"),
+        UsedStyle::Character(_) => ("place in the text", "places in the text"),
+    };
+    let mut go: Option<usize> = None;
+    style_ui::card_with_action(
+        ui,
+        "In this document",
+        |ui| {
+            ui.add_enabled_ui(used > 0, |ui| {
+                if super::panels::icon_button(ui, Icon::ChevronRight, "Next use", false) {
+                    go = Some(at.map_or(0, |i| (i + 1) % used));
+                }
+                if super::panels::icon_button(ui, Icon::ChevronLeft, "Previous use", false) {
+                    go = Some(at.map_or(used - 1, |i| (i + used - 1) % used));
+                }
+            });
+            if let Some(i) = at {
+                ui.colored_label(Theme::text_muted(), format!("{} of {used}", i + 1));
+            }
+        },
+        |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 28.0;
+                style_ui::stat(ui, used, if used == 1 { one } else { many })
+                    .on_hover_text(usage_sentence(used, own));
+                style_ui::stat(ui, own, "with formatting of their own (+)")
+                    .on_hover_text(usage_sentence(used, own));
+            });
+        },
+    );
+    if let Some(i) = go {
+        state.styles_window.visited = Some((which, i));
+        crate::view::find::reveal(state, &uses[i].0);
+    }
 }
 
 fn usage_sentence(used: usize, own: usize) -> String {
@@ -2108,26 +2265,7 @@ fn paragraph_fields(
         });
     });
 
-    // How much of the document hangs on the style, before anybody changes
-    // it: two numbers, read at a glance, rather than a sentence to parse.
-    let (used, own) = paragraph_usage(state, id);
-    style_ui::card(ui, Some("In this document"), |ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 28.0;
-            style_ui::stat(
-                ui,
-                used,
-                if used == 1 {
-                    "paragraph uses it"
-                } else {
-                    "paragraphs use it"
-                },
-            )
-            .on_hover_text(usage_sentence(used, own));
-            style_ui::stat(ui, own, "with formatting of their own (+)")
-                .on_hover_text(usage_sentence(used, own));
-        });
-    });
+    uses_card(ui, state, UsedStyle::Paragraph(id));
 
     // InDesign's "Reset To Base", as a button on the summary it empties:
     // in a window that edits live there is no OK for a checkbox to wait for.
@@ -2473,7 +2611,8 @@ fn character_fields(
 
     let page = state.styles_window.current_page();
     if page != StylePage::General {
-        let lineage = character_lineage(state, existing.based_on);
+        let context = shown_in(state, id);
+        let lineage = character_lineage(state, existing.based_on, context);
         match page {
             StylePage::BasicCharacter => {
                 character_basic(ui, state, &mut edited.format, &lineage);
@@ -2539,6 +2678,8 @@ fn character_fields(
             );
         });
     });
+
+    uses_card(ui, state, UsedStyle::Character(id));
 
     // A character style based on nothing looks like the text it is put on,
     // so that is what the summary and the reset say rather than "[None]".
@@ -3106,7 +3247,7 @@ fn stated_row<T: Clone + PartialEq>(
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.add(
                                 egui::Label::new(
-                                    egui::RichText::new(format!("from {}", inherited.from))
+                                    egui::RichText::new(inherited.source())
                                         .size(Theme::TYPE_SM)
                                         .color(Theme::text_muted()),
                                 )
@@ -3809,13 +3950,31 @@ mod tests {
     }
 
     #[test]
-    fn a_character_style_leaves_to_the_text_what_it_does_not_state() {
-        // No floor of its own: what it says nothing about is whatever the
-        // text it lands on already says, and no number would be true.
-        let state = TesseraApp::headless();
-        let lineage = character_lineage(&state, None);
-        let size = lineage.find(|f| f.size);
-        assert_eq!((size.value, size.from.as_str()), (None, "the text's own"));
+    fn a_character_style_shows_what_it_leaves_alone_as_the_paragraph_it_is_in_says() {
+        // It is based on no paragraph, but it lands in one: what it says
+        // nothing about is what that paragraph says, and the row says so
+        // with a number rather than "the text's own".
+        let (state, parent, _) = two_styles();
+        let size = character_lineage(&state, None, None).find(|f| f.size);
+        assert_eq!(
+            (size.value, size.from.as_str(), size.source()),
+            (
+                Some(12.0),
+                BASIC_PARAGRAPH,
+                format!("as in {BASIC_PARAGRAPH}")
+            )
+        );
+        let size = character_lineage(&state, None, Some(parent)).find(|f| f.size);
+        assert_eq!(
+            (size.value, size.source()),
+            (Some(18.0), "as in Parent".to_string())
+        );
+        let figures = character_lineage(&state, None, Some(parent)).find(|f| f.figure_case);
+        assert_eq!(
+            (figures.value, figures.from.as_str()),
+            (None, "the font's own"),
+            "and what no paragraph states is still nobody's number"
+        );
     }
 
     #[test]
@@ -4089,7 +4248,11 @@ mod tests {
             },
         );
         // Three paragraphs in one style fold into one run; a reader sees three.
-        assert_eq!(paragraph_usage(&state, parent), (3, 0));
+        let counted = |state: &TesseraApp| {
+            let uses = crate::find::uses_of_paragraph_style(state.active().document(), parent);
+            (uses.len(), uses.iter().filter(|(_, own)| *own).count())
+        };
+        assert_eq!(counted(&state), (3, 0));
 
         apply(
             &mut state,
@@ -4102,7 +4265,7 @@ mod tests {
                 },
             },
         );
-        assert_eq!(paragraph_usage(&state, parent), (3, 1));
+        assert_eq!(counted(&state), (3, 1));
         assert_eq!(
             usage_sentence(3, 1),
             "Used by 3 paragraphs; 1 has formatting of its own (+)."
@@ -4362,5 +4525,193 @@ mod tests {
         assert_eq!(leading_number(" 1,5×"), Some(1.5));
         assert_eq!(leading_number("-3 pt"), Some(-3.0));
         assert_eq!(leading_number("pt"), None);
+    }
+
+    /// A character style called Emphasis, and its id.
+    fn emphasis(state: &mut TesseraApp) -> CharacterStyleId {
+        apply(
+            state,
+            Command::DefineCharacterStyle(CharacterStyle {
+                name: "Emphasis".to_string(),
+                based_on: None,
+                format: CharacterFormat {
+                    italic: Some(true),
+                    ..CharacterFormat::default()
+                },
+            }),
+        );
+        state
+            .active()
+            .document()
+            .character_styles
+            .keys()
+            .last()
+            .expect("style")
+    }
+
+    #[test]
+    fn a_character_style_is_used_in_places_not_runs() {
+        // Formatting a letter inside a styled word splits its run in three;
+        // the person who styled the word styled one place.
+        let (mut state, _, _) = two_styles();
+        let story = a_frame_saying(&mut state, "one two three");
+        let id = emphasis(&mut state);
+        for range in [4..7, 8..13] {
+            apply(
+                &mut state,
+                Command::SetCharacterStyleOf {
+                    story,
+                    range,
+                    style: Some(id),
+                },
+            );
+        }
+        apply(
+            &mut state,
+            Command::SetCharacterFormat {
+                story,
+                range: 5..6,
+                format: CharacterFormat {
+                    weight: Some(700),
+                    ..CharacterFormat::default()
+                },
+            },
+        );
+        let uses = crate::find::uses_of_character_style(state.active().document(), id);
+        let places: Vec<(std::ops::Range<usize>, bool)> = uses
+            .into_iter()
+            .map(|(hit, own)| (hit.range, own))
+            .collect();
+        assert_eq!(places, [(4..7, true), (8..13, false)]);
+    }
+
+    #[test]
+    fn going_to_a_paragraph_selects_its_words_and_not_its_break() {
+        let (mut state, parent, _) = two_styles();
+        let story = a_frame_saying(&mut state, "One\nTwo");
+        apply(
+            &mut state,
+            Command::SetParagraphStyleOf {
+                story,
+                range: 0..7,
+                style: Some(parent),
+            },
+        );
+        let ranges: Vec<std::ops::Range<usize>> =
+            crate::find::uses_of_paragraph_style(state.active().document(), parent)
+                .into_iter()
+                .map(|(hit, _)| hit.range)
+                .collect();
+        assert_eq!(ranges, [0..3, 4..7]);
+    }
+
+    #[test]
+    fn next_selects_each_use_in_turn_and_comes_round_again() {
+        let (mut state, _, _) = two_styles();
+        let story = a_frame_saying(&mut state, "one two three");
+        let id = emphasis(&mut state);
+        for range in [0..3, 8..13] {
+            apply(
+                &mut state,
+                Command::SetCharacterStyleOf {
+                    story,
+                    range,
+                    style: Some(id),
+                },
+            );
+        }
+        state.styles_window.kind = StyleKind::Character;
+        state.styles_window.character = Some(id);
+        state.styles_window.editing = true;
+        state.styles_window.page = StylePage::General;
+        let ctx = window();
+        // Made so by the commands above; the question is whether going to a
+        // use makes it so again.
+        state.active_mut().dirty = false;
+        let selected = |state: &TesseraApp| {
+            state
+                .active()
+                .editing
+                .as_ref()
+                .and_then(|(_, buffer)| buffer.selection_range())
+        };
+        for expected in [0..3, 8..13, 0..3] {
+            click(&ctx, &mut state, "Next use");
+            assert_eq!(selected(&state), Some(expected));
+        }
+        click(&ctx, &mut state, "Previous use");
+        assert_eq!(selected(&state), Some(8..13), "and back");
+        assert!(!state.active().dirty, "going to a use is not an edit");
+    }
+
+    #[test]
+    fn a_character_style_is_shown_in_the_paragraph_it_is_first_used_in() {
+        let (mut state, parent, _) = two_styles();
+        let id = emphasis(&mut state);
+        assert_eq!(shown_in(&mut state, id), None, "unused, [Basic Paragraph]");
+        assert_eq!(first_use_in_context(&mut state, id), None);
+
+        let story = a_frame_saying(&mut state, "Plain words, then styled ones, then plain.");
+        apply(
+            &mut state,
+            Command::SetParagraphStyleOf {
+                story,
+                range: 0..1,
+                style: Some(parent),
+            },
+        );
+        apply(
+            &mut state,
+            Command::SetCharacterStyleOf {
+                story,
+                range: 18..29,
+                style: Some(id),
+            },
+        );
+        assert_eq!(shown_in(&mut state, id), Some(parent));
+        assert_eq!(
+            first_use_in_context(&mut state, id),
+            Some((
+                "Plain words, then ".to_string(),
+                "styled ones".to_string(),
+                ", then plain.".to_string()
+            ))
+        );
+
+        // Chosen under the preview, it stays chosen.
+        state.styles_window.shown_in = Some((id, None));
+        assert_eq!(shown_in(&mut state, id), None);
+    }
+
+    #[test]
+    fn the_sample_around_a_use_is_cut_at_words() {
+        let (mut state, _, _) = two_styles();
+        let long = "word ".repeat(30);
+        let text = format!("{long}STYLED{long}");
+        let story = a_frame_saying(&mut state, &text);
+        let id = emphasis(&mut state);
+        let start = long.len();
+        apply(
+            &mut state,
+            Command::SetCharacterStyleOf {
+                story,
+                range: start..start + 6,
+                style: Some(id),
+            },
+        );
+        let (before, styled, after) = first_use_in_context(&mut state, id).expect("a sample");
+        assert_eq!(styled, "STYLED");
+        assert!(before.ends_with("word "), "{before:?}");
+        assert!(
+            before
+                .strip_prefix('\u{2026}')
+                .is_some_and(|rest| rest.starts_with("word")),
+            "cut before a whole word, with an ellipsis: {before:?}"
+        );
+        assert!(
+            after.ends_with('\u{2026}') && after.starts_with("word"),
+            "{after:?}"
+        );
+        assert!(before.chars().count() <= 60 && after.chars().count() <= 60);
     }
 }
