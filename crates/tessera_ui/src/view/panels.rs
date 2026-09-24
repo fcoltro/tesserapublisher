@@ -3460,13 +3460,7 @@ fn format_target(
 /// own overrides and nothing it inherits, so a style made from it states what
 /// somebody set rather than every default. `None` with no text frame selected.
 pub(crate) fn stated_paragraph_format(state: &TesseraApp) -> Option<ParagraphFormat> {
-    let id = state.active().selection.single()?;
-    let tessera_document::nodes::FrameKind::Text { story, .. } =
-        state.active().document().frame(id)?.kind
-    else {
-        return None;
-    };
-    let range = format_target(state, id, story);
+    let (story, range) = text_in_hand(state)?;
     Some(
         state
             .active()
@@ -3474,6 +3468,19 @@ pub(crate) fn stated_paragraph_format(state: &TesseraApp) -> Option<ParagraphFor
             .story(story)?
             .common_paragraph_format(range),
     )
+}
+
+/// The text formatting would land on: the story, and the selection in it or
+/// the caret — or the whole story when the frame is selected and not being
+/// typed in. `None` with no single text frame selected.
+pub(crate) fn text_in_hand(state: &TesseraApp) -> Option<(StoryId, std::ops::Range<usize>)> {
+    let id = state.active().selection.single()?;
+    let tessera_document::nodes::FrameKind::Text { story, .. } =
+        state.active().document().frame(id)?.kind
+    else {
+        return None;
+    };
+    Some((story, format_target(state, id, story)))
 }
 
 /// A character property the user just changed, as a format stating only it.

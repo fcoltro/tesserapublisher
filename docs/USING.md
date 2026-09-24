@@ -86,6 +86,14 @@ To break a thread: select the frames and **Object ▸ Unthread**.
 what you look at every few minutes, so the two dozen properties live in a window
 of their own.
 
+In that window a ticked property is one the style states; an unticked one shows,
+greyed, the value it inherits and which style it comes from — "12 pt, from
+[Basic Paragraph]". Ticking it starts from that value, so nothing on the page
+moves until you change it. The page list counts what the style states on each
+page, and General sums it up in words, with **Apply to selection** and **Reset
+to base** beside the name. Character colour can name one of the document's
+swatches, so editing the swatch recolours every style that uses it.
+
 **Tabs.** Press Tab in a frame and the text after it goes to the next stop.
 The stops are in the inspector's Paragraph section: a position from the left
 edge of the column, whether the text sits left, centred, right or on its
