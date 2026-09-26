@@ -48,6 +48,29 @@ impl Document {
         page
     }
 
+    /// `count` new pages after `after` — or first, with `None` — in order:
+    /// each on `parent` when one is given (`Some(None)` for no parent), or,
+    /// with `None`, on the parent of the page it follows, as InDesign's
+    /// Insert Pages makes them. The pages made, in reading order.
+    pub fn insert_pages(
+        &mut self,
+        after: Option<PageId>,
+        count: usize,
+        parent: Option<Option<MasterId>>,
+    ) -> Vec<PageId> {
+        let mut made = Vec::with_capacity(count);
+        let mut previous = after;
+        for _ in 0..count {
+            let page = self.insert_page_after(previous);
+            if let Some(parent) = parent {
+                self.apply_master(page, parent);
+            }
+            made.push(page);
+            previous = Some(page);
+        }
+        made
+    }
+
     /// Put the pages in `order`, which must hold every document page once.
     ///
     /// One page at a time into its place, front to back: each move repacks
@@ -195,6 +218,31 @@ mod tests {
         let first = doc.insert_page_after(None);
         assert_eq!(order(&doc)[0], first, "None puts it first");
         assert_eq!(doc.master_of_page(first), None);
+    }
+
+    #[test]
+    fn several_pages_are_inserted_in_order_on_the_parent_asked() {
+        let (mut doc, ids) = pages(3);
+        let a = doc.add_master("A-Master");
+        let b = doc.add_master("B-Master");
+        doc.apply_master(ids[0], Some(a));
+
+        // As the page before: the first page's parent.
+        let made = doc.insert_pages(Some(ids[0]), 2, None);
+        assert_eq!(order(&doc), [ids[0], made[0], made[1], ids[1], ids[2]]);
+        assert!(made.iter().all(|p| doc.master_of_page(*p) == Some(a)));
+
+        // On another parent, at the end.
+        let end = doc.insert_pages(Some(ids[2]), 3, Some(Some(b)));
+        assert_eq!(&order(&doc)[5..], end.as_slice());
+        assert!(end.iter().all(|p| doc.master_of_page(*p) == Some(b)));
+
+        // On none, at the start.
+        let start = doc.insert_pages(None, 1, Some(None));
+        assert_eq!(order(&doc)[0], start[0]);
+        assert_eq!(doc.master_of_page(start[0]), None);
+        assert!(doc.insert_pages(None, 0, None).is_empty());
+        on_the_sheet(&doc);
     }
 
     #[test]

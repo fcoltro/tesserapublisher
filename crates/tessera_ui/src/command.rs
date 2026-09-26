@@ -364,6 +364,13 @@ pub enum Command {
     InsertPage {
         after: Option<PageId>,
     },
+    /// Several new pages after one — or first — each on the parent asked,
+    /// or on the parent of the page it follows.
+    InsertPages {
+        after: Option<PageId>,
+        count: usize,
+        parent: Option<Option<MasterId>>,
+    },
     /// Copy several pages; the copies go together, in order, after the last
     /// of them.
     DuplicatePages {
@@ -1742,6 +1749,17 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::MovePage { id, to } => {
             state.active_mut().document_mut().move_page(id, to);
+        }
+
+        Command::InsertPages {
+            after,
+            count,
+            parent,
+        } => {
+            state
+                .active_mut()
+                .document_mut()
+                .insert_pages(after, count, parent);
         }
 
         Command::InsertPage { after } => {

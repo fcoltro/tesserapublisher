@@ -85,15 +85,173 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
     heading(ui, state);
 
     // The rail scrolls its panel, so the room left is what is left *visible*:
-    // the clip, not the unbounded height a scrolling area offers.
-    let room = (ui.clip_rect().bottom() - ui.cursor().top() - FOOTER).max(MIN_LIST);
+    // the clip, not the unbounded height a scrolling area offers — less what
+    // the foot of the panel took last frame, which grows while the Insert
+    // pages form is open.
+    let foot_id = egui::Id::new("pages-foot-height");
+    let foot = ui.data(|d| d.get_temp::<f32>(foot_id)).unwrap_or(FOOTER);
+    let room = (ui.clip_rect().bottom() - ui.cursor().top() - foot).max(MIN_LIST);
     egui::ScrollArea::vertical()
         .id_salt("pages-list")
         .max_height(room)
         .min_scrolled_height(room)
         .auto_shrink([false, false])
         .show(ui, |ui| body(ui, state));
+    let top = ui.cursor().top();
+    if state.pages_window.inserting.is_some() {
+        insert_form(ui, state);
+    }
     footer(ui, state);
+    let measured = (ui.cursor().top() - top).max(FOOTER);
+    if ui.data(|d| d.get_temp::<f32>(foot_id)) != Some(measured) {
+        ui.data_mut(|d| d.insert_temp(foot_id, measured));
+        ui.ctx().request_repaint();
+    }
+}
+
+/// Where Insert pages puts the new pages.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InsertAt {
+    /// After the last page chosen, or the page being worked on.
+    #[default]
+    AfterChosen,
+    Start,
+    End,
+}
+
+/// What the new pages are built on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InsertParent {
+    /// The parent of the page each follows, as one page inserted takes.
+    #[default]
+    AsBefore,
+    None,
+    Master(MasterId),
+}
+
+/// InDesign's Insert Pages: how many, where, and on what parent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InsertForm {
+    pub count: usize,
+    pub at: InsertAt,
+    pub parent: InsertParent,
+}
+
+impl Default for InsertForm {
+    fn default() -> Self {
+        Self {
+            count: 1,
+            at: InsertAt::default(),
+            parent: InsertParent::default(),
+        }
+    }
+}
+
+/// The most pages one Insert makes: a book's worth, and no more — a slip
+/// of the finger on the count should not be a document of ten thousand.
+const MOST_INSERTED: usize = 500;
+
+/// Insert pages, as a card over the foot of the panel.
+fn insert_form(ui: &mut Ui, state: &mut TesseraApp) {
+    let Some(mut form) = state.pages_window.inserting else {
+        return;
+    };
+    let chosen = summary(state);
+    let doc = state.active().document();
+    let masters: Vec<(MasterId, String)> = doc
+        .master_ids()
+        .filter_map(|id| doc.masters.get(id).map(|m| (id, m.name.clone())))
+        .collect();
+    let mut go = false;
+    let mut cancel = false;
+    super::style_ui::card(ui, Some("Insert pages"), |ui| {
+        crate::view::panels::field(ui, "Pages", |ui| {
+            crate::icons::speak_as(
+                ui.add(
+                    egui::DragValue::new(&mut form.count)
+                        .range(1..=MOST_INSERTED)
+                        .speed(0.2),
+                ),
+                "How many pages",
+            );
+        });
+        crate::view::panels::field(ui, "Where", |ui| {
+            let said = |at: InsertAt| match at {
+                InsertAt::AfterChosen => format!("After {}", chosen.to_lowercase()),
+                InsertAt::Start => "At the start".to_string(),
+                InsertAt::End => "At the end".to_string(),
+            };
+            crate::icons::reads_as(
+                egui::ComboBox::from_id_salt("insert-where")
+                    .selected_text(said(form.at))
+                    .width(ui.available_width())
+                    .show_ui(ui, |ui| {
+                        for at in [InsertAt::AfterChosen, InsertAt::Start, InsertAt::End] {
+                            ui.selectable_value(&mut form.at, at, said(at));
+                        }
+                    })
+                    .response,
+                "Where",
+                egui::WidgetType::ComboBox,
+                None,
+            );
+        });
+        crate::view::panels::field(ui, "Parent", |ui| {
+            let said = |parent: InsertParent| match parent {
+                InsertParent::AsBefore => "As the page before".to_string(),
+                InsertParent::None => "[None]".to_string(),
+                InsertParent::Master(id) => masters
+                    .iter()
+                    .find(|(m, _)| *m == id)
+                    .map_or_else(|| "A parent".to_string(), |(_, name)| name.clone()),
+            };
+            crate::icons::reads_as(
+                egui::ComboBox::from_id_salt("insert-parent")
+                    .selected_text(said(form.parent))
+                    .width(ui.available_width())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut form.parent,
+                            InsertParent::AsBefore,
+                            said(InsertParent::AsBefore),
+                        );
+                        ui.selectable_value(&mut form.parent, InsertParent::None, "[None]");
+                        for (id, name) in &masters {
+                            ui.selectable_value(
+                                &mut form.parent,
+                                InsertParent::Master(*id),
+                                name.as_str(),
+                            );
+                        }
+                    })
+                    .response,
+                "Parent",
+                egui::WidgetType::ComboBox,
+                None,
+            );
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let label = if form.count == 1 {
+                "Insert 1 page".to_string()
+            } else {
+                format!("Insert {} pages", form.count)
+            };
+            if super::panel_ui::action(ui, Icon::Plus, &label).clicked() {
+                go = true;
+            }
+            if ui.button("Cancel").clicked() {
+                cancel = true;
+            }
+        });
+    });
+    state.pages_window.inserting = Some(form);
+    if go {
+        run(state, PageAct::InsertMany(form));
+        state.pages_window.inserting = None;
+    } else if cancel {
+        state.pages_window.inserting = None;
+    }
 }
 
 /// Forget chosen pages that have gone — deleted, undone away, or of another
@@ -677,7 +835,7 @@ fn placed(state: &TesseraApp, width: f32) -> (Vec<Placed>, f32) {
 }
 
 /// What a page's menu, or the footer, asked for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum PageAct {
     /// A new page after the last chosen one.
     Insert,
@@ -688,6 +846,14 @@ enum PageAct {
     RemoveOverrides(PageId),
     /// The numbering and section options, opened on a page.
     Numbering(PageId),
+    /// Insert pages as the form says.
+    InsertMany(InsertForm),
+    /// Open or close the Insert pages form.
+    InsertForm,
+    /// Give the chosen pages this size.
+    Size(f64, f64),
+    /// Turn the chosen pages a quarter: portrait to landscape, or back.
+    Turn,
 }
 
 fn body(ui: &mut Ui, state: &mut TesseraApp) {
@@ -715,7 +881,8 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
         .master_ids()
         .filter_map(|id| doc.masters.get(id).map(|m| (id, m.name.clone())))
         .collect();
-    let facts: Vec<(String, Option<String>, bool, bool)> = order
+    let unit = state.prefs.unit;
+    let facts: Vec<(String, Option<String>, bool, bool, bool)> = order
         .iter()
         .map(|page| {
             let parent = doc
@@ -723,11 +890,16 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
                 .and_then(|m| masters.iter().find(|(id, _)| *id == m))
                 .map(|(_, name)| name.clone());
             let has_parent = parent.is_some();
+            let landscape = doc
+                .pages
+                .get(*page)
+                .is_some_and(|p| p.bounds.width > p.bounds.height);
             (
                 doc.page_label(*page).unwrap_or_default(),
                 parent,
                 doc.starts_section(*page),
                 has_parent,
+                landscape,
             )
         })
         .collect();
@@ -755,7 +927,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
     let modifiers = ui.input(|i| i.modifiers);
     let slots: Vec<Rect> = placed.iter().map(|p| p.rect).collect();
 
-    for (spot, (label, parent, section, has_parent)) in placed.iter().zip(facts) {
+    for (spot, (label, parent, section, has_parent, landscape)) in placed.iter().zip(facts) {
         let page = spot.page;
         let rect = spot.rect;
         let is_chosen = explicit && chosen.contains(&page);
@@ -927,6 +1099,38 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
                 act = Some(PageAct::RemoveOverrides(page));
                 ui.close();
             }
+            ui.menu_button("Page size", |ui| {
+                for preset in OFFERED_SIZES {
+                    let (w, h) = preset.size();
+                    if ui
+                        .button(format!(
+                            "{}  \u{00b7}  {}",
+                            preset.name(),
+                            size_measured(w, h, unit)
+                        ))
+                        .clicked()
+                    {
+                        act = Some(PageAct::Size(w, h));
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                if ui
+                    .button(if landscape {
+                        "Turn to portrait"
+                    } else {
+                        "Turn to landscape"
+                    })
+                    .clicked()
+                {
+                    act = Some(PageAct::Turn);
+                    ui.close();
+                }
+            });
+            if ui.button("Insert pages\u{2026}").clicked() {
+                act = Some(PageAct::InsertForm);
+                ui.close();
+            }
             ui.separator();
             if ui.button("Numbering & section options…").clicked() {
                 act = Some(PageAct::Numbering(page));
@@ -1057,8 +1261,113 @@ fn run(state: &mut TesseraApp, act: PageAct) {
             window.open(state.active().document(), Some(page));
             state.numbering = window;
         }
+        PageAct::InsertMany(form) => {
+            let after = match form.at {
+                InsertAt::AfterChosen => pages.last().copied().or_else(|| before.last().copied()),
+                InsertAt::Start => None,
+                InsertAt::End => before.last().copied(),
+            };
+            let parent = match form.parent {
+                InsertParent::AsBefore => None,
+                InsertParent::None => Some(None),
+                InsertParent::Master(id) => Some(Some(id)),
+            };
+            apply(
+                state,
+                Command::InsertPages {
+                    after,
+                    count: form.count.clamp(1, MOST_INSERTED),
+                    parent,
+                },
+            );
+            choose_made(state, made(state));
+        }
+        PageAct::InsertForm => {
+            let window = &mut state.pages_window;
+            window.inserting = match window.inserting {
+                Some(_) => None,
+                None => Some(InsertForm::default()),
+            };
+        }
+        PageAct::Size(width, height) => {
+            if pages.is_empty() {
+                return;
+            }
+            apply(
+                state,
+                Command::Together(
+                    pages
+                        .iter()
+                        .map(|page| Command::SetPageSizeOf {
+                            page: *page,
+                            width,
+                            height,
+                        })
+                        .collect(),
+                ),
+            );
+        }
+        PageAct::Turn => {
+            let doc = state.active().document();
+            let turned: Vec<Command> = pages
+                .iter()
+                .filter_map(|page| {
+                    let b = doc.pages.get(*page)?.bounds;
+                    Some(Command::SetPageSizeOf {
+                        page: *page,
+                        width: b.height,
+                        height: b.width,
+                    })
+                })
+                .collect();
+            if !turned.is_empty() {
+                apply(state, Command::Together(turned));
+            }
+        }
     }
 }
+
+/// A page size as a person names it: "A4", "Letter landscape", or, for a
+/// size no preset has, its measurements in the unit being worked in.
+fn size_name(width: f64, height: f64, unit: tessera_geometry::Unit) -> String {
+    use tessera_document::nodes::PagePreset;
+    let near = |a: f64, b: f64| (a - b).abs() < 0.5;
+    for preset in PagePreset::ALL {
+        let (w, h) = preset.size();
+        if near(width, w) && near(height, h) {
+            return preset.name().to_string();
+        }
+        if near(width, h) && near(height, w) {
+            return format!("{} landscape", preset.name());
+        }
+    }
+    size_measured(width, height, unit)
+}
+
+/// A size in the unit being worked in: "210 × 297 mm".
+fn size_measured(width: f64, height: f64, unit: tessera_geometry::Unit) -> String {
+    let number = |points: f64| {
+        let said = unit.format(points);
+        said.trim_end_matches(unit.suffix()).trim().to_string()
+    };
+    format!(
+        "{} \u{00d7} {} {}",
+        number(width),
+        number(height),
+        unit.suffix()
+    )
+}
+
+/// The sizes offered for pages, in the order people reach for them.
+const OFFERED_SIZES: [tessera_document::nodes::PagePreset; 7] = [
+    tessera_document::nodes::PagePreset::A4,
+    tessera_document::nodes::PagePreset::Letter,
+    tessera_document::nodes::PagePreset::A5,
+    tessera_document::nodes::PagePreset::A3,
+    tessera_document::nodes::PagePreset::Legal,
+    tessera_document::nodes::PagePreset::Tabloid,
+    tessera_document::nodes::PagePreset::Executive,
+];
 
 /// Choose the pages an action made, and turn to the first of them.
 fn choose_made(state: &mut TesseraApp, made: Vec<PageId>) {
@@ -1091,6 +1400,26 @@ fn summary(state: &TesseraApp) -> String {
     }
 }
 
+/// The size the chosen pages are, or that they differ.
+fn sizes_said(state: &TesseraApp, pages: &[PageId]) -> String {
+    let doc = state.active().document();
+    let sizes: Vec<(f64, f64)> = pages
+        .iter()
+        .filter_map(|p| doc.pages.get(*p).map(|p| (p.bounds.width, p.bounds.height)))
+        .collect();
+    let Some(first) = sizes.first().copied() else {
+        return String::new();
+    };
+    if sizes
+        .iter()
+        .all(|s| (s.0 - first.0).abs() < 0.5 && (s.1 - first.1).abs() < 0.5)
+    {
+        size_name(first.0, first.1, state.prefs.unit)
+    } else {
+        "sizes differ".to_string()
+    }
+}
+
 /// The foot of the panel: what is chosen, and insert, duplicate and delete.
 fn footer(ui: &mut Ui, state: &mut TesseraApp) {
     ui.add_space(2.0);
@@ -1103,14 +1432,20 @@ fn footer(ui: &mut Ui, state: &mut TesseraApp) {
     ui.add_space(4.0);
     let pages = targets(state);
     let count = state.active().document().page_ids().count();
-    let text = summary(state);
+    let text = format!("{} \u{00b7} {}", summary(state), sizes_said(state, &pages));
     let mut act = None;
     ui.horizontal(|ui| {
-        ui.add(
-            egui::Label::new(egui::RichText::new(text).color(Theme::text_muted()))
-                .truncate()
-                .selectable(false),
-        );
+        // What is chosen, and what size it is, beside the buttons: as much as
+        // the buttons leave, cut short rather than pushing them off.
+        let room = (ui.available_width() - 4.0 * (Theme::control_height() + 4.0)).max(40.0);
+        ui.allocate_ui(Vec2::new(room, Theme::control_height()), |ui| {
+            ui.add(
+                egui::Label::new(egui::RichText::new(&text).color(Theme::text_muted()))
+                    .truncate()
+                    .selectable(false),
+            )
+            .on_hover_text(&text);
+        });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let many = pages.len() > 1;
             ui.add_enabled_ui(!pages.is_empty() && pages.len() < count, |ui| {
@@ -1139,6 +1474,14 @@ fn footer(ui: &mut Ui, state: &mut TesseraApp) {
             });
             if crate::view::panels::icon_button(ui, Icon::Plus, "Insert page", false) {
                 act = Some(PageAct::Insert);
+            }
+            if crate::view::panels::icon_button(
+                ui,
+                Icon::Pages,
+                "Insert pages\u{2026}",
+                state.pages_window.inserting.is_some(),
+            ) {
+                act = Some(PageAct::InsertForm);
             }
         });
     });
@@ -1917,6 +2260,70 @@ mod tests {
         assert!(![third].contains(&new));
         assert_eq!(targets(&state), [new], "the new page is chosen");
         assert_eq!(summary(&state), "Page 4");
+    }
+
+    #[test]
+    fn insert_pages_puts_as_many_as_asked_where_asked_on_the_parent_asked() {
+        let mut state = six_pages();
+        apply(&mut state, Command::AddMaster);
+        let master = state.active().document().master_order[0];
+        let ctx = a_panel();
+        click(&ctx, &mut state, "Insert pages\u{2026}");
+        assert!(state.pages_window.inserting.is_some(), "the form is open");
+        state.pages_window.inserting = Some(InsertForm {
+            count: 3,
+            at: InsertAt::End,
+            parent: InsertParent::Master(master),
+        });
+        let depth = state.active().history.undo_depth();
+        click(&ctx, &mut state, "Insert 3 pages");
+        assert!(state.pages_window.inserting.is_none(), "and closes");
+        let doc = state.active().document();
+        assert_eq!(doc.page_ids().count(), 9);
+        let made: Vec<PageId> = doc.page_ids().skip(6).collect();
+        assert_eq!(targets(&state), made, "the new pages are chosen");
+        assert!(made.iter().all(|p| doc.master_of_page(*p) == Some(master)));
+        assert_eq!(state.active().history.undo_depth(), depth + 1, "one step");
+    }
+
+    #[test]
+    fn chosen_pages_take_a_size_and_turn_as_one_step() {
+        use tessera_document::nodes::PagePreset;
+        let mut state = six_pages();
+        let (two, three) = (page(&state, 2), page(&state, 3));
+        state.pages_window.selected = vec![two, three];
+        state.pages_window.of = Some(state.active);
+        let depth = state.active().history.undo_depth();
+        let (w, h) = PagePreset::A5.size();
+        run(&mut state, PageAct::Size(w, h));
+        assert_eq!(state.active().history.undo_depth(), depth + 1);
+        let size = |state: &TesseraApp, p: PageId| {
+            let b = state.active().document().pages[p].bounds;
+            (b.width, b.height)
+        };
+        assert_eq!(size(&state, two), (w, h));
+        assert_eq!(size(&state, three), (w, h));
+        assert_eq!(sizes_said(&state, &[two, three]), "A5");
+
+        run(&mut state, PageAct::Turn);
+        assert_eq!(size(&state, two), (h, w), "turned a quarter");
+        assert_eq!(sizes_said(&state, &[two, three]), "A5 landscape");
+        let first = page(&state, 1);
+        assert_eq!(sizes_said(&state, &[first, two]), "sizes differ");
+    }
+
+    #[test]
+    fn a_size_is_named_by_its_preset_or_measured() {
+        use tessera_document::nodes::PagePreset;
+        let mm = tessera_geometry::Unit::Millimetres;
+        let (w, h) = PagePreset::A4.size();
+        assert_eq!(size_name(w, h, mm), "A4");
+        let (w, h) = PagePreset::Letter.size();
+        assert_eq!(size_name(h, w, mm), "Letter landscape");
+        assert_eq!(
+            size_name(100.0 * 72.0 / 25.4, 50.0 * 72.0 / 25.4, mm),
+            "100 \u{00d7} 50 mm"
+        );
     }
 
     #[test]

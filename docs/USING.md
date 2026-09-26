@@ -274,13 +274,17 @@ starts; the numbers of the pages the canvas shows are on a pill.
 A click chooses a page and turns to it. Shift-click chooses every page from
 the last one clicked, and Ctrl-click (Cmd on a Mac) adds or removes one. What
 the panel does, it does to the chosen pages — or, with none chosen, to the
-page you are on — and the foot of the panel says which: *Page 4*, *Pages
-4–6*. There, **+** inserts a page after them, built on the same parent as the
-page it follows; the copy button duplicates them, the copies together after
-the last of them; the bin deletes them, and is refused when they are every
-page. Drag a page to move it; drag one of several chosen pages and they move
-together. Right-click a page for the same, its parent, *Remove local
-overrides*, and *Numbering & section options…*.
+page you are on — and the foot of the panel says which, and what size they
+are: *Page 4 · A4*, *Pages 4–6 · Letter landscape*. There, **+** inserts a
+page after them, built on the same parent as the page it follows; *Insert
+pages…* opens a form for several — how many, after them or at the start or
+the end, and on which parent; the copy button duplicates them, the copies
+together after the last of them; the bin deletes them, and is refused when
+they are every page. Drag a page to move it; drag one of several chosen pages
+and they move together. Right-click a page for the same, its parent, *Page
+size* — a size for the chosen pages, or *Turn to landscape* — *Remove local
+overrides*, and *Numbering & section options…*. A page of its own size is
+drawn at that size in the panel.
 
 **Parent pages** are listed above, each drawn small with how many pages are
 built on it. A click puts it on the chosen pages; drag it onto any page to put

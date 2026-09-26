@@ -160,6 +160,8 @@ pub struct PagesWindow {
     pub shown: Option<(DocumentKey, usize)>,
     /// A parent being renamed in place, and its name as typed so far.
     pub renaming: Option<(tessera_document::ids::MasterId, String)>,
+    /// Insert pages, while its form is open: how many, where, on what.
+    pub inserting: Option<crate::view::pages::InsertForm>,
 }
 
 /// How large the Pages panel draws a page.
