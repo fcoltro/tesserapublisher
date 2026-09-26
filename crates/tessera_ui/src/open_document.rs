@@ -36,6 +36,12 @@ pub struct OpenDocument {
     /// Resolving lays out every story, and the viewport needs the result on
     /// every painted frame whether or not anything moved.
     pub resolved: ResolveCache,
+    /// A second layout, for a scope the canvas is not showing: the document
+    /// pages' thumbnails while a parent is open on the canvas, or a
+    /// parent's own thumbnail while the document is. The cache holds one
+    /// scope, and asking the canvas's for another would lay the whole
+    /// document out twice a frame, each ask undoing the other.
+    pub aside: ResolveCache,
 
     pub view: ViewTransform,
     pub selection: Selection,
@@ -85,6 +91,7 @@ impl OpenDocument {
             document: Document::new(),
             history: History::new(UNDO_LIMIT),
             resolved: ResolveCache::default(),
+            aside: ResolveCache::default(),
             view: ViewTransform::default(),
             selection: Selection::default(),
             current_spread: 0,
@@ -146,6 +153,17 @@ impl OpenDocument {
         let composing = composing(&self.document, self.editing.as_ref(), self.editing_cell);
         self.resolved
             .get_composing(&self.document, shaper, scope, composing.as_ref())
+    }
+
+    /// The document laid out in `scope` without disturbing the canvas's
+    /// layout: nothing composed, since what is being typed shows on the
+    /// canvas and not in a thumbnail.
+    pub fn resolve_aside<'a>(
+        &'a mut self,
+        shaper: &mut Shaper,
+        scope: tessera_layout::resolve::Scope,
+    ) -> &'a ResolvedDocument {
+        self.aside.get_scope(&self.document, shaper, scope)
     }
 
     // The operations below pair the document with one of its neighbours —

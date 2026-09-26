@@ -231,6 +231,33 @@ changing open ones undoably. *Update contents* rebuilds the open chapter's
 table of contents from every chapter's headings, and *Export PDF…* writes the
 whole book as one file.
 
+## Pages
+
+The **Pages** panel shows every page as it is, drawn by the same renderer as
+the canvas. Facing pages sit either side of one spine down the panel, as they
+sit either side of the fold, so page one stands alone on the right; pages that
+do not face are laid out in rows across it. The three page icons beside the
+count set how large they are drawn. Each page carries the letter of the parent
+it is built on in its corner, and a triangle over it where a numbering section
+starts; the numbers of the pages the canvas shows are on a pill.
+
+A click chooses a page and turns to it. Shift-click chooses every page from
+the last one clicked, and Ctrl-click (Cmd on a Mac) adds or removes one. What
+the panel does, it does to the chosen pages — or, with none chosen, to the
+page you are on — and the foot of the panel says which: *Page 4*, *Pages
+4–6*. There, **+** inserts a page after them, built on the same parent as the
+page it follows; the copy button duplicates them, the copies together after
+the last of them; the bin deletes them, and is refused when they are every
+page. Drag a page to move it; drag one of several chosen pages and they move
+together. Right-click a page for the same, its parent, *Remove local
+overrides*, and *Numbering & section options…*.
+
+**Parent pages** are listed above, each drawn small with how many pages are
+built on it. A click puts it on the chosen pages; drag it onto any page to put
+it there; double-click to open it on the canvas and edit it. Right-click one
+to rename it in place, apply it to every page, or delete it. *[None]* takes
+the parent off.
+
 ## Colour
 
 The Swatches panel holds named colours. A **spot** colour is a pot of a specific

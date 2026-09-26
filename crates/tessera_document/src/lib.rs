@@ -24,6 +24,7 @@ pub mod links;
 pub mod masters;
 pub mod nodes;
 pub mod object_style;
+mod page_edit;
 pub mod paint;
 pub mod path;
 pub mod path_text;

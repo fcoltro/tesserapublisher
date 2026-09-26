@@ -141,6 +141,49 @@ pub enum StyleKind {
 #[derive(Debug, Clone, Default)]
 pub struct PagesWindow {
     pub open: bool,
+    /// The pages chosen in the panel, which its actions act on — in the
+    /// order they were chosen, not the reading order. Empty means the page
+    /// being worked on.
+    ///
+    /// View state: which pages somebody has picked out is not part of what
+    /// they are making, and must not mark it dirty or land in undo.
+    pub selected: Vec<tessera_document::ids::PageId>,
+    /// Where a shift-click's run of pages starts.
+    pub anchor: Option<tessera_document::ids::PageId>,
+    /// The document the selection is of. Page ids are per document, so
+    /// another document's selection would name pages that are not there.
+    pub of: Option<DocumentKey>,
+    /// How large the pages are drawn.
+    pub size: ThumbnailSize,
+    /// The spread the list last brought into view, so it follows the
+    /// canvas when the canvas is turned from somewhere else.
+    pub shown: Option<(DocumentKey, usize)>,
+    /// A parent being renamed in place, and its name as typed so far.
+    pub renaming: Option<(tessera_document::ids::MasterId, String)>,
+}
+
+/// How large the Pages panel draws a page.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ThumbnailSize {
+    /// Enough to count pages and see which are full.
+    Small,
+    /// Enough to tell a picture from a column of type.
+    #[default]
+    Medium,
+    /// Enough to recognise a layout.
+    Large,
+}
+
+impl ThumbnailSize {
+    /// A page's width at this size, in points, before the panel's own
+    /// width limits it.
+    pub fn width(self) -> f32 {
+        match self {
+            Self::Small => 38.0,
+            Self::Medium => 58.0,
+            Self::Large => 88.0,
+        }
+    }
 }
 
 /// Which collapsible sections are shut.
@@ -853,6 +896,21 @@ impl TesseraApp {
         let key = self.active;
         let scope = self.scope();
         self.documents[key].resolve_scope(&mut self.shaper, scope)
+    }
+
+    /// The active document laid out in `scope`: the canvas's own layout
+    /// when that is the scope it shows, and a second one kept aside when it
+    /// is not — so a thumbnail of the document, drawn while a parent is open
+    /// on the canvas, is of the document and not of the parent.
+    pub fn resolve_in(
+        &mut self,
+        scope: tessera_layout::resolve::Scope,
+    ) -> &tessera_layout::ResolvedDocument {
+        if scope == self.scope() {
+            return self.resolve_active();
+        }
+        let key = self.active;
+        self.documents[key].resolve_aside(&mut self.shaper, scope)
     }
 
     /// What the canvas is looking at: the document, or one parent page.

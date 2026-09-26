@@ -332,6 +332,32 @@ pub enum Command {
         id: PageId,
         to: usize,
     },
+    /// A new page directly after `after` — first, with `None` — built on
+    /// the parent of the page it follows.
+    InsertPage {
+        after: Option<PageId>,
+    },
+    /// Copy several pages; the copies go together, in order, after the last
+    /// of them.
+    DuplicatePages {
+        ids: Vec<PageId>,
+    },
+    /// Delete several pages and what stands on them. Refused, changing
+    /// nothing, when it would be every page.
+    RemovePages {
+        ids: Vec<PageId>,
+    },
+    /// Move several pages as a block to the gap `to` names in the reading
+    /// order as it stands.
+    MovePages {
+        ids: Vec<PageId>,
+        to: usize,
+    },
+    /// Build several pages on one parent, or on none, in one step.
+    ApplyMasterToPages {
+        pages: Vec<PageId>,
+        master: Option<MasterId>,
+    },
 
     /// Replace a text frame's whole layout at once.
     ///
@@ -1585,6 +1611,32 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::MovePage { id, to } => {
             state.active_mut().document_mut().move_page(id, to);
+        }
+
+        Command::InsertPage { after } => {
+            state.active_mut().document_mut().insert_page_after(after);
+        }
+
+        Command::DuplicatePages { ids } => {
+            state.active_mut().document_mut().duplicate_pages(&ids);
+        }
+
+        Command::RemovePages { ids } => {
+            state.active_mut().document_mut().remove_pages(&ids);
+            // What stood on them has gone with them; a selection still
+            // holding it would draw handles round nothing.
+            state.active_mut().retain_existing_selection();
+        }
+
+        Command::MovePages { ids, to } => {
+            state.active_mut().document_mut().move_pages(&ids, to);
+        }
+
+        Command::ApplyMasterToPages { pages, master } => {
+            state
+                .active_mut()
+                .document_mut()
+                .apply_master_to(&pages, master);
         }
 
         Command::SetTextLayout { id, layout } => {

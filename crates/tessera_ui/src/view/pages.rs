@@ -1,38 +1,50 @@
-//! The pages panel: which spreads exist, which one you are on, and reordering.
+//! The pages panel: the parent pages, the document's pages, which of them
+//! are chosen, and what can be done to them.
 //!
-//! Thumbnails are **schematic**, drawn with egui's painter from the document:
-//! each frame becomes a filled rectangle in its own colour. A real thumbnail
-//! would mean rendering every spread to a texture and keeping those textures in
-//! step with the document, which is a cache with an invalidation rule â€” and at
-//! the size these are drawn, the schematic says the same thing. It also costs
-//! no GPU and cannot fall behind, because it is redrawn from the document the
-//! canvas is drawn from.
+//! **A page is drawn as a page, not a spread as a rectangle.** Facing pages
+//! sit either side of one spine running down the list, as they sit either
+//! side of the fold of the book, so every recto lines up with every other
+//! and page one stands alone on the right. Pages that do not face are laid
+//! out in rows across the panel instead of one to a row down its left.
 //!
-//! **A page is drawn as a page, not a spread as a rectangle.** Every spread
-//! occupies the same slot â€” two page-widths across when pages face â€” and each
-//! page is painted in its own column with a gap at the fold. That makes three
-//! things legible that were not: how many pages a spread holds, which side of
-//! the fold each one is on, and that page one is a recto sitting to the right
-//! of the spine with nothing facing it.
+//! Each page is the page itself, drawn by the canvas's renderer, with what a
+//! page is built from marked on it: the letter of its parent in its corner,
+//! and a mark over it where a numbering section starts.
+//!
+//! **The panel chooses pages, and its actions act on the chosen ones.** They
+//! acted on "the current page" — the first page of the spread the canvas was
+//! turned to — so a parent could not be put on a right-hand page from here
+//! at all, and nothing could be done to three pages at once. A click chooses
+//! a page and turns to it; Shift-click chooses a run, Ctrl-click one more.
+//! With none chosen, the page being worked on is what they act on.
 
-use egui::Ui;
+use egui::{Color32, Rect, Sense, Stroke, Ui, Vec2};
 
 use tessera_document::ids::{MasterId, PageId, SpreadId};
+use tessera_layout::resolve::Scope;
 
-use crate::app::TesseraApp;
+use crate::app::{TesseraApp, ThumbnailSize};
 use crate::command::{Command, apply};
+use crate::icons::Icon;
 use crate::theme::Theme;
-
-/// How wide one page is drawn, in screen points: sixty, now that a page
-/// shows what is on it rather than boxes, so a line of type can be told
-/// from a picture at a glance.
-const PAGE: f32 = 60.0;
 
 /// The gap at the fold, so two facing pages read as two sheets.
 const FOLD: f32 = 2.0;
 
-/// How much room the label under a spread takes.
-const LABEL: f32 = 16.0;
+/// The room under a page for its number.
+const LABEL: f32 = 20.0;
+
+/// The room over a page for the mark saying a section starts there.
+const MARK: f32 = 9.0;
+
+/// Between one row of pages and the next.
+const ROW_GAP: f32 = 4.0;
+
+/// Between pages that do not face, side by side in a row.
+const GRID_GAP: f32 = 14.0;
+
+/// Kept clear at either side of the list.
+const PAD: f32 = 6.0;
 
 /// Where [`crate::view::show`] leaves the GPU for the thumbnails.
 pub(crate) const GPU: &str = "tessera-gpu";
@@ -45,277 +57,894 @@ const RENDERS_PER_FRAME: u8 = 2;
 /// How thick the line marking where a dragged page would land is.
 const MARKER: f32 = 2.0;
 
-/// The tallest the page list grows before it scrolls inside itself.
-const LIST: f32 = 260.0;
+/// The least the page list is given, however little room the rail has.
+const MIN_LIST: f32 = 140.0;
+
+/// The height the footer's actions take under the list.
+const FOOTER: f32 = 44.0;
+
+/// A parent's row, and how wide one of its pages is drawn in it.
+const PARENT_ROW: f32 = 30.0;
+const PARENT_PAGE: f32 = 15.0;
+
+/// A parent being dragged onto a page: `None` is [None], which takes the
+/// parent off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ParentPayload(Option<MasterId>);
 
 /// The section, as it sits in the rail.
 ///
-/// The buttons come last but take a fixed height of their own, so the list
-/// above them can grow without the strip growing with it â€” the waste the
-/// floating panel was reported for.
+/// The list runs down to the foot of the rail and the footer sits under it,
+/// where InDesign's does. The list was capped at 260 points and scrolled
+/// inside itself, which showed three spreads of a book with the rest of the
+/// rail empty below them.
 pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
-    actions(ui, state);
-    ui.add_space(Theme::space_2());
-    masters(ui, state);
+    tidy(state);
+    parents(ui, state);
+    ui.add_space(Theme::space_3());
+    heading(ui, state);
 
-    // The list scrolls inside a bounded height rather than growing without
-    // limit. Left to grow, twenty pages push the buttons off the bottom of the
-    // rail and every panel below this one with them.
+    // The rail scrolls its panel, so the room left is what is left *visible*:
+    // the clip, not the unbounded height a scrolling area offers.
+    let room = (ui.clip_rect().bottom() - ui.cursor().top() - FOOTER).max(MIN_LIST);
     egui::ScrollArea::vertical()
         .id_salt("pages-list")
-        .max_height(LIST)
-        .auto_shrink([false, true])
+        .max_height(room)
+        .min_scrolled_height(room)
+        .auto_shrink([false, false])
         .show(ui, |ui| body(ui, state));
+    footer(ui, state);
 }
 
-/// The parent pages, listed above the document's own.
-///
-/// InDesign's arrangement: parents are their own short list at the top of the
-/// panel, with the document's pages under them. A parent is **edited in
-/// isolation** â€” double-clicking one opens it on its own canvas â€” rather than
-/// sitting in the scroll a person is trying to lay out in.
-fn masters(ui: &mut Ui, state: &mut TesseraApp) {
-    let masters = state.active().document().master_order.clone();
+/// Forget chosen pages that have gone — deleted, undone away, or of another
+/// document — so no action is sent to a page that is not there.
+fn tidy(state: &mut TesseraApp) {
+    let key = state.active;
+    let doc = state.active().document();
+    let pages: Vec<PageId> = doc.page_ids().collect();
+    let renamed_gone = state
+        .pages_window
+        .renaming
+        .as_ref()
+        .is_some_and(|(master, _)| !doc.masters.contains_key(*master));
+    let window = &mut state.pages_window;
+    if window.of != Some(key) {
+        window.selected.clear();
+        window.anchor = None;
+        window.of = Some(key);
+    }
+    window.selected.retain(|page| pages.contains(page));
+    if window.anchor.is_some_and(|anchor| !pages.contains(&anchor)) {
+        window.anchor = None;
+    }
+    if renamed_gone {
+        window.renaming = None;
+    }
+}
 
-    // The heading carries the add button, so "add a parent" reads as part of
-    // the parent list rather than as a fifth unexplained glyph in the strip at
-    // the foot, which is where it was and what it looked like.
+/// The pages the panel's actions act on, in reading order: the chosen ones,
+/// or with none chosen the page being worked on.
+pub(crate) fn targets(state: &TesseraApp) -> Vec<PageId> {
+    let doc = state.active().document();
+    let window = &state.pages_window;
+    if window.of == Some(state.active) {
+        let chosen: Vec<PageId> = doc
+            .page_ids()
+            .filter(|page| window.selected.contains(page))
+            .collect();
+        if !chosen.is_empty() {
+            return chosen;
+        }
+    }
+    state.current_page().into_iter().collect()
+}
+
+/// What a click on `page` makes the chosen pages, and where the next
+/// Shift-click's run starts from.
+///
+/// A plain click chooses the page alone; Ctrl (Cmd on a Mac) adds it or
+/// takes it out; Shift chooses every page from the last one clicked to this
+/// one, in reading order, as a list anywhere else does.
+fn select(
+    chosen: &[PageId],
+    anchor: Option<PageId>,
+    page: PageId,
+    order: &[PageId],
+    modifiers: egui::Modifiers,
+) -> (Vec<PageId>, Option<PageId>) {
+    if modifiers.shift {
+        let from = anchor.or_else(|| chosen.last().copied()).unwrap_or(page);
+        let at = |p: PageId| order.iter().position(|o| *o == p);
+        let (Some(a), Some(b)) = (at(from), at(page)) else {
+            return (vec![page], Some(page));
+        };
+        (order[a.min(b)..=a.max(b)].to_vec(), Some(from))
+    } else if modifiers.command {
+        let mut chosen = chosen.to_vec();
+        if let Some(at) = chosen.iter().position(|p| *p == page) {
+            chosen.remove(at);
+        } else {
+            chosen.push(page);
+        }
+        (chosen, Some(page))
+    } else {
+        (vec![page], Some(page))
+    }
+}
+
+// --- the parent pages ------------------------------------------------------
+
+/// A parent's letter, for the corner of a page built on it: "A" of
+/// "A-Master", as InDesign's prefix; the first letter of a name with none.
+pub(crate) fn prefix(name: &str) -> String {
+    match name.split_once('-') {
+        Some((before, _)) if (1..=4).contains(&before.chars().count()) => before.to_string(),
+        _ => name
+            .chars()
+            .find(|c| c.is_alphanumeric())
+            .map(|c| c.to_uppercase().to_string())
+            .unwrap_or_default(),
+    }
+}
+
+/// What a click, a double-click or a parent's menu asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ParentAct {
+    /// Build the chosen pages on it.
+    Apply(Option<MasterId>),
+    /// Build every page on it.
+    ApplyAll(MasterId),
+    /// Open it on the canvas, or close it if it is open.
+    Edit(MasterId),
+    Rename(MasterId),
+    Delete(MasterId),
+}
+
+/// The parent pages, above the document's own: InDesign's arrangement.
+///
+/// Each row is the parent — its pages drawn small, its name, and how many
+/// pages are built on it — and the one the chosen pages are built on is
+/// marked. A click puts it on the chosen pages, a double-click opens it on
+/// the canvas to edit, and it can be dragged onto any page in the list.
+fn parents(ui: &mut Ui, state: &mut TesseraApp) {
     ui.horizontal(|ui| {
         crate::view::panels::group_label_pub(ui, "Parent pages");
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if crate::view::panels::icon_button(
-                ui,
-                crate::icons::Icon::Plus,
-                "Add parent page",
-                false,
-            ) {
+            if crate::view::panels::icon_button(ui, Icon::Plus, "New parent page", false) {
                 apply(state, Command::AddMaster);
             }
         });
     });
 
-    let current = crate::view::panels::current_page(state);
-    let applied = current.and_then(|p| state.active().document().pages[p].master);
-    let editing = state.editing_master;
-
-    let mut chosen: Option<MasterId> = None;
-    let mut open: Option<MasterId> = None;
-    let mut detach = false;
-
-    // "None" first, which is how a page is taken off a parent. InDesign has
-    // the same entry for the same reason: without it, the only way to say "no
-    // parent" is to guess that clicking the current one twice does it.
-    {
-        let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), Theme::row()),
-            egui::Sense::click(),
-        );
-        let painter = ui.painter_at(rect);
-        if applied.is_none() {
-            painter.rect_filled(rect, Theme::RADIUS, Theme::selected_bg());
-        } else if response.hovered() {
-            painter.rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
-        }
-        painter.text(
-            egui::pos2(rect.left() + Theme::space_2(), rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            "None",
-            egui::TextStyle::Body.resolve(ui.style()),
-            Theme::text_muted(),
-        );
-        let response = crate::icons::named_toggle(
-            response,
-            "Build this page on no parent",
-            egui::WidgetType::RadioButton,
-            applied.is_none(),
-        );
-        if response.clicked() {
-            detach = true;
-        }
-    }
-
-    for id in masters {
-        let Some(master) = state.active().document().masters.get(id).cloned() else {
-            continue;
-        };
-        let pages = state.active().document().pages_of_master(id);
-        let holds = pages
+    let targets = targets(state);
+    let doc = state.active().document();
+    let rows: Vec<(Option<MasterId>, String, Vec<PageId>, usize)> =
+        std::iter::once((None, "[None]".to_string(), Vec::new()))
+            .chain(doc.master_ids().filter_map(|id| {
+                let master = doc.masters.get(id)?;
+                Some((Some(id), master.name.clone(), doc.pages_of_master(id)))
+            }))
+            .map(|(id, name, pages)| {
+                let uses = doc
+                    .page_ids()
+                    .filter(|page| doc.master_of_page(*page) == id)
+                    .count();
+                (id, name, pages, uses)
+            })
+            .collect();
+    let on_targets: Option<Option<MasterId>> = {
+        let parents: Vec<Option<MasterId>> = targets
             .iter()
-            .map(|p| state.active().document().frames_on_page(*p).len())
-            .sum::<usize>();
-        let on_this_page = pages.iter().any(|p| Some(*p) == applied);
+            .map(|page| doc.master_of_page(*page))
+            .collect();
+        parents
+            .first()
+            .copied()
+            .filter(|first| parents.iter().all(|p| p == first))
+    };
+    let editing = state.editing_master;
+    let mut act: Option<ParentAct> = None;
+    let mut budget = 1;
 
+    for (id, name, pages, uses) in rows {
         let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), Theme::row()),
-            egui::Sense::click(),
+            Vec2::new(ui.available_width(), PARENT_ROW),
+            Sense::click_and_drag(),
         );
-        let painter = ui.painter_at(rect);
-        if editing == Some(id) {
-            // Being edited beats being applied: it is where you are, not what
-            // this page happens to use.
-            painter.rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
-            painter.rect_stroke(
-                rect,
-                Theme::RADIUS,
-                egui::Stroke::new(1.0, Theme::accent()),
-                egui::StrokeKind::Inside,
-            );
-        } else if on_this_page {
-            painter.rect_filled(rect, Theme::RADIUS, Theme::selected_bg());
-        } else if response.hovered() {
-            painter.rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
+        let on = on_targets == Some(id);
+        let open = id.is_some() && editing == id;
+        {
+            let painter = ui.painter();
+            if open {
+                painter.rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
+                painter.rect_stroke(
+                    rect,
+                    Theme::RADIUS,
+                    Stroke::new(1.0, Theme::accent()),
+                    egui::StrokeKind::Inside,
+                );
+            } else if on {
+                painter.rect_filled(rect, Theme::RADIUS, Theme::accent_soft());
+            } else if response.hovered() {
+                painter.rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
+            }
         }
-        painter.text(
-            egui::pos2(rect.left() + Theme::space_2(), rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            &master.name,
-            egui::TextStyle::Body.resolve(ui.style()),
-            Theme::text_primary(),
-        );
-        painter.text(
-            egui::pos2(rect.right() - Theme::space_2(), rect.center().y),
-            egui::Align2::RIGHT_CENTER,
-            if holds == 1 {
-                "1 item".to_string()
-            } else {
-                format!("{holds} items")
-            },
+
+        // Its pages, small: the parent's layout is what tells two of them
+        // apart, far more than "A-Master" and "B-Master" do.
+        let mut x = rect.left() + 6.0;
+        let aspect = {
+            let first = state.active().document().first_page_bounds();
+            (first.height / first.width.max(1.0)) as f32
+        };
+        let size = Vec2::new(PARENT_PAGE, (PARENT_PAGE * aspect).min(PARENT_ROW - 6.0));
+        let top = rect.center().y - size.y / 2.0;
+        match id {
+            None => {
+                let sheet = Rect::from_min_size(egui::pos2(x + PARENT_PAGE / 2.0, top), size);
+                ui.painter().rect_stroke(
+                    sheet,
+                    1.0,
+                    Stroke::new(1.0, Theme::rule()),
+                    egui::StrokeKind::Inside,
+                );
+                ui.painter().line_segment(
+                    [sheet.left_bottom(), sheet.right_top()],
+                    Stroke::new(1.0, Theme::rule()),
+                );
+            }
+            Some(master) => {
+                for page in pages.iter().take(2) {
+                    let sheet = Rect::from_min_size(egui::pos2(x, top), size);
+                    thumbnail(ui, state, *page, sheet, Scope::Master(master), &mut budget);
+                    ui.painter().rect_stroke(
+                        sheet,
+                        1.0,
+                        Stroke::new(1.0, Theme::border()),
+                        egui::StrokeKind::Inside,
+                    );
+                    x += PARENT_PAGE + 1.0;
+                }
+            }
+        }
+        let text_left = rect.left() + 6.0 + 2.0 * PARENT_PAGE + 10.0;
+
+        // The count first, at the right, so the name knows its room.
+        let count = match uses {
+            0 => "unused".to_string(),
+            1 => "1 page".to_string(),
+            n => format!("{n} pages"),
+        };
+        let count = ui.painter().layout_no_wrap(
+            count,
             egui::TextStyle::Small.resolve(ui.style()),
             Theme::text_muted(),
         );
-
-        // The row's name and its item count are both painted, so neither is in
-        // the widget tree. The name is what identifies the row; whether *this*
-        // page is built on it is what the row is for.
-        let response = crate::icons::reads_as(
-            response,
-            &master.name,
-            egui::WidgetType::RadioButton,
-            Some(on_this_page),
+        let count_left = rect.right() - 8.0 - count.size().x;
+        ui.painter().galley(
+            egui::pos2(count_left, rect.center().y - count.size().y / 2.0),
+            count,
+            Theme::text_muted(),
         );
-        let response = response
-            .on_hover_text("Click to build this page on it. Double-click to open and edit it.");
-        if response.double_clicked() {
-            open = Some(id);
-        } else if response.clicked() {
-            chosen = Some(id);
-        }
-    }
 
-    if let Some(page) = current {
-        if detach {
-            apply(state, Command::ApplyMaster { page, master: None });
-        } else if let Some(master) = chosen {
-            apply(
-                state,
-                Command::ApplyMaster {
-                    page,
-                    master: Some(master),
+        let renaming = match (&state.pages_window.renaming, id) {
+            (Some((r, text)), Some(master)) if *r == master => Some(text.clone()),
+            _ => None,
+        };
+        if let (Some(mut text), Some(master)) = (renaming, id) {
+            let field = Rect::from_min_max(
+                egui::pos2(text_left - 3.0, rect.top() + 4.0),
+                egui::pos2(count_left - 6.0, rect.bottom() - 4.0),
+            );
+            let edit = ui.put(
+                field,
+                egui::TextEdit::singleline(&mut text).id(egui::Id::new(("rename-parent", master))),
+            );
+            let edit = crate::icons::speak_as(edit, "Parent page name");
+            if !edit.has_focus() && !edit.lost_focus() {
+                edit.request_focus();
+            }
+            let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            if edit.lost_focus() || cancel {
+                state.pages_window.renaming = None;
+                let name = text.trim();
+                let taken = state
+                    .active()
+                    .document()
+                    .masters
+                    .iter()
+                    .any(|(other, m)| other != master && m.name == name);
+                if !cancel && !name.is_empty() && !taken && name != state_name(state, master) {
+                    apply(
+                        state,
+                        Command::RenameMaster {
+                            id: master,
+                            name: name.to_owned(),
+                        },
+                    );
+                }
+            } else {
+                state.pages_window.renaming = Some((master, text));
+            }
+        } else {
+            let mut job = egui::text::LayoutJob::simple_singleline(
+                name.clone(),
+                egui::TextStyle::Body.resolve(ui.style()),
+                if id.is_some() {
+                    Theme::text_primary()
+                } else {
+                    Theme::text_muted()
                 },
             );
+            job.wrap = egui::text::TextWrapping::truncate_at_width(
+                (count_left - text_left - 8.0).max(8.0),
+            );
+            let galley = ui.painter().layout_job(job);
+            ui.painter().galley(
+                egui::pos2(text_left, rect.center().y - galley.size().y / 2.0),
+                galley,
+                Theme::text_primary(),
+            );
+        }
+
+        let label = match id {
+            None => "No parent".to_string(),
+            Some(_) => name.clone(),
+        };
+        let response =
+            crate::icons::reads_as(response, &label, egui::WidgetType::RadioButton, Some(on))
+                .on_hover_text(match id {
+                    None => "Click to take the chosen pages off their parent, or drag onto a page",
+                    Some(_) => {
+                        "Click to build the chosen pages on it, double-click to edit it, \
+                         or drag it onto a page"
+                    }
+                });
+        response.dnd_set_drag_payload(ParentPayload(id));
+        if response.dragged() {
+            dragging_label(ui, &label);
+        }
+        if response.double_clicked() {
+            if let Some(master) = id {
+                act = Some(ParentAct::Edit(master));
+            }
+        } else if response.clicked() {
+            act = Some(ParentAct::Apply(id));
+        }
+        if let Some(master) = id {
+            response.context_menu(|ui| {
+                let open_label = if open { "Close parent" } else { "Edit parent" };
+                for (label, choice) in [
+                    (open_label, ParentAct::Edit(master)),
+                    ("Rename…", ParentAct::Rename(master)),
+                    ("Apply to all pages", ParentAct::ApplyAll(master)),
+                    ("Delete parent", ParentAct::Delete(master)),
+                ] {
+                    if ui.button(label).clicked() {
+                        act = Some(choice);
+                        ui.close();
+                    }
+                }
+            });
         }
     }
-    if let Some(master) = open {
-        // Toggling: double-clicking the parent already open closes it, so the
-        // way in is the way out as well as the bar at the top of the canvas.
-        let now = if state.editing_master == Some(master) {
-            None
-        } else {
-            Some(master)
-        };
-        state.edit_master(now);
-    }
 
-    ui.add_space(Theme::space_3());
-    crate::view::panels::group_label_pub(ui, "Pages");
+    match act {
+        Some(ParentAct::Apply(master)) if !targets.is_empty() => apply(
+            state,
+            Command::ApplyMasterToPages {
+                pages: targets,
+                master,
+            },
+        ),
+        Some(ParentAct::ApplyAll(master)) => apply(
+            state,
+            Command::ApplyMasterToAll {
+                master: Some(master),
+            },
+        ),
+        Some(ParentAct::Edit(master)) => {
+            // Toggling: double-clicking the parent already open closes it,
+            // so the way in is the way out, as well as the bar on the canvas.
+            let now = (state.editing_master != Some(master)).then_some(master);
+            state.edit_master(now);
+        }
+        Some(ParentAct::Rename(master)) => {
+            let name = state_name(state, master).to_owned();
+            state.pages_window.renaming = Some((master, name));
+        }
+        Some(ParentAct::Delete(master)) => {
+            if state.editing_master == Some(master) {
+                state.edit_master(None);
+            }
+            apply(state, Command::RemoveMaster { id: master });
+        }
+        _ => {}
+    }
+}
+
+/// A parent's name as the document has it.
+fn state_name(state: &TesseraApp, master: MasterId) -> &str {
+    state
+        .active()
+        .document()
+        .masters
+        .get(master)
+        .map_or("", |m| m.name.as_str())
+}
+
+/// The name of what is being dragged, beside the pointer, so a drag across
+/// the list says what it will drop.
+fn dragging_label(ui: &Ui, label: &str) {
+    let Some(at) = ui.ctx().pointer_interact_pos() else {
+        return;
+    };
+    let painter = ui.ctx().layer_painter(egui::LayerId::new(
+        egui::Order::Tooltip,
+        egui::Id::new("pages-drag-label"),
+    ));
+    let galley = painter.layout_no_wrap(
+        label.to_owned(),
+        egui::TextStyle::Small.resolve(ui.style()),
+        Theme::text_primary(),
+    );
+    let pill = Rect::from_min_size(
+        at + Vec2::new(14.0, 10.0),
+        galley.size() + Vec2::new(14.0, 6.0),
+    );
+    painter.rect(
+        pill,
+        pill.height() / 2.0,
+        Theme::panel_bg_solid(),
+        Stroke::new(1.0, Theme::accent_edge()),
+        egui::StrokeKind::Inside,
+    );
+    painter.galley(
+        pill.min + Vec2::new(7.0, 3.0),
+        galley,
+        Theme::text_primary(),
+    );
+}
+
+// --- the pages ---------------------------------------------------------------
+
+/// "Pages", how many there are, and how large to draw them.
+fn heading(ui: &mut Ui, state: &mut TesseraApp) {
+    let count = state.active().document().page_ids().count();
+    ui.horizontal(|ui| {
+        crate::view::panels::group_label_pub(ui, "Pages");
+        ui.colored_label(
+            Theme::text_muted(),
+            if count == 1 {
+                "1 page".to_string()
+            } else {
+                format!("{count} pages")
+            },
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            size_choice(ui, state);
+        });
+    });
+}
+
+/// Three sizes, each drawn as a page of that size: larger to read a layout,
+/// smaller to see a whole book.
+fn size_choice(ui: &mut Ui, state: &mut TesseraApp) {
+    ui.spacing_mut().item_spacing.x = 1.0;
+    // Right to left, so the largest is drawn first.
+    for (size, side, name) in [
+        (ThumbnailSize::Large, 12.0, "Large pages"),
+        (ThumbnailSize::Medium, 9.0, "Medium pages"),
+        (ThumbnailSize::Small, 6.0, "Small pages"),
+    ] {
+        let (rect, response) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::click());
+        let chosen = state.pages_window.size == size;
+        let painter = ui.painter();
+        if chosen {
+            painter.rect_filled(rect, 4.0, Theme::selected_bg());
+        } else if response.hovered() {
+            painter.rect_filled(rect, 4.0, Theme::hover_bg());
+        }
+        let page = Rect::from_center_size(rect.center(), Vec2::new(side, side * 1.3));
+        painter.rect_stroke(
+            page,
+            1.0,
+            Stroke::new(
+                1.2,
+                if chosen {
+                    Theme::text_primary()
+                } else {
+                    Theme::text_muted()
+                },
+            ),
+            egui::StrokeKind::Inside,
+        );
+        let response =
+            crate::icons::reads_as(response, name, egui::WidgetType::RadioButton, Some(chosen))
+                .on_hover_text(name);
+        if response.clicked() {
+            state.pages_window.size = size;
+        }
+    }
+}
+
+/// A page as the list lays it out: which spread, in reading order, and
+/// where.
+#[derive(Clone, Copy, Debug)]
+struct Placed {
+    page: PageId,
+    spread: usize,
+    rect: Rect,
+}
+
+/// A page to be laid out: its spread, the column of the spread it sits in —
+/// 0 the verso, 1 the recto, for facing pages — and its size as drawn.
+#[derive(Clone, Copy, Debug)]
+struct Slot {
+    spread: usize,
+    column: f32,
+    size: Vec2,
+}
+
+/// Where each page goes in a list `width` wide, in reading order, and how
+/// tall the list is.
+///
+/// Facing pages: a row per spread, a verso's right edge and a recto's left
+/// edge against one spine down the middle. Pages that do not face: as many
+/// to a row as fit, the rows centred.
+fn arrange(slots: &[Slot], facing: bool, width: f32) -> (Vec<Rect>, f32) {
+    let mut rects = Vec::with_capacity(slots.len());
+    let mut y = 0.0;
+    if facing {
+        let spine = width / 2.0;
+        let mut at = 0;
+        while at < slots.len() {
+            let spread = slots[at].spread;
+            let row: Vec<&Slot> = slots[at..]
+                .iter()
+                .take_while(|slot| slot.spread == spread)
+                .collect();
+            let tallest = row.iter().map(|slot| slot.size.y).fold(0.0, f32::max);
+            for slot in &row {
+                let x = if slot.column < 1.0 {
+                    spine - FOLD / 2.0 - slot.size.x
+                } else {
+                    spine + FOLD / 2.0 + (slot.column - 1.0) * (slot.size.x + FOLD)
+                };
+                rects.push(Rect::from_min_size(egui::pos2(x, y + MARK), slot.size));
+            }
+            y += MARK + tallest + LABEL + ROW_GAP;
+            at += row.len();
+        }
+    } else {
+        let cell = slots.iter().map(|slot| slot.size.x).fold(0.0, f32::max);
+        let across = (((width - 2.0 * PAD + GRID_GAP) / (cell + GRID_GAP)).floor() as usize).max(1);
+        for row in slots.chunks(across) {
+            let block = row.len() as f32 * cell + (row.len() as f32 - 1.0) * GRID_GAP;
+            let left = (width - block) / 2.0;
+            let tallest = row.iter().map(|slot| slot.size.y).fold(0.0, f32::max);
+            for (i, slot) in row.iter().enumerate() {
+                let x = left + i as f32 * (cell + GRID_GAP) + (cell - slot.size.x) / 2.0;
+                rects.push(Rect::from_min_size(egui::pos2(x, y + MARK), slot.size));
+            }
+            y += MARK + tallest + LABEL + ROW_GAP;
+        }
+    }
+    (rects, y)
+}
+
+/// Every document page, laid out for a list `width` wide.
+fn placed(state: &TesseraApp, width: f32) -> (Vec<Placed>, f32) {
+    let doc = state.active().document();
+    let facing = doc.setup.facing_pages;
+    let columns = if facing { 2.0 } else { 1.0 };
+    // One scale for every page, so a wider page — a cover, a gatefold — is
+    // drawn wider rather than squeezed to the width of the rest.
+    let most = ((width - 2.0 * PAD - (columns - 1.0) * FOLD) / columns).max(12.0);
+    let page_width = state.pages_window.size.width().min(most);
+    let scale = f64::from(page_width) / doc.first_page_bounds().width.max(1.0);
+    let mut pages = Vec::new();
+    let mut slots = Vec::new();
+    for (index, spread) in doc.spread_order.iter().enumerate() {
+        for (column, page) in doc.pages_of(*spread).into_iter().enumerate() {
+            let Some(bounds) = doc.pages.get(page).map(|p| p.bounds) else {
+                continue;
+            };
+            let size = Vec2::new(
+                ((bounds.width * scale) as f32).min(most),
+                (bounds.height * scale) as f32,
+            );
+            slots.push(Slot {
+                spread: index,
+                column: column_of(state, *spread, column, facing),
+                size,
+            });
+            pages.push(page);
+        }
+    }
+    let (rects, height) = arrange(&slots, facing, width);
+    let placed = pages
+        .into_iter()
+        .zip(slots)
+        .zip(rects)
+        .map(|((page, slot), rect)| Placed {
+            page,
+            spread: slot.spread,
+            rect,
+        })
+        .collect();
+    (placed, height)
+}
+
+/// What a page's menu, or the footer, asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PageAct {
+    /// A new page after the last chosen one.
+    Insert,
+    Duplicate,
+    Delete,
+    Parent(Option<MasterId>),
+    /// Take a page's local changes to its parent's items back.
+    RemoveOverrides(PageId),
+    /// The numbering and section options, opened on a page.
+    Numbering(PageId),
 }
 
 fn body(ui: &mut Ui, state: &mut TesseraApp) {
-    let spreads = state.active().document().spread_order.clone();
+    let width = ui.available_width();
+    let (placed, height) = placed(state, width);
+    let (area, _) = ui.allocate_exact_size(Vec2::new(width, height.max(1.0)), Sense::hover());
+    let placed: Vec<Placed> = placed
+        .into_iter()
+        .map(|p| Placed {
+            rect: p.rect.translate(area.min.to_vec2()),
+            ..p
+        })
+        .collect();
+
+    let key = state.active;
+    let doc = state.active().document();
+    let order: Vec<PageId> = placed.iter().map(|p| p.page).collect();
     let current = state
         .active()
         .current_spread
-        .min(spreads.len().saturating_sub(1));
+        .min(doc.spread_order.len().saturating_sub(1));
+    let chosen = targets(state);
+    let explicit = !state.pages_window.selected.is_empty();
+    let masters: Vec<(MasterId, String)> = doc
+        .master_ids()
+        .filter_map(|id| doc.masters.get(id).map(|m| (id, m.name.clone())))
+        .collect();
+    let facts: Vec<(String, Option<String>, bool, bool)> = order
+        .iter()
+        .map(|page| {
+            let parent = doc
+                .master_of_page(*page)
+                .and_then(|m| masters.iter().find(|(id, _)| *id == m))
+                .map(|(_, name)| name.clone());
+            let has_parent = parent.is_some();
+            (
+                doc.page_label(*page).unwrap_or_default(),
+                parent,
+                doc.starts_section(*page),
+                has_parent,
+            )
+        })
+        .collect();
 
-    let facing = state.active().document().setup.facing_pages;
-    let columns = if facing { 2.0 } else { 1.0 };
-    let slot = egui::vec2(PAGE * columns + FOLD, PAGE * 1.3);
-
-    // Decided while drawing, acted on afterwards: moving a page mid-walk would
-    // renumber what is still being drawn.
-    let mut turn_to: Option<usize> = None;
-    let mut budget = RENDERS_PER_FRAME;
-    let mut dragging: Option<PageId> = None;
-    let mut dropped = false;
-
-    // Every page slot in reading order, which is what a drop position counts.
-    let mut slots: Vec<egui::Rect> = Vec::new();
-
-    for (index, spread) in spreads.iter().enumerate() {
-        let (rect, _) =
-            ui.allocate_exact_size(egui::vec2(slot.x, slot.y + LABEL), egui::Sense::hover());
-        let sheet = egui::Rect::from_min_size(rect.min, slot);
-        let first_slot = slots.len();
-
-        // Collected first: a thumbnail may lay the document out, which needs
-        // the application while the loop would otherwise still hold it.
-        let pages: Vec<PageId> = state.active().document().pages_of(*spread).to_vec();
-        for (column, page) in pages.iter().enumerate() {
-            let side = column_of(state, *spread, column, facing);
-            let at = egui::Rect::from_min_size(
-                sheet.min + egui::vec2(side * (PAGE + FOLD), 0.0),
-                egui::vec2(PAGE, slot.y),
-            );
-            slots.push(at);
-
-            let response = ui
-                .interact(
-                    at,
-                    egui::Id::new(("page", *page)),
-                    egui::Sense::click_and_drag(),
-                )
-                .on_hover_text("Click to go to this page. Drag to reorder.");
-
-            thumbnail(ui, state, *page, at, index == current, &mut budget);
-
-            if response.dragged() {
-                dragging = Some(*page);
-            }
-            if response.drag_stopped() {
-                dropped = true;
-                dragging = Some(*page);
-            }
-            if response.clicked() {
-                turn_to = Some(index);
-            }
-        }
-
-        // The page numbers this spread holds, under the pages it holds - not
-        // under the slot, which is two columns wide even when the first
-        // spread is one right-hand page, and left its "1" under nothing.
-        let numbers = page_numbers(state, *spread).unwrap_or_else(|| format!("{}", index + 1));
-        let under = slots[first_slot..]
+    // Follow the canvas: turned to another spread from anywhere else — the
+    // status bar, a Next use, a find — the list brings it into view.
+    if state.pages_window.shown != Some((key, current)) {
+        if let Some(rect) = placed
             .iter()
-            .copied()
+            .filter(|p| p.spread == current)
+            .map(|p| p.rect)
             .reduce(|a, b| a.union(b))
-            .unwrap_or(sheet);
-        ui.painter().text(
-            egui::pos2(under.center().x, sheet.bottom() + LABEL / 2.0),
-            egui::Align2::CENTER_CENTER,
-            numbers,
-            egui::TextStyle::Small.resolve(ui.style()),
-            if index == current {
-                Theme::text_primary()
-            } else {
-                Theme::text_muted()
-            },
-        );
+        {
+            ui.scroll_to_rect(rect.expand2(Vec2::new(0.0, MARK + LABEL)), None);
+        }
+        state.pages_window.shown = Some((key, current));
     }
 
+    let mut budget = RENDERS_PER_FRAME;
+    let mut clicked: Option<(PageId, egui::Modifiers)> = None;
+    let mut dragging: Option<PageId> = None;
+    let mut dropped = false;
+    let mut parent_dropped: Option<(PageId, Option<MasterId>)> = None;
+    let mut act: Option<PageAct> = None;
+    let modifiers = ui.input(|i| i.modifiers);
+    let slots: Vec<Rect> = placed.iter().map(|p| p.rect).collect();
+
+    for (spot, (label, parent, section, has_parent)) in placed.iter().zip(facts) {
+        let page = spot.page;
+        let rect = spot.rect;
+        let is_chosen = explicit && chosen.contains(&page);
+        let is_current = spot.spread == current;
+        let response = ui.interact(
+            rect.expand(3.0),
+            egui::Id::new(("page", page)),
+            Sense::click_and_drag(),
+        );
+        let parent_over = response.dnd_hover_payload::<ParentPayload>().is_some();
+
+        // Chosen: the page on the accent's ground, as a chosen row is.
+        if is_chosen {
+            ui.painter()
+                .rect_filled(rect.expand(4.0), 5.0, Theme::accent_soft());
+        }
+        // A shadow, so white paper reads as paper on a light ground.
+        ui.painter().rect_filled(
+            rect.translate(Vec2::new(0.0, 1.5)),
+            2.0,
+            Color32::from_black_alpha(if Theme::is_light() { 34 } else { 70 }),
+        );
+        thumbnail(ui, state, page, rect, Scope::Document, &mut budget);
+        let (edge, weight) = if is_chosen || parent_over {
+            (Theme::accent(), 2.0)
+        } else if response.hovered() {
+            (Theme::accent_edge(), 1.5)
+        } else {
+            (Theme::border(), 1.0)
+        };
+        ui.painter().rect_stroke(
+            rect,
+            1.0,
+            Stroke::new(weight, edge),
+            egui::StrokeKind::Outside,
+        );
+
+        // Its parent's letter, in the corner, on a ground of its own so it
+        // reads over whatever the page has there.
+        if let Some(name) = &parent {
+            let letter = prefix(name);
+            let font = egui::FontId::proportional(9.5);
+            let galley = ui
+                .painter()
+                .layout_no_wrap(letter, font, Theme::text_primary());
+            let tag = Rect::from_min_size(
+                rect.left_top() + Vec2::new(2.0, 2.0),
+                galley.size() + Vec2::new(6.0, 2.0),
+            );
+            ui.painter().rect(
+                tag,
+                3.0,
+                Theme::panel_bg_solid(),
+                Stroke::new(1.0, Theme::rule()),
+                egui::StrokeKind::Inside,
+            );
+            ui.painter()
+                .galley(tag.min + Vec2::new(3.0, 1.0), galley, Theme::text_primary());
+        }
+        // A section starts here: InDesign's triangle over the page.
+        if section {
+            let apex = egui::pos2(rect.left() + 4.5, rect.top() - 2.0);
+            ui.painter().add(egui::Shape::convex_polygon(
+                vec![
+                    egui::pos2(rect.left(), rect.top() - MARK + 1.0),
+                    egui::pos2(rect.left() + 9.0, rect.top() - MARK + 1.0),
+                    apex,
+                ],
+                Theme::accent(),
+                Stroke::NONE,
+            ));
+        }
+        // The number, under the page; the pages the canvas shows on a pill.
+        {
+            let galley = ui.painter().layout_no_wrap(
+                label.clone(),
+                egui::TextStyle::Small.resolve(ui.style()),
+                Theme::text_primary(),
+            );
+            let centre = egui::pos2(rect.center().x, rect.bottom() + LABEL / 2.0 + 1.0);
+            if is_current {
+                let pill = Rect::from_center_size(
+                    centre,
+                    Vec2::new(galley.size().x + 12.0, galley.size().y + 2.0),
+                );
+                ui.painter()
+                    .rect_filled(pill, pill.height() / 2.0, Theme::selected_bg());
+            }
+            ui.painter().galley(
+                centre - galley.size() / 2.0,
+                galley,
+                if is_current {
+                    Theme::text_primary()
+                } else {
+                    Theme::text_muted()
+                },
+            );
+        }
+
+        let spoken = match &parent {
+            Some(name) => format!("Page {label}, on {name}"),
+            None => format!("Page {label}"),
+        };
+        let response = crate::icons::reads_as(
+            response,
+            format!("Page {label}"),
+            egui::WidgetType::SelectableLabel,
+            Some(is_chosen),
+        )
+        .on_hover_text(format!(
+            "{spoken}. Click to go to it; Shift-click or Ctrl-click to choose several; \
+             drag to move."
+        ));
+
+        if response.dragged() {
+            dragging = Some(page);
+        }
+        if response.drag_stopped() {
+            dropped = true;
+            dragging = Some(page);
+        }
+        if response.clicked() {
+            clicked = Some((page, modifiers));
+        }
+        if let Some(payload) = response.dnd_release_payload::<ParentPayload>() {
+            parent_dropped = Some((page, payload.0));
+        }
+        if response.secondary_clicked() && !(explicit && chosen.contains(&page)) {
+            // The menu acts on what is chosen, so the page it was opened on
+            // is chosen first, as a right-click does in any list.
+            clicked = Some((page, egui::Modifiers::NONE));
+        }
+        response.context_menu(|ui| {
+            let many = explicit && chosen.len() > 1 && chosen.contains(&page);
+            let (insert, duplicate, delete) = if many {
+                ("Insert page after these", "Duplicate pages", "Delete pages")
+            } else {
+                ("Insert page after", "Duplicate page", "Delete page")
+            };
+            if ui.button(insert).clicked() {
+                act = Some(PageAct::Insert);
+                ui.close();
+            }
+            if ui.button(duplicate).clicked() {
+                act = Some(PageAct::Duplicate);
+                ui.close();
+            }
+            if ui
+                .add_enabled(order.len() > chosen.len().max(1), egui::Button::new(delete))
+                .clicked()
+            {
+                act = Some(PageAct::Delete);
+                ui.close();
+            }
+            ui.separator();
+            ui.menu_button("Parent page", |ui| {
+                if ui.button("[None]").clicked() {
+                    act = Some(PageAct::Parent(None));
+                    ui.close();
+                }
+                for (id, name) in &masters {
+                    if ui.button(name).clicked() {
+                        act = Some(PageAct::Parent(Some(*id)));
+                        ui.close();
+                    }
+                }
+            });
+            if has_parent && ui.button("Remove local overrides").clicked() {
+                act = Some(PageAct::RemoveOverrides(page));
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("Numbering & section options…").clicked() {
+                act = Some(PageAct::Numbering(page));
+                ui.close();
+            }
+        });
+    }
+
+    // Moving the chosen pages when one of them is dragged, and the one page
+    // otherwise.
+    let moving: Vec<PageId> = match dragging {
+        Some(page) if explicit && chosen.contains(&page) => chosen.clone(),
+        Some(page) => vec![page],
+        None => Vec::new(),
+    };
     let landing = dragging
         .and(ui.ctx().pointer_interact_pos())
         .map(|p| landing(p, &slots));
-
     // The line saying where it would land. Without one, a drag is a gesture
     // with no target and the page simply appears somewhere afterwards.
     if let Some(at) = landing
@@ -323,16 +952,198 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
     {
         ui.painter().rect_filled(marker, 1.0, Theme::accent());
     }
+    if dragging.is_some() && !dropped {
+        let what = match moving.len() {
+            1 => "1 page".to_string(),
+            n => format!("{n} pages"),
+        };
+        dragging_label(ui, &what);
+    }
 
-    if let Some(at) = turn_to {
-        state.active_mut().current_spread = at;
-        state.active_mut().fitted = false;
+    if let Some((page, modifiers)) = clicked {
+        let window = &state.pages_window;
+        let (now, anchor) = select(&window.selected, window.anchor, page, &order, modifiers);
+        state.pages_window.selected = now;
+        state.pages_window.anchor = anchor;
+        // A plain click also turns the canvas to it, leaving a parent that
+        // was open: the page is what was asked for.
+        if !modifiers.shift && !modifiers.command {
+            turn_to(state, page);
+        }
     }
     if dropped
-        && let Some(id) = dragging
         && let Some(to) = landing
+        && !moving.is_empty()
     {
-        apply(state, Command::MovePage { id, to });
+        apply(state, Command::MovePages { ids: moving, to });
+    }
+    if let Some((page, master)) = parent_dropped {
+        // Onto one of the chosen pages, it goes on all of them; onto any other
+        // page, on that one.
+        let pages = if explicit && chosen.contains(&page) {
+            chosen.clone()
+        } else {
+            vec![page]
+        };
+        apply(state, Command::ApplyMasterToPages { pages, master });
+    }
+    if let Some(act) = act {
+        run(state, act);
+    }
+}
+
+/// Turn the canvas to the spread `page` is on, leaving any parent open.
+fn turn_to(state: &mut TesseraApp, page: PageId) {
+    let doc = state.active().document();
+    let Some(at) = doc
+        .spread_order
+        .iter()
+        .position(|spread| doc.pages_of(*spread).contains(&page))
+    else {
+        return;
+    };
+    if state.editing_master.is_some() {
+        state.edit_master(None);
+    }
+    state.active_mut().current_spread = at;
+    state.active_mut().fitted = false;
+}
+
+/// Do what a page's menu or the footer asked, to the chosen pages; and choose
+/// what the action made, so the next action acts on it.
+fn run(state: &mut TesseraApp, act: PageAct) {
+    let pages = targets(state);
+    let before: Vec<PageId> = state.active().document().page_ids().collect();
+    let made = |state: &TesseraApp| -> Vec<PageId> {
+        state
+            .active()
+            .document()
+            .page_ids()
+            .filter(|page| !before.contains(page))
+            .collect()
+    };
+    match act {
+        PageAct::Insert => {
+            let after = pages.last().copied().or_else(|| before.last().copied());
+            apply(state, Command::InsertPage { after });
+            choose_made(state, made(state));
+        }
+        PageAct::Duplicate => {
+            if pages.is_empty() {
+                return;
+            }
+            apply(state, Command::DuplicatePages { ids: pages });
+            choose_made(state, made(state));
+        }
+        PageAct::Delete => {
+            if pages.is_empty() || pages.len() >= before.len() {
+                return;
+            }
+            apply(state, Command::RemovePages { ids: pages });
+            state.pages_window.selected.clear();
+            state.pages_window.anchor = None;
+            let spreads = state.active().document().spread_order.len();
+            let open = state.active_mut();
+            open.current_spread = open.current_spread.min(spreads.saturating_sub(1));
+        }
+        PageAct::Parent(master) => {
+            if !pages.is_empty() {
+                apply(state, Command::ApplyMasterToPages { pages, master });
+            }
+        }
+        PageAct::RemoveOverrides(page) => apply(state, Command::RemoveOverrides { page }),
+        PageAct::Numbering(page) => {
+            let mut window = std::mem::take(&mut state.numbering);
+            window.open(state.active().document(), Some(page));
+            state.numbering = window;
+        }
+    }
+}
+
+/// Choose the pages an action made, and turn to the first of them.
+fn choose_made(state: &mut TesseraApp, made: Vec<PageId>) {
+    let Some(first) = made.first().copied() else {
+        return;
+    };
+    state.pages_window.anchor = Some(first);
+    state.pages_window.selected = made;
+    turn_to(state, first);
+}
+
+/// What the actions will act on, in words: "Page 4", "Pages 2–3",
+/// "3 pages".
+fn summary(state: &TesseraApp) -> String {
+    let pages = targets(state);
+    let doc = state.active().document();
+    let label = |page: &PageId| doc.page_label(*page).unwrap_or_default();
+    let order: Vec<PageId> = doc.page_ids().collect();
+    let run = pages
+        .iter()
+        .filter_map(|p| order.iter().position(|o| o == p))
+        .collect::<Vec<_>>()
+        .windows(2)
+        .all(|w| w[1] == w[0] + 1);
+    match pages.as_slice() {
+        [] => "No page chosen".to_string(),
+        [one] => format!("Page {}", label(one)),
+        [first, .., last] if run => format!("Pages {}–{}", label(first), label(last)),
+        many => format!("{} pages", many.len()),
+    }
+}
+
+/// The foot of the panel: what is chosen, and insert, duplicate and delete.
+fn footer(ui: &mut Ui, state: &mut TesseraApp) {
+    ui.add_space(2.0);
+    let rule = ui.cursor().top();
+    ui.painter().hline(
+        ui.max_rect().x_range(),
+        rule,
+        Stroke::new(1.0, Theme::rule()),
+    );
+    ui.add_space(4.0);
+    let pages = targets(state);
+    let count = state.active().document().page_ids().count();
+    let text = summary(state);
+    let mut act = None;
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::Label::new(egui::RichText::new(text).color(Theme::text_muted()))
+                .truncate()
+                .selectable(false),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let many = pages.len() > 1;
+            ui.add_enabled_ui(!pages.is_empty() && pages.len() < count, |ui| {
+                if crate::view::panels::icon_button(
+                    ui,
+                    Icon::Trash,
+                    if many { "Delete pages" } else { "Delete page" },
+                    false,
+                ) {
+                    act = Some(PageAct::Delete);
+                }
+            });
+            ui.add_enabled_ui(!pages.is_empty(), |ui| {
+                if crate::view::panels::icon_button(
+                    ui,
+                    Icon::Duplicate,
+                    if many {
+                        "Duplicate pages"
+                    } else {
+                        "Duplicate page"
+                    },
+                    false,
+                ) {
+                    act = Some(PageAct::Duplicate);
+                }
+            });
+            if crate::view::panels::icon_button(ui, Icon::Plus, "Insert page", false) {
+                act = Some(PageAct::Insert);
+            }
+        });
+    });
+    if let Some(act) = act {
+        run(state, act);
     }
 }
 
@@ -341,7 +1152,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
 /// Counted rather than hit-tested: a page goes *after* every slot the pointer
 /// is past, where past means a row below, or the same row and beyond the
 /// middle of the page. Dropping onto the right half of page four means five.
-fn landing(p: egui::Pos2, slots: &[egui::Rect]) -> usize {
+fn landing(p: egui::Pos2, slots: &[Rect]) -> usize {
     slots
         .iter()
         .filter(|r| p.y > r.bottom() || (p.y >= r.top() && p.x > r.center().x))
@@ -352,7 +1163,7 @@ fn landing(p: egui::Pos2, slots: &[egui::Rect]) -> usize {
 ///
 /// On the leading edge of the slot it would take, or the trailing edge of the
 /// last one when it goes at the end.
-fn marker(at: usize, slots: &[egui::Rect]) -> Option<egui::Rect> {
+fn marker(at: usize, slots: &[Rect]) -> Option<Rect> {
     let (slot, edge) = match slots.get(at) {
         Some(slot) => (slot, slot.left()),
         None => {
@@ -360,9 +1171,9 @@ fn marker(at: usize, slots: &[egui::Rect]) -> Option<egui::Rect> {
             (slot, slot.right())
         }
     };
-    Some(egui::Rect::from_min_size(
+    Some(Rect::from_min_size(
         egui::pos2(edge - MARKER / 2.0, slot.top()),
-        egui::vec2(MARKER, slot.height()),
+        Vec2::new(MARKER, slot.height()),
     ))
 }
 
@@ -371,7 +1182,7 @@ fn marker(at: usize, slots: &[egui::Rect]) -> Option<egui::Rect> {
 /// A spread of one page is not a spread of two with a hole in it: page one is
 /// a recto and belongs on the right of the fold, a final lone page is a verso
 /// and belongs on the left. The document already positions them that way, so
-/// this reads the answer off the geometry rather than deciding it again â€” two
+/// this reads the answer off the geometry rather than deciding it again — two
 /// places deciding the same thing is two places to disagree.
 fn column_of(state: &TesseraApp, spread: SpreadId, column: usize, facing: bool) -> f32 {
     if !facing {
@@ -387,55 +1198,37 @@ fn column_of(state: &TesseraApp, spread: SpreadId, column: usize, facing: bool) 
     offset + column as f32
 }
 
-/// One page, drawn as its contents blocked in.
-/// A page in the panel: the page itself, drawn by the canvas's renderer, at
-/// its own proportions and as large as the slot allows â€” InDesign's
-/// thumbnail, what is on the page rather than boxes where things are. Without
-/// a GPU (a test, a machine with none) the boxes are drawn instead.
+/// A page in the panel: the page itself, drawn by the canvas's renderer
+/// from the layout of `scope` — the document's for its pages, a parent's
+/// for the parent's — filling `sheet`. Without a GPU (a test, a machine with
+/// none) the boxes are drawn instead.
 fn thumbnail(
     ui: &Ui,
     state: &mut TesseraApp,
     page: PageId,
-    at: egui::Rect,
-    current: bool,
+    sheet: Rect,
+    scope: Scope,
     budget: &mut u8,
 ) {
     let Some(bounds) = state.active().document().pages.get(page).map(|p| p.bounds) else {
         return;
     };
-    let fit = (f64::from(at.width()) / bounds.width.max(1.0))
-        .min(f64::from(at.height()) / bounds.height.max(1.0));
-    let sheet = egui::Rect::from_min_size(
-        at.min,
-        egui::vec2((bounds.width * fit) as f32, (bounds.height * fit) as f32),
-    );
-    let painter = ui.painter_at(at);
-    if !rendered(ui, state, page, bounds, sheet, budget, &painter) {
+    let painter = ui.painter_at(sheet);
+    if !rendered(ui, state, page, bounds, sheet, scope, budget, &painter) {
         schematic(&painter, state, page, bounds, sheet);
     }
-    painter.rect_stroke(
-        sheet,
-        1.0,
-        egui::Stroke::new(
-            if current { 2.0 } else { 1.0 },
-            if current {
-                Theme::accent()
-            } else {
-                Theme::border()
-            },
-        ),
-        egui::StrokeKind::Inside,
-    );
 }
 
 /// The page, rendered, into `sheet`. `false` when there is no GPU to render
 /// on, and nothing was drawn.
+#[allow(clippy::too_many_arguments)]
 fn rendered(
     ui: &Ui,
     state: &mut TesseraApp,
     page: PageId,
     bounds: tessera_geometry::DocRect,
-    sheet: egui::Rect,
+    sheet: Rect,
+    scope: Scope,
     budget: &mut u8,
     painter: &egui::Painter,
 ) -> bool {
@@ -461,7 +1254,11 @@ fn rendered(
     let revision = state.active().document().revision();
     let zoom = f64::from(size.0) / bounds.width.max(1.0);
     let drawn = crate::view::vello_host::thumbnail(&gpu, key, revision, size, *budget > 0, || {
-        let resolved = state.resolve_active().clone();
+        // The layout of the scope the page belongs to, whatever the canvas
+        // is showing. Drawn from the canvas's, every page went blank at the
+        // first change made while a parent was open: the parent's layout has
+        // nothing on the document's pages.
+        let resolved = state.resolve_in(scope).clone();
         tessera_render::scene::build_scene_with_images(
             &resolved,
             tessera_geometry::ViewTransform {
@@ -491,8 +1288,8 @@ fn rendered(
     painter.image(
         drawn.texture,
         sheet,
-        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-        egui::Color32::WHITE,
+        Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        Color32::WHITE,
     );
     true
 }
@@ -504,11 +1301,11 @@ fn schematic(
     state: &TesseraApp,
     page: PageId,
     bounds: tessera_geometry::DocRect,
-    at: egui::Rect,
+    at: Rect,
 ) {
     let doc = state.active().document();
     let scale = f64::from(at.width()) / bounds.width.max(1.0);
-    painter.rect_filled(at, 1.0, egui::Color32::WHITE);
+    painter.rect_filled(at, 1.0, Color32::WHITE);
 
     // What stands on the page, in paint order. Layers span the document, so
     // this asks the page what is on it rather than walking layers it owns.
@@ -524,13 +1321,13 @@ fn schematic(
             continue;
         };
         let b = frame.bounds;
-        let block = egui::Rect::from_min_size(
+        let block = Rect::from_min_size(
             at.min
-                + egui::vec2(
+                + Vec2::new(
                     ((b.x - bounds.x) * scale) as f32,
                     ((b.y - bounds.y) * scale) as f32,
                 ),
-            egui::vec2((b.width * scale) as f32, (b.height * scale) as f32),
+            Vec2::new((b.width * scale) as f32, (b.height * scale) as f32),
         );
         // A thumbnail block is a few pixels of one colour. Drawing the whole
         // ramp at that size would cost a gradient per object for something
@@ -541,7 +1338,7 @@ fn schematic(
         painter.rect_filled(
             block.intersect(at),
             0.0,
-            egui::Color32::from_rgba_unmultiplied(
+            Color32::from_rgba_unmultiplied(
                 (r * 255.0) as u8,
                 (g * 255.0) as u8,
                 (bl * 255.0) as u8,
@@ -552,47 +1349,6 @@ fn schematic(
             ),
         );
     }
-}
-
-/// Add, duplicate and delete: a strip of fixed height at the foot.
-fn actions(ui: &mut Ui, state: &mut TesseraApp) {
-    // `horizontal`, not `horizontal_centered`. The centred version allocates
-    // **all** the height it is offered and centres its contents in it, which
-    // is what left a void the size of the rail under these four buttons and
-    // pushed Layers and Styles to the bottom of the panel.
-    ui.horizontal(|ui| {
-        if super::panel_ui::action(ui, crate::icons::Icon::Plus, "Add page").clicked() {
-            apply(state, Command::AddPage);
-        }
-        if let Some(page) = crate::view::panels::current_page(state) {
-            ui.menu_button("Page actions", |ui| {
-                if ui.button("Duplicate page").clicked() {
-                    apply(state, Command::DuplicatePage { id: page });
-                    ui.close();
-                }
-                if ui.button("Delete page").clicked() {
-                    apply(state, Command::RemovePage { id: page });
-                    ui.close();
-                }
-            });
-        }
-    });
-}
-
-/// "4" or "2â€“3", by where the spread's pages fall in the reading order.
-fn page_numbers(state: &TesseraApp, spread: SpreadId) -> Option<String> {
-    let doc = state.active().document();
-    let pages = doc.pages_of(spread);
-
-    // As the section writes it â€” "iv", "A-12" â€” because that is what the
-    // folio on the page says, and a panel that said "4" under a page printed
-    // "iv" would be describing a different book.
-    let first = doc.page_label(*pages.first()?)?;
-    if pages.len() < 2 {
-        return Some(first);
-    }
-    let last = doc.page_label(*pages.last()?)?;
-    Some(format!("{first}â€“{last}"))
 }
 
 #[cfg(test)]
@@ -617,7 +1373,7 @@ mod tests {
     #[test]
     fn the_window_menu_lists_the_panels_there_are() {
         // The menu bar is generated from the action list, so this is what
-        // proves a Window menu appears at all â€” it was the last of the three
+        // proves a Window menu appears at all — it was the last of the three
         // milestone 1.5 named as absent for having no commands. Exact, so a
         // panel cannot be added to the menu without being added here: an entry
         // for an unbuilt panel is the lie the previous codebase told often.
@@ -650,18 +1406,30 @@ mod tests {
         assert!(!state.active().dirty, "a panel is not a change to the work");
     }
 
+    /// Choose the pages of the `index`th spread, as a click and a
+    /// Shift-click would.
+    fn choose_spread(state: &mut TesseraApp, index: usize) {
+        let spread = state.active().document().spread_order[index];
+        state.pages_window.selected = state.active().document().pages_of(spread);
+        state.pages_window.of = Some(state.active);
+    }
+
     #[test]
     fn a_lone_page_is_numbered_and_a_facing_pair_is_a_range() {
+        // With an en dash. The panel drew the dash as three characters of
+        // mangled text: the file had been read as Latin-1 and written back
+        // as UTF-8, and this test checked for the mangled form.
         let mut state = TesseraApp::headless();
         state.active_mut().document_mut().setup.facing_pages = true;
         apply(&mut state, Command::AddPage);
         apply(&mut state, Command::AddPage);
 
-        let order = state.active().document().spread_order.clone();
-        assert_eq!(page_numbers(&state, order[0]).as_deref(), Some("1"));
+        choose_spread(&mut state, 0);
+        assert_eq!(summary(&state), "Page 1");
+        choose_spread(&mut state, 1);
         assert_eq!(
-            page_numbers(&state, order[1]).as_deref(),
-            Some("2â€“3"),
+            summary(&state),
+            "Pages 2\u{2013}3",
             "the pair reads as a range"
         );
     }
@@ -678,14 +1446,12 @@ mod tests {
         apply(&mut state, Command::AddPage);
 
         let order = state.active().document().spread_order.clone();
-        assert_eq!(page_numbers(&state, order[2]).as_deref(), Some("3"));
+        choose_spread(&mut state, 2);
+        assert_eq!(summary(&state), "Page 3");
 
         apply(&mut state, Command::MoveSpread { from: 2, to: 0 });
-        assert_eq!(
-            page_numbers(&state, order[2]).as_deref(),
-            Some("1"),
-            "the same spread is page one now"
-        );
+        state.pages_window.selected = state.active().document().pages_of(order[2]);
+        assert_eq!(summary(&state), "Page 1", "the same spread is page one now");
     }
 
     // --- which column a page is drawn in ------------------------------------
@@ -746,12 +1512,12 @@ mod tests {
 
     // --- where a drop lands -------------------------------------------------
 
-    fn slot(x: f32, y: f32) -> egui::Rect {
-        egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(46.0, 60.0))
+    fn slot(x: f32, y: f32) -> Rect {
+        Rect::from_min_size(egui::pos2(x, y), egui::vec2(46.0, 60.0))
     }
 
     /// Two spreads: page one alone on the right, then two facing.
-    fn a_short_document() -> Vec<egui::Rect> {
+    fn a_short_document() -> Vec<Rect> {
         vec![slot(48.0, 0.0), slot(0.0, 76.0), slot(48.0, 76.0)]
     }
 
@@ -852,5 +1618,485 @@ mod tests {
             let column = (doc.pages[page].bounds.x / width).round() as i32;
             assert!((0..=1).contains(&column), "page off the sheet at {column}");
         }
+    }
+
+    // --- choosing pages -------------------------------------------------------
+
+    fn ids(n: usize) -> Vec<PageId> {
+        let mut doc = tessera_document::Document::new();
+        while doc.page_ids().count() < n {
+            doc.add_page();
+        }
+        doc.page_ids().collect()
+    }
+
+    #[test]
+    fn a_click_chooses_one_ctrl_adds_one_and_shift_chooses_a_run() {
+        let order = ids(6);
+        let plain = egui::Modifiers::NONE;
+        let (chosen, anchor) = select(&[], None, order[2], &order, plain);
+        assert_eq!((chosen.clone(), anchor), (vec![order[2]], Some(order[2])));
+
+        let (chosen, anchor) = select(&chosen, anchor, order[4], &order, egui::Modifiers::COMMAND);
+        assert_eq!(chosen, [order[2], order[4]]);
+        let (chosen, anchor) = select(&chosen, anchor, order[2], &order, egui::Modifiers::COMMAND);
+        assert_eq!(chosen, [order[4]], "a second Ctrl-click takes it out");
+
+        // From the last page clicked — the third, Ctrl-clicked out — and
+        // backwards as well as forwards.
+        let (chosen, anchor) = select(&chosen, anchor, order[1], &order, egui::Modifiers::SHIFT);
+        assert_eq!(chosen, order[1..=2]);
+        let (chosen, _) = select(&chosen, anchor, order[5], &order, egui::Modifiers::SHIFT);
+        assert_eq!(
+            chosen,
+            order[2..=5],
+            "a second Shift-click runs from the same page"
+        );
+    }
+
+    // --- laying the pages out --------------------------------------------------
+
+    fn laid(spread: usize, column: f32) -> Slot {
+        Slot {
+            spread,
+            column,
+            size: Vec2::new(40.0, 52.0),
+        }
+    }
+
+    #[test]
+    fn facing_pages_meet_at_one_spine_down_the_list() {
+        // Page one alone on the right, then pairs: every recto starts at the
+        // spine and every verso ends there, so the book reads as a book.
+        let (rects, height) = arrange(
+            &[laid(0, 1.0), laid(1, 0.0), laid(1, 1.0), laid(2, 0.0)],
+            true,
+            200.0,
+        );
+        let spine = 100.0;
+        assert!((rects[0].left() - (spine + FOLD / 2.0)).abs() < 0.01);
+        assert!((rects[1].right() - (spine - FOLD / 2.0)).abs() < 0.01);
+        assert!((rects[2].left() - (spine + FOLD / 2.0)).abs() < 0.01);
+        assert!(
+            (rects[3].right() - (spine - FOLD / 2.0)).abs() < 0.01,
+            "a last lone verso"
+        );
+        assert_eq!(rects[1].top(), rects[2].top(), "a spread is one row");
+        assert!(
+            rects[3].top() > rects[1].bottom(),
+            "and the next is under it"
+        );
+        assert!(height > rects[3].bottom());
+    }
+
+    #[test]
+    fn pages_that_do_not_face_fill_rows_across_the_list() {
+        // One to a row down the left edge was a column of pages beside an
+        // empty panel.
+        let slots: Vec<Slot> = (0..7).map(|i| laid(i, 0.0)).collect();
+        let (rects, _) = arrange(&slots, false, 200.0);
+        let first_row: Vec<&Rect> = rects.iter().filter(|r| r.top() == rects[0].top()).collect();
+        assert_eq!(first_row.len(), 3, "as many as fit across 200 points");
+        let (left, right) = (first_row[0].left(), 200.0 - first_row[2].right());
+        assert!((left - right).abs() < 0.01, "the row is centred");
+        assert!(
+            rects[6].top() > rects[3].top(),
+            "the seventh starts the third row"
+        );
+    }
+
+    // --- the panel, used ------------------------------------------------------
+
+    fn panel(
+        ctx: &egui::Context,
+        state: &mut TesseraApp,
+        events: Vec<egui::Event>,
+    ) -> Vec<(String, Rect)> {
+        let output = crate::headless_frame::frame(
+            ctx,
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    Vec2::new(300.0, 1400.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| docked(ui, state),
+        );
+        output
+            .platform_output
+            .accesskit_update
+            .map(|update| {
+                update
+                    .nodes
+                    .iter()
+                    .filter_map(|(_, node)| {
+                        let b = node.bounds()?;
+                        Some((
+                            node.label()?.to_string(),
+                            Rect::from_min_max(
+                                egui::pos2(b.x0 as f32, b.y0 as f32),
+                                egui::pos2(b.x1 as f32, b.y1 as f32),
+                            ),
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn a_panel() -> egui::Context {
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx);
+        ctx.enable_accesskit();
+        ctx
+    }
+
+    fn at(ctx: &egui::Context, state: &mut TesseraApp, label: &str) -> egui::Pos2 {
+        panel(ctx, state, Vec::new());
+        let nodes = panel(ctx, state, Vec::new());
+        nodes
+            .iter()
+            .find(|(name, _)| name == label)
+            .unwrap_or_else(|| panic!("no {label:?} in {nodes:#?}"))
+            .1
+            .center()
+    }
+
+    fn press(pos: egui::Pos2, pressed: bool, modifiers: egui::Modifiers) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers,
+            },
+        ]
+    }
+
+    fn click_with(
+        ctx: &egui::Context,
+        state: &mut TesseraApp,
+        label: &str,
+        modifiers: egui::Modifiers,
+    ) {
+        let pos = at(ctx, state, label);
+        for pressed in [true, false] {
+            let mut events = vec![egui::Event::ModifiersChanged(modifiers)];
+            events.extend(press(pos, pressed, modifiers));
+            panel(ctx, state, events);
+        }
+        panel(
+            ctx,
+            state,
+            vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)],
+        );
+    }
+
+    fn click(ctx: &egui::Context, state: &mut TesseraApp, label: &str) {
+        click_with(ctx, state, label, egui::Modifiers::NONE);
+    }
+
+    /// A facing document of six pages: 1 | 2-3 | 4-5 | 6.
+    fn six_pages() -> TesseraApp {
+        let mut state = TesseraApp::headless();
+        state.active_mut().document_mut().setup.facing_pages = true;
+        for _ in 0..5 {
+            apply(&mut state, Command::AddPage);
+        }
+        state
+    }
+
+    fn page(state: &TesseraApp, n: usize) -> PageId {
+        state
+            .active()
+            .document()
+            .page_ids()
+            .nth(n - 1)
+            .expect("a page")
+    }
+
+    #[test]
+    fn a_click_chooses_a_page_and_turns_to_it_and_shift_chooses_a_run() {
+        let mut state = six_pages();
+        let ctx = a_panel();
+        click(&ctx, &mut state, "Page 5");
+        assert_eq!(targets(&state), [page(&state, 5)]);
+        assert_eq!(state.active().current_spread, 2, "turned to 4–5");
+
+        click_with(&ctx, &mut state, "Page 2", egui::Modifiers::SHIFT);
+        assert_eq!(
+            targets(&state),
+            [
+                page(&state, 2),
+                page(&state, 3),
+                page(&state, 4),
+                page(&state, 5)
+            ]
+        );
+        assert_eq!(state.active().current_spread, 2, "Shift only chooses");
+    }
+
+    #[test]
+    fn a_parent_goes_on_the_chosen_pages_right_hand_ones_included() {
+        // The panel put a parent on "the current page": the first page of the
+        // spread in view. A recto could not be given one from here at all.
+        let mut state = six_pages();
+        apply(&mut state, Command::AddMaster);
+        let master = state.active().document().master_order[0];
+        let ctx = a_panel();
+        click(&ctx, &mut state, "Page 3");
+        click(&ctx, &mut state, "A-Master");
+        let doc = state.active().document();
+        assert_eq!(doc.master_of_page(page(&state, 3)), Some(master));
+        assert_eq!(doc.master_of_page(page(&state, 2)), None, "not its partner");
+
+        click_with(&ctx, &mut state, "Page 5", egui::Modifiers::SHIFT);
+        click(&ctx, &mut state, "A-Master");
+        let doc = state.active().document();
+        for n in 3..=5 {
+            assert_eq!(
+                doc.master_of_page(page(&state, n)),
+                Some(master),
+                "page {n}"
+            );
+        }
+        apply(&mut state, Command::Undo);
+        let doc = state.active().document();
+        assert_eq!(
+            doc.master_of_page(page(&state, 4)),
+            None,
+            "one step for all three"
+        );
+        assert_eq!(doc.master_of_page(page(&state, 3)), Some(master));
+    }
+
+    #[test]
+    fn a_parent_dragged_onto_a_page_is_put_on_it() {
+        let mut state = six_pages();
+        apply(&mut state, Command::AddMaster);
+        let master = state.active().document().master_order[0];
+        let ctx = a_panel();
+        let from = at(&ctx, &mut state, "A-Master");
+        let to = at(&ctx, &mut state, "Page 4");
+        panel(&ctx, &mut state, press(from, true, egui::Modifiers::NONE));
+        let steps = 6;
+        for i in 1..=steps {
+            let t = i as f32 / steps as f32;
+            panel(
+                &ctx,
+                &mut state,
+                vec![egui::Event::PointerMoved(from + (to - from) * t)],
+            );
+        }
+        panel(&ctx, &mut state, press(to, false, egui::Modifiers::NONE));
+        panel(&ctx, &mut state, Vec::new());
+        assert_eq!(
+            state.active().document().master_of_page(page(&state, 4)),
+            Some(master)
+        );
+        assert_eq!(
+            state.active().document().master_of_page(page(&state, 5)),
+            None
+        );
+    }
+
+    #[test]
+    fn insert_puts_a_page_after_the_chosen_one_and_chooses_it() {
+        let mut state = six_pages();
+        let ctx = a_panel();
+        let third = page(&state, 3);
+        click(&ctx, &mut state, "Page 3");
+        click(&ctx, &mut state, "Insert page");
+        let doc = state.active().document();
+        assert_eq!(doc.page_ids().count(), 7);
+        let new = page(&state, 4);
+        assert_eq!(page(&state, 3), third);
+        assert!(![third].contains(&new));
+        assert_eq!(targets(&state), [new], "the new page is chosen");
+        assert_eq!(summary(&state), "Page 4");
+    }
+
+    #[test]
+    fn duplicate_copies_the_chosen_run_after_itself_and_chooses_the_copies() {
+        let mut state = six_pages();
+        let ctx = a_panel();
+        let (two, three) = (page(&state, 2), page(&state, 3));
+        click(&ctx, &mut state, "Page 2");
+        click_with(&ctx, &mut state, "Page 3", egui::Modifiers::SHIFT);
+        click(&ctx, &mut state, "Duplicate pages");
+        let order: Vec<PageId> = state.active().document().page_ids().collect();
+        assert_eq!(order.len(), 8);
+        assert_eq!(order[1..3], [two, three]);
+        assert_eq!(targets(&state), order[3..5], "the copies, chosen");
+        assert_eq!(summary(&state), "Pages 4\u{2013}5");
+    }
+
+    #[test]
+    fn delete_takes_the_chosen_pages_and_is_refused_for_all_of_them() {
+        let mut state = six_pages();
+        let ctx = a_panel();
+        let (one, four) = (page(&state, 1), page(&state, 4));
+        click(&ctx, &mut state, "Page 2");
+        click_with(&ctx, &mut state, "Page 3", egui::Modifiers::SHIFT);
+        click(&ctx, &mut state, "Delete pages");
+        let order: Vec<PageId> = state.active().document().page_ids().collect();
+        assert_eq!(order.len(), 4);
+        assert_eq!(order[..2], [one, four]);
+
+        // Every page chosen: the button does nothing, as the document would
+        // refuse it anyway.
+        let all: Vec<PageId> = state.active().document().page_ids().collect();
+        state.pages_window.selected = all;
+        run(&mut state, PageAct::Delete);
+        assert_eq!(state.active().document().page_ids().count(), 4);
+    }
+
+    #[test]
+    fn a_parent_is_renamed_in_place() {
+        let mut state = six_pages();
+        apply(&mut state, Command::AddMaster);
+        let master = state.active().document().master_order[0];
+        state.pages_window.renaming = Some((master, "A-Master".into()));
+        let ctx = a_panel();
+        panel(&ctx, &mut state, Vec::new());
+        panel(
+            &ctx,
+            &mut state,
+            vec![
+                egui::Event::Key {
+                    key: egui::Key::A,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::COMMAND,
+                },
+                egui::Event::Text("A-Chapter".into()),
+            ],
+        );
+        panel(
+            &ctx,
+            &mut state,
+            vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }],
+        );
+        assert_eq!(state.active().document().masters[master].name, "A-Chapter");
+        assert!(state.pages_window.renaming.is_none());
+    }
+
+    #[test]
+    fn a_parents_letter_is_its_prefix() {
+        assert_eq!(prefix("A-Master"), "A");
+        assert_eq!(prefix("BK-Back matter"), "BK");
+        assert_eq!(prefix("Chapter opener"), "C");
+        assert_eq!(prefix("a very-long-prefix name"), "A");
+    }
+
+    #[test]
+    fn the_numbering_options_open_on_the_page_asked() {
+        let mut state = six_pages();
+        let four = page(&state, 4);
+        run(&mut state, PageAct::Numbering(four));
+        assert!(state.numbering.open);
+        assert_eq!(state.numbering.page, Some(four));
+    }
+
+    #[test]
+    fn a_chosen_page_that_is_deleted_elsewhere_is_forgotten() {
+        let mut state = six_pages();
+        let two = page(&state, 2);
+        state.pages_window.selected = vec![two];
+        state.pages_window.of = Some(state.active);
+        apply(&mut state, Command::RemovePage { id: two });
+        tidy(&mut state);
+        assert!(state.pages_window.selected.is_empty());
+        assert_ne!(targets(&state), [two]);
+    }
+
+    #[test]
+    fn dragging_one_of_the_chosen_pages_moves_them_all_and_undoes_in_one_step() {
+        let mut state = six_pages();
+        let ctx = a_panel();
+        let before: Vec<PageId> = state.active().document().page_ids().collect();
+        click(&ctx, &mut state, "Page 2");
+        click_with(&ctx, &mut state, "Page 3", egui::Modifiers::SHIFT);
+        let from = at(&ctx, &mut state, "Page 2");
+        // The right half of page five: after it.
+        let five = at(&ctx, &mut state, "Page 5");
+        let to = five + Vec2::new(8.0, 0.0);
+        panel(&ctx, &mut state, press(from, true, egui::Modifiers::NONE));
+        for i in 1..=6 {
+            let t = i as f32 / 6.0;
+            panel(
+                &ctx,
+                &mut state,
+                vec![egui::Event::PointerMoved(from + (to - from) * t)],
+            );
+        }
+        panel(&ctx, &mut state, press(to, false, egui::Modifiers::NONE));
+        panel(&ctx, &mut state, Vec::new());
+        let after: Vec<PageId> = state.active().document().page_ids().collect();
+        assert_eq!(
+            after,
+            [
+                before[0], before[3], before[4], before[1], before[2], before[5]
+            ],
+            "2 and 3 together, after 5"
+        );
+        apply(&mut state, Command::Undo);
+        assert_eq!(
+            state.active().document().page_ids().collect::<Vec<_>>(),
+            before
+        );
+    }
+
+    #[test]
+    fn the_document_is_laid_out_as_the_document_while_a_parent_is_open() {
+        // What a page's thumbnail is drawn from. Drawn from the canvas's
+        // layout, every page went blank at the first change made while a
+        // parent was open.
+        let mut state = six_pages();
+        let first = state.active().document().pages[page(&state, 1)].bounds;
+        apply(
+            &mut state,
+            Command::AddRectangle(tessera_geometry::DocRect {
+                x: first.x + 10.0,
+                y: first.y + 10.0,
+                width: 20.0,
+                height: 20.0,
+            }),
+        );
+        let rectangle = state.active().selection.single().expect("selected");
+        apply(&mut state, Command::AddMaster);
+        let master = state.active().document().master_order[0];
+        state.edit_master(Some(master));
+
+        let on_canvas = |state: &mut TesseraApp| {
+            state
+                .resolve_active()
+                .items
+                .iter()
+                .any(|item| item.frame == rectangle)
+        };
+        assert!(!on_canvas(&mut state), "the canvas shows the parent");
+        assert!(
+            state
+                .resolve_in(Scope::Document)
+                .items
+                .iter()
+                .any(|item| item.frame == rectangle),
+            "the thumbnails the document"
+        );
+        assert!(
+            !on_canvas(&mut state),
+            "and the canvas's layout is left alone"
+        );
     }
 }
