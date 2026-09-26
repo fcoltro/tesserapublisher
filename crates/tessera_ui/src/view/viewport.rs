@@ -3516,6 +3516,8 @@ mod tests {
             shadow: None,
             anchor: None,
             style: None,
+            hidden: false,
+            locked: false,
         };
         let lower = document.add_frame(layer, box_at(400.0));
         let upper = document.add_frame(layer, box_at(100.0));
@@ -4116,6 +4118,8 @@ mod tests {
                 shadow: None,
                 anchor: None,
                 style: None,
+                hidden: false,
+                locked: false,
             },
         );
         state.active_mut().selection.set(id);
@@ -4202,6 +4206,8 @@ mod tests {
                 shadow: None,
                 anchor: None,
                 style: None,
+                hidden: false,
+                locked: false,
             },
         );
         state.active_mut().selection.toggle(second);

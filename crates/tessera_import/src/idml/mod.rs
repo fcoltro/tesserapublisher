@@ -630,6 +630,8 @@ impl Items<'_> {
                 shadow: None,
                 anchor: Some(tessera_document::anchored::Anchored::new(story, index)),
                 style: None,
+                hidden: false,
+                locked: false,
             },
         );
         if let Some(name) = attr(node, "Self") {
@@ -837,6 +839,9 @@ impl Items<'_> {
                 anchor: anchored
                     .map(|(story, index)| tessera_document::anchored::Anchored::new(story, index)),
                 style,
+                // InDesign's own Object ▸ Hide and Lock, as the item was left.
+                hidden: attr(node, "Visible") == Some("false"),
+                locked: attr(node, "Locked") == Some("true"),
             },
         );
         if let Some(name) = attr(node, "Self") {

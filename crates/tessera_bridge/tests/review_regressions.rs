@@ -59,6 +59,8 @@ fn add_text(d: &mut Document, s: Story) -> FrameId {
             shadow: None,
             anchor: None,
             style: None,
+            hidden: false,
+            locked: false,
         },
     )
 }

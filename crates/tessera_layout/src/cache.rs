@@ -158,6 +158,8 @@ mod tests {
                 shadow: None,
                 anchor: None,
                 style: None,
+                hidden: false,
+                locked: false,
             },
         );
         (doc, id)
@@ -195,6 +197,8 @@ mod tests {
                 shadow: None,
                 anchor: None,
                 style: None,
+                hidden: false,
+                locked: false,
             },
         );
         let _ = id;

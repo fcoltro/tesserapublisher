@@ -20,6 +20,7 @@ pub mod graphic;
 pub mod history;
 pub mod ids;
 pub mod intent;
+mod layer_edit;
 pub mod links;
 pub mod masters;
 pub mod nodes;

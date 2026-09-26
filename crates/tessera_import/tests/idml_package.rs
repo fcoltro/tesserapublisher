@@ -114,7 +114,7 @@ fn a_book() -> Vec<u8> {
   <Page Self="ub8" Name="1" AppliedMaster="ub6" GeometricBounds="0 0 792 612" ItemTransform="1 0 0 1 0 -396"><MarginPreference Top="36" Left="54" Bottom="48" Right="36" ColumnCount="1"/></Page>
   <TextFrame Self="uf2" ParentStory="u12" PreviousTextFrame="n" NextTextFrame="uf3" ItemLayer="ub3" ItemTransform="1 0 0 1 54 -360"><TextFramePreference TextColumnCount="2" TextColumnGutter="12" VerticalJustification="TopAlign"/>{}</TextFrame>
   <Rectangle Self="ur1" FillColor="Color/Brand red" StrokeColor="Color/Black" StrokeWeight="2" ItemLayer="ub3" ItemTransform="1 0 0 1 100 200"><TextWrapPreference TextWrapMode="BoundingBoxTextWrap" TextWrapSide="BothSides"><Properties><TextWrapOffset Top="4" Left="4" Bottom="4" Right="4"/></Properties></TextWrapPreference>{}</Rectangle>
-  <Rectangle Self="ur2" FillColor="Gradient/Sunset" GradientFillAngle="90" AppliedObjectStyle="ObjectStyle/Callout" ItemLayer="ub3" ItemTransform="1 0 0 1 300 200"><TransparencySetting><BlendingSetting Opacity="50" BlendMode="Multiply"/><DropShadowSetting Mode="Drop" Opacity="40" XOffset="3" YOffset="4" Size="6" EffectColor="Color/Black"/></TransparencySetting>{}</Rectangle>
+  <Rectangle Self="ur2" FillColor="Gradient/Sunset" GradientFillAngle="90" AppliedObjectStyle="ObjectStyle/Callout" ItemLayer="ub3" Locked="true" ItemTransform="1 0 0 1 300 200"><TransparencySetting><BlendingSetting Opacity="50" BlendMode="Multiply"/><DropShadowSetting Mode="Drop" Opacity="40" XOffset="3" YOffset="4" Size="6" EffectColor="Color/Black"/></TransparencySetting>{}</Rectangle>
 </Spread></idPkg:Spread>"#,
         rect_path(0.0, 0.0, 300.0, 400.0),
         rect_path(0.0, 0.0, 100.0, 50.0),
@@ -449,6 +449,8 @@ fn a_gradient_fill_effects_and_an_object_style_come_through() {
         "its opacity in the alpha"
     );
     assert_eq!(frame.style, Some(style_id));
+    assert!(frame.locked, "locked in InDesign, locked here");
+    assert!(!frame.hidden);
 
     // The plain red rectangle beside it has none of that.
     let plain = doc
@@ -459,6 +461,7 @@ fn a_gradient_fill_effects_and_an_object_style_come_through() {
         .expect("the red rectangle");
     assert!(plain.shadow.is_none());
     assert_eq!(plain.style, None);
+    assert!(!plain.locked);
 }
 
 #[test]

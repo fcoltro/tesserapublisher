@@ -304,6 +304,8 @@ mod tests {
                 shadow: None,
                 anchor: None,
                 style: None,
+                hidden: false,
+                locked: false,
             },
         );
         let spread = doc.spread_of(page).expect("a spread");

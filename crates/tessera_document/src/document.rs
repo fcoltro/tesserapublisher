@@ -2472,7 +2472,13 @@ impl Document {
             .filter_map(|l| self.layers.get(l))
             .filter(|l| l.visible)
             .flat_map(|l| l.frames.iter().copied())
+            .filter(|f| !self.is_hidden(*f))
             .collect()
+    }
+
+    /// Whether a frame is hidden on its own — not its layer, itself.
+    pub fn is_hidden(&self, id: FrameId) -> bool {
+        self.frames.get(id).is_some_and(|f| f.hidden)
     }
 
     /// Back-to-front paint order, with groups expanded into their children.
@@ -2488,6 +2494,9 @@ impl Document {
     }
 
     fn push_leaves(&self, id: FrameId, out: &mut Vec<FrameId>) {
+        if self.is_hidden(id) {
+            return;
+        }
         match self.frames.get(id).map(|f| &f.kind) {
             Some(FrameKind::Group(children)) => {
                 for child in children.clone() {
@@ -2684,6 +2693,8 @@ impl Document {
             shadow: None,
             anchor: None,
             style: None,
+            hidden: false,
+            locked: false,
         });
 
         let layer = self.layers.get_mut(layer_id)?;
@@ -2877,6 +2888,9 @@ impl Document {
             .filter_map(|l| self.layers.get(l))
             .filter(|l| l.visible && !l.locked)
             .flat_map(|l| l.frames.iter().copied())
+            // And the objects hidden or locked on their own, for the same
+            // two reasons at the size of one object.
+            .filter(|f| self.frames.get(*f).is_some_and(|f| !f.hidden && !f.locked))
             .collect()
     }
 
@@ -3237,6 +3251,8 @@ mod tests {
                     shadow: None,
                     anchor: Some(Anchored::new(story, index)),
                     style: None,
+                    hidden: false,
+                    locked: false,
                 },
             )
         };
@@ -3332,6 +3348,8 @@ mod tests {
                 shadow: None,
                 anchor: None,
                 style: None,
+                hidden: false,
+                locked: false,
             },
         );
         doc.set_page_size_of(page, bounds.width * 2.0, bounds.height);
@@ -3556,6 +3574,8 @@ mod tests {
             shadow: None,
             anchor: None,
             style: None,
+            hidden: false,
+            locked: false,
         }
     }
 
@@ -3783,6 +3803,8 @@ mod tests {
             shadow: None,
             anchor: None,
             style: None,
+            hidden: false,
+            locked: false,
         }
     }
 
@@ -3853,6 +3875,8 @@ mod tests {
             shadow: None,
             anchor: None,
             style: None,
+            hidden: false,
+            locked: false,
         }
     }
 
@@ -3880,6 +3904,8 @@ mod tests {
             shadow: None,
             anchor: None,
             style: None,
+            hidden: false,
+            locked: false,
         }
     }
 

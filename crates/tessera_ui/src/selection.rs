@@ -128,6 +128,8 @@ mod tests {
             shadow: None,
             anchor: None,
             style: None,
+            hidden: false,
+            locked: false,
         };
         let a = doc.add_frame(layer, frame());
         let b = doc.add_frame(layer, frame());

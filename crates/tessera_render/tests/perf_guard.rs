@@ -53,6 +53,8 @@ fn crowded_document() -> Document {
                 shadow: None,
                 anchor: None,
                 style: None,
+                hidden: false,
+                locked: false,
             },
         );
     }
@@ -155,6 +157,8 @@ fn wordy_document() -> Document {
                 shadow: None,
                 anchor: None,
                 style: None,
+                hidden: false,
+                locked: false,
             },
         );
     }

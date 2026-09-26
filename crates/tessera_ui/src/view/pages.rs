@@ -475,7 +475,7 @@ fn state_name(state: &TesseraApp, master: MasterId) -> &str {
 
 /// The name of what is being dragged, beside the pointer, so a drag across
 /// the list says what it will drop.
-fn dragging_label(ui: &Ui, label: &str) {
+pub(crate) fn dragging_label(ui: &Ui, label: &str) {
     let Some(at) = ui.ctx().pointer_interact_pos() else {
         return;
     };

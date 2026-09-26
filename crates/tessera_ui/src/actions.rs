@@ -24,6 +24,9 @@ pub enum Group {
     /// it, and what kept Edit within its dozen lines.
     Spelling,
     Object,
+    /// Locking and hiding objects, a submenu of Object — InDesign keeps the
+    /// four together, and Object has room for a dozen lines.
+    Visibility,
     Arrange,
     Transform,
     Align,
@@ -44,11 +47,12 @@ pub enum Group {
 }
 
 impl Group {
-    pub const ALL: [Group; 17] = [
+    pub const ALL: [Group; 18] = [
         Group::File,
         Group::Edit,
         Group::Spelling,
         Group::Object,
+        Group::Visibility,
         Group::Arrange,
         Group::Transform,
         Group::Align,
@@ -75,6 +79,7 @@ impl Group {
     /// what a palette is for — you type at it rather than hunt through it.
     pub fn submenu(self) -> Option<&'static str> {
         match self {
+            Group::Visibility => Some("Lock and hide"),
             Group::Arrange => Some("Arrange"),
             Group::Transform => Some("Transform"),
             Group::Align => Some("Align and distribute"),
@@ -107,7 +112,11 @@ impl Group {
         match self {
             Group::File => Some("File"),
             Group::Edit | Group::Spelling => Some("Edit"),
-            Group::Object | Group::Arrange | Group::Transform | Group::Align => Some("Object"),
+            Group::Object
+            | Group::Visibility
+            | Group::Arrange
+            | Group::Transform
+            | Group::Align => Some("Object"),
             Group::View => Some("View"),
             Group::Type | Group::Insert | Group::Markers => Some("Type"),
             Group::Layout => Some("Layout"),
@@ -446,7 +455,9 @@ pub fn guard(run: Run) -> Guard {
             | DefaultFillAndStroke
             | ClearFill
             | ThreadSelection
-            | UnthreadSelection,
+            | UnthreadSelection
+            | LockSelection
+            | HideSelection,
         ) => Guard::NeedsSelection,
 
         // Everything else: page commands, paste, select-all, picking a tool.
@@ -479,12 +490,48 @@ pub fn enabled(state: &crate::app::TesseraApp, run: Run) -> bool {
             )
         }),
         Run::Command(Cmd::RemovePage) => doc.document().page_ids().count() > 1,
+        Run::Command(Cmd::UnlockAll) => {
+            doc.editing.is_none() && !on_spread(state, |f| f.locked).is_empty()
+        }
+        Run::Command(Cmd::ShowAll) => {
+            doc.editing.is_none() && !on_spread(state, |f| f.hidden).is_empty()
+        }
         _ => match guard(run) {
             Guard::Always => true,
             Guard::NotWhileTyping => doc.editing.is_none(),
             Guard::NeedsSelection => count > 0 && doc.editing.is_none(),
         },
     }
+}
+
+/// The objects on the spread the canvas shows — or the parent open on it —
+/// for which `which` holds: what Unlock all and Show all on spread reach.
+///
+/// On the spread, as InDesign has them: locking and hiding are a way of
+/// getting things out of the way while working on a page, and a command
+/// that reached into every page of a book would undo that on pages nobody
+/// is looking at.
+pub fn on_spread(
+    state: &crate::app::TesseraApp,
+    which: impl Fn(&tessera_document::nodes::Frame) -> bool,
+) -> Vec<tessera_document::ids::FrameId> {
+    let doc = state.active().document();
+    let pages: Vec<tessera_document::ids::PageId> = match state.scope() {
+        tessera_layout::resolve::Scope::Master(master) => doc.pages_of_master(master),
+        tessera_layout::resolve::Scope::Document => doc
+            .spread_order
+            .get(state.active().current_spread)
+            .map(|spread| doc.pages_of(*spread))
+            .unwrap_or_default(),
+    };
+    doc.layer_ids()
+        .filter_map(|l| doc.layers.get(l))
+        .flat_map(|l| l.frames.iter().copied())
+        .filter(|id| {
+            doc.frame(*id).is_some_and(&which)
+                && doc.page_of_frame(*id).is_some_and(|p| pages.contains(&p))
+        })
+        .collect()
 }
 
 /// The document commands an action can name.
@@ -534,6 +581,14 @@ pub enum Cmd {
     SwapFillAndStroke,
     DefaultFillAndStroke,
     ClearFill,
+    /// Object ▸ Lock: the selection stays drawn and cannot be touched.
+    LockSelection,
+    /// Object ▸ Unlock all on spread.
+    UnlockAll,
+    /// Object ▸ Hide: the selection is taken off the page until shown.
+    HideSelection,
+    /// Object ▸ Show all on spread.
+    ShowAll,
 }
 
 /// One named thing a user can ask for.
@@ -945,6 +1000,31 @@ pub fn all() -> &'static [Action] {
             Command(DefaultFillAndStroke),
         ),
         a("No fill", Some("/"), Group::Object, Command(ClearFill)),
+        // InDesign's four, on InDesign's keys.
+        a(
+            "Lock",
+            Some("Ctrl+L"),
+            Group::Visibility,
+            Command(LockSelection),
+        ),
+        a(
+            "Unlock all on spread",
+            Some("Ctrl+Alt+L"),
+            Group::Visibility,
+            Command(UnlockAll),
+        ),
+        a(
+            "Hide",
+            Some("Ctrl+3"),
+            Group::Visibility,
+            Command(HideSelection),
+        ),
+        a(
+            "Show all on spread",
+            Some("Ctrl+Alt+3"),
+            Group::Visibility,
+            Command(ShowAll),
+        ),
         //
         a(
             "Align left edges",
@@ -1681,6 +1761,22 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
                     dx: f64::from(dx),
                     dy: f64::from(dy),
                 },
+                Cmd::LockSelection | Cmd::HideSelection => {
+                    let ids = state.active().selection.as_slice().to_vec();
+                    if cmd == Cmd::LockSelection {
+                        Command::SetObjectsLocked { ids, locked: true }
+                    } else {
+                        Command::SetObjectsHidden { ids, hidden: true }
+                    }
+                }
+                Cmd::UnlockAll => Command::SetObjectsLocked {
+                    ids: on_spread(state, |f| f.locked),
+                    locked: false,
+                },
+                Cmd::ShowAll => Command::SetObjectsHidden {
+                    ids: on_spread(state, |f| f.hidden),
+                    hidden: false,
+                },
                 Cmd::SwapFillAndStroke | Cmd::DefaultFillAndStroke | Cmd::ClearFill => {
                     // These three act on one frame. With nothing selected, or
                     // several, there is no single answer — doing nothing beats
@@ -1918,6 +2014,8 @@ mod tests {
                 | "Send to back"
                 | "Swap fill and stroke"
                 | "Default fill and stroke"
+                | "Lock"
+                | "Hide"
                 | "Nudge left"
                 | "Nudge right"
                 | "Nudge up"
@@ -2222,5 +2320,46 @@ mod tests {
         assert_eq!(transformed, 4, "two flips and two rotations");
         assert_eq!(Group::Arrange.menu(), Some("Object"));
         assert_eq!(Group::Transform.menu(), Some("Object"));
+    }
+
+    #[test]
+    fn lock_and_hide_take_the_selection_out_of_reach_until_the_spread_is_unlocked_or_shown() {
+        let mut state = crate::app::TesseraApp::headless();
+        let add = |state: &mut crate::app::TesseraApp| {
+            crate::command::apply(
+                state,
+                crate::command::Command::AddRectangle(tessera_geometry::DocRect {
+                    x: 10.0,
+                    y: 10.0,
+                    width: 20.0,
+                    height: 20.0,
+                }),
+            );
+            state.active().selection.single().expect("selected")
+        };
+        let (a, b) = (add(&mut state), add(&mut state));
+
+        state.active_mut().selection.set(a);
+        run(&mut state, Run::Command(Cmd::LockSelection));
+        assert!(state.active().selection.is_empty(), "let go of");
+        state.active_mut().selection.set(b);
+        run(&mut state, Run::Command(Cmd::HideSelection));
+        let doc = state.active().document();
+        assert!(doc.frames[a].locked && doc.frames[b].hidden);
+        state.active_mut().select_all();
+        assert!(
+            state.active().selection.is_empty(),
+            "neither can be selected"
+        );
+
+        assert!(enabled(&state, Run::Command(Cmd::UnlockAll)));
+        run(&mut state, Run::Command(Cmd::UnlockAll));
+        run(&mut state, Run::Command(Cmd::ShowAll));
+        let doc = state.active().document();
+        assert!(!doc.frames[a].locked && !doc.frames[b].hidden);
+        assert!(
+            !enabled(&state, Run::Command(Cmd::UnlockAll)),
+            "nothing left locked"
+        );
     }
 }

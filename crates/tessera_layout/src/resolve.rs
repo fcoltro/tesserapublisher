@@ -387,6 +387,7 @@ fn resolve_pages<'a>(
                 .layer_of_frame(item)
                 .and_then(|id| doc.layers.get(id))
                 .is_some_and(|layer| layer.visible)
+                || doc.is_hidden(item)
             {
                 continue;
             }
@@ -545,7 +546,9 @@ fn obstacles_for(
     let mut out = Vec::new();
     for page in doc.pages_of(spread) {
         for other in doc.frames_on_page(page) {
-            if other == id {
+            // A hidden object is not on the page, and text does not move
+            // aside for what is not there.
+            if other == id || doc.is_hidden(other) {
                 continue;
             }
             let Some(wrap) = doc
@@ -1243,6 +1246,8 @@ mod tests {
             shadow: None,
             anchor: None,
             style: None,
+            hidden: false,
+            locked: false,
         }
     }
 
@@ -1575,6 +1580,8 @@ mod tests {
             shadow: None,
             anchor: None,
             style: None,
+            hidden: false,
+            locked: false,
         }
     }
 
@@ -2444,6 +2451,48 @@ The body of the chapter.",
             both.len() > largest.len(),
             "both sides takes more, shorter lines"
         );
+    }
+
+    #[test]
+    fn a_hidden_object_is_not_drawn_and_text_does_not_wrap_round_it() {
+        use tessera_document::nodes::TextWrap;
+        let mut doc = Document::default();
+        let page = doc.page_ids().next().expect("a page");
+        let layer = doc.default_layer().expect("a layer");
+        let bounds = doc.pages[page].bounds;
+        let story = doc.add_story(Story::new("word ".repeat(200)));
+        let host = doc.add_frame(layer, {
+            let mut f = rect(bounds.x + 20.0, bounds.y + 20.0, 300.0, 300.0);
+            f.kind = FrameKind::text(story);
+            f
+        });
+        let mut block = rect(bounds.x + 20.0, bounds.y + 20.0, 150.0, 100.0);
+        block.wrap = TextWrap::Bounds {
+            standoff: Default::default(),
+            sides: Default::default(),
+        };
+        let block = doc.add_frame(layer, block);
+
+        let mut shaper = Shaper::new();
+        let first_line_starts = |doc: &Document, shaper: &mut Shaper| {
+            let resolved = resolve(doc, shaper);
+            let item = item_for(&resolved, host).expect("resolved");
+            let ResolvedKind::Text { shaped, .. } = &item.kind else {
+                panic!("text");
+            };
+            let starts = shaped.lines[0]
+                .glyphs()
+                .map(|g| g.x)
+                .fold(f64::MAX, f64::min);
+            (starts, item_for(&resolved, block).is_some())
+        };
+        let (pushed, drawn) = first_line_starts(&doc, &mut shaper);
+        assert!(pushed >= 150.0 && drawn, "wrapped round it: {pushed}");
+
+        doc.set_frames_hidden(&[block], true);
+        let (starts, drawn) = first_line_starts(&doc, &mut shaper);
+        assert!(starts < 1.0, "the text runs where it was: {starts}");
+        assert!(!drawn, "and it is not drawn");
     }
 
     #[test]

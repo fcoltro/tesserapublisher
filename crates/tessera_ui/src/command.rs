@@ -596,6 +596,31 @@ pub enum Command {
     SetActiveLayer(LayerId),
     /// Hand the selection to another layer, without moving it on the page.
     MoveSelectionToLayer(LayerId),
+    /// Show or hide several layers at once — Show All Layers, Hide Others.
+    SetLayersVisible {
+        layers: Vec<(LayerId, bool)>,
+    },
+    /// Lock or unlock several layers at once — Unlock All, Lock Others.
+    SetLayersLocked {
+        layers: Vec<(LayerId, bool)>,
+    },
+    /// Hide objects on their own, or show them again.
+    SetObjectsHidden {
+        ids: Vec<FrameId>,
+        hidden: bool,
+    },
+    /// Lock objects on their own, or unlock them.
+    SetObjectsLocked {
+        ids: Vec<FrameId>,
+        locked: bool,
+    },
+    /// Put objects on a layer at a depth in its back-to-front list, as a
+    /// block, without moving them on the page: the Layers panel's drag.
+    ArrangeObjects {
+        ids: Vec<FrameId>,
+        layer: LayerId,
+        index: usize,
+    },
 
     /// Replace the whole page setup at once.
     ///
@@ -1939,6 +1964,51 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 .move_frames_to_layer(&frames, id);
         }
 
+        Command::SetLayersVisible { layers } => {
+            for (id, visible) in layers {
+                if let Some(layer) = state.active_mut().document_mut().layers.get_mut(id) {
+                    layer.visible = visible;
+                }
+            }
+            state.active_mut().document_mut().touch();
+            drop_the_untouchable(state);
+        }
+
+        Command::SetLayersLocked { layers } => {
+            for (id, locked) in layers {
+                if let Some(layer) = state.active_mut().document_mut().layers.get_mut(id) {
+                    layer.locked = locked;
+                }
+            }
+            state.active_mut().document_mut().touch();
+            drop_the_untouchable(state);
+        }
+
+        Command::SetObjectsHidden { ids, hidden } => {
+            state
+                .active_mut()
+                .document_mut()
+                .set_frames_hidden(&ids, hidden);
+            // What cannot be seen cannot stay selected: handles round
+            // nothing, and a nudge moving what nobody can see.
+            drop_the_untouchable(state);
+        }
+
+        Command::SetObjectsLocked { ids, locked } => {
+            state
+                .active_mut()
+                .document_mut()
+                .set_frames_locked(&ids, locked);
+            drop_the_untouchable(state);
+        }
+
+        Command::ArrangeObjects { ids, layer, index } => {
+            state
+                .active_mut()
+                .document_mut()
+                .arrange_frames(&ids, layer, index);
+        }
+
         Command::SetDocumentSetup(setup) => {
             state.active_mut().document_mut().set_setup(setup);
         }
@@ -2582,6 +2652,8 @@ fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, look: Look) {
             shadow: None,
             anchor: None,
             style: None,
+            hidden: false,
+            locked: false,
         },
     );
     state.active_mut().selection.set(id);
@@ -4227,6 +4299,8 @@ mod tests {
             shadow: None,
             anchor: None,
             style: None,
+            hidden: false,
+            locked: false,
         };
         let a = state
             .active_mut()
@@ -5832,6 +5906,8 @@ mod tests {
                 shadow: None,
                 anchor: None,
                 style: None,
+                hidden: false,
+                locked: false,
             },
         );
 
@@ -6184,6 +6260,8 @@ mod tests {
                 shadow: None,
                 anchor: None,
                 style: None,
+                hidden: false,
+                locked: false,
             },
         );
         (master, item)

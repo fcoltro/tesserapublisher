@@ -203,6 +203,8 @@ fn hyperlinks_become_link_annotations_on_the_page_they_land_on() {
             shadow: None,
             anchor: None,
             style: None,
+            hidden: false,
+            locked: false,
         },
     );
     let mut shaper = Shaper::new();

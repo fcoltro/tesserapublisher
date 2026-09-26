@@ -235,6 +235,17 @@ pub struct Frame {
     /// description of a fact the values already tell.
     #[serde(default)]
     pub style: Option<crate::ids::ObjectStyleId>,
+    /// Hidden on its own, as InDesign's Object ▸ Hide hides one object
+    /// rather than its whole layer: not drawn, not printed, not selectable,
+    /// and no text wraps round it. Left out of the file when false, so a
+    /// document with nothing hidden is written as it was before.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
+    /// Locked on its own: drawn and printed, but not selected or moved —
+    /// the background kept still while the work goes on over it, one
+    /// object at a time rather than a layer at a time.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locked: bool,
 }
 
 impl Frame {

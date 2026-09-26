@@ -259,6 +259,29 @@ pub struct LayersWindow {
     pub renaming: Option<tessera_document::ids::LayerId>,
     /// What is being typed into that field.
     pub draft: String,
+    /// The layers whose objects are folded away under them. Folded rather
+    /// than unfolded, so a new layer shows what is on it.
+    pub collapsed: std::collections::HashSet<tessera_document::ids::LayerId>,
+    /// Where a Shift-click's run of objects starts.
+    pub anchor: Option<tessera_document::ids::FrameId>,
+    /// Each layer's objects on the spread in view, as last found: finding
+    /// which page every object is on is a walk of the document, and the
+    /// panel is drawn every frame.
+    pub listed: Option<ListedObjects>,
+}
+
+/// Every layer's objects on one spread, top layer first and each front to
+/// back, and what they were found for.
+#[derive(Debug, Clone)]
+pub struct ListedObjects {
+    pub document: DocumentKey,
+    pub revision: u64,
+    pub scope: tessera_layout::resolve::Scope,
+    pub spread: usize,
+    pub layers: Vec<(
+        tessera_document::ids::LayerId,
+        Vec<tessera_document::ids::FrameId>,
+    )>,
 }
 
 /// The styles window's own state.

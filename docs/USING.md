@@ -258,6 +258,34 @@ it there; double-click to open it on the canvas and edit it. Right-click one
 to rename it in place, apply it to every page, or delete it. *[None]* takes
 the parent off.
 
+## Layers
+
+The **Layers** panel lists the layers top to bottom, as they stack, and under
+each one what it holds on the spread in view — front first, each by its kind
+and what it says, with the page it is on. The triangle folds a layer's objects
+away. Click a layer to draw on it; double-click its name to rename it; drag it
+to restack; click its colour to change the colour its selections are drawn in.
+Its eye hides it and its padlock locks it — drawn but not touched. Alt-click
+either for every *other* layer: the eye shows that layer alone, and again
+shows them all; the padlock locks the others.
+
+Click an object's row to select it; Shift-click selects the run from the last
+one clicked, Ctrl-click one more. Point at a row for its own eye and padlock:
+an object can be hidden or locked on its own, as with **Object ▸ Lock and
+hide** — *Lock* (Ctrl+L), *Hide* (Ctrl+3), *Unlock all on spread*
+(Ctrl+Alt+L), *Show all on spread* (Ctrl+Alt+3). A hidden object is not drawn,
+printed or wrapped round; a locked one cannot be selected on the page or in
+the panel. Drag an object's row in front of or behind another, or onto another
+layer's row; drag one of several selected objects and they all go.
+
+The small square at the end of a layer's row is filled in its colour when the
+selection is on that layer: drag it onto another layer to move the selection
+there, or click it to select everything the layer holds on this spread.
+Right-click a layer for *Hide others*, *Lock others*, its colour, and *Delete
+layer…*; right-click an object for *Hide*, *Lock* and *Move to layer*. The foot
+of the panel adds a layer, moves the selection to the active one, and deletes
+it — asking first when it holds anything.
+
 ## Colour
 
 The Swatches panel holds named colours. A **spot** colour is a pot of a specific

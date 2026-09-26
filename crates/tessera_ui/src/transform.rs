@@ -840,6 +840,8 @@ mod tests {
             shadow: None,
             anchor: None,
             style: None,
+            hidden: false,
+            locked: false,
         };
         [
             doc.add_frame(layer, frame()),
