@@ -32,6 +32,18 @@ fn yes() -> bool {
     true
 }
 
+/// `document` as a book at `book_path` stores it: relative to the book's
+/// folder when it lies under it, as given otherwise.
+fn relative_to(book_path: &Path, document: &Path) -> PathBuf {
+    match book_path.parent() {
+        Some(folder) => document
+            .strip_prefix(folder)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|_| document.to_path_buf()),
+        None => document.to_path_buf(),
+    }
+}
+
 impl Default for Book {
     fn default() -> Self {
         Self {
@@ -55,13 +67,7 @@ impl Book {
     /// Add a document, kept relative to `book_path`'s folder when it lies
     /// under it. Already listed: left where it is.
     pub fn add(&mut self, book_path: &Path, document: &Path) {
-        let stored = match book_path.parent() {
-            Some(folder) => document
-                .strip_prefix(folder)
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|_| document.to_path_buf()),
-            None => document.to_path_buf(),
-        };
+        let stored = relative_to(book_path, document);
         if !self.documents.contains(&stored) {
             self.documents.push(stored);
         }
@@ -77,6 +83,49 @@ impl Book {
                 _ => p.clone(),
             })
             .collect()
+    }
+
+    /// Move the document at `from` to stand at `to` in the list as it is
+    /// before the move — counted as a drop marker is drawn, so `to` of the
+    /// list's length is the end. Whether anything moved.
+    pub fn move_to(&mut self, from: usize, to: usize) -> bool {
+        if from >= self.documents.len() || to > self.documents.len() {
+            return false;
+        }
+        let at = if to > from { to - 1 } else { to };
+        if at == from {
+            return false;
+        }
+        let document = self.documents.remove(from);
+        self.documents.insert(at, document);
+        true
+    }
+
+    /// Point the entry at `index` at another file — a chapter found again
+    /// after its folder moved — kept relative as [`Book::add`] keeps one.
+    /// Refused when the file is already another entry.
+    pub fn locate(&mut self, book_path: &Path, index: usize, document: &Path) -> bool {
+        let stored = relative_to(book_path, document);
+        if index >= self.documents.len()
+            || self
+                .documents
+                .iter()
+                .enumerate()
+                .any(|(i, d)| i != index && *d == stored)
+        {
+            return false;
+        }
+        self.documents[index] = stored;
+        true
+    }
+
+    /// Take the entry at `index` out of the book. The file is not touched.
+    pub fn remove(&mut self, index: usize) -> bool {
+        if index >= self.documents.len() {
+            return false;
+        }
+        self.documents.remove(index);
+        true
     }
 
     /// Move the document at `index` one place earlier or later.
@@ -133,6 +182,57 @@ mod tests {
 
         assert!(back.continue_numbering, "a book numbers on by default");
         let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    fn abc() -> Book {
+        Book {
+            documents: vec!["a".into(), "b".into(), "c".into()],
+            ..Default::default()
+        }
+    }
+
+    fn order(book: &Book) -> String {
+        book.documents
+            .iter()
+            .map(|d| d.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_chapter_dragged_lands_where_it_was_dropped() {
+        let mut book = abc();
+        assert!(book.move_to(0, 3), "the first to the end");
+        assert_eq!(order(&book), "bca");
+        assert!(book.move_to(2, 0), "the last to the front");
+        assert_eq!(order(&book), "abc");
+        assert!(book.move_to(0, 2), "into the gap before the third");
+        assert_eq!(order(&book), "bac");
+        assert!(
+            !book.move_to(1, 1) && !book.move_to(1, 2),
+            "dropped where it was"
+        );
+        assert!(!book.move_to(5, 0) && !book.move_to(0, 9), "nothing there");
+    }
+
+    #[test]
+    fn a_missing_chapter_is_found_again_and_a_chapter_taken_out() {
+        let folder = std::env::temp_dir().join("tessera-book-locate");
+        let book_path = folder.join("b.tesserabook");
+        let mut book = abc();
+        assert!(book.locate(&book_path, 1, &folder.join("moved").join("b2.tsrdf")));
+        assert_eq!(
+            book.documents[1],
+            PathBuf::from("moved/b2.tsrdf"),
+            "kept relative"
+        );
+        assert!(
+            !book.locate(&book_path, 1, &folder.join("a")),
+            "not a second entry for a file already listed"
+        );
+        assert!(!book.locate(&book_path, 7, &folder.join("x")));
+        assert!(book.remove(0));
+        assert_eq!(book.documents.len(), 2);
+        assert!(!book.remove(2));
     }
 
     #[test]

@@ -229,14 +229,28 @@ runs — this page, the next few paragraphs, or to the end of the story — so a
 subject discussed for a chapter is indexed "12–15". Layout ▸ Index… places
 the index and updates it.
 
-**Book.** Window ▸ Book opens the Book panel. *New…* makes a book file —
-a list of documents that are one publication — and *Add document…* fills it;
-the arrows order the chapters, double-clicking one opens it. With *Number the
-pages on* ticked, *Number now* gives each chapter's first page the number
-after the chapter before's last, saving chapters that are not open and
-changing open ones undoably. *Update contents* rebuilds the open chapter's
-table of contents from every chapter's headings, and *Export PDF…* writes the
-whole book as one file.
+**Book.** Window ▸ Book opens the Book panel. *New book…* makes a book file —
+a list of documents that are one publication — or *Open book…* one, and the
+books opened lately are listed until one is. *Add chapters…* fills it, and
+every change to the list is saved as it is made.
+
+Each chapter's row says the pages it runs to as the book numbers them, how
+many pages it has, whether it is open in a tab (a ring) and unsaved (a dot),
+and, in red, when it is missing; drag a row to reorder, double-click one to
+open it, and choose one for *Open*, *Locate…* for a missing one, or *Remove*
+— which takes it out of the book and leaves the file. When the chapters' own
+page numbers are not the ones the book gives them, the panel says so above
+the list.
+
+With *Number pages on from chapter to chapter* ticked, *Number pages* gives
+each chapter's first page the number after the chapter before's last, saving
+chapters that are not open and changing open ones undoably; it waits while a
+chapter is missing, since a book numbered around a gap is numbered wrong.
+*Update contents* rebuilds the open chapter's table of contents from every
+chapter's headings, *Check chapters* preflights every chapter and puts each
+one's count of problems on its row, and *Export PDF…* writes the whole book as
+one file. The ••• menu opens another book, shows this one's folder, or
+closes it.
 
 ## Pages
 

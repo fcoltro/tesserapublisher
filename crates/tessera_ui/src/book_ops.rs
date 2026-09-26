@@ -87,9 +87,15 @@ pub fn continue_numbering(state: &mut TesseraApp, paths: &[PathBuf]) -> Result<u
                 apply(state, Command::SetSections(sections));
                 state.active = was;
             }
-            None => format::save(&document, &chapter.path)?,
+            None => {
+                format::save(&document, &chapter.path)?;
+                tessera_io::seen::look_now(&chapter.path);
+            }
         }
         chapter.document = document;
+    }
+    if count > 0 {
+        state.book.summaries.forget();
     }
     Ok(count)
 }
@@ -158,6 +164,215 @@ pub fn update_contents(
         },
     );
     Ok(true)
+}
+
+// --- what the panel shows ------------------------------------------------------
+
+/// Where a chapter is, as the panel says it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChapterState {
+    /// Open in a tab, and whether that tab has changes not yet saved — the
+    /// book works from the tab, so they are in what it numbers and exports.
+    Open { unsaved: bool },
+    /// A file, not open.
+    Closed,
+    /// Not where the book says.
+    Missing,
+    /// There, and not a document this can read.
+    Unreadable(String),
+}
+
+/// One chapter, as the Book panel lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Summary {
+    pub path: PathBuf,
+    /// What it was made from, for telling whether a check of the chapter
+    /// is still about the chapter as it is.
+    pub stamp: Stamp,
+    pub state: ChapterState,
+    pub pages: usize,
+    /// Its first and last pages' numbers as the chapter has them now.
+    pub numbered: Option<(String, String)>,
+    /// As the book numbers them: on from the chapter before, when it does.
+    pub in_book: Option<(String, String)>,
+}
+
+impl Summary {
+    /// Whether the chapter's own numbers are not the ones the book gives it:
+    /// what "Number pages" would change.
+    pub fn out_of_date(&self) -> bool {
+        self.numbered.is_some() && self.numbered != self.in_book
+    }
+}
+
+/// What a chapter's summary was made from: its tab and that tab's revision,
+/// or its file and the file's date. The same stamp, the same summary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Stamp {
+    Tab(DocumentKey, u64, bool),
+    File(Option<u64>),
+    Missing,
+}
+
+/// The panel's summaries, and the chapters read to make them, kept until a
+/// chapter changes: reading every chapter from disk each frame would be a
+/// book's worth of JSON sixty times a second.
+#[derive(Debug, Clone, Default)]
+pub struct Summaries {
+    made_from: Option<(Vec<(PathBuf, Stamp)>, bool)>,
+    held: Vec<Summary>,
+    /// Chapters read from disk, by path, with the date they were read at.
+    files: std::collections::HashMap<PathBuf, (Option<u64>, Result<Document, String>)>,
+    /// Chapters' paths as the file system spells them, found once.
+    canonical: std::collections::HashMap<PathBuf, PathBuf>,
+}
+
+impl Summaries {
+    /// Forget what was read, so the next summary reads every chapter again:
+    /// for after the book's own work has saved chapters, whose dates are in
+    /// whole seconds and may not have moved.
+    pub fn forget(&mut self) {
+        self.made_from = None;
+        self.files.clear();
+    }
+}
+
+/// Every chapter's stamp: which tab shows it, or the file's date — the
+/// file's from what the disk said lately, not asked afresh each frame.
+pub fn stamps(
+    state: &TesseraApp,
+    cache: &mut Summaries,
+    paths: &[PathBuf],
+) -> Vec<(PathBuf, Stamp)> {
+    let tabs: Vec<(DocumentKey, PathBuf)> = state
+        .documents
+        .iter()
+        .filter_map(|(key, open)| {
+            let path = open.current_path.as_deref()?;
+            Some((
+                key,
+                path.canonicalize().unwrap_or_else(|_| path.to_path_buf()),
+            ))
+        })
+        .collect();
+    paths
+        .iter()
+        .map(|path| {
+            let canonical = match cache.canonical.get(path) {
+                Some(found) => found.clone(),
+                None => match path.canonicalize() {
+                    Ok(found) => {
+                        cache.canonical.insert(path.clone(), found.clone());
+                        found
+                    }
+                    Err(_) => path.clone(),
+                },
+            };
+            let stamp = match tabs.iter().find(|(_, p)| *p == canonical) {
+                Some((key, _)) => {
+                    let open = &state.documents[*key];
+                    Stamp::Tab(*key, open.document().revision(), open.dirty)
+                }
+                None => match tessera_io::seen::seen(path) {
+                    tessera_io::seen::Seen::Present { modified } => Stamp::File(modified),
+                    tessera_io::seen::Seen::Missing => Stamp::Missing,
+                },
+            };
+            (path.clone(), stamp)
+        })
+        .collect()
+}
+
+/// Every chapter summarised, remade only when a chapter has changed or the
+/// book's numbering has been switched.
+pub fn summaries(
+    state: &mut TesseraApp,
+    paths: &[PathBuf],
+    continue_numbers: bool,
+) -> Vec<Summary> {
+    let mut cache = std::mem::take(&mut state.book.summaries);
+    let stamps = stamps(state, &mut cache, paths);
+    let key = (stamps, continue_numbers);
+    if cache.made_from.as_ref() != Some(&key) {
+        let mut read: Vec<(ChapterState, Option<Document>)> = Vec::new();
+        for (path, stamp) in &key.0 {
+            read.push(match stamp {
+                Stamp::Tab(tab, _, unsaved) => (
+                    ChapterState::Open { unsaved: *unsaved },
+                    Some(state.documents[*tab].document().clone()),
+                ),
+                Stamp::Missing => (ChapterState::Missing, None),
+                Stamp::File(modified) => {
+                    let fresh = cache
+                        .files
+                        .get(path)
+                        .is_some_and(|(at, _)| at == modified && modified.is_some());
+                    if !fresh {
+                        let loaded = format::load(path).map_err(|e| e.to_string());
+                        cache.files.insert(path.clone(), (*modified, loaded));
+                    }
+                    match &cache.files[path].1 {
+                        Ok(doc) => (ChapterState::Closed, Some(doc.clone())),
+                        Err(e) => (ChapterState::Unreadable(e.clone()), None),
+                    }
+                }
+            });
+        }
+        let ends = |doc: &Document| {
+            let numbers = doc.page_numbers();
+            Some((
+                numbers.first()?.1.label.clone(),
+                numbers.last()?.1.label.clone(),
+            ))
+        };
+        let now: Vec<Option<(String, String)>> = read
+            .iter()
+            .map(|(_, doc)| doc.as_ref().and_then(ends))
+            .collect();
+        let mut documents: Vec<Document> = read.iter().filter_map(|(_, d)| d.clone()).collect();
+        if continue_numbers {
+            tessera_layout::book::continue_numbering(&mut documents);
+        }
+        let mut numbered = documents.iter();
+        cache.held = read
+            .into_iter()
+            .zip(now)
+            .zip(&key.0)
+            .map(|(((state, doc), now), (path, stamp))| {
+                let in_book = doc.as_ref().and_then(|_| numbered.next()).and_then(ends);
+                Summary {
+                    path: path.clone(),
+                    stamp: stamp.clone(),
+                    state,
+                    pages: doc.as_ref().map_or(0, |d| d.page_ids().count()),
+                    numbered: now,
+                    in_book,
+                }
+            })
+            .collect();
+        cache.made_from = Some(key);
+    }
+    let held = cache.held.clone();
+    state.book.summaries = cache;
+    held
+}
+
+/// Every readable chapter preflighted as it is now, each against its own
+/// bleed: how many errors and warnings, or `None` for one that could not be
+/// read. Open chapters are checked as their tabs have them.
+pub fn preflight(state: &mut TesseraApp, paths: &[PathBuf]) -> Vec<Option<(usize, usize)>> {
+    paths
+        .iter()
+        .map(|path| {
+            let document = match open_at(state, path) {
+                Some(key) => state.documents[key].document().clone(),
+                None => format::load(path).ok()?,
+            };
+            let limits = crate::preflight::limits_for(state, &document);
+            let report = tessera_preflight::rules::check(&document, &mut state.shaper, limits);
+            Some((report.errors(), report.warnings()))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -266,6 +481,92 @@ mod tests {
             state.active().document().story(contents).unwrap().text,
             "Contents\nOne\t1\nTwo\t4"
         );
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn each_chapter_says_where_it_is_and_what_the_book_numbers_it() {
+        let folder = std::env::temp_dir().join(format!("tessera-book-sum-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let one = chapter(&folder, "one", 3, "One");
+        let two = chapter(&folder, "two", 2, "Two");
+        let gone = folder.join("gone.tsrdf");
+        let paths = vec![one.clone(), two.clone(), gone];
+
+        let mut state = TesseraApp::headless();
+        crate::file_ops::open_from_path(&mut state, &two).unwrap();
+        let listed = summaries(&mut state, &paths, true);
+        assert_eq!(listed[0].state, ChapterState::Closed);
+        assert_eq!(listed[1].state, ChapterState::Open { unsaved: false });
+        assert_eq!(listed[2].state, ChapterState::Missing);
+        assert_eq!(listed[0].pages, 3);
+        assert_eq!(
+            listed[1].numbered,
+            Some(("1".into(), "2".into())),
+            "as it is"
+        );
+        assert_eq!(
+            listed[1].in_book,
+            Some(("4".into(), "5".into())),
+            "as the book has it"
+        );
+        assert!(listed[1].out_of_date());
+        assert!(
+            !listed[0].out_of_date(),
+            "the first is where the count starts"
+        );
+        assert!(
+            !listed[2].out_of_date(),
+            "a missing one has no numbers to be wrong"
+        );
+
+        let apart = summaries(&mut state, &paths, false);
+        assert!(
+            !apart[1].out_of_date(),
+            "a book not numbering on asks nothing"
+        );
+
+        // Numbering refuses a book with a chapter missing: it would be
+        // numbered around a gap.
+        assert!(continue_numbering(&mut state, &paths).is_err());
+        // Numbered, the open chapter is up to date and shows it unsaved.
+        continue_numbering(&mut state, &paths[..2]).unwrap();
+        let after = summaries(&mut state, &paths, true);
+        assert!(!after[1].out_of_date());
+        assert_eq!(after[1].state, ChapterState::Open { unsaved: true });
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_book_is_not_read_from_disk_again_until_a_chapter_changes() {
+        let folder =
+            std::env::temp_dir().join(format!("tessera-book-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let one = chapter(&folder, "one", 3, "One");
+        let paths = vec![one];
+        let mut state = TesseraApp::headless();
+        let first = summaries(&mut state, &paths, true);
+        let made = state.book.summaries.made_from.clone();
+        assert!(made.is_some());
+        assert_eq!(summaries(&mut state, &paths, true), first);
+        assert_eq!(state.book.summaries.made_from, made, "the same stamps");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn each_chapter_is_preflighted_against_itself() {
+        let folder = std::env::temp_dir().join(format!("tessera-book-pf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let one = chapter(&folder, "one", 1, "One");
+        let paths = vec![one, folder.join("gone.tsrdf")];
+        let mut state = TesseraApp::headless();
+        let found = preflight(&mut state, &paths);
+        // A new document has no press chosen: one warning, no errors.
+        assert_eq!(found[0], Some((0, 1)));
+        assert_eq!(found[1], None, "a missing chapter is not checked");
         let _ = std::fs::remove_dir_all(&folder);
     }
 }

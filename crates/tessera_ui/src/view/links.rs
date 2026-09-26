@@ -337,7 +337,7 @@ fn date(seconds: u64) -> String {
 }
 
 /// What a file manager is called here, for its button.
-fn file_manager() -> &'static str {
+pub(crate) fn file_manager() -> &'static str {
     if cfg!(target_os = "windows") {
         "Show in Explorer"
     } else if cfg!(target_os = "macos") {
@@ -1159,7 +1159,7 @@ fn fitted_path(ui: &Ui, path: &Path, width: f32) -> String {
 
 /// Open the file's folder with the file chosen, the way every file manager
 /// can. Best effort: a manager that cannot is a link that is still fine.
-fn reveal_in_file_manager(path: &Path) {
+pub(crate) fn reveal_in_file_manager(path: &Path) {
     #[cfg(target_os = "windows")]
     {
         let _ = std::process::Command::new("explorer")

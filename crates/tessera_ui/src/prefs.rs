@@ -227,6 +227,12 @@ pub struct Preferences {
     /// en dash or a section sign wanted today is wanted tomorrow.
     #[serde(default)]
     pub glyphs: crate::view::glyphs::GlyphMemory,
+
+    /// The books opened lately, the latest first: what the Book panel offers
+    /// before one is open, since a book is worked on over weeks and found
+    /// again through a file dialog every morning otherwise.
+    #[serde(default)]
+    pub recent_books: Vec<std::path::PathBuf>,
 }
 
 fn yes() -> bool {
@@ -274,6 +280,7 @@ impl Default for Preferences {
             workspaces: crate::workspace::Workspace::usual(),
             workspace: None,
             glyphs: Default::default(),
+            recent_books: Vec::new(),
         }
     }
 }
@@ -476,6 +483,7 @@ mod tests {
                 recent: vec!['§', '—'],
                 favourites: vec!['→'],
             },
+            recent_books: vec!["novel.tesserabook".into()],
         };
         written.save_to(&path).expect("save failed");
 

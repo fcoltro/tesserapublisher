@@ -886,6 +886,7 @@ mod tests {
                 recent: vec!['§'],
                 favourites: vec!['→'],
             },
+            recent_books: vec!["novel.tesserabook".into()],
         };
 
         for page in Page::ALL {
@@ -908,6 +909,7 @@ mod tests {
                     recent: vec!['§'],
                     favourites: vec!['→'],
                 },
+                recent_books: vec!["novel.tesserabook".into()],
                 ..Preferences::default()
             },
             "a setting is reachable but not restorable, so it is on no page"

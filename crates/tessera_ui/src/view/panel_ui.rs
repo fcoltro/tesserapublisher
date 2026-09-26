@@ -5,21 +5,42 @@ use crate::{icons::Icon, theme::Theme};
 
 /// A familiar symbol paired with its action, with one focus and hit target.
 pub fn action(ui: &mut Ui, icon: Icon, label: &str) -> Response {
+    let enabled = ui.is_enabled();
+    action_when(ui, enabled, icon, label)
+}
+
+/// [`action`], greyed and inert when `enabled` is false — without the child
+/// ui `add_enabled_ui` would make, which in a wrapping row does not wrap and
+/// runs out of the dock. Its hover text is the caller's to choose by
+/// `enabled`: an inert target shows none of its own.
+pub fn action_when(ui: &mut Ui, enabled: bool, icon: Icon, label: &str) -> Response {
     let font = egui::TextStyle::Body.resolve(ui.style());
-    let color = if ui.is_enabled() {
+    let color = if enabled && ui.is_enabled() {
         Theme::text_primary()
     } else {
         Theme::text_muted()
     };
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, color);
-    let width = (galley.size().x + 38.0).min(ui.available_width());
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(width, Theme::row()), egui::Sense::click());
+    // In a wrapping row, measured against the whole line, so one that does
+    // not fit what is left goes to the next line rather than being squeezed
+    // into the end of this one.
+    let line = if ui.layout().main_wrap {
+        ui.max_rect().width()
+    } else {
+        ui.available_width()
+    };
+    let width = (galley.size().x + 38.0).min(line);
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, Theme::row()), sense);
     let painter = ui.painter_at(rect);
     painter.rect_filled(
         rect,
         Theme::RADIUS,
-        if response.hovered() {
+        if response.hovered() && enabled {
             Theme::hover_bg()
         } else {
             Theme::panel_bg_alt()

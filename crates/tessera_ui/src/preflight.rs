@@ -87,7 +87,13 @@ impl Preflight {
 /// and the bleed is the document's own, because an object is short of *this*
 /// document's bleed or of nothing at all.
 fn limits_from(state: &TesseraApp) -> Limits {
-    let setup = state.active().document().setup;
+    limits_for(state, state.active().document())
+}
+
+/// The same, for any document: a book's chapters are checked each against
+/// its own bleed.
+pub(crate) fn limits_for(state: &TesseraApp, doc: &tessera_document::document::Document) -> Limits {
+    let setup = doc.setup;
     // The smallest of the four edges. An object short of any of them is short,
     // and taking the largest would let three edges through.
     let bleed = setup
