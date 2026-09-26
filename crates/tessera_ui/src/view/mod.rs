@@ -44,6 +44,7 @@ pub mod step_repeat;
 pub mod story_editor;
 pub mod style_ui;
 pub mod styles;
+pub mod swatch_editor;
 pub mod swatches;
 pub mod text_edit;
 pub mod variables;
@@ -99,6 +100,7 @@ pub(crate) fn modal_open(state: &TesseraApp) -> bool {
         || state.footnote_options.open
         || state.spelling.open
         || state.story_editor.open
+        || state.swatches_window.deleting.is_some()
 }
 
 /// The whole window, outermost first.
@@ -149,6 +151,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     spelling::show(ui.ctx(), state);
     story_editor::show(ui.ctx(), state);
     styles::editor(ui.ctx(), state);
+    swatch_editor::show(ui.ctx(), state);
     find::show(ui.ctx(), state);
 
     Panel::bottom("status")

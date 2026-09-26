@@ -127,7 +127,9 @@ pub fn lay_out(
                 .map(|run| story.resolve_run(run, doc))
                 .and_then(|f| f.colour)
                 .unwrap_or(tessera_color::Color::BLACK);
-            let shaped = shaper.shape(&story, doc, inner);
+            let color = doc.resolve_colour(&color);
+            let mut shaped = shaper.shape(&story, doc, inner);
+            shaped.resolve_colours(|c| doc.resolve_colour(c));
             let needs = shaped.height + cell.inset.top + cell.inset.bottom;
             measured.push(Measured {
                 row,

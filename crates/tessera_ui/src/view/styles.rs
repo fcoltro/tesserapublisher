@@ -2548,7 +2548,7 @@ fn uses_of_object_style(
 
 /// Select an object and bring its spread into view, as a click on it in the
 /// Layers panel does, leaving any text being typed in first.
-fn reveal_object(state: &mut TesseraApp, frame: tessera_document::ids::FrameId) {
+pub(crate) fn reveal_object(state: &mut TesseraApp, frame: tessera_document::ids::FrameId) {
     state.edit_master(None);
     crate::view::viewport::finish_editing(state);
     state.active_mut().selection.set(frame);

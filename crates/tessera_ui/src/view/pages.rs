@@ -535,7 +535,9 @@ fn schematic(
         // A thumbnail block is a few pixels of one colour. Drawing the whole
         // ramp at that size would cost a gradient per object for something
         // nobody can see, so it takes one colour from it.
-        let [r, g, bl, a] = frame.fill.representative().to_rgb_f32();
+        let [r, g, bl, a] = doc
+            .resolve_colour(&frame.fill.representative())
+            .to_rgb_f32();
         painter.rect_filled(
             block.intersect(at),
             0.0,

@@ -1857,6 +1857,34 @@ impl ShapedText {
     pub fn runs(&self) -> impl Iterator<Item = &ShapedRun> + '_ {
         self.lines.iter().flat_map(|l| l.runs.iter())
     }
+
+    /// Every colour the text states — its runs', its underlines' and
+    /// strikethroughs', its paragraph rules' — passed through `resolve`.
+    ///
+    /// What a document does with this is turn its swatch references into
+    /// the colours they name, as it does a frame's fill, before anything
+    /// draws them. The shaper carries a run's colour as the story states
+    /// it, and a swatch is a name: drawn as it came, a word set in a swatch
+    /// was the alarming magenta of a colour nobody defined.
+    pub fn resolve_colours(
+        &mut self,
+        resolve: impl Fn(&tessera_color::Color) -> tessera_color::Color,
+    ) {
+        for line in &mut self.lines {
+            for colour in line
+                .runs
+                .iter_mut()
+                .filter_map(|run| run.colour.as_mut())
+                .chain(
+                    line.rules
+                        .iter_mut()
+                        .filter_map(|rule| rule.colour.as_mut()),
+                )
+            {
+                *colour = resolve(colour);
+            }
+        }
+    }
 }
 
 /// A box the text flows through, in the frame's own space.

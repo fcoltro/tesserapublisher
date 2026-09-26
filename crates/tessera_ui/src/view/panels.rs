@@ -318,8 +318,11 @@ fn fill_stroke_proxy(
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(swatch + offset), Sense::hover());
     let painter = ui.painter();
 
+    // Through the swatch table: a fill that names a swatch is the swatch's
+    // colour, and drawn as the name it drew the magenta of an undefined one.
+    let doc = state.active().document();
     let to_colour = |c: &Color| {
-        let [r, g, b, a] = c.to_rgb_f32();
+        let [r, g, b, a] = doc.resolve_colour(c).to_rgb_f32();
         egui::Color32::from_rgba_unmultiplied(
             (r * 255.0) as u8,
             (g * 255.0) as u8,
@@ -2719,19 +2722,11 @@ fn shadow_controls(
     }
 }
 
-/// A colour picker that offers alpha.
-///
-/// Separate from [`fill_picker`], which deliberately does not: a fill's alpha
-/// and its object's opacity are different facts and offering both in one place
-/// is how a person comes to believe they are the same control. A shadow has no
-/// such pair — its alpha *is* how much of it shows.
-pub(crate) fn swatch_picker(ui: &mut Ui, rgba: &mut [f32; 4]) -> bool {
-    // A swatch offers alpha, because a named colour at 60% is a thing a person
-    // defines once and refers to everywhere. That is different from an object’s
-    // opacity, which is about one object.
-    shadow_picker(ui, rgba)
-}
-
+/// A shadow's colour, with its alpha: separate from [`fill_picker`], which
+/// deliberately offers none — a fill's alpha and its object's opacity are
+/// different facts, and offering both in one place is how a person comes to
+/// believe they are the same control. A shadow has no such pair: its alpha
+/// *is* how much of it shows.
 fn shadow_picker(ui: &mut Ui, rgba: &mut [f32; 4]) -> bool {
     let mut colour = egui::Rgba::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
     let changed = egui::widgets::color_picker::color_edit_button_rgba(

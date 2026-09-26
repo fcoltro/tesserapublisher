@@ -294,7 +294,66 @@ pub struct SwatchesWindow {
     ///
     /// By name rather than by index, because the list is reordered by every
     /// rename and an index would quietly start pointing at a different colour.
+    /// One of the built-ins' bracketed names — `[None]`, `[Paper]`,
+    /// `[Black]` — when one of those is chosen to apply.
     pub chosen: Option<String>,
+    /// Whether the chosen swatch is open in the Swatch window.
+    pub editing: bool,
+    /// Which use of which swatch the window's Next last went to.
+    pub visited: Option<(String, usize)>,
+    /// What Apply colours.
+    pub target: SwatchTarget,
+    /// The panel's list narrowed to names containing this.
+    pub filter: String,
+    /// A delete being asked about, and what its uses would go to.
+    pub deleting: Option<DeletingSwatch>,
+    /// The swatch a slider or number is being dragged on, once the drag has
+    /// recorded its one undo step: every later frame of the same drag
+    /// changes the document without recording another, so the page follows
+    /// the drag live and one undo takes the whole drag back.
+    pub dragging: Option<String>,
+    /// Every swatch's uses as last found, and the document and revision they
+    /// were found at: a whole walk of the document per swatch, which the
+    /// panel's counts would otherwise make on every frame.
+    pub found: Option<FoundSwatchUses>,
+}
+
+/// Where each swatch is used, as found at one revision of one document.
+#[derive(Debug, Clone)]
+pub struct FoundSwatchUses {
+    pub document: DocumentKey,
+    pub revision: u64,
+    pub uses: Vec<SwatchUses>,
+}
+
+/// One swatch's uses: every reference, and the stretches of text to go to.
+#[derive(Debug, Clone)]
+pub struct SwatchUses {
+    pub name: String,
+    pub references: tessera_document::SwatchReferences,
+    pub text: Vec<crate::find::Hit>,
+}
+
+/// What the Swatches panel's Apply colours in the selection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SwatchTarget {
+    /// The selected objects' fill.
+    #[default]
+    Fill,
+    /// Their stroke, keeping its weight and style.
+    Stroke,
+    /// The text in hand: the selection being typed in, or all of a selected
+    /// text frame's.
+    Text,
+}
+
+/// A swatch somebody asked to delete while something uses it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeletingSwatch {
+    pub name: String,
+    /// The swatch its uses go to, or `None` for each to keep the colour it
+    /// has now.
+    pub with: Option<String>,
 }
 
 /// Everything the application holds.

@@ -9,7 +9,7 @@
 //! document is edited constantly and its output intent almost never, so
 //! rebuilding on revision would rebuild on every keystroke.
 
-use tessera_color::managed::{OutputProfile, Proof};
+use tessera_color::managed::{Conversion, OutputProfile, Proof};
 use tessera_document::intent::OutputIntent;
 
 /// The proof in force, and what it was built for.
@@ -30,6 +30,13 @@ pub struct SoftProof {
     /// `decodes` does for the image cache. Comparing addresses would not: an
     /// allocator is free to hand back the one it has just released.
     builds: u64,
+    /// The conversion from a screen colour into the press's inks, and the
+    /// intent it came from: what the swatch window converts an RGB swatch
+    /// to CMYK through. Kept on the same terms as the proof, and apart from
+    /// it, because it answers the opposite question.
+    /// A profile that would not build one is kept as `None` beside its
+    /// intent, so it is not parsed again on every frame.
+    ink: Option<(OutputIntent, Option<Conversion>)>,
 }
 
 impl SoftProof {
@@ -40,6 +47,19 @@ impl SoftProof {
     /// message in [`Self::trouble`] rather than failing quietly, because a person
     /// who asked to see a proof and is not seeing one is entitled to know why.
     pub fn proof_for(&mut self, intent: Option<&OutputIntent>) -> Option<&Proof> {
+        let showing = self.showing;
+        let proof = self.press(intent);
+        if !showing {
+            return None;
+        }
+        proof
+    }
+
+    /// The proof for `intent` whether or not the page is being shown through
+    /// it: for a panel that shows a colour both ways side by side, as the
+    /// swatch window does, and should not need the whole page proofed to do
+    /// it.
+    pub fn press(&mut self, intent: Option<&OutputIntent>) -> Option<&Proof> {
         let Some(intent) = intent else {
             self.held = None;
             return None;
@@ -59,10 +79,46 @@ impl SoftProof {
             }
         }
 
-        if !self.showing {
-            return None;
-        }
         self.held.as_ref().map(|(_, proof)| proof)
+    }
+
+    /// The proof and the ink conversion for `intent` together, for a caller
+    /// that shows a colour as printed and converts one into inks in the same
+    /// breath.
+    pub fn press_and_ink(
+        &mut self,
+        intent: Option<&OutputIntent>,
+    ) -> (Option<&Proof>, Option<&Conversion>) {
+        self.press(intent);
+        self.ink_for(intent);
+        (
+            self.held.as_ref().map(|(_, proof)| proof),
+            self.ink.as_ref().and_then(|(_, ink)| ink.as_ref()),
+        )
+    }
+
+    /// The conversion from a screen colour into `intent`'s inks, built once
+    /// per choice as the proof is. `None` with no intent, or a profile that
+    /// would not build one — and then the caller converts by the formula and
+    /// says so.
+    pub fn ink_for(&mut self, intent: Option<&OutputIntent>) -> Option<&Conversion> {
+        let Some(intent) = intent else {
+            self.ink = None;
+            return None;
+        };
+        if self.ink.as_ref().is_none_or(|(was, _)| was != intent) {
+            let conversion = OutputProfile::from_bytes(intent.profile.clone())
+                .ok()
+                .and_then(|profile| {
+                    profile
+                        .ink_for_screen_colour(intent.rendering.to_managed())
+                        .ok()
+                });
+            self.ink = Some((intent.clone(), conversion));
+        }
+        self.ink
+            .as_ref()
+            .and_then(|(_, conversion)| conversion.as_ref())
     }
 
     /// Whether a proof is available to show, whether or not it is being shown.

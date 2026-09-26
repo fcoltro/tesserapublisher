@@ -174,6 +174,66 @@ pub fn uses_of_paragraph_style(
     uses
 }
 
+/// Every stretch of text whose own formatting names the swatch `name`, in
+/// reading order: a run's colour or its underline's, a paragraph's rules.
+///
+/// Its own formatting only. Text coloured by a style naming the swatch is
+/// that style's use, and is counted with the style: going to every word
+/// set in a coloured heading style is a tour of the headings, not of the
+/// swatch.
+///
+/// Neighbouring runs and a paragraph's own rule fold into one stretch, as a
+/// reader would point at it.
+pub fn uses_of_swatch(doc: &Document, name: &str) -> Vec<Hit> {
+    use tessera_document::{character_names_swatch, paragraph_names_swatch};
+    let mut uses = Vec::new();
+    for (story, frame, cell) in shown_stories(doc) {
+        let Some(text) = doc.story(story) else {
+            continue;
+        };
+        let trimmed = |range: &Range<usize>| {
+            if text
+                .text
+                .get(range.clone())
+                .is_some_and(|t| t.ends_with('\n'))
+            {
+                range.start..range.end - 1
+            } else {
+                range.clone()
+            }
+        };
+        let mut ranges: Vec<Range<usize>> = text
+            .runs
+            .iter()
+            .filter(|run| character_names_swatch(&run.local, name))
+            .map(|run| run.range.clone())
+            .chain(
+                text.paragraphs
+                    .iter()
+                    .filter(|run| paragraph_names_swatch(&run.local, name))
+                    .map(|run| trimmed(&run.range)),
+            )
+            .filter(|range| !range.is_empty())
+            .collect();
+        ranges.sort_by_key(|range| range.start);
+        let mut open: Option<Range<usize>> = None;
+        for range in ranges {
+            open = Some(match open {
+                Some(at) if range.start <= at.end => at.start..at.end.max(range.end),
+                Some(done) => {
+                    uses.push(hit(story, frame, cell, done));
+                    range
+                }
+                None => range,
+            });
+        }
+        if let Some(range) = open {
+            uses.push(hit(story, frame, cell, range));
+        }
+    }
+    uses
+}
+
 fn hit(story: StoryId, frame: FrameId, cell: Option<(usize, usize)>, range: Range<usize>) -> Hit {
     Hit {
         story,
@@ -418,5 +478,66 @@ mod tests {
         let edits = edits_for(&hits, "longer");
         assert_eq!(edits[0].1, 10..13, "the later hit is changed first");
         assert_eq!(edits[1].1, 0..3);
+    }
+
+    #[test]
+    fn a_swatch_is_found_in_the_text_formatted_with_it_and_neighbours_fold() {
+        use crate::app::TesseraApp;
+        use crate::command::{Command, apply};
+        use tessera_color::Color;
+        let mut state = TesseraApp::headless();
+        apply(
+            &mut state,
+            Command::AddTextFrame(tessera_geometry::DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 200.0,
+                height: 100.0,
+            }),
+        );
+        let frame = state.active().selection.single().expect("selected");
+        apply(
+            &mut state,
+            Command::SetText {
+                id: frame,
+                text: "One two three\nFour".into(),
+            },
+        );
+        let FrameKind::Text { story, .. } = state.active().document().frames[frame].kind else {
+            panic!("a text frame");
+        };
+        let brand = Color::Swatch {
+            name: "Brand".into(),
+            tint: 1.0,
+        };
+        let colour = |state: &mut TesseraApp, range: Range<usize>, colour: Color| {
+            apply(
+                state,
+                Command::SetCharacterFormat {
+                    story,
+                    range,
+                    format: tessera_text::story::CharacterFormat {
+                        colour: Some(colour),
+                        ..Default::default()
+                    },
+                },
+            );
+        };
+        // "One" and "two" coloured separately but touching, then "Four".
+        colour(&mut state, 0..4, brand.clone());
+        colour(&mut state, 4..7, brand.clone());
+        colour(&mut state, 14..18, brand.clone());
+        // Another colour is not this swatch.
+        colour(&mut state, 8..13, Color::BLACK);
+
+        let found = uses_of_swatch(state.active().document(), "Brand");
+        let ranges: Vec<_> = found.iter().map(|hit| hit.range.clone()).collect();
+        assert_eq!(ranges, [0..7, 14..18]);
+        assert!(
+            found
+                .iter()
+                .all(|hit| hit.frame == frame && hit.story == story)
+        );
+        assert!(uses_of_swatch(state.active().document(), "Other").is_empty());
     }
 }

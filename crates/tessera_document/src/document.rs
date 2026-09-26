@@ -6729,6 +6729,37 @@ mod tests {
     }
 
     #[test]
+    fn a_tint_of_a_process_swatch_is_drawn_lighter_on_the_page() {
+        // It resolved to the swatch at full strength: the tint slider moved
+        // and nothing on the page did.
+        let mut doc = Document::new();
+        doc.set_swatch(Swatch::new(
+            "Brand",
+            Color::Cmyk {
+                c: 0.0,
+                m: 0.8,
+                y: 0.6,
+                k: 0.2,
+                a: 1.0,
+            },
+        ));
+        let resolved = doc.resolve_colour(&Color::Swatch {
+            name: "Brand".to_string(),
+            tint: 0.25,
+        });
+        assert_eq!(
+            resolved,
+            Color::Cmyk {
+                c: 0.0,
+                m: 0.2,
+                y: 0.15,
+                k: 0.05,
+                a: 1.0,
+            }
+        );
+    }
+
+    #[test]
     fn a_deleted_swatch_leaves_the_reference_unresolved_rather_than_baked_in() {
         // Rewriting every object to the swatch's last value would silently
         // bake in a colour the user had just deleted.

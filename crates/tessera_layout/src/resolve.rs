@@ -1089,7 +1089,8 @@ fn resolve_one<'a>(
                     flip: carried.flip,
                 };
                 let measure = crate::path_text::measure(&path, &placement);
-                let shaped = shaper.shape(story, doc, measure);
+                let mut shaped = shaper.shape(story, doc, measure);
+                shaped.resolve_colours(|c| doc.resolve_colour(c));
                 let colour = story
                     .runs
                     .first()
@@ -1185,9 +1186,11 @@ fn resolve_one<'a>(
                 doc, shaper, id, frame, *story_id, story, from, on, running, composed,
             );
 
-            links = links_in(doc, story, &flowed.text, frame.bounds.width as f32, running);
+            let mut shaped = flowed.text;
+            shaped.resolve_colours(|c| doc.resolve_colour(c));
+            links = links_in(doc, story, &shaped, frame.bounds.width as f32, running);
             ResolvedKind::Text {
-                shaped: flowed.text,
+                shaped,
                 color: colour,
                 overset_lines: flowed.overset_lines,
             }
@@ -1467,6 +1470,51 @@ mod tests {
             panic!("expected text");
         };
         assert_eq!(shaped.glyph_count(), 5);
+    }
+
+    #[test]
+    fn text_set_in_a_swatch_is_drawn_in_the_swatch_and_its_rule_too() {
+        // The shaper carries a run's colour as the story states it, and a
+        // swatch is a name: drawn as it came, it was magenta.
+        let red = tessera_color::Color::Cmyk {
+            c: 0.0,
+            m: 0.9,
+            y: 0.8,
+            k: 0.0,
+            a: 1.0,
+        };
+        let brand = tessera_color::Color::Swatch {
+            name: "Brand".into(),
+            tint: 1.0,
+        };
+        let mut doc = Document::new();
+        doc.set_swatch(tessera_document::nodes::Swatch::new("Brand", red.clone()));
+        let layer = doc.default_layer().expect("layer");
+        let mut story = Story::new("Hello");
+        story.runs[0].local.colour = Some(brand.clone());
+        story.paragraphs[0].local.rule_below = Some(tessera_text::story::ParagraphRule {
+            on: true,
+            colour: Some(brand.clone()),
+            ..Default::default()
+        });
+        let story = doc.add_story(story);
+        let mut frame = rect(0.0, 0.0, 500.0, 100.0);
+        frame.kind = FrameKind::text(story);
+        doc.add_frame(layer, frame);
+
+        let resolved = resolve(&doc, &mut Shaper::new());
+
+        let ResolvedKind::Text { shaped, color, .. } = &resolved.items[0].kind else {
+            panic!("expected text");
+        };
+        assert_eq!(color, &red, "the frame's colour");
+        assert!(shaped.runs().all(|run| run.colour.as_ref() == Some(&red)));
+        assert!(shaped.rules().count() > 0, "the rule is there to check");
+        assert!(
+            shaped
+                .rules()
+                .all(|rule| rule.colour.as_ref() == Some(&red))
+        );
     }
 
     #[test]

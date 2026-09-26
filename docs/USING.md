@@ -237,6 +237,32 @@ The Swatches panel holds named colours. A **spot** colour is a pot of a specific
 ink and gets a plate of its own on the press; a **process** colour is mixed from
 the four.
 
+Each row shows the colour, the space it is written in — CMYK, RGB, Lab, or
+*Tint* — and how many places use it: objects, text, styles and tints, not only
+fills and strokes. A click chooses a swatch and *Apply* puts it on the
+selection's **fill**, **stroke** or **text**, as the switch above the list
+says; the swatch the selection already wears carries a dot. Choosing and
+applying are two steps on purpose, so looking through the list with an object
+selected does not recolour it. Past eight swatches a filter narrows the list
+by name.
+
+Double-click a swatch — or *Edit swatch…* — for the **Swatch window**. A
+colour is edited in its own numbers: a CMYK swatch as inks, with a slider for
+each whose track shows what the colour becomes along it, and it stays CMYK.
+*Mode* converts it to RGB or Lab — the same colour in other numbers, through
+the document's press when one is chosen — and *Ink* makes it a spot or a
+process colour. Beside the colour on screen is the colour as that press will
+print it, with a warning when the press cannot reach it; the row of tints
+under it makes any of them a tint swatch with a click. A tint swatch is a
+share of another and follows it. *In this document* counts the uses, and
+*Next* and *Previous* go to each object and each stretch of text in turn; the
+styles and tints listed there open with a click. The name is edited in place
+at the top.
+
+Deleting a swatch nothing uses deletes it. Deleting one in use asks what its
+uses should become — each keeps the colour it has now, or takes another
+swatch — rather than leaving them naming a colour that no longer exists.
+
 **Soft proofing** — View ▸ Soft proof — shows the document as the chosen press
 will print it, which usually means duller. That is not a fault: it is the gamut
 of the ink, and seeing it now is better than seeing it on paper.

@@ -295,7 +295,7 @@ impl Proof {
     pub fn show(&self, colour: &Color) -> [f32; 4] {
         // A colour already in the press’s own space is converted, not proofed.
         if let (Color::Cmyk { c, m, y, k, a }, Some(transform)) = (colour, &self.ink_to_screen) {
-            let source = [[*c, *m, *y, *k]];
+            let source = [[*c, *m, *y, *k].map(|v| v * INK_PERCENT)];
             let mut out = [[0.0f32; 3]];
             transform.transform_pixels(&source, &mut out);
             return [out[0][0], out[0][1], out[0][2], *a];
@@ -330,6 +330,15 @@ impl Proof {
     }
 }
 
+/// What Little CMS counts a whole ink as, in a floating-point CMYK pixel.
+///
+/// **A hundred, not one.** Its float CMYK is in percent, where every other
+/// float format it has — and every ink value in this program — runs to one.
+/// Read as fractions, a press conversion's 48% came out as 48 whole inks:
+/// RGB mid grey went into a CMYK PDF as four solid plates, and proofed the
+/// other way 100% cyan was sent in as 1% and drawn as paper.
+const INK_PERCENT: f32 = 100.0;
+
 /// A compiled conversion from the screen's space into an output profile's.
 ///
 /// Two variants rather than one type with a spare channel, because Little CMS
@@ -356,7 +365,9 @@ impl Conversion {
             Self::Cmyk(transform) => {
                 let mut out = vec![[0.0f32; 4]; rgb.len()];
                 transform.transform_pixels(rgb, &mut out);
-                out
+                out.into_iter()
+                    .map(|ink| ink.map(|v| v / INK_PERCENT))
+                    .collect()
             }
             Self::Rgb(transform) => {
                 let mut out = vec![[0.0f32; 3]; rgb.len()];
@@ -377,7 +388,7 @@ impl Conversion {
             Self::Cmyk(transform) => {
                 let mut out = [[0.0f32; 4]];
                 transform.transform_pixels(&source, &mut out);
-                out[0]
+                out[0].map(|v| v / INK_PERCENT)
             }
             Self::Rgb(transform) => {
                 let mut out = [[0.0f32; 3]];
@@ -603,6 +614,55 @@ mod tests {
         assert_eq!(
             ink[3], 0.0,
             "an RGB output has no fourth ink, and says so with a zero"
+        );
+    }
+
+    /// A real press, where the checkout has one: an RGB profile has no inks
+    /// to get the scale of wrong.
+    fn a_press() -> Option<OutputProfile> {
+        let press = crate::profiles::bundled()
+            .into_iter()
+            .find(|b| b.space == "CMYK")?;
+        OutputProfile::from_bytes(std::fs::read(press.path).ok()?).ok()
+    }
+
+    #[test]
+    fn a_press_conversion_counts_inks_in_fractions_of_one() {
+        let Some(press) = a_press() else {
+            return;
+        };
+        let conversion = press
+            .ink_for_screen_colour(Rendering::default())
+            .expect("a conversion");
+        let grey = conversion.apply([0.5, 0.5, 0.5]);
+        assert!(
+            grey.iter().all(|v| (0.0..=1.0).contains(v)) && grey.iter().any(|v| *v > 0.05),
+            "mid grey is some of each ink, not four solid plates: {grey:?}"
+        );
+        let paper = conversion.apply([1.0, 1.0, 1.0]);
+        assert!(
+            paper.iter().all(|v| *v < 0.02),
+            "white is no ink: {paper:?}"
+        );
+        assert_eq!(conversion.apply_run(&[[0.5, 0.5, 0.5]]), vec![grey]);
+    }
+
+    #[test]
+    fn a_press_proof_draws_solid_cyan_as_cyan() {
+        let Some(press) = a_press() else {
+            return;
+        };
+        let proof = press.proof(Rendering::default()).expect("a proof");
+        let [r, g, b, _] = proof.show(&Color::Cmyk {
+            c: 1.0,
+            m: 0.0,
+            y: 0.0,
+            k: 0.0,
+            a: 1.0,
+        });
+        assert!(
+            r < 0.4 && g > 0.4 && b > 0.7,
+            "100% cyan is a blue-green, not the paper: {r} {g} {b}"
         );
     }
 }

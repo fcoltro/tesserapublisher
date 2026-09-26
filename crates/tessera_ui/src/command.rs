@@ -501,6 +501,13 @@ pub enum Command {
     RemoveSwatch {
         name: String,
     },
+    /// Remove a named colour and hand its uses to another swatch, or with
+    /// `None` to the colour it stood for, so nothing is left naming a
+    /// colour that no longer exists.
+    ReplaceSwatch {
+        name: String,
+        with: Option<String>,
+    },
 
     /// Add a parent spread shaped like the document.
     AddMaster,
@@ -1759,6 +1766,13 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::RemoveSwatch { name } => {
             state.active_mut().document_mut().remove_swatch(&name);
+        }
+
+        Command::ReplaceSwatch { name, with } => {
+            state
+                .active_mut()
+                .document_mut()
+                .replace_swatch(&name, with.as_deref());
         }
 
         Command::AddMaster => {
