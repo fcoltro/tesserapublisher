@@ -1823,33 +1823,38 @@ pub(crate) fn list_editor(
                 (Numbering::LowerRoman, "i, ii, iii"),
                 (Numbering::UpperRoman, "I, II, III"),
             ];
-            text_field(ui, crate::icons::Icon::List, "Number format", |ui| {
-                let shown = numberings
-                    .iter()
-                    .find(|(n, _)| *n == l.numbering)
-                    .map_or("1, 2, 3", |(_, label)| *label);
-                crate::icons::reads_as(
-                    egui::ComboBox::from_id_salt("list-numbering")
-                        .width(ui.available_width())
-                        .selected_text(shown)
-                        .show_ui(ui, |ui| {
-                            for (numbering, label) in numberings {
-                                if ui
-                                    .selectable_label(l.numbering == numbering, label)
-                                    .clicked()
-                                    && l.numbering != numbering
-                                {
-                                    l.numbering = numbering;
-                                    changed = true;
+            text_field(
+                ui,
+                crate::icons::Icon::NumberedList,
+                "Number format",
+                |ui| {
+                    let shown = numberings
+                        .iter()
+                        .find(|(n, _)| *n == l.numbering)
+                        .map_or("1, 2, 3", |(_, label)| *label);
+                    crate::icons::reads_as(
+                        egui::ComboBox::from_id_salt("list-numbering")
+                            .width(ui.available_width())
+                            .selected_text(shown)
+                            .show_ui(ui, |ui| {
+                                for (numbering, label) in numberings {
+                                    if ui
+                                        .selectable_label(l.numbering == numbering, label)
+                                        .clicked()
+                                        && l.numbering != numbering
+                                    {
+                                        l.numbering = numbering;
+                                        changed = true;
+                                    }
                                 }
-                            }
-                        })
-                        .response,
-                    "Numbering",
-                    egui::WidgetType::ComboBox,
-                    None,
-                );
-            });
+                            })
+                            .response,
+                        "Numbering",
+                        egui::WidgetType::ComboBox,
+                        None,
+                    );
+                },
+            );
             field(ui, "Suffix", |ui| {
                 let mut suffix = l.suffix.clone();
                 let response = ui.add(
@@ -2400,25 +2405,25 @@ fn graphic_section(
     for (label, icon, how, hint) in [
         (
             "Fit artwork",
-            crate::icons::Icon::Scale,
+            crate::icons::Icon::FitArtwork,
             Fit::Proportionally,
             "Show the entire artwork without changing its proportions.",
         ),
         (
             "Fill frame",
-            crate::icons::Icon::PictureFrame,
+            crate::icons::Icon::FillFrame,
             Fit::FillProportionally,
             "Fill the frame proportionally; edges may be cropped.",
         ),
         (
             "Stretch artwork",
-            crate::icons::Icon::Scale,
+            crate::icons::Icon::StretchArtwork,
             Fit::Stretch,
             "Fill the frame by changing the artwork's proportions.",
         ),
         (
             "Centre artwork",
-            crate::icons::Icon::Move,
+            crate::icons::Icon::CentreArtwork,
             Fit::Centre,
             "Centre the artwork without resizing it.",
         ),
@@ -3906,7 +3911,7 @@ fn text_section(
         // These controls also work on a selected frame, before entering its text.
         // The same target and pending format as the other controls keep both
         // entry points in sync with the toolbar while typing.
-        let family = text_field(ui, Icon::Text, "Font family", |ui| {
+        let family = text_field(ui, Icon::Font, "Font family", |ui| {
             let width = ui.available_width().min(WIDEST_ROW);
             family_menu(ui, state, shown.family.as_deref(), width)
         });
@@ -4306,7 +4311,7 @@ fn text_section(
         // The language: what the hyphenation patterns are chosen by, and what
         // the font is told. A choice, not a toggle, so it states `Some` always;
         // the document default is English.
-        text_field(ui, Icon::Text, "Language", |ui| {
+        text_field(ui, Icon::Language, "Language", |ui| {
             use tessera_text::story::LANGUAGES;
             let current = shown.language.as_deref().unwrap_or("en");
             let name = LANGUAGES

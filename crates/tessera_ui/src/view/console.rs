@@ -365,7 +365,7 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
             "Choose a provider, a model and a key in Preferences \u{203a} General \u{203a} \
              Assistant. The console talks to that model, and it works on the page you have open.",
         );
-        if super::panel_ui::action(ui, Icon::Properties, "Open preferences").clicked() {
+        if super::panel_ui::action(ui, Icon::Settings, "Open preferences").clicked() {
             act = Some(Act::Settings);
         }
     } else if state.console.transcript.is_empty() && !state.console.busy {
@@ -426,7 +426,7 @@ fn header(ui: &mut Ui, state: &TesseraApp, configured: bool) -> Option<Act> {
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if busy {
-                if super::panel_ui::action(ui, Icon::Close, "Stop")
+                if super::panel_ui::action(ui, Icon::Stop, "Stop")
                     .on_hover_text("Stop the model after the step it is on")
                     .clicked()
                 {
@@ -542,7 +542,7 @@ fn transcript(ui: &mut Ui, state: &mut TesseraApp) -> Option<Act> {
                 } else {
                     format!("Undo this turn ({made} changes)")
                 };
-                if super::panel_ui::action(ui, Icon::RotateCcw, &label)
+                if super::panel_ui::action(ui, Icon::Undo, &label)
                     .on_hover_text("Take back everything the model just did, in one step")
                     .clicked()
                 {
@@ -752,7 +752,7 @@ fn input(ui: &mut Ui, state: &mut TesseraApp) -> Option<Act> {
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let ready = !busy && !state.console.input.trim().is_empty();
-            if super::panel_ui::action_when(ui, ready, Icon::ChevronRight, "Send")
+            if super::panel_ui::action_when(ui, ready, Icon::Send, "Send")
                 .on_hover_text("Send the prompt (Enter)")
                 .clicked()
             {

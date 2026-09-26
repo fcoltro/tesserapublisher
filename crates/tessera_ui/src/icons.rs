@@ -3,10 +3,15 @@
 //! Most are Adobe's **Spectrum 2** workflow icons — the set InDesign and
 //! Illustrator draw their own interface with — vendored as SVG under
 //! `assets/icons/` (Apache-2.0: the licence is beside them, and see
-//! `ATTRIBUTION.md`). Where Spectrum has no picture for a page-layout idea —
-//! a line cap, a text wrap, a paragraph indent, the I-beam — Tessera draws its
-//! own, as stroked path data in [`Icon::paths`], at Spectrum's line weight so
-//! the two read as one set.
+//! `ATTRIBUTION.md`). Where Spectrum has no picture for an idea — a line cap,
+//! a text wrap, a paragraph indent, the I-beam, a book, a glyph — Tessera draws
+//! its own, as stroked path data in [`Icon::paths`], at Spectrum's line weight
+//! so the two read as one set.
+//!
+//! **An icon is the name of one thing.** A picture that already means
+//! something in Tessera is not borrowed for a second meaning because it is
+//! near enough: a person who has learnt the Layers panel's stack reads a
+//! button with that stack on it as "layers", whatever its label says.
 //!
 //! Both are rasterised by resvg at exactly the device pixels they cover and
 //! placed on whole pixels. That is what "pixel perfect" means here: an icon
@@ -41,7 +46,7 @@ pub enum Icon {
     Swatches,
     Styles,
     Close,
-    /// The AI console.
+    /// A prompt: what is typed to the assistant.
     SquareTerminal,
     Rectangle,
     Ellipse,
@@ -57,15 +62,20 @@ pub enum Icon {
     /// handle's own normal. See [`paint_rotated`].
     Scale,
     TextCursor,
-    /// The type tool before anything is drawn: a frame waiting to be dragged.
+    /// The type tool before anything is drawn: a frame waiting to be
+    /// dragged, its edge dashed and lines of text inside.
     TextFrame,
     Crosshair,
     /// The eyedropper.
     Pipette,
-    /// The Book panel.
+    /// The Book panel: a book lying open, not a bookmark in one.
     Book,
-    /// The Glyphs panel: a letter that is only a glyph.
-    Pi,
+    /// The Glyphs panel: an ampersand, the character every typeface draws its
+    /// own way and nobody types from the keyboard's face.
+    Glyphs,
+    /// The AI console: sparkles, the mark assistants have settled on. A
+    /// prompt's `>_` said "command line" to anybody who had used one.
+    Assistant,
 
     // The canvas toolbar's spatial verbs. Named for what they do here rather
     // than for Lucide's own name, which describes the divider's axis; each
@@ -180,6 +190,72 @@ pub enum Icon {
     ErrorMark,
     /// A problem to look at: a triangle, a warning sign's.
     WarningMark,
+
+    // What the panels' buttons do. Each is the verb's own picture, so that
+    // two buttons side by side never share one, and none borrows a picture
+    // that means something else a panel away: Export PDF was once drawn as
+    // Duplicate, Send as a chevron, and Group as the Layers panel.
+    Export,
+    /// A paper plane: send the prompt.
+    Send,
+    /// A square, as every player draws stop.
+    Stop,
+    /// A favourite, and one that is.
+    Star,
+    StarFilled,
+    /// To the clipboard; [`Icon::Duplicate`] makes a second object.
+    Copy,
+    Group,
+    BringToFront,
+    SendToBack,
+    /// 1 2 3: number the pages.
+    Numbering,
+    NumberedList,
+    /// A page with a plus: add pages, add documents.
+    AddFile,
+    /// A folder with a magnifier: look for a file on disk.
+    FindFile,
+    /// Read again: a changed link, a new check. [`Icon::RotateCw`] turns
+    /// objects and is not this.
+    Refresh,
+    Undo,
+    /// Swap the file a link points at.
+    Relink,
+    /// Taken out of a list without being destroyed: a book's chapter keeps
+    /// its file, so [`Icon::Trash`] would say the wrong thing.
+    Remove,
+    Settings,
+    Keyboard,
+    /// Light and dark: the theme's half-filled circle.
+    Appearance,
+    /// A window divided into panels.
+    Workspace,
+    Folder,
+    Open,
+    /// A document as a whole, where a problem belongs to no page.
+    Document,
+    /// The press, and printing.
+    Print,
+    Table,
+    Language,
+    /// Ag: a typeface.
+    Font,
+    Edit,
+    /// A table of contents: entries, and their page numbers at the right.
+    Contents,
+    /// How artwork sits in its frame, as the Properties panel offers it.
+    FitArtwork,
+    FillFrame,
+    StretchArtwork,
+    CentreArtwork,
+    /// Several objects of different kinds, selected together.
+    Objects,
+    /// The selection, moved: onto another layer.
+    MoveToLayer,
+    /// A percentage of a colour.
+    Tint,
+    /// A letter with a plus: type it where the cursor is.
+    InsertText,
 }
 
 impl Icon {
@@ -188,8 +264,10 @@ impl Icon {
     ///
     /// Only what Spectrum has no picture of is drawn here: the stroke's caps
     /// and joins, the text wraps, the paragraph indents and spaces, the
-    /// pointer's I-beam and crosshair. `<rect>` and `<circle>` primitives are
-    /// written out as paths so everything goes through one parser.
+    /// pointer's I-beam and crosshair, a book, a moon, an ampersand, the
+    /// assistant's sparkles and a table of contents. `<rect>` and `<circle>`
+    /// primitives are written out as paths so everything goes through one
+    /// parser.
     pub fn paths(self) -> &'static [&'static str] {
         match self {
             // lucide: move-horizontal. Drawn along +x and rotated to the
@@ -292,9 +370,40 @@ impl Icon {
                 "M12 9v4",
                 "M12 17h.01",
             ],
+            // lucide: book-open. Spectrum has a bookmark and no book.
+            Self::Book => &[
+                "M12 7v14",
+                "M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z",
+            ],
+            // lucide: moon. Spectrum's nearest is a half-filled circle, which
+            // says "contrast" and is [`Icon::Appearance`] here.
+            Self::Moon => &["M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"],
+            // lucide: text-select. A dashed edge: a frame not drawn yet.
+            Self::TextFrame => &[
+                "M5 3a2 2 0 0 0-2 2",
+                "M19 3a2 2 0 0 1 2 2",
+                "M21 19a2 2 0 0 1-2 2",
+                "M5 21a2 2 0 0 1-2-2",
+                "M9 3h1 M14 3h1 M9 21h1 M14 21h1",
+                "M3 9v1 M3 14v1 M21 9v1 M21 14v1",
+                "M7 8h8 M7 12h10 M7 16h6",
+            ],
+            // lucide: ampersand
+            Self::Glyphs => &[
+                "M17.5 12c0 4.4-3.6 8-8 8A4.5 4.5 0 0 1 5 15.5c0-6 8-4 8-8.5a3 3 0 1 0-6 0c0 3 2.5 8.5 12 13",
+                "M16 12h3",
+            ],
+            // lucide: sparkles
+            Self::Assistant => &[
+                "M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a0.5 0.5 0 0 1 0-0.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a0.5 0.5 0 0 1 0.963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a0.5 0.5 0 0 1 0 0.964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a0.5 0.5 0 0 1-0.963 0z",
+                "M20 3v4 M22 5h-4",
+                "M4 17v2 M5 18H3",
+            ],
+            // Tessera, after lucide's table-of-contents: a chapter and the
+            // sections under it, each with its page number at the right.
+            Self::Contents => &["M3 5h13 M7 12h9 M7 19h9", "M21 5h.01 M21 12h.01 M21 19h.01"],
             // Drawn by Spectrum; see [`Icon::spectrum`].
             Self::Sun
-            | Self::Moon
             | Self::Select
             | Self::DirectSelect
             | Self::PictureFrame
@@ -316,10 +425,7 @@ impl Icon {
             | Self::Grab
             | Self::Rotate
             | Self::Move
-            | Self::TextFrame
             | Self::Pipette
-            | Self::Book
-            | Self::Pi
             | Self::AlignLeft
             | Self::AlignCentreH
             | Self::AlignRight
@@ -382,7 +488,44 @@ impl Icon {
             | Self::Blend
             | Self::ZoomIn
             | Self::ZoomOut
-            | Self::ZoomFit => &[],
+            | Self::ZoomFit
+            | Self::Export
+            | Self::Send
+            | Self::Stop
+            | Self::Star
+            | Self::StarFilled
+            | Self::Copy
+            | Self::Group
+            | Self::BringToFront
+            | Self::SendToBack
+            | Self::Numbering
+            | Self::NumberedList
+            | Self::AddFile
+            | Self::FindFile
+            | Self::Refresh
+            | Self::Undo
+            | Self::Relink
+            | Self::Remove
+            | Self::Settings
+            | Self::Keyboard
+            | Self::Appearance
+            | Self::Workspace
+            | Self::Folder
+            | Self::Open
+            | Self::Document
+            | Self::Print
+            | Self::Table
+            | Self::Language
+            | Self::Font
+            | Self::Edit
+            | Self::FitArtwork
+            | Self::FillFrame
+            | Self::StretchArtwork
+            | Self::CentreArtwork
+            | Self::Objects
+            | Self::MoveToLayer
+            | Self::Tint
+            | Self::InsertText => &[],
         }
     }
 
@@ -516,7 +659,46 @@ impl Icon {
             | Self::Preflight
             | Self::SquareTerminal
             | Self::Book
-            | Self::Pi
+            | Self::Glyphs
+            | Self::Assistant
+            | Self::Contents
+            | Self::Export
+            | Self::Send
+            | Self::Stop
+            | Self::Star
+            | Self::StarFilled
+            | Self::Copy
+            | Self::Group
+            | Self::BringToFront
+            | Self::SendToBack
+            | Self::Numbering
+            | Self::NumberedList
+            | Self::AddFile
+            | Self::FindFile
+            | Self::Refresh
+            | Self::Undo
+            | Self::Relink
+            | Self::Remove
+            | Self::Settings
+            | Self::Keyboard
+            | Self::Appearance
+            | Self::Workspace
+            | Self::Folder
+            | Self::Open
+            | Self::Document
+            | Self::Print
+            | Self::Table
+            | Self::Language
+            | Self::Font
+            | Self::Edit
+            | Self::FitArtwork
+            | Self::FillFrame
+            | Self::StretchArtwork
+            | Self::CentreArtwork
+            | Self::Objects
+            | Self::MoveToLayer
+            | Self::Tint
+            | Self::InsertText
             | Self::Swatches
             | Self::Styles
             | Self::Close
@@ -540,7 +722,6 @@ impl Icon {
         }
         match self {
             Self::Sun => s2!("Lighten"),
-            Self::Moon => s2!("Contrast"),
             Self::Select => s2!("Select"),
             Self::DirectSelect => s2!("DirectSelect"),
             Self::PictureFrame => s2!("Image"),
@@ -562,10 +743,7 @@ impl Icon {
             Self::Grab => s2!("Hand"),
             Self::Rotate => s2!("RotateCW"),
             Self::Move => s2!("Move"),
-            Self::TextFrame => s2!("Layout"),
             Self::Pipette => s2!("Eyedropper"),
-            Self::Book => s2!("Bookmark"),
-            Self::Pi => s2!("FontPicker"),
             Self::AlignLeft => s2!("AlignLeft"),
             Self::AlignCentreH => s2!("AlignCenter"),
             Self::AlignRight => s2!("AlignRight"),
@@ -629,6 +807,43 @@ impl Icon {
             Self::ZoomIn => s2!("ZoomIn"),
             Self::ZoomOut => s2!("ZoomOut"),
             Self::ZoomFit => s2!("ZoomFitToScreen"),
+            Self::Export => s2!("Export"),
+            Self::Send => s2!("Send"),
+            Self::Stop => s2!("StopProcessing"),
+            Self::Star => s2!("Star"),
+            Self::StarFilled => s2!("StarFilled"),
+            Self::Copy => s2!("Copy"),
+            Self::Group => s2!("Group"),
+            Self::BringToFront => s2!("OrderTop"),
+            Self::SendToBack => s2!("OrderBottom"),
+            Self::Numbering => s2!("TextNumbers"),
+            Self::NumberedList => s2!("ListNumbered"),
+            Self::AddFile => s2!("FileAdd"),
+            Self::FindFile => s2!("FolderSearch"),
+            Self::Refresh => s2!("Refresh"),
+            Self::Undo => s2!("Undo"),
+            Self::Relink => s2!("Replace"),
+            Self::Remove => s2!("RemoveCircle"),
+            Self::Settings => s2!("Settings"),
+            Self::Keyboard => s2!("Keyboard"),
+            Self::Appearance => s2!("Contrast"),
+            Self::Workspace => s2!("Layout"),
+            Self::Folder => s2!("Folder"),
+            Self::Open => s2!("FolderOpen"),
+            Self::Document => s2!("FileText"),
+            Self::Print => s2!("Print"),
+            Self::Table => s2!("Table"),
+            Self::Language => s2!("Translate"),
+            Self::Font => s2!("FontPicker"),
+            Self::Edit => s2!("Edit"),
+            Self::FitArtwork => s2!("FullScreen"),
+            Self::FillFrame => s2!("Maximize"),
+            Self::StretchArtwork => s2!("Resize"),
+            Self::CentreArtwork => s2!("Target"),
+            Self::Objects => s2!("Shapes"),
+            Self::MoveToLayer => s2!("SelectAndMove"),
+            Self::Tint => s2!("Percentage"),
+            Self::InsertText => s2!("TextAdd"),
             // Page-layout ideas Spectrum has no picture of: drawn here.
             Self::Scale
             | Self::TextCursor
@@ -658,7 +873,13 @@ impl Icon {
             | Self::WrapContour
             | Self::WrapJump
             | Self::ErrorMark
-            | Self::WarningMark => None,
+            | Self::WarningMark
+            | Self::Book
+            | Self::Moon
+            | Self::TextFrame
+            | Self::Glyphs
+            | Self::Assistant
+            | Self::Contents => None,
         }
     }
 
@@ -1003,12 +1224,14 @@ fn texture(ctx: &egui::Context, icon: Icon, side: u32, degrees: f32) -> egui::Te
 /// **An icon missing from this list is missing from its own tests.** Seventeen
 /// were once, and three more — `Book`, `Pipette`, `Pi` — until the move to
 /// Spectrum, when a count taken by hand matched a list that was short.
-pub const ALL: [Icon; 119] = [
+pub const ALL: [Icon; 158] = [
     Icon::StrokeWeight,
     Icon::Disclosure,
     Icon::Book,
     Icon::Pipette,
-    Icon::Pi,
+    Icon::Glyphs,
+    Icon::Assistant,
+    Icon::Contents,
     Icon::Sun,
     Icon::Moon,
     Icon::DirectSelect,
@@ -1123,6 +1346,43 @@ pub const ALL: [Icon; 119] = [
     Icon::ZoomFit,
     Icon::ErrorMark,
     Icon::WarningMark,
+    Icon::Export,
+    Icon::Send,
+    Icon::Stop,
+    Icon::Star,
+    Icon::StarFilled,
+    Icon::Copy,
+    Icon::Group,
+    Icon::BringToFront,
+    Icon::SendToBack,
+    Icon::Numbering,
+    Icon::NumberedList,
+    Icon::AddFile,
+    Icon::FindFile,
+    Icon::Refresh,
+    Icon::Undo,
+    Icon::Relink,
+    Icon::Remove,
+    Icon::Settings,
+    Icon::Keyboard,
+    Icon::Appearance,
+    Icon::Workspace,
+    Icon::Folder,
+    Icon::Open,
+    Icon::Document,
+    Icon::Print,
+    Icon::Table,
+    Icon::Language,
+    Icon::Font,
+    Icon::Edit,
+    Icon::FitArtwork,
+    Icon::FillFrame,
+    Icon::StretchArtwork,
+    Icon::CentreArtwork,
+    Icon::Objects,
+    Icon::MoveToLayer,
+    Icon::Tint,
+    Icon::InsertText,
 ];
 
 #[cfg(test)]
@@ -1259,6 +1519,35 @@ mod tests {
     }
 
     #[test]
+    fn a_picture_names_one_thing() {
+        // The pairs that share a picture because they are one idea under two
+        // names: the pan tool at rest and mid-drag, the rotate tool and the
+        // quarter turn it makes, justified text as a paragraph's alignment and
+        // as the toolbar's, and the Styles panel and the paragraph style it
+        // mostly holds. Anything else sharing is a picture borrowed for a
+        // second meaning — Export PDF drawn as Duplicate, Group as Layers.
+        const ONE_IDEA: [(Icon, Icon); 4] = [
+            (Icon::Hand, Icon::Grab),
+            (Icon::Rotate, Icon::RotateCw),
+            (Icon::AlignJustify, Icon::TextAlignJustify),
+            (Icon::Styles, Icon::Pilcrow),
+        ];
+        let mut by_picture: HashMap<String, Vec<Icon>> = HashMap::new();
+        for icon in ALL {
+            by_picture
+                .entry(icon.svg().into_owned())
+                .or_default()
+                .push(icon);
+        }
+        for icons in by_picture.values().filter(|icons| icons.len() > 1) {
+            let allowed = ONE_IDEA
+                .iter()
+                .any(|&(a, b)| icons[..] == [a, b] || icons[..] == [b, a]);
+            assert!(allowed, "{icons:?} are one picture with different meanings");
+        }
+    }
+
+    #[test]
     fn a_link_and_a_broken_link_are_different_pictures() {
         assert_ne!(Icon::Link2.spectrum(), Icon::Unlink2.spectrum());
     }
@@ -1302,6 +1591,6 @@ mod tests {
         // count is what is checked, and it is the enum's own count.
         let unique: std::collections::HashSet<_> = ALL.iter().collect();
         assert_eq!(unique.len(), ALL.len(), "an icon is listed twice");
-        assert_eq!(ALL.len(), 119);
+        assert_eq!(ALL.len(), 158);
     }
 }

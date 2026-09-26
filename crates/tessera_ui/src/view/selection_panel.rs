@@ -158,7 +158,7 @@ pub(crate) fn several(ui: &mut Ui, state: &mut TesseraApp) {
     let said = kinds_said(&frames);
     style_ui::card(ui, None, |ui| {
         ui.horizontal(|ui| {
-            tile(ui, Icon::Layers);
+            tile(ui, Icon::Objects);
             ui.vertical(|ui| {
                 ui.add(
                     egui::Label::new(
@@ -477,19 +477,19 @@ fn arrange(ui: &mut Ui) -> Option<Act> {
     let mut act = None;
     style_ui::card(ui, Some("Arrange"), |ui| {
         ui.horizontal_wrapped(|ui| {
-            if panel_ui::action(ui, Icon::Layers, "Group")
+            if panel_ui::action(ui, Icon::Group, "Group")
                 .on_hover_text("Make them one object (Ctrl+G)")
                 .clicked()
             {
                 act = Some(run(Command::GroupSelection));
             }
-            if panel_ui::action(ui, Icon::ChevronRight, "To front")
+            if panel_ui::action(ui, Icon::BringToFront, "To front")
                 .on_hover_text("Bring them in front of everything on their layers")
                 .clicked()
             {
                 act = Some(run(Command::MoveSelectionInZ(ZMove::ToFront)));
             }
-            if panel_ui::action(ui, Icon::ChevronLeft, "To back")
+            if panel_ui::action(ui, Icon::SendToBack, "To back")
                 .on_hover_text("Send them behind everything on their layers")
                 .clicked()
             {

@@ -1477,7 +1477,7 @@ fn footer(ui: &mut Ui, state: &mut TesseraApp) {
             }
             if crate::view::panels::icon_button(
                 ui,
-                Icon::Pages,
+                Icon::AddFile,
                 "Insert pages\u{2026}",
                 state.pages_window.inserting.is_some(),
             ) {

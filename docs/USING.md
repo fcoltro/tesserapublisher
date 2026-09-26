@@ -180,7 +180,7 @@ character itself pasted in, or by code (*U+2026*, *2026*), and narrow the grid
 to letters, numbers, punctuation, symbols, arrows, maths or currency. Point at
 a character to see it large with its name and code; click it to put it at the
 caret, or, with no caret in text, to choose it. *Copy* copies it to paste
-anywhere; the bookmark keeps it among the **favourites** above the grid, with
+anywhere; the star keeps it among the **favourites** above the grid, with
 the characters used lately — both kept between runs. Right-click a character
 for the same. The magnifiers draw the grid larger or smaller. Type ▸ Insert
 special character ▸ Glyph by code point… is the same thing for a character

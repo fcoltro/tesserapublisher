@@ -154,7 +154,7 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
                     .wrap(),
                 );
             });
-            if panel_ui::action_when(ui, missing == 0, Icon::Pages, "Number pages")
+            if panel_ui::action_when(ui, missing == 0, Icon::Numbering, "Number pages")
                 .on_hover_text(if missing == 0 {
                     "Number each chapter on from the one before"
                 } else {
@@ -180,7 +180,7 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
 
     ui.add_space(4.0);
     ui.horizontal_wrapped(|ui| {
-        if panel_ui::action(ui, Icon::Plus, "Add chapters\u{2026}")
+        if panel_ui::action(ui, Icon::AddFile, "Add chapters\u{2026}")
             .on_hover_text("Choose saved documents to add at the end")
             .clicked()
         {
@@ -192,7 +192,7 @@ pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
             .is_some_and(|c| summaries.iter().any(|s| same_file(&s.path, c)));
         if current.is_some()
             && !listed
-            && panel_ui::action(ui, Icon::Plus, "Add this document")
+            && panel_ui::action(ui, Icon::AddFile, "Add this document")
                 .on_hover_text("Add the document open in front, at the end")
                 .clicked()
         {
@@ -232,7 +232,7 @@ fn no_book(ui: &mut Ui, state: &TesseraApp) -> Option<Act> {
         if panel_ui::action(ui, Icon::Plus, "New book\u{2026}").clicked() {
             act = Some(Act::NewBook);
         }
-        if panel_ui::action(ui, Icon::Book, "Open book\u{2026}").clicked() {
+        if panel_ui::action(ui, Icon::Open, "Open book\u{2026}").clicked() {
             act = Some(Act::OpenBook);
         }
     });
@@ -625,19 +625,19 @@ fn chosen_actions(ui: &mut Ui, index: usize, summary: &Summary) -> Option<Act> {
         .on_hover_text(summary.path.display().to_string());
         ui.horizontal_wrapped(|ui| {
             if summary_openable(summary) {
-                if panel_ui::action(ui, Icon::Pages, "Open")
+                if panel_ui::action(ui, Icon::Open, "Open")
                     .on_hover_text("Open the chapter in a tab")
                     .clicked()
                 {
                     act = Some(Act::Open(index));
                 }
-            } else if panel_ui::action(ui, Icon::Link2, "Locate\u{2026}")
+            } else if panel_ui::action(ui, Icon::FindFile, "Locate\u{2026}")
                 .on_hover_text("Choose where the chapter is now")
                 .clicked()
             {
                 act = Some(Act::Locate(index));
             }
-            if panel_ui::action(ui, Icon::Trash, "Remove")
+            if panel_ui::action(ui, Icon::Remove, "Remove")
                 .on_hover_text("Take it out of the book. The file stays where it is.")
                 .clicked()
             {
@@ -674,7 +674,7 @@ fn publish(
             .is_some_and(|a| summaries.iter().any(|s| same_file(&s.path, a)));
         ui.horizontal_wrapped(|ui| {
             let can = any && numbering && missing == 0;
-            if panel_ui::action_when(ui, can, Icon::Pages, "Number pages")
+            if panel_ui::action_when(ui, can, Icon::Numbering, "Number pages")
                 .on_hover_text(if missing > 0 {
                     "Find the missing chapters first: a book numbered around a gap is \
                      numbered wrong"
@@ -691,7 +691,7 @@ fn publish(
                 act = Some(Act::Number);
             }
             let can = any && chapter_in_front && missing == 0;
-            if panel_ui::action_when(ui, can, Icon::List, "Update contents")
+            if panel_ui::action_when(ui, can, Icon::Contents, "Update contents")
                 .on_hover_text(if can {
                     "Rebuild the contents in the chapter in front from every chapter's \
                      headings"
@@ -710,7 +710,7 @@ fn publish(
                 act = Some(Act::Preflight);
             }
             let can = any && missing == 0;
-            if panel_ui::action_when(ui, can, Icon::Duplicate, "Export PDF\u{2026}")
+            if panel_ui::action_when(ui, can, Icon::Export, "Export PDF\u{2026}")
                 .on_hover_text(if can {
                     "Every chapter, in order, as one PDF"
                 } else {

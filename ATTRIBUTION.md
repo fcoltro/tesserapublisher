@@ -20,10 +20,13 @@ They are licensed under the Apache License, Version 2.0, a copy of which is in
 ## Lucide icons
 
 The icons Spectrum has no picture of — line caps and joins, text wraps,
-paragraph indents and spacing, the pointer's I-beam and crosshair — are drawn
-in `crates/tessera_ui/src/icons.rs` in the manner of
-[Lucide](https://lucide.dev), and some are Lucide's own. They are stored as
-SVG path data and rendered at runtime; no image files are distributed.
+paragraph indents and spacing, the pointer's I-beam and crosshair, a book, a
+moon, a glyph, the assistant — are drawn in `crates/tessera_ui/src/icons.rs` in
+the manner of [Lucide](https://lucide.dev), and some are Lucide's own: the
+open book, the moon, the ampersand, the sparkles, the dashed text frame, the
+text cursor, the crosshair, the resize arrows and the error and warning
+marks. They are stored as SVG path data and rendered at runtime; no image
+files are distributed.
 
 Lucide is ISC-licensed:
 
@@ -43,8 +46,9 @@ Icons inherited from [Feather](https://feathericons.com) carry the MIT licence:
 
 Both licences are compatible with GPL-3.0-or-later.
 
-The Direct Select, Picture Frame, Polygon, Properties, Pages, Preflight and
-Swatches paths are Tessera-specific geometry using the same 24-unit grid.
+The stroke samples, text wraps, indents, spacing, scale and angle fields,
+columns, gutter and table of contents are Tessera-specific geometry on the same
+24-unit grid.
 
 ## Noto Sans interface font
 

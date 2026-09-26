@@ -82,8 +82,8 @@ impl Dock {
             Dock::Styles => Icon::Styles,
             Dock::Swatches => Icon::Swatches,
             Dock::Preflight => Icon::Preflight,
-            Dock::Console => Icon::SquareTerminal,
-            Dock::Glyphs => Icon::Pi,
+            Dock::Console => Icon::Assistant,
+            Dock::Glyphs => Icon::Glyphs,
             Dock::Book => Icon::Book,
             Dock::Links => Icon::Link2,
         }

@@ -646,11 +646,11 @@ fn actions(ui: &mut Ui, state: &mut TesseraApp) {
                     action = Some(MenuAction::Duplicate);
                 }
                 if !matches!(swatch.colour, Color::Swatch { .. })
-                    && super::panels::icon_button(ui, Icon::Opacity, "New tint swatch", false)
+                    && super::panels::icon_button(ui, Icon::Tint, "New tint swatch", false)
                 {
                     action = Some(MenuAction::NewTint);
                 }
-                if super::panels::icon_button(ui, Icon::Palette, "Edit swatch…", false) {
+                if super::panels::icon_button(ui, Icon::Edit, "Edit swatch…", false) {
                     action = Some(MenuAction::Edit);
                 }
             });

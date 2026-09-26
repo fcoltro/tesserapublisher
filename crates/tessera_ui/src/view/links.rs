@@ -425,7 +425,7 @@ fn picture(ui: &Ui, area: Rect, texture: Option<&egui::TextureHandle>, row: &Row
             } else if row.vector {
                 (Icon::Pen, Theme::text_muted())
             } else {
-                (Icon::PlaceImage, Theme::text_muted())
+                (Icon::PictureFrame, Theme::text_muted())
             };
             crate::icons::paint(&painter, area, icon, tint);
         }
@@ -642,7 +642,7 @@ fn remedies(ui: &mut Ui, state: &mut TesseraApp, rows: &[Row]) {
     ui.add_space(2.0);
     ui.horizontal_wrapped(|ui| {
         if !modified.is_empty()
-            && super::panel_ui::action(ui, Icon::RotateCw, "Update all")
+            && super::panel_ui::action(ui, Icon::Refresh, "Update all")
                 .on_hover_text("Read every changed file again, in one step")
                 .clicked()
         {
@@ -655,7 +655,7 @@ fn remedies(ui: &mut Ui, state: &mut TesseraApp, rows: &[Row]) {
             state.links.recheck();
         }
         if !missing.is_empty()
-            && super::panel_ui::action(ui, Icon::Link2, "Find missing…")
+            && super::panel_ui::action(ui, Icon::FindFile, "Find missing…")
                 .on_hover_text(
                     "Choose a folder: every missing file found in it, or in the folders \
                      inside it, is relinked there in one step",
@@ -1065,7 +1065,7 @@ fn details_card(ui: &mut Ui, state: &mut TesseraApp, row: &Row, minimum: f64, bu
 
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
-            if super::panel_ui::action(ui, Icon::PlaceImage, "Relink…")
+            if super::panel_ui::action(ui, Icon::Relink, "Relink…")
                 .on_hover_text(
                     "Choose the file this should point at. Every frame showing it follows.",
                 )
@@ -1074,7 +1074,7 @@ fn details_card(ui: &mut Ui, state: &mut TesseraApp, row: &Row, minimum: f64, bu
                 act = Some(Act::Relink);
             }
             if row.status == Status::Modified
-                && super::panel_ui::action(ui, Icon::RotateCw, "Update")
+                && super::panel_ui::action(ui, Icon::Refresh, "Update")
                     .on_hover_text("Read the changed file again")
                     .clicked()
             {

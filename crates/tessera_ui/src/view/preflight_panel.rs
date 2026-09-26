@@ -228,7 +228,7 @@ fn verdict(ui: &mut Ui, state: &mut TesseraApp, report: &Report, checks: Checks)
         });
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
-            if panel_ui::action(ui, Icon::RotateCw, "Check again")
+            if panel_ui::action(ui, Icon::Refresh, "Check again")
                 .on_hover_text(
                     "Read the linked files again. Everything else is checked as the \
                      document changes.",
@@ -616,14 +616,14 @@ fn section_fixes(
     }
     match rule {
         Rule::MissingLink => vec![(
-            Icon::Link2,
+            Icon::FindFile,
             "Find missing…",
             "Choose a folder: every missing file found in it, or in the folders inside \
              it, is relinked there in one step",
             Fix::FindMissing,
         )],
         Rule::ModifiedLink if links.len() > 1 => vec![(
-            Icon::RotateCw,
+            Icon::Refresh,
             "Update all",
             "Read every changed file again, in one step",
             Fix::UpdateAll(links),
@@ -653,7 +653,7 @@ fn fixes(
         }
         (Rule::MissingLink, Subject::Link(link), _) => vec![
             (
-                Icon::PlaceImage,
+                Icon::Relink,
                 "Relink…",
                 "Choose the file this should point at. Every frame showing it follows.",
                 Fix::Relink(*link),
@@ -667,7 +667,7 @@ fn fixes(
         ],
         (Rule::ModifiedLink, Subject::Link(link), _) => vec![
             (
-                Icon::RotateCw,
+                Icon::Refresh,
                 "Update",
                 "Read the changed file again",
                 Fix::Update(*link),
@@ -686,7 +686,7 @@ fn fixes(
             Fix::ShowInLinks(*link),
         )],
         (Rule::NoOutputIntent, ..) => vec![(
-            Icon::Palette,
+            Icon::Print,
             "Choose a press…",
             "Choose the ICC profile of the press this will print on",
             Fix::ChoosePress,
@@ -711,9 +711,9 @@ fn problem_row(ui: &mut Ui, state: &mut TesseraApp, problem: &Problem) -> Option
                 .map_or("A page".to_string(), |folio| format!("Page {folio}")),
         ),
         Where::Document => match &problem.subject {
-            Subject::Family(family) => (Icon::Text, family.clone()),
+            Subject::Family(family) => (Icon::Font, family.clone()),
             Subject::Swatch(name) => (Icon::Swatches, format!("\u{201c}{name}\u{201d}")),
-            _ => (Icon::Properties, "The document".to_string()),
+            _ => (Icon::Document, "The document".to_string()),
         },
     };
     let place = match problem.at {

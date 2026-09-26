@@ -745,7 +745,7 @@ fn details(ui: &mut Ui, state: &TesseraApp, family: &FontFamily, typing: bool) -
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
             ui.add_enabled_ui(typing, |ui| {
-                if panel_ui::action(ui, Icon::TextCursor, "Insert")
+                if panel_ui::action(ui, Icon::InsertText, "Insert")
                     .on_hover_text("Type it at the text cursor")
                     .on_disabled_hover_text("Put the text cursor in some text first")
                     .clicked()
@@ -753,7 +753,7 @@ fn details(ui: &mut Ui, state: &TesseraApp, family: &FontFamily, typing: bool) -
                     act = Some(Act::Insert(c));
                 }
             });
-            if panel_ui::action(ui, Icon::Duplicate, "Copy")
+            if panel_ui::action(ui, Icon::Copy, "Copy")
                 .on_hover_text("Copy it, to paste anywhere")
                 .clicked()
             {
@@ -767,7 +767,16 @@ fn details(ui: &mut Ui, state: &TesseraApp, family: &FontFamily, typing: bool) -
             } else {
                 "Add to favourites"
             };
-            if crate::view::panels::icon_button(ui, Icon::Book, label, favourite) {
+            if crate::view::panels::icon_button(
+                ui,
+                if favourite {
+                    Icon::StarFilled
+                } else {
+                    Icon::Star
+                },
+                label,
+                favourite,
+            ) {
                 act = Some(Act::Favourite(c));
             }
         });

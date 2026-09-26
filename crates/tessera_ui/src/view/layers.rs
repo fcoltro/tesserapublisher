@@ -120,8 +120,8 @@ pub(crate) fn describe(
         FrameKind::Rectangle => (Icon::Rectangle, "Rectangle".to_string()),
         FrameKind::Ellipse => (Icon::Ellipse, "Ellipse".to_string()),
         FrameKind::Path(_) => (Icon::Pen, "Path".to_string()),
-        FrameKind::Table(_) => (Icon::Columns, "Table".to_string()),
-        FrameKind::Group(children) => (Icon::Layers, format!("Group of {}", children.len())),
+        FrameKind::Table(_) => (Icon::Table, "Table".to_string()),
+        FrameKind::Group(children) => (Icon::Group, format!("Group of {}", children.len())),
     }
 }
 
@@ -1277,7 +1277,7 @@ fn footer(ui: &mut Ui, state: &mut TesseraApp) {
             ui.add_enabled_ui(can_move, |ui| {
                 if super::panels::icon_button(
                     ui,
-                    Icon::Swap,
+                    Icon::MoveToLayer,
                     &format!("Move selection to {active_name}"),
                     false,
                 ) && let Some(id) = active

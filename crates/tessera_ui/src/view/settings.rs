@@ -59,12 +59,12 @@ impl Page {
     pub fn icon(self) -> crate::icons::Icon {
         use crate::icons::Icon;
         match self {
-            Page::General => Icon::Scale,
-            Page::Appearance => Icon::Blend,
-            Page::Workspaces => Icon::Layers,
-            Page::Shortcuts => Icon::TextCursor,
+            Page::General => Icon::Settings,
+            Page::Appearance => Icon::Appearance,
+            Page::Workspaces => Icon::Workspace,
+            Page::Shortcuts => Icon::Keyboard,
             Page::Colour => Icon::Palette,
-            Page::Files => Icon::Duplicate,
+            Page::Files => Icon::Folder,
         }
     }
 }

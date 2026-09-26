@@ -185,7 +185,7 @@ impl StylePage {
     /// wherever it has one.
     pub fn icon(self) -> Icon {
         match self {
-            StylePage::General => Icon::Styles,
+            StylePage::General => Icon::Settings,
             StylePage::BasicCharacter => Icon::CaseSensitive,
             StylePage::AdvancedCharacter => Icon::BaselineShift,
             StylePage::CharacterColour => Icon::Palette,
