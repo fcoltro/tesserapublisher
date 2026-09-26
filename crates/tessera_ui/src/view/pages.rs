@@ -993,7 +993,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
 }
 
 /// Turn the canvas to the spread `page` is on, leaving any parent open.
-fn turn_to(state: &mut TesseraApp, page: PageId) {
+pub(crate) fn turn_to(state: &mut TesseraApp, page: PageId) {
     let doc = state.active().document();
     let Some(at) = doc
         .spread_order

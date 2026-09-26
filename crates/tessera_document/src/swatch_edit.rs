@@ -193,6 +193,30 @@ impl Document {
     }
 }
 
+impl Document {
+    /// Hand every use of a colour name the document does not define to a
+    /// swatch it does, each at the tint it named: the repair for a swatch
+    /// deleted out from under its uses, or a colour pasted in from a document
+    /// that had it.
+    ///
+    /// Refused, changing nothing, when `from` *is* defined — handing a real
+    /// swatch's uses on is [`Document::replace_swatch`], which removes it —
+    /// or when `to` is not.
+    pub fn repoint_swatch(&mut self, from: &str, to: &str) -> bool {
+        if self.swatch(from).is_some() || self.swatch(to).is_none() {
+            return false;
+        }
+        let to = to.to_owned();
+        let mut replace = renaming(from, |tint| Color::Swatch {
+            name: to.clone(),
+            tint,
+        });
+        Recolour { f: &mut replace }.document(self);
+        self.touch();
+        true
+    }
+}
+
 /// Every place a swatch is named, gathered: what editing it recolours, and
 /// what deleting it would leave drawing in the alarming magenta of a colour
 /// nobody defined.
@@ -300,6 +324,30 @@ fn frame_names_swatch(frame: &crate::nodes::Frame, name: &str) -> bool {
 }
 
 impl Document {
+    /// Every swatch name the document's colours refer to, defined or not, in
+    /// the order they are first met.
+    ///
+    /// Read by the walk a rename makes, so no place a rename would reach is
+    /// missed by whoever asks which names are used — the unresolved-swatch
+    /// check looked at fills and strokes, and a heading coloured with a
+    /// deleted swatch printed magenta without a word. The walk is written
+    /// once, to rewrite; it reads a copy.
+    pub fn swatch_names_used(&self) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        let mut copy = self.clone();
+        Recolour {
+            f: |colour: &mut Color| {
+                if let Color::Swatch { name, .. } = colour
+                    && !names.contains(name)
+                {
+                    names.push(name.clone());
+                }
+            },
+        }
+        .document(&mut copy);
+        names
+    }
+
     /// Every place the swatch `name` is used. See [`SwatchReferences`].
     pub fn swatch_references(&self, name: &str) -> SwatchReferences {
         let order = self.paint_order();
@@ -569,6 +617,50 @@ mod tests {
             Some(reference("Ink"))
         );
         assert!(doc.swatch_references("Brand").is_empty());
+    }
+
+    #[test]
+    fn a_name_nobody_defines_is_handed_to_a_swatch_that_exists() {
+        let mut doc = Document::new();
+        doc.set_swatch(Swatch::new("Ink", Color::WHITE));
+        let frame = frame_filled(&mut doc, reference("Gone"));
+        let mut story = Story::new("Text");
+        story.runs[0].local.colour = Some(reference("Gone"));
+        let story = doc.add_story(story);
+        let names = doc.swatch_names_used();
+        assert!(names.contains(&"Gone".to_string()), "{names:?}");
+
+        assert!(doc.repoint_swatch("Gone", "Ink"));
+        assert_eq!(
+            doc.frames[frame].fill,
+            Paint::Solid(reference("Ink")),
+            "tint kept"
+        );
+        assert_eq!(
+            doc.stories[story].runs[0].local.colour,
+            Some(reference("Ink"))
+        );
+        assert!(!doc.swatch_names_used().contains(&"Gone".to_string()));
+        assert!(doc.swatch("Ink").is_some(), "the swatch handed to stays");
+    }
+
+    #[test]
+    fn a_defined_swatch_or_one_handed_to_nothing_is_not_repointed() {
+        let mut doc = Document::new();
+        doc.set_swatch(Swatch::new("Brand", Color::BLACK));
+        doc.set_swatch(Swatch::new("Ink", Color::WHITE));
+        frame_filled(&mut doc, reference("Brand"));
+        frame_filled(&mut doc, reference("Gone"));
+        let revision = doc.revision();
+        assert!(
+            !doc.repoint_swatch("Brand", "Ink"),
+            "Brand is defined: handing it on is replace_swatch's"
+        );
+        assert!(
+            !doc.repoint_swatch("Gone", "Also gone"),
+            "nothing to hand to"
+        );
+        assert_eq!(doc.revision(), revision);
     }
 
     #[test]

@@ -31,7 +31,7 @@
 pub mod fonts;
 pub mod rules;
 
-use tessera_document::ids::{FrameId, PageId};
+use tessera_document::ids::{FrameId, LinkId, PageId};
 
 /// How much attention a problem deserves.
 ///
@@ -93,6 +93,62 @@ impl Rule {
         Rule::MissingFont,
     ];
 
+    /// Why it matters, in a sentence: what a panel says under the title, so
+    /// a rule nobody has met before explains itself where it is met.
+    pub fn why(self) -> &'static str {
+        match self {
+            Rule::OversetText => "Text that does not fit its frames is left out of print.",
+            Rule::MissingLink => "A picture whose file cannot be found cannot be printed.",
+            Rule::ModifiedLink => {
+                "The file has changed since it was placed. Update it if the new \
+                 version is the one meant."
+            }
+            Rule::LowResolution => {
+                "A picture printed at fewer pixels to the inch than asked for \
+                 prints soft, or in visible squares."
+            }
+            Rule::ColourSpaceMismatch => {
+                "RGB colour is converted to the press's inks on the way out, and \
+                 bright colours shift."
+            }
+            Rule::OutsideBleed => {
+                "Something meant to run off the page must reach into the bleed, \
+                 or trimming can leave a white edge."
+            }
+            Rule::UnresolvedSwatch => {
+                "A colour name the document does not define prints in magenta."
+            }
+            Rule::NoOutputIntent => {
+                "Without a press, colour cannot be checked against the inks it \
+                 will print in."
+            }
+            Rule::MissingFont => {
+                "Type in a font this machine does not have is set in another, \
+                 and fits and breaks differently."
+            }
+        }
+    }
+
+    /// A name for the rule that stays the same whatever its title becomes:
+    /// what a preference switching it off is written with.
+    pub fn key(self) -> &'static str {
+        match self {
+            Rule::OversetText => "overset-text",
+            Rule::MissingLink => "missing-link",
+            Rule::ModifiedLink => "modified-link",
+            Rule::LowResolution => "low-resolution",
+            Rule::ColourSpaceMismatch => "colour-space",
+            Rule::OutsideBleed => "outside-bleed",
+            Rule::UnresolvedSwatch => "unresolved-swatch",
+            Rule::NoOutputIntent => "no-output-intent",
+            Rule::MissingFont => "missing-font",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Rule> {
+        Rule::ALL.into_iter().find(|rule| rule.key() == key)
+    }
+
     pub fn title(self) -> &'static str {
         match self {
             Rule::OversetText => "Overset text",
@@ -153,6 +209,22 @@ pub enum Where {
     Document,
 }
 
+/// What a problem is a problem *with*, beyond where it is: the file, the
+/// font or the colour name, which is what a fix for it acts on.
+///
+/// A panel offering "Relink…" on a missing picture needs the link, not the
+/// frame showing it — every frame showing the file follows a relink — and
+/// one offering "Replace with…" on a missing font needs the family, which a
+/// sentence about it names but cannot be trusted to be parsed back out of.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Subject {
+    #[default]
+    None,
+    Link(LinkId),
+    Family(String),
+    Swatch(String),
+}
+
 /// One thing that is wrong.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Problem {
@@ -165,6 +237,7 @@ pub struct Problem {
     /// program noticed.
     pub message: String,
     pub at: Where,
+    pub subject: Subject,
 }
 
 impl Problem {
@@ -181,6 +254,8 @@ impl Problem {
 /// somebody happens to be sitting at.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Limits {
+    /// Which rules are run.
+    pub checks: Checks,
     /// Artwork below this effective resolution is reported.
     pub minimum_ppi: f64,
     /// How far past a page edge an object must reach to count as bleeding.
@@ -194,9 +269,61 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            checks: Checks::ALL,
             minimum_ppi: 300.0,
             bleed: 0.0,
         }
+    }
+}
+
+/// The rules a check runs, as InDesign's preflight profiles choose them.
+///
+/// A rule switched off is not run at all rather than run and hidden: the
+/// overset check lays out every story, and somebody who has said they do not
+/// want it should not wait for it. A set rather than a list, so a report made
+/// against it is keyed on a number and remade when it changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Checks(u16);
+
+impl Checks {
+    pub const ALL: Checks = Checks((1 << Rule::ALL.len()) - 1);
+    pub const NONE: Checks = Checks(0);
+
+    fn bit(rule: Rule) -> u16 {
+        let at = Rule::ALL
+            .iter()
+            .position(|r| *r == rule)
+            .expect("every rule is in ALL");
+        1 << at
+    }
+
+    pub fn on(self, rule: Rule) -> bool {
+        self.0 & Self::bit(rule) != 0
+    }
+
+    #[must_use]
+    pub fn with(self, rule: Rule, on: bool) -> Checks {
+        if on {
+            Checks(self.0 | Self::bit(rule))
+        } else {
+            Checks(self.0 & !Self::bit(rule))
+        }
+    }
+
+    /// How many rules are switched off.
+    pub fn off(self) -> usize {
+        Rule::ALL.iter().filter(|r| !self.on(**r)).count()
+    }
+
+    /// The set as a number, for a cache key.
+    pub fn bits(self) -> u16 {
+        self.0
+    }
+}
+
+impl Default for Checks {
+    fn default() -> Self {
+        Checks::ALL
     }
 }
 
@@ -269,7 +396,36 @@ mod tests {
             rule,
             message: "something".to_string(),
             at: Where::Document,
+            subject: Subject::None,
         }
+    }
+
+    #[test]
+    fn every_rule_says_why_it_matters_and_has_a_key_of_its_own() {
+        let mut keys: Vec<&str> = Rule::ALL.iter().map(|r| r.key()).collect();
+        for rule in Rule::ALL {
+            assert!(rule.why().ends_with('.'), "{}", rule.title());
+            assert_eq!(Rule::from_key(rule.key()), Some(rule));
+        }
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), Rule::ALL.len(), "two rules share a key");
+        assert_eq!(Rule::from_key("no-such-rule"), None);
+    }
+
+    #[test]
+    fn a_rule_switched_off_is_off_and_the_rest_stay_on() {
+        let checks = Checks::ALL.with(Rule::OutsideBleed, false);
+        assert!(!checks.on(Rule::OutsideBleed));
+        assert_eq!(checks.off(), 1);
+        for rule in Rule::ALL {
+            if rule != Rule::OutsideBleed {
+                assert!(checks.on(rule), "{}", rule.title());
+            }
+        }
+        assert_eq!(checks.with(Rule::OutsideBleed, true), Checks::ALL);
+        assert_eq!(Checks::NONE.off(), Rule::ALL.len());
+        assert_eq!(Checks::default(), Checks::ALL);
     }
 
     #[test]

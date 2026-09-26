@@ -4818,7 +4818,7 @@ fn family_menu(
 const RECENT_FONTS: usize = 5;
 
 /// Put `family` at the head of `recent`, once, keeping the list short.
-fn remember_font(recent: &mut Vec<String>, family: &str) {
+pub(crate) fn remember_font(recent: &mut Vec<String>, family: &str) {
     recent.retain(|f| f != family);
     recent.insert(0, family.to_string());
     recent.truncate(RECENT_FONTS);

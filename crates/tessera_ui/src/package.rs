@@ -348,6 +348,7 @@ mod tests {
                 rule: tessera_preflight::Rule::MissingLink,
                 message: "Bridge.jpg is not where the document expects it".to_string(),
                 at: tessera_preflight::Where::Document,
+                subject: tessera_preflight::Subject::None,
             }],
         };
         collect(&doc, "Job", &folder, &report).expect("packaged");

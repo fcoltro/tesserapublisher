@@ -106,6 +106,20 @@ pub enum Command {
     RelinkMany {
         changes: Vec<(tessera_document::ids::LinkId, std::path::PathBuf)>,
     },
+    /// Make a text frame just tall enough for the rest of its story.
+    FitFrameToText {
+        id: FrameId,
+    },
+    /// Set everything named in one font family in another, everywhere.
+    ReplaceFamily {
+        from: String,
+        to: String,
+    },
+    /// Hand the uses of a colour name nobody defines to a swatch.
+    RepointSwatch {
+        from: String,
+        to: String,
+    },
     /// Re-fit what is already in a frame.
     RefitArtwork {
         id: FrameId,
@@ -1030,6 +1044,42 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                     state.links.selected = Some(now);
                 }
             }
+        }
+
+        Command::FitFrameToText { id } => {
+            let key = state.active;
+            let fitted = tessera_layout::resolve::height_to_fit(
+                state.documents[key].document(),
+                &mut state.shaper,
+                id,
+            );
+            let Some(height) = fitted else {
+                state.status = Some(crate::app::Status::info(
+                    "this frame cannot be fitted to its text: it passes text on, \
+                     or would be taller than any page",
+                ));
+                return;
+            };
+            let Some(mut bounds) = state.active().document().frame(id).map(|f| f.bounds) else {
+                return;
+            };
+            if bounds.height != height {
+                bounds.height = height;
+                let placement = state
+                    .active()
+                    .document()
+                    .frame(id)
+                    .map_or(Transform::IDENTITY, |f| f.transform);
+                retarget(state, id, bounds, placement);
+            }
+        }
+
+        Command::ReplaceFamily { from, to } => {
+            state.active_mut().document_mut().replace_family(&from, &to);
+        }
+
+        Command::RepointSwatch { from, to } => {
+            state.active_mut().document_mut().repoint_swatch(&from, &to);
         }
 
         Command::RefitArtwork { id, fit } => {

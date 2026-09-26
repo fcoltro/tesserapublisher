@@ -237,6 +237,73 @@ pub fn resolve_scope(doc: &Document, shaper: &mut Shaper, scope: Scope) -> Resol
     resolve_composing(doc, shaper, scope, None)
 }
 
+/// The tallest a frame is made to hold its text: a frame that would need to
+/// be taller than a sheet of plan paper is a mistake, not a fit.
+pub const FIT_LIMIT: f64 = 3_000.0;
+
+/// How tall a text frame must be to hold the rest of its story — what
+/// "Fit frame to text" makes it — found by laying out the page it is on at
+/// trial heights.
+///
+/// Measured by the flow pass rather than estimated, because only the flow
+/// knows: where the frame starts in its thread, its columns, the objects
+/// the text runs around, the baseline grid. One page at a time, since a
+/// threaded frame's start is found from its story and not from the pages
+/// before it, so a trial is the cost of a page and not of a book.
+///
+/// `None` when it is not a text frame, when it is not the last of its
+/// thread (the frames before it pass text on by design), when it is on no
+/// page, or when it would need to be taller than [`FIT_LIMIT`]. Its own
+/// height when the text already fits.
+pub fn height_to_fit(doc: &Document, shaper: &mut Shaper, frame: FrameId) -> Option<f64> {
+    let start = doc.frame(frame)?;
+    if !matches!(start.kind, FrameKind::Text { .. }) || doc.thread_of(frame).last() != Some(&frame)
+    {
+        return None;
+    }
+    let start = start.bounds.height;
+    let mut probe = doc.clone();
+    let mut overset = |height: f64| -> Option<usize> {
+        probe.frame_mut(frame)?.bounds.height = height;
+        // Asked again each time: a frame grown far enough can move onto
+        // the next page by where its centre falls.
+        let page = probe.page_of_frame(frame)?;
+        let laid = resolve_pages(&probe, shaper, &[page], None);
+        laid.items
+            .iter()
+            .find(|item| item.frame == frame)
+            .and_then(|item| match &item.kind {
+                ResolvedKind::Text { overset_lines, .. } => Some(*overset_lines),
+                _ => None,
+            })
+    };
+    if overset(start)? == 0 {
+        return Some(start);
+    }
+    // Out in doubling steps until it fits, then halved back to the half
+    // point: a handful of pages laid out, whatever the story.
+    let mut short = start;
+    let mut step = start.max(36.0);
+    let mut fits = start + step;
+    while overset(fits)? > 0 {
+        short = fits;
+        step *= 2.0;
+        fits = start + step;
+        if fits > FIT_LIMIT {
+            return None;
+        }
+    }
+    while fits - short > 0.5 {
+        let middle = (short + fits) / 2.0;
+        if overset(middle)? == 0 {
+            fits = middle;
+        } else {
+            short = middle;
+        }
+    }
+    Some(fits)
+}
+
 /// The same, showing text an input method has not committed yet.
 pub fn resolve_composing(
     doc: &Document,
@@ -2577,6 +2644,65 @@ The body of the chapter.",
 
         doc.thread(a, b);
         (doc, a, b)
+    }
+
+    fn overset_of(doc: &Document, frame: FrameId) -> usize {
+        match &item_for(&resolve(doc, &mut Shaper::new()), frame)
+            .expect("drawn")
+            .kind
+        {
+            ResolvedKind::Text { overset_lines, .. } => *overset_lines,
+            _ => panic!("text"),
+        }
+    }
+
+    #[test]
+    fn a_frame_fitted_to_its_text_holds_it_all_and_no_more() {
+        let (mut doc, a, _) = a_thread(40.0);
+        doc.unthread(a);
+        assert!(
+            overset_of(&doc, a) > 0,
+            "the story is too long to begin with"
+        );
+
+        let height = height_to_fit(&doc, &mut Shaper::new(), a).expect("fitted");
+        assert!(height > 40.0);
+        doc.frame_mut(a).expect("frame").bounds.height = height;
+        assert_eq!(overset_of(&doc, a), 0, "it all fits");
+        doc.frame_mut(a).expect("frame").bounds.height = height - 1.0;
+        assert!(overset_of(&doc, a) > 0, "and a point less does not");
+    }
+
+    #[test]
+    fn a_frame_whose_text_fits_is_already_its_height() {
+        let (mut doc, a, _) = a_thread(40.0);
+        doc.unthread(a);
+        doc.frame_mut(a).expect("frame").bounds.height = 900.0;
+        assert_eq!(height_to_fit(&doc, &mut Shaper::new(), a), Some(900.0));
+    }
+
+    #[test]
+    fn only_the_end_of_a_thread_is_fitted() {
+        // The frames before it pass text on by design: growing one would
+        // pull the story back out of the rest of the chain.
+        let (doc, a, b) = a_thread(40.0);
+        assert_eq!(height_to_fit(&doc, &mut Shaper::new(), a), None);
+        assert!(height_to_fit(&doc, &mut Shaper::new(), b).is_some());
+        let mut rect_only = doc.clone();
+        rect_only.frame_mut(b).expect("frame").kind = FrameKind::Rectangle;
+        assert_eq!(height_to_fit(&rect_only, &mut Shaper::new(), b), None);
+    }
+
+    #[test]
+    fn text_that_would_need_a_frame_taller_than_a_wall_is_not_fitted() {
+        let (mut doc, a, _) = a_thread(40.0);
+        doc.unthread(a);
+        let long = "word ".repeat(40_000);
+        let FrameKind::Text { story, .. } = doc.frame(a).expect("frame").kind else {
+            panic!("text")
+        };
+        doc.stories[story] = tessera_text::story::Story::new(long);
+        assert_eq!(height_to_fit(&doc, &mut Shaper::new(), a), None);
     }
 
     /// Which lines of the story a frame ended up drawing.

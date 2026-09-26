@@ -252,6 +252,7 @@ fn restore(state: &mut TesseraApp) {
         Page::Shortcuts => state.prefs.shortcuts.clear(),
         Page::Colour => {
             state.prefs.minimum_ppi = fresh.minimum_ppi;
+            state.prefs.preflight_off = fresh.preflight_off;
         }
         Page::Files => {
             state.prefs.recovery_copy = fresh.recovery_copy;
@@ -862,6 +863,7 @@ mod tests {
             theme: ThemeChoice::Light,
             density: Density::Compact,
             minimum_ppi: 72.0,
+            preflight_off: vec!["missing-font".to_string()],
             snapping: false,
             typographers_quotes: false,
             dynamic_spelling: false,

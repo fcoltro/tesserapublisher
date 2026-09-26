@@ -34,13 +34,37 @@ pub fn families(doc: &Document) -> Vec<String> {
         note(style.format.character.family.as_ref());
     }
     for story in doc.stories.values() {
-        for run in &story.runs {
-            note(run.local.family.as_ref());
-        }
+        story_families(story, &mut note);
     }
 
     out.sort();
     out
+}
+
+/// A story's own families: its runs', its paragraphs' own formatting's, and
+/// its footnotes', which are stories of their own set in the same book.
+fn story_families<'a>(
+    story: &'a tessera_text::story::Story,
+    note: &mut impl FnMut(Option<&'a String>),
+) {
+    for run in &story.runs {
+        note(run.local.family.as_ref());
+    }
+    for paragraph in &story.paragraphs {
+        note(paragraph.local.character.family.as_ref());
+    }
+    for footnote in &story.footnotes {
+        story_families(footnote, note);
+    }
+}
+
+/// Whether a story's own formatting names `family` anywhere.
+fn story_names(story: &tessera_text::story::Story, family: &str) -> bool {
+    let mut found = false;
+    story_families(story, &mut |named| {
+        found |= named.is_some_and(|n| n == family);
+    });
+    found
 }
 
 /// The first text frame whose own runs name this family, if any.
@@ -58,12 +82,9 @@ pub fn first_frame_using(doc: &Document, family: &str) -> Option<FrameId> {
         let FrameKind::Text { story, .. } = frame.kind else {
             return false;
         };
-        doc.stories.get(story).is_some_and(|story| {
-            story
-                .runs
-                .iter()
-                .any(|run| run.local.family.as_deref() == Some(family))
-        })
+        doc.stories
+            .get(story)
+            .is_some_and(|story| story_names(story, family))
     })
 }
 

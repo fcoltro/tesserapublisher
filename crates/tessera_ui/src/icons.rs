@@ -176,6 +176,10 @@ pub enum Icon {
     ZoomIn,
     ZoomOut,
     ZoomFit,
+    /// A problem that stops the job: an octagon, a stop sign's shape.
+    ErrorMark,
+    /// A problem to look at: a triangle, a warning sign's.
+    WarningMark,
 }
 
 impl Icon {
@@ -274,6 +278,20 @@ impl Icon {
                 "M12 8 A4 4 0 1 1 12 16 A4 4 0 1 1 12 8 Z",
             ],
             Self::WrapJump => &["M3 5 H21 M3 19 H21", "M8 8 H16 V16 H8 Z"],
+            // lucide: octagon-x and triangle-alert. Two shapes, not one
+            // shape in two colours: about one man in twelve cannot tell the
+            // red from the amber, and the outline says which it is to all of
+            // them.
+            Self::ErrorMark => &[
+                "M2.586 16.726A2 2 0 0 1 2 15.312V8.688a2 2 0 0 1 .586-1.414l4.688-4.688A2 2 0 0 1 8.688 2h6.624a2 2 0 0 1 1.414.586l4.688 4.688A2 2 0 0 1 22 8.688v6.624a2 2 0 0 1-.586 1.414l-4.688 4.688a2 2 0 0 1-1.414.586H8.688a2 2 0 0 1-1.414-.586z",
+                "m15 9-6 6",
+                "m9 9 6 6",
+            ],
+            Self::WarningMark => &[
+                "m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3",
+                "M12 9v4",
+                "M12 17h.01",
+            ],
             // Drawn by Spectrum; see [`Icon::spectrum`].
             Self::Sun
             | Self::Moon
@@ -474,6 +492,8 @@ impl Icon {
             | Self::WrapBounds
             | Self::WrapContour
             | Self::WrapJump
+            | Self::ErrorMark
+            | Self::WarningMark
             | Self::Plus
             | Self::Duplicate
             | Self::PlaceImage
@@ -636,7 +656,9 @@ impl Icon {
             | Self::WrapNone
             | Self::WrapBounds
             | Self::WrapContour
-            | Self::WrapJump => None,
+            | Self::WrapJump
+            | Self::ErrorMark
+            | Self::WarningMark => None,
         }
     }
 
@@ -981,7 +1003,7 @@ fn texture(ctx: &egui::Context, icon: Icon, side: u32, degrees: f32) -> egui::Te
 /// **An icon missing from this list is missing from its own tests.** Seventeen
 /// were once, and three more — `Book`, `Pipette`, `Pi` — until the move to
 /// Spectrum, when a count taken by hand matched a list that was short.
-pub const ALL: [Icon; 117] = [
+pub const ALL: [Icon; 119] = [
     Icon::StrokeWeight,
     Icon::Disclosure,
     Icon::Book,
@@ -1099,6 +1121,8 @@ pub const ALL: [Icon; 117] = [
     Icon::ZoomIn,
     Icon::ZoomOut,
     Icon::ZoomFit,
+    Icon::ErrorMark,
+    Icon::WarningMark,
 ];
 
 #[cfg(test)]
@@ -1278,6 +1302,6 @@ mod tests {
         // count is what is checked, and it is the enum's own count.
         let unique: std::collections::HashSet<_> = ALL.iter().collect();
         assert_eq!(unique.len(), ALL.len(), "an icon is listed twice");
-        assert_eq!(ALL.len(), 117);
+        assert_eq!(ALL.len(), 119);
     }
 }

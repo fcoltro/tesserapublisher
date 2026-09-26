@@ -14,7 +14,7 @@
 //! from disk while the document sits untouched. That is what the manual re-check
 //! is for, and why the panel has a button rather than only a list.
 
-use tessera_preflight::{Limits, Report};
+use tessera_preflight::{Checks, Limits, Report, Rule};
 
 use crate::app::TesseraApp;
 
@@ -23,13 +23,16 @@ use crate::app::TesseraApp;
 pub struct Preflight {
     /// Whether the panel is open.
     pub open: bool,
+    /// What the panel is showing: its filter, its folds, the problem last
+    /// gone to.
+    pub view: crate::view::preflight_panel::View,
     held: Option<Report>,
     /// The document revision and limits the held report was made from.
     ///
     /// The limits are in the key because changing the resolution threshold must
     /// re-run the check: a preference that only takes effect on the next edit is
     /// a preference that looks broken.
-    made_from: Option<(crate::app::DocumentKey, u64, u64, u64)>,
+    made_from: Option<(crate::app::DocumentKey, u64, u64, u64, u16)>,
 }
 
 impl Preflight {
@@ -47,6 +50,7 @@ impl Preflight {
             revision,
             limits.minimum_ppi.round() as u64,
             limits.bleed.to_bits(),
+            limits.checks.bits(),
         );
 
         if state.preflight.made_from != Some(key) {
@@ -94,8 +98,29 @@ fn limits_from(state: &TesseraApp) -> Limits {
         .min(setup.bleed.right);
 
     Limits {
+        checks: checks(state),
         minimum_ppi: state.prefs.minimum_ppi,
         bleed: bleed.max(0.0),
+    }
+}
+
+/// The checks preflight runs, from the preferences.
+pub fn checks(state: &TesseraApp) -> Checks {
+    state
+        .prefs
+        .preflight_off
+        .iter()
+        .filter_map(|key| Rule::from_key(key))
+        .fold(Checks::ALL, |checks, rule| checks.with(rule, false))
+}
+
+/// Switch one check on or off. The report is remade on the next ask: the
+/// checks are in its key.
+pub fn set_check(state: &mut TesseraApp, rule: Rule, on: bool) {
+    let off = &mut state.prefs.preflight_off;
+    off.retain(|key| *key != rule.key());
+    if !on {
+        off.push(rule.key().to_string());
     }
 }
 
@@ -172,6 +197,40 @@ mod tests {
         let _ = Preflight::report(&mut state);
         state.preflight.recheck();
         assert!(state.preflight.made_from.is_none());
+    }
+
+    #[test]
+    fn a_check_switched_off_is_not_run_and_remakes_the_report() {
+        let mut state = TesseraApp::headless();
+        let before = Preflight::report(&mut state).clone();
+        assert!(
+            before
+                .problems
+                .iter()
+                .any(|p| p.rule == Rule::NoOutputIntent),
+            "a new document has no press: {before:?}"
+        );
+        set_check(&mut state, Rule::NoOutputIntent, false);
+        assert_eq!(state.prefs.preflight_off, ["no-output-intent"]);
+        assert!(!checks(&state).on(Rule::NoOutputIntent));
+        assert!(
+            !Preflight::report(&mut state)
+                .problems
+                .iter()
+                .any(|p| p.rule == Rule::NoOutputIntent)
+        );
+        set_check(&mut state, Rule::NoOutputIntent, true);
+        assert!(state.prefs.preflight_off.is_empty());
+        assert_eq!(*Preflight::report(&mut state), before);
+    }
+
+    #[test]
+    fn a_check_this_version_does_not_know_is_ignored() {
+        // Preferences written by a later version, naming a rule this one has
+        // never heard of, switch nothing off here.
+        let mut state = TesseraApp::headless();
+        state.prefs.preflight_off = vec!["a-rule-from-the-future".into()];
+        assert_eq!(checks(&state), Checks::ALL);
     }
 
     #[test]

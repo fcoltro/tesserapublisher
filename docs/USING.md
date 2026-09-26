@@ -348,12 +348,30 @@ row for the same, and *Copy path*.
 
 ## Before you send it
 
-**Preflight** runs continuously and the status bar says what it found. Eight
-checks: overset text, missing and modified links, low resolution, colour space,
-objects short of the bleed, unresolved swatches, missing fonts, and whether a
-press has been chosen at all. Click a problem to jump to it.
+**Preflight** runs continuously and the status bar says what it found: click
+it for the **Preflight** panel. Nine checks: overset text, missing and
+modified links, low resolution, colour space, objects short of the bleed,
+colours the document does not define — in text and styles as well as fills —
+missing fonts, and whether a press has been chosen at all.
 
-Errors mean the job comes back wrong. Warnings mean somebody should look.
+Errors mean the job comes back wrong. Warnings mean somebody should look. The
+top of the panel says which it comes to — *Not ready to print*, *Ready, with
+warnings*, or *No problems found* — and when there are both, the counts under
+it list only the errors or only the warnings.
+
+Problems are listed under the check that found them, one row per object with
+the page it is on. Click a row, or walk the list with *Next* and *Previous*,
+to select the object and bring it into view — on its parent page when that is
+where it is. The row gone to opens out with what fixes it: *Fit frame to
+text* for overset text, *Relink…* or *Update* for a file, *Choose a press…*,
+and *Replace with…* for a missing font or an undefined colour, which changes
+it everywhere it is named. *Find missing…* and *Update all* fix every file at
+once. Each fix is one step to undo.
+
+*Checks* lists the checks with a switch for each, and the lowest resolution
+artwork may print at; a check switched off is not run, and the panel and the
+status bar say how many are off. *Check again* reads the linked files from
+disk again; everything else is checked as the document changes.
 
 **Print** — File ▸ Print…, Ctrl+P. Choose all pages or a range. The pages are
 written as a PDF and handed to the system's print path — on Windows,

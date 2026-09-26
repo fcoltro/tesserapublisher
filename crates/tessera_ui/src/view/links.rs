@@ -214,7 +214,7 @@ fn rows(state: &mut TesseraApp) -> Vec<Row> {
 
 /// Where a frame is, as the panel says it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Spot {
+pub(crate) enum Spot {
     /// On a document page, by its folio.
     Page(String),
     /// On a parent page, so on every page built on it; by the parent's name.
@@ -224,7 +224,7 @@ enum Spot {
 
 impl Spot {
     /// For a row's corner: "p. 3", "A-Master".
-    fn short(&self) -> String {
+    pub(crate) fn short(&self) -> String {
         match self {
             Spot::Page(folio) => format!("p.\u{2009}{folio}"),
             Spot::Parent(name) => name.clone(),
@@ -233,7 +233,7 @@ impl Spot {
     }
 
     /// For a line of its own: "Page 3", "On A-Master".
-    fn long(&self) -> String {
+    pub(crate) fn long(&self) -> String {
         match self {
             Spot::Page(folio) => format!("Page {folio}"),
             Spot::Parent(name) => format!("On {name}"),
@@ -242,7 +242,7 @@ impl Spot {
     }
 }
 
-fn spot(doc: &tessera_document::document::Document, frame: FrameId) -> Spot {
+pub(crate) fn spot(doc: &tessera_document::document::Document, frame: FrameId) -> Spot {
     let Some(page) = doc.page_of_frame(frame) else {
         return Spot::Pasteboard;
     };
@@ -590,7 +590,7 @@ fn summary(ui: &mut Ui, state: &mut TesseraApp, rows: &[Row], minimum: f64) {
 }
 
 /// A count in a pill, lit when it is the filter in force.
-fn chip(ui: &mut Ui, text: &str, tint: Color32, on: bool) -> egui::Response {
+pub(crate) fn chip(ui: &mut Ui, text: &str, tint: Color32, on: bool) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(
         text.to_owned(),
         egui::FontId::proportional(Theme::TYPE_SM),
@@ -661,15 +661,39 @@ fn remedies(ui: &mut Ui, state: &mut TesseraApp, rows: &[Row]) {
                      inside it, is relinked there in one step",
                 )
                 .clicked()
-            && let Some(folder) = rfd::FileDialog::new().pick_folder()
         {
-            relink_from(state, &folder, &missing);
+            find_missing(state);
         }
     });
     if let Some(report) = &state.links.report {
         super::panel_ui::hint(ui, report);
     }
     ui.add_space(2.0);
+}
+
+/// Ask for a folder, and relink every missing file found in it or the
+/// folders inside it: the repair for a job whose artwork was moved.
+pub(crate) fn find_missing(state: &mut TesseraApp) {
+    let missing: Vec<(LinkId, String)> = rows(state)
+        .into_iter()
+        .filter(|r| r.status == Status::Missing)
+        .map(|r| (r.link, r.name))
+        .collect();
+    if missing.is_empty() {
+        return;
+    }
+    if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+        relink_from(state, &folder, &missing);
+    }
+}
+
+/// Open the Links panel with `link` chosen, its details showing.
+pub(crate) fn show(state: &mut TesseraApp, link: LinkId) {
+    state.links.open = true;
+    state.links.selected = Some(link);
+    state.links.filter = Filter::All;
+    state.rail_open = true;
+    state.prefs.docking.reveal("Links");
 }
 
 /// Relink each missing file to the file of the same name in `folder` or a

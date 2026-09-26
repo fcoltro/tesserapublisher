@@ -14,6 +14,7 @@ pub mod book;
 pub mod contents;
 pub mod corners;
 pub mod document;
+mod font_edit;
 pub mod footnotes;
 pub mod format;
 pub mod graphic;

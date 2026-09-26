@@ -119,6 +119,14 @@ pub struct Preferences {
     #[serde(default = "default_minimum_ppi")]
     pub minimum_ppi: f64,
 
+    /// The preflight checks switched off, by [`tessera_preflight::Rule::key`].
+    ///
+    /// The ones off rather than the ones on, and by name rather than as bits:
+    /// a check added later is on for somebody whose preferences were written
+    /// before it existed, and a rule moving in the list switches nothing.
+    #[serde(default)]
+    pub preflight_off: Vec<String>,
+
     /// Whether the canvas snaps objects to guides and to other objects.
     ///
     /// It lived only in the application before, so it was forgotten between
@@ -242,6 +250,7 @@ impl Default for Preferences {
             theme: ThemeChoice::default(),
             density: Density::default(),
             minimum_ppi: default_minimum_ppi(),
+            preflight_off: Vec::new(),
             snapping: yes(),
             typographers_quotes: yes(),
             dynamic_spelling: yes(),
@@ -439,6 +448,7 @@ mod tests {
             theme: ThemeChoice::Light,
             density: Density::Comfortable,
             minimum_ppi: 150.0,
+            preflight_off: vec!["outside-bleed".to_string()],
             snapping: false,
             typographers_quotes: false,
             dynamic_spelling: false,

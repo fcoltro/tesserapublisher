@@ -16,22 +16,44 @@ use tessera_document::nodes::FrameKind;
 use tessera_document::paint::Paint;
 use tessera_text::shape::Shaper;
 
-use crate::{Limits, Problem, Report, Rule, Where};
+use crate::{Limits, Problem, Report, Rule, Subject, Where};
 
 /// Everything, in one call.
 ///
 /// The order rules run in is the order their problems appear before sorting, and
 /// it is chosen to read well: the things that stop the job, then the things to
 /// look at.
+///
+/// A rule switched off in `limits.checks` is not run: the overset check lays
+/// out every story, and somebody who has said they do not want it should not
+/// wait for it.
 pub fn check(doc: &Document, shaper: &mut Shaper, limits: Limits) -> Report {
+    let on = |rule| limits.checks.on(rule);
     let mut problems = Vec::new();
-    problems.extend(overset_text(doc, shaper));
-    problems.extend(links(doc));
-    problems.extend(unresolved_swatches(doc));
-    problems.extend(resolution(doc, limits));
-    problems.extend(colour_space(doc));
-    problems.extend(outside_bleed(doc, limits));
-    problems.extend(missing_fonts(doc, shaper));
+    if on(Rule::OversetText) {
+        problems.extend(overset_text(doc, shaper));
+    }
+    if on(Rule::MissingLink) || on(Rule::ModifiedLink) {
+        problems.extend(links(doc));
+    }
+    if on(Rule::UnresolvedSwatch) {
+        problems.extend(unresolved_swatches(doc));
+    }
+    if on(Rule::LowResolution) {
+        problems.extend(resolution(doc, limits));
+    }
+    if on(Rule::ColourSpaceMismatch) || on(Rule::NoOutputIntent) {
+        problems.extend(colour_space(doc));
+    }
+    if on(Rule::OutsideBleed) {
+        problems.extend(outside_bleed(doc, limits));
+    }
+    if on(Rule::MissingFont) {
+        problems.extend(missing_fonts(doc, shaper));
+    }
+    // The walks that answer two rules at once answer both; the one switched
+    // off is dropped here.
+    problems.retain(|p| on(p.rule));
     Report { problems }.sorted()
 }
 
@@ -67,8 +89,13 @@ pub fn overset_text(doc: &Document, shaper: &mut Shaper) -> Vec<Problem> {
         if overset > 0 {
             out.push(Problem {
                 rule: Rule::OversetText,
-                message: format!("{overset} lines overflow their frame and will not be printed"),
+                message: if overset == 1 {
+                    "1 line does not fit and will not be printed".to_string()
+                } else {
+                    format!("{overset} lines do not fit and will not be printed")
+                },
                 at: Where::Frame(id),
+                subject: Subject::None,
             });
         }
     }
@@ -99,11 +126,13 @@ pub fn links(doc: &Document) -> Vec<Problem> {
                 rule: Rule::MissingLink,
                 message: format!("{name} is not where the document expects it"),
                 at: Where::Frame(id),
+                subject: Subject::Link(p.link),
             }),
             Status::Modified => out.push(Problem {
                 rule: Rule::ModifiedLink,
                 message: format!("{name} has changed on disk since it was placed"),
                 at: Where::Frame(id),
+                subject: Subject::Link(p.link),
             }),
         }
     }
@@ -151,6 +180,7 @@ pub fn resolution(doc: &Document, limits: Limits) -> Vec<Problem> {
                     limits.minimum_ppi
                 ),
                 at: Where::Frame(id),
+                subject: Subject::Link(p.link),
             });
         }
     }
@@ -162,25 +192,85 @@ pub fn resolution(doc: &Document, limits: Limits) -> Vec<Problem> {
 /// An unresolved swatch draws in an alarming magenta on purpose, so this rule is
 /// mostly a way of finding them in a long document rather than a way of
 /// discovering them. It is still an error: that magenta prints.
+///
+/// **Everywhere a colour can name one**, as a rename reaches them — text,
+/// shadows, table cells and styles as well as fills and strokes. Reported on
+/// each object that shows it, text at the frame its story is in; a name only
+/// a style, a tint or the default text colour holds is the document's.
 pub fn unresolved_swatches(doc: &Document) -> Vec<Problem> {
+    let shown = doc.paint_order();
     let mut out = Vec::new();
-    for id in doc.paint_order() {
-        let Some(frame) = doc.frame(id) else { continue };
-
-        for name in names_used(&frame.fill)
-            .into_iter()
-            .chain(frame.stroke.as_ref().and_then(|s| swatch_name(&s.color)))
-        {
-            if doc.swatch(&name).is_none() {
-                out.push(Problem {
-                    rule: Rule::UnresolvedSwatch,
-                    message: format!("\"{name}\" is not a colour this document defines"),
-                    at: Where::Frame(id),
-                });
+    for name in doc.swatch_names_used() {
+        if doc.swatch(&name).is_some() {
+            continue;
+        }
+        let uses = doc.swatch_references(&name);
+        let mut frames: Vec<tessera_document::ids::FrameId> = uses
+            .frames
+            .iter()
+            .copied()
+            .filter(|f| shown.contains(f))
+            .collect();
+        let mut stories_nowhere = false;
+        for story in &uses.stories {
+            match frame_showing(doc, &shown, *story) {
+                Some(frame) => frames.push(frame),
+                None => stories_nowhere = true,
             }
+        }
+        frames.sort_by_key(|f| shown.iter().position(|s| s == f));
+        frames.dedup();
+        let message = format!("\"{name}\" is not a colour this document defines");
+        for frame in &frames {
+            out.push(Problem {
+                rule: Rule::UnresolvedSwatch,
+                message: message.clone(),
+                at: Where::Frame(*frame),
+                subject: Subject::Swatch(name.clone()),
+            });
+        }
+        let elsewhere = [
+            (!uses.paragraph_styles.is_empty(), "a paragraph style"),
+            (!uses.character_styles.is_empty(), "a character style"),
+            (!uses.object_styles.is_empty(), "an object style"),
+            (!uses.swatches.is_empty(), "a tint swatch"),
+            (uses.text_default, "the default text colour"),
+            (stories_nowhere, "text not on any page"),
+        ]
+        .into_iter()
+        .find_map(|(named, by)| named.then_some(by));
+        if let Some(by) = elsewhere {
+            out.push(Problem {
+                rule: Rule::UnresolvedSwatch,
+                message: format!(
+                    "\"{name}\" is named by {by}, and is not a colour this document defines"
+                ),
+                at: Where::Document,
+                subject: Subject::Swatch(name.clone()),
+            });
         }
     }
     out
+}
+
+/// The first object drawn that shows a story: its text frame, or the table
+/// holding it in a cell.
+fn frame_showing(
+    doc: &Document,
+    shown: &[tessera_document::ids::FrameId],
+    story: tessera_document::ids::StoryId,
+) -> Option<tessera_document::ids::FrameId> {
+    shown.iter().copied().find(|id| {
+        doc.frame(*id).is_some_and(|frame| match &frame.kind {
+            FrameKind::Text { story: s, .. } => *s == story,
+            FrameKind::Table(table) => table
+                .cells
+                .iter()
+                .filter_map(|slot| slot.cell())
+                .any(|cell| cell.story == story),
+            _ => false,
+        })
+    })
 }
 
 /// Colours in a space the chosen press cannot print.
@@ -195,6 +285,7 @@ pub fn colour_space(doc: &Document) -> Vec<Problem> {
             rule: Rule::NoOutputIntent,
             message: "No press chosen, so colour cannot be checked against one".to_string(),
             at: Where::Document,
+            subject: Subject::None,
         }];
     };
 
@@ -215,6 +306,7 @@ pub fn colour_space(doc: &Document) -> Vec<Problem> {
                     intent.description
                 ),
                 at: Where::Frame(id),
+                subject: Subject::None,
             });
         }
     }
@@ -251,12 +343,11 @@ pub fn outside_bleed(doc: &Document, limits: Limits) -> Vec<Problem> {
         if short {
             out.push(Problem {
                 rule: Rule::OutsideBleed,
-                message: format!(
-                    "This reaches the page edge but not the {:.1} pt bleed, so a \
-                     trimming press may leave a white edge",
-                    limits.bleed
-                ),
+                // The bleed itself is not named: it is the document's, and a
+                // panel says it in the units the document is measured in.
+                message: "Reaches the page edge but stops short of the bleed".to_string(),
                 at: Where::Frame(id),
+                subject: Subject::None,
             });
         }
     }
@@ -269,25 +360,6 @@ fn file_name(path: &std::path::Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
-}
-
-fn swatch_name(colour: &Color) -> Option<String> {
-    match colour {
-        Color::Swatch { name, .. } => Some(name.clone()),
-        _ => None,
-    }
-}
-
-/// Every swatch a paint refers to, gradient stops included.
-fn names_used(paint: &Paint) -> Vec<String> {
-    match paint {
-        Paint::Solid(colour) => swatch_name(colour).into_iter().collect(),
-        Paint::Gradient(g) => g
-            .stops()
-            .iter()
-            .filter_map(|s| swatch_name(&s.colour))
-            .collect(),
-    }
 }
 
 /// Whether an output intent describes a CMYK press.
@@ -363,6 +435,7 @@ pub fn missing_fonts(doc: &Document, shaper: &mut Shaper) -> Vec<Problem> {
             // default or from a style is not any one frame's fault, and jumping
             // to an arbitrary frame would look like an answer.
             at: crate::fonts::first_frame_using(doc, &family).map_or(Where::Document, Where::Frame),
+            subject: Subject::Family(family),
         });
     }
 
@@ -688,6 +761,157 @@ mod tests {
         );
 
         assert!(colour_space(&doc).is_empty());
+    }
+
+    // --- reach and subjects ------------------------------------------------
+
+    /// A text frame showing `text`, in a story of its own.
+    fn a_text_frame(doc: &mut Document, text: &str) -> (FrameId, tessera_document::ids::StoryId) {
+        let story = doc.add_story(tessera_text::story::Story::new(text));
+        let frame = add(
+            doc,
+            a_frame(
+                box_at(0.0, 0.0, 200.0, 100.0),
+                FrameKind::text(story),
+                Paint::Solid(Color::WHITE),
+            ),
+        );
+        (frame, story)
+    }
+
+    fn coloured(name: &str) -> tessera_text::story::CharacterFormat {
+        tessera_text::story::CharacterFormat {
+            colour: Some(Color::Swatch {
+                name: name.to_string(),
+                tint: 1.0,
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn text_in_a_colour_nobody_defined_is_reported_at_its_frame() {
+        // Only fills and strokes were looked at, and a heading coloured with
+        // a deleted swatch printed magenta without a word.
+        let mut doc = a_document();
+        let (frame, story) = a_text_frame(&mut doc, "Spring collection");
+        doc.stories[story].apply_character_format(0..6, &coloured("Brand red"));
+
+        let found = unresolved_swatches(&doc);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].at, Where::Frame(frame));
+        assert_eq!(found[0].subject, Subject::Swatch("Brand red".into()));
+    }
+
+    #[test]
+    fn a_colour_only_a_style_names_is_the_document_s() {
+        let mut doc = a_document();
+        doc.add_paragraph_style(tessera_text::story::ParagraphStyle {
+            name: "Heading".into(),
+            format: tessera_text::story::ParagraphFormat {
+                character: coloured("Gone"),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let found = unresolved_swatches(&doc);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].at, Where::Document);
+        assert!(
+            found[0].message.contains("a paragraph style"),
+            "{}",
+            found[0].message
+        );
+    }
+
+    #[test]
+    fn one_name_on_one_object_twice_is_one_problem() {
+        let mut doc = a_document();
+        let gone = Color::Swatch {
+            name: "Gone".into(),
+            tint: 1.0,
+        };
+        let mut frame = a_frame(
+            box_at(0.0, 0.0, 10.0, 10.0),
+            FrameKind::Rectangle,
+            Paint::Solid(gone.clone()),
+        );
+        frame.stroke = Some(tessera_document::nodes::Stroke::new(gone, 1.0));
+        add(&mut doc, frame);
+        assert_eq!(unresolved_swatches(&doc).len(), 1);
+    }
+
+    #[test]
+    fn a_font_named_only_in_a_footnote_or_a_paragraph_is_still_used() {
+        let mut doc = a_document();
+        let (_, story) = a_text_frame(&mut doc, "Body");
+        let mut note = tessera_text::story::Story::new("A note.");
+        note.apply_character_format(
+            0..7,
+            &tessera_text::story::CharacterFormat {
+                family: Some("Footnote Face".into()),
+                ..Default::default()
+            },
+        );
+        doc.stories[story].footnotes.push(note);
+        doc.stories[story].paragraphs[0].local.character.family = Some("Paragraph Face".into());
+
+        let families = crate::fonts::families(&doc);
+        assert!(
+            families.contains(&"Footnote Face".to_string()),
+            "{families:?}"
+        );
+        assert!(
+            families.contains(&"Paragraph Face".to_string()),
+            "{families:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_font_and_a_missing_file_say_what_a_fix_acts_on() {
+        let mut doc = a_document();
+        doc.text_default.family = "Definitely Not Installed Sans".to_string();
+        let link = doc.add_link(tessera_document::links::Link::new(
+            std::env::temp_dir().join("tessera-preflight-nothing-here.png"),
+            (10.0, 10.0),
+        ));
+        let frame = add(
+            &mut doc,
+            a_frame(
+                box_at(0.0, 0.0, 72.0, 72.0),
+                FrameKind::Graphic { placed: None },
+                Paint::Solid(Color::WHITE),
+            ),
+        );
+        doc.place(frame, link, tessera_document::graphic::Fit::Stretch);
+
+        let fonts = missing_fonts(&doc, &mut Shaper::new());
+        assert_eq!(
+            fonts[0].subject,
+            Subject::Family("Definitely Not Installed Sans".into())
+        );
+        let files = links(&doc);
+        assert_eq!(files[0].rule, Rule::MissingLink);
+        assert_eq!(files[0].subject, Subject::Link(link));
+    }
+
+    #[test]
+    fn a_rule_switched_off_is_not_reported() {
+        let mut doc = a_document();
+        doc.text_default.family = "Definitely Not Installed Sans".to_string();
+        let mut shaper = Shaper::new();
+        let all = check(&doc, &mut shaper, Limits::default());
+        assert!(all.problems.iter().any(|p| p.rule == Rule::MissingFont));
+        assert!(all.problems.iter().any(|p| p.rule == Rule::NoOutputIntent));
+
+        let limits = Limits {
+            checks: crate::Checks::ALL
+                .with(Rule::MissingFont, false)
+                .with(Rule::NoOutputIntent, false),
+            ..Limits::default()
+        };
+        let some = check(&doc, &mut shaper, limits);
+        assert!(some.problems.is_empty(), "{some:?}");
     }
 
     // --- the whole run -----------------------------------------------------
