@@ -117,9 +117,7 @@ pub fn links(doc: &Document) -> Vec<Problem> {
 /// missing file is not reported here — it has no resolution, and it is already
 /// an error under its own rule.
 pub fn resolution(doc: &Document, limits: Limits) -> Vec<Problem> {
-    use tessera_document::graphic::effective_ppi;
     use tessera_document::links::Status;
-    use tessera_geometry::DocPoint;
 
     let mut out = Vec::new();
     for id in doc.paint_order() {
@@ -133,32 +131,17 @@ pub fn resolution(doc: &Document, limits: Limits) -> Vec<Problem> {
         if link.status() == Status::Missing {
             continue;
         }
-        // **Vector artwork has no resolution to be short of.** Its `natural`
-        // size is in points, not pixels, so the arithmetic below would read a
-        // 40pt logo as a 40-pixel one and report every drawing in the document
-        // as unprintable. A rule that cries wolf on the artwork that is always
-        // fine is a rule people learn to ignore.
-        if is_vector(&link.path) {
-            continue;
-        }
-
-        // How big the artwork actually lands, after its transform inside the
-        // frame. Measured from the placement rather than the frame, because a
-        // cropped picture is drawn larger than the box it shows through.
-        let a = p.inner.apply(DocPoint::ZERO);
-        let b = p.inner.apply(DocPoint {
-            x: link.natural.0,
-            y: link.natural.1,
-        });
-        let drawn = ((b.x - a.x).abs(), (b.y - a.y).abs());
-        let pixels = (link.natural.0 as u32, link.natural.1 as u32);
-
-        let Some((x, y)) = effective_ppi(pixels, drawn) else {
+        // **Vector artwork has no resolution to be short of**, and the
+        // document answers it with no figure at all: its `natural` size is in
+        // points, not pixels, and read as pixels a 40pt logo would be a
+        // 40-pixel one — every drawing in the document reported unprintable,
+        // and a rule that cries wolf is one people learn to ignore. The figure
+        // is measured through the placement and the frame's transform both: a
+        // cropped picture is drawn larger than the box it shows through, and a
+        // scaled frame larger than its bounds.
+        let Some(worst) = doc.effective_ppi(id) else {
             continue;
         };
-        // The worse axis. A stretched placement really does have two, and
-        // reporting the better one would pass artwork that prints badly.
-        let worst = x.min(y);
         if worst < limits.minimum_ppi {
             out.push(Problem {
                 rule: Rule::LowResolution,
@@ -172,17 +155,6 @@ pub fn resolution(doc: &Document, limits: Limits) -> Vec<Problem> {
         }
     }
     out
-}
-
-/// Whether a link is resolution-independent.
-///
-/// By extension, which is what decides how the file is read everywhere else in
-/// the application; see `tessera_render::images::is_svg`, which this agrees
-/// with by construction because there is only one vector format so far.
-fn is_vector(path: &std::path::Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
 }
 
 /// References to named colours the document no longer defines.

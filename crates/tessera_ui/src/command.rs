@@ -97,6 +97,15 @@ pub enum Command {
     UpdateLink {
         link: tessera_document::ids::LinkId,
     },
+    /// Read several links' files again at once — Update all.
+    UpdateLinks {
+        links: Vec<tessera_document::ids::LinkId>,
+    },
+    /// Point several links at other files at once: what finding a folder of
+    /// moved artwork does, in one step.
+    RelinkMany {
+        changes: Vec<(tessera_document::ids::LinkId, std::path::PathBuf)>,
+    },
     /// Re-fit what is already in a frame.
     RefitArtwork {
         id: FrameId,
@@ -992,6 +1001,34 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             };
             if let Some(measured) = measure_link(state, &path) {
                 state.active_mut().document_mut().relink(link, measured);
+            }
+        }
+
+        Command::UpdateLinks { links } => {
+            for link in links {
+                let path = state
+                    .active()
+                    .document()
+                    .links
+                    .get(link)
+                    .map(|l| l.path.clone());
+                if let Some(path) = path
+                    && let Some(measured) = measure_link(state, &path)
+                {
+                    state.active_mut().document_mut().relink(link, measured);
+                }
+            }
+        }
+
+        Command::RelinkMany { changes } => {
+            for (link, path) in changes {
+                let Some(measured) = measure_link(state, &path) else {
+                    continue;
+                };
+                let now = state.active_mut().document_mut().relink(link, measured);
+                if state.links.selected == Some(link) {
+                    state.links.selected = Some(now);
+                }
             }
         }
 

@@ -322,6 +322,30 @@ swatch — rather than leaving them naming a colour that no longer exists.
 will print it, which usually means duller. That is not a fault: it is the gamut
 of the ink, and seeing it now is better than seeing it on paper.
 
+## Links
+
+The **Links** panel lists every file the document shows, once each however
+many frames show it, by name: its picture, its pixels and the resolution it
+prints at, and at the right the page it is on — or the parent page it is
+drawn on — and how many times it is placed. A picture's resolution is its
+pixels over the size it is drawn, frame scaling included, and a file placed
+twice is as good as its smaller use.
+
+The counts across the top say what is wrong: files **missing** from where they
+were, **modified** on disk since they were placed, and short of the
+**resolution** Preferences asks for. Click one to list only those files; click
+it again for all of them. *Update all* reads every changed file again, and
+*Find missing…* asks for a folder and relinks every missing file found in it,
+or up to four folders inside it, by name — the usual repair for a job whose
+artwork was moved. Each is one step to undo.
+
+Click a row to go to its first frame and see the file in full below the list:
+its picture, kind, size, date, folder, and every place it is used, each a
+click away. *Relink…* points it at another file and every frame showing it
+follows; *Update* reads a changed file again; *Show in folder* (*Show in
+Explorer*, *Reveal in Finder*) and *Open* hand it to the system. Right-click a
+row for the same, and *Copy path*.
+
 ## Before you send it
 
 **Preflight** runs continuously and the status bar says what it found. Eight

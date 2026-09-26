@@ -1210,8 +1210,14 @@ impl Document {
 
     /// The frames showing a link, in paint order.
     pub fn frames_using(&self, link: LinkId) -> Vec<FrameId> {
-        self.paint_order()
-            .into_iter()
+        // Every frame, not the paint order: that leaves out hidden layers and
+        // hidden objects, and a relink onto a path already linked removed the
+        // old link and re-pointed only the frames being drawn — leaving a
+        // picture on a hidden layer naming a link that no longer existed.
+        self.layer_ids()
+            .filter_map(|l| self.layers.get(l))
+            .flat_map(|l| l.frames.iter().copied())
+            .flat_map(|id| self.descendants(id))
             .filter(|id| {
                 self.frames.get(*id).is_some_and(
                     |f| matches!(&f.kind, FrameKind::Graphic { placed: Some(p) } if p.link == link),

@@ -2549,7 +2549,18 @@ fn uses_of_object_style(
 /// Select an object and bring its spread into view, as a click on it in the
 /// Layers panel does, leaving any text being typed in first.
 pub(crate) fn reveal_object(state: &mut TesseraApp, frame: tessera_document::ids::FrameId) {
-    state.edit_master(None);
+    // An object on a parent page is shown, and chosen, where it can be: in
+    // that parent, not on a document page it only appears on.
+    let parent = {
+        let doc = state.active().document();
+        doc.page_of_frame(frame)
+            .filter(|page| doc.is_master_page(*page))
+            .and_then(|page| {
+                doc.master_ids()
+                    .find(|master| doc.pages_of_master(*master).contains(&page))
+            })
+    };
+    state.edit_master(parent);
     crate::view::viewport::finish_editing(state);
     state.active_mut().selection.set(frame);
     let doc = state.active().document();
