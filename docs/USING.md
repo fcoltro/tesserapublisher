@@ -411,6 +411,25 @@ printer can read. Fonts are *listed*, not copied: a licence to set type is not a
 licence to pass the font on, and the PDF carries subsetted outlines, which is
 what makes the job printable.
 
+## The AI Console
+
+Window ▸ AI Console (F9) talks to a model about the page you have open. Set
+one up first in Preferences ▸ General ▸ Assistant: a provider, a model and,
+for Anthropic, a key. The top of the panel says which model it is and whether
+it is working.
+
+Write what you want in your own words and press Enter; Shift+Enter starts a
+new line, and Up brings back the prompts you sent before. Before anything is
+asked, the panel offers a few things to try. Your prompts sit at the right,
+the model's replies at the left, and between them each step it took — a tick,
+or a cross where a step failed — so you can see what it did as well as what
+it says. *Stop* halts it after the step it is on; *New chat* clears the
+transcript, and the model forgets it too. Right-click a message to copy it.
+
+Each change the model makes is one step to undo, like a click; *Undo this
+turn* takes back everything its last turn did at once, and is offered only
+while nothing has been done or undone since.
+
 ## Things worth knowing
 
 - **Undo is per gesture, not per frame.** Dragging forty objects is one entry.

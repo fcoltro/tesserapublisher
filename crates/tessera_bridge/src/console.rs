@@ -194,6 +194,9 @@ impl Driver {
                 self.session = Some(session);
                 self.running = None;
                 state.console.busy = false;
+                let history = &state.active().history;
+                let (recorded, depth) = (history.recorded(), history.undo_depth());
+                state.console.turn_ended(state.active, recorded, depth);
             }
             return;
         }
@@ -272,6 +275,10 @@ impl Driver {
             saying: None,
         });
         state.console.busy = true;
+        // Where the turn begins in the document's history, so the whole of
+        // it can be undone as one.
+        let recorded = state.active().history.recorded();
+        state.console.turn_began(state.active, recorded);
     }
 }
 
@@ -389,6 +396,14 @@ mod tests {
         assert!(
             driver.session.is_some(),
             "the conversation is kept for the next turn"
+        );
+        let history = &state.active().history;
+        assert_eq!(
+            state
+                .console
+                .undoable_turn(state.active, history.recorded(), history.undo_depth()),
+            Some(1),
+            "the turn made one change, and can be undone as one"
         );
     }
 

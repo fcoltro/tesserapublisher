@@ -32,6 +32,10 @@ pub struct History {
     limit: usize,
     budget: usize,
     held: usize,
+    /// How many edits have ever been recorded: never falls, even as the
+    /// oldest are trimmed away — what tells how many entries a stretch of
+    /// work made, which the depth cannot once the stack is full.
+    recorded: u64,
 }
 
 impl History {
@@ -48,6 +52,7 @@ impl History {
             limit: limit.max(1),
             budget,
             held: 0,
+            recorded: 0,
         }
     }
 
@@ -56,6 +61,7 @@ impl History {
         let size = doc.footprint();
         self.past.push_back((doc.clone(), size));
         self.held += size;
+        self.recorded += 1;
         self.trim();
         self.future.clear();
     }
@@ -101,6 +107,12 @@ impl History {
 
     pub fn undo_depth(&self) -> usize {
         self.past.len()
+    }
+
+    /// How many edits have been recorded since the history began. See
+    /// the field.
+    pub fn recorded(&self) -> u64 {
+        self.recorded
     }
 }
 
@@ -296,6 +308,13 @@ mod tests {
             doc.add_frame(layer, frame());
         }
         assert_eq!(history.undo_depth(), 3);
+        assert_eq!(
+            history.recorded(),
+            10,
+            "the count of edits goes on as the oldest are trimmed"
+        );
+        history.undo(&doc);
+        assert_eq!(history.recorded(), 10, "an undo is not an edit recorded");
     }
 
     #[test]
