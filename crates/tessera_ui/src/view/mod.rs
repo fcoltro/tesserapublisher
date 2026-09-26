@@ -37,6 +37,7 @@ pub mod quit;
 pub mod rail;
 pub mod rulers;
 pub mod sections;
+pub mod selection_panel;
 pub mod settings;
 pub mod specimen;
 pub mod spelling;

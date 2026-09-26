@@ -39,6 +39,15 @@ hard to picture from two numbers and easy to recognise on sight.
 
 The panel you are in is named; the rest are their icons. Hover one to see which.
 
+**Properties** is the panel for what is selected. With nothing selected it is
+the document's setup. With one object it names what the object is — its words,
+or its picture's file — the layer and page it is on, and offers *Lock*, *Hide*,
+*Duplicate* and *Delete* before its sections. With several it says what they
+are, aligns them by an edge or a middle or spaces them evenly — against the
+selection, the margins or the page — gives them one fill, one stroke and one
+opacity (*Mixed* says where they differ), and groups them or brings them to
+the front or the back. A change to several objects is one step to undo.
+
 ## Tools
 
 Every tool has a single-key shortcut, and they are InDesign's, because that is

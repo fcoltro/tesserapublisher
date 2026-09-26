@@ -82,6 +82,10 @@ pub struct OpenDocument {
 
     /// Set once the viewport has sized itself and fitted the page.
     pub fitted: bool,
+
+    /// How many compound commands are under way: while any is, the changes
+    /// they make are held in the one undo entry recorded before it began.
+    pub(crate) holding: u32,
 }
 
 impl OpenDocument {
@@ -104,6 +108,7 @@ impl OpenDocument {
             pen: None,
             pen_cursor: None,
             fitted: false,
+            holding: 0,
         }
     }
 
@@ -176,6 +181,11 @@ impl OpenDocument {
     /// Snapshot the document, so the change about to be made can be undone.
     pub(crate) fn record_history(&mut self) {
         self.recovery.last_saved_revision = u64::MAX;
+        if self.holding > 0 {
+            // Inside a compound command: its one entry, recorded before it
+            // began, holds this change too.
+            return;
+        }
         self.history.record(&self.document);
     }
 

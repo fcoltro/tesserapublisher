@@ -185,11 +185,7 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
     // value to show, and silently editing only the first would be worse than
     // saying so.
     let Some(id) = state.active().selection.single() else {
-        context_heading(
-            ui,
-            &format!("{} objects selected", state.active().selection.len()),
-            "Select one object to edit its properties. Use the Object menu to align or group this selection.",
-        );
+        crate::view::selection_panel::several(ui, state);
         return;
     };
     let Some(frame) = state.active().document().frame(id).cloned() else {
@@ -197,21 +193,14 @@ pub fn inspector(ui: &mut Ui, state: &mut TesseraApp) {
         return;
     };
 
-    use tessera_document::nodes::FrameKind;
-    let kind = match &frame.kind {
-        FrameKind::Rectangle => "Rectangle",
-        FrameKind::Ellipse => "Ellipse",
-        FrameKind::Text { .. } => "Text frame",
-        FrameKind::Graphic { .. } => "Picture frame",
-        FrameKind::Path(_) => "Path",
-        FrameKind::Table(_) => "Table",
-        FrameKind::Group(_) => "Group",
-    };
-    context_heading(
-        ui,
-        kind,
-        "Position and size are in the toolbar above the page.",
-    );
+    crate::view::selection_panel::object_header(ui, state, id, &frame);
+    // The header's quick actions can take the object away — deleted,
+    // hidden, locked out of the selection — and the rest is about it.
+    if state.active().document().frame(id).is_none()
+        || state.active().selection.single() != Some(id)
+    {
+        return;
+    }
     ui.horizontal(|ui| {
         fill_stroke_proxy(ui, state, id, &frame, 36.0);
         ui.label(
@@ -4842,7 +4831,7 @@ fn frame_section(ui: &mut Ui, frame: &tessera_document::nodes::Frame) {
 /// A colour swatch that opens a picker. `name` is what a screen reader says
 /// for it: a swatch is a patch of colour, and without one NVDA says only
 /// "button".
-fn fill_picker(ui: &mut Ui, rgba: &mut [f32; 4], name: &str) -> bool {
+pub(crate) fn fill_picker(ui: &mut Ui, rgba: &mut [f32; 4], name: &str) -> bool {
     ui.spacing_mut().interact_size =
         Vec2::new(2.0 * Theme::control_height(), Theme::control_height());
     let mut colour = egui::Rgba::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
@@ -5855,6 +5844,10 @@ mod tests {
     /// it actually built, which is the thing a screen reader reads.
     fn accessibility_tree(draw: impl FnMut(&mut Ui)) -> Vec<(String, Option<String>)> {
         let ctx = egui::Context::default();
+        // The theme, fonts and all, as the window has it: a panel drawing its
+        // heading in the interface's semibold is drawing in a family only
+        // the theme installs.
+        crate::theme::apply(&ctx);
         ctx.enable_accesskit();
         // `run_ui` rather than `run`: egui 0.35 hands the application a root
         // `Ui` and panels nest inside it, which is the same shape `view::show`

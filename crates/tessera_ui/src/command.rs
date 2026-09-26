@@ -106,6 +106,10 @@ pub enum Command {
     RelinkMany {
         changes: Vec<(tessera_document::ids::LinkId, std::path::PathBuf)>,
     },
+    /// Several commands as one change: one undo step for them all — the
+    /// same colour put on every object of a selection, say, which is one
+    /// thing a person did and one thing to take back.
+    Together(Vec<Command>),
     /// Make a text frame just tall enough for the rest of its story.
     FitFrameToText {
         id: FrameId,
@@ -809,10 +813,13 @@ impl Command {
         // edit to it, and InDesign does not offer it back on undo either.
         // Undoing a rectangle should remove the rectangle, not first take back
         // the click that chose where to draw it.
-        !matches!(
-            self,
-            Self::Undo | Self::Redo | Self::CopySelection | Self::SetActiveLayer(_)
-        )
+        match self {
+            Self::Together(commands) => commands.iter().any(Command::mutates),
+            _ => !matches!(
+                self,
+                Self::Undo | Self::Redo | Self::CopySelection | Self::SetActiveLayer(_)
+            ),
+        }
     }
 }
 
@@ -1044,6 +1051,18 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                     state.links.selected = Some(now);
                 }
             }
+        }
+
+        Command::Together(commands) => {
+            // Held, not recorded: the entry recorded above holds them all.
+            // A count rather than a flag, so one inside another does not let
+            // go early.
+            state.active_mut().holding += 1;
+            for command in commands {
+                apply(state, command);
+            }
+            let open = state.active_mut();
+            open.holding = open.holding.saturating_sub(1);
         }
 
         Command::FitFrameToText { id } => {
@@ -3988,6 +4007,44 @@ mod tests {
             "one",
             "editing the copy must not edit the original"
         );
+    }
+
+    #[test]
+    fn several_changes_together_are_one_undo_step() {
+        let (mut state, a, b) = two_selected();
+        let depth = state.active().history.undo_depth();
+        let red = tessera_document::paint::Paint::Solid(tessera_color::Color::Rgb {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        });
+        apply(
+            &mut state,
+            Command::Together(vec![
+                Command::SetFill {
+                    id: a,
+                    paint: red.clone(),
+                },
+                Command::Together(vec![Command::SetFill {
+                    id: b,
+                    paint: red.clone(),
+                }]),
+            ]),
+        );
+        assert_eq!(state.active().history.undo_depth(), depth + 1, "one step");
+        let doc = state.active().document();
+        assert!(doc.frames[a].fill == red && doc.frames[b].fill == red);
+        apply(&mut state, Command::Undo);
+        let doc = state.active().document();
+        assert!(
+            doc.frames[a].fill != red && doc.frames[b].fill != red,
+            "both back"
+        );
+        assert_eq!(state.active().holding, 0, "and nothing left held");
+        // Recording afterwards is recording again.
+        apply(&mut state, Command::SetFill { id: a, paint: red });
+        assert_eq!(state.active().history.undo_depth(), depth + 1);
     }
 
     #[test]
