@@ -110,6 +110,17 @@ vello = { git = "https://github.com/linebender/vello", rev = "539ac99" }
 kurbo                = { version = "0.13", features = ["serde"] }
 parley               = "0.11"
 unicode-segmentation = "1.13"
+# The Glyphs panel's search and sorting: every character's name from the
+# Unicode standard, and its general category. The names are what finding a
+# character is — somebody looking for the right arrow, the section sign or
+# the euro knows the word, not the code point — and the full table is about
+# 500 KB, looked up in time proportional to the name. What it costs beyond
+# that: the tables are generated when it builds, by a generator that brings
+# an older phf and rand 0.8 into the *build* (1.3 does the same, checked) —
+# and neither reaches the binary. The categories are already in the tree,
+# through epaint.
+unicode_names2           = "4"
+unicode-general-category = "1.1"
 
 # Document model and format.
 slotmap    = { version = "1.1", features = ["serde"] }

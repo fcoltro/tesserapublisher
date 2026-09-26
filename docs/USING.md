@@ -165,10 +165,17 @@ and a non-breaking space Ctrl+Alt+X. A discretionary hyphen is a break you
 allow in one word, honoured whether or not the paragraph hyphenates.
 
 **Glyphs.** Window ▸ Glyphs opens a panel in the rail drawing every character
-the face at the caret has, in that face. Click one to put it at the caret;
-type part of a code point in *Find* to narrow the grid; choose another
-family from *Face* to browse it. Type ▸ Insert special character ▸ Glyph by
-code point… is the same thing for a character whose number you know.
+the face at the caret has, in that face; choose another family at the top to
+browse it. Search by name — *arrow*, *em dash*, *euro*, *section* — by the
+character itself pasted in, or by code (*U+2026*, *2026*), and narrow the grid
+to letters, numbers, punctuation, symbols, arrows, maths or currency. Point at
+a character to see it large with its name and code; click it to put it at the
+caret, or, with no caret in text, to choose it. *Copy* copies it to paste
+anywhere; the bookmark keeps it among the **favourites** above the grid, with
+the characters used lately — both kept between runs. Right-click a character
+for the same. The magnifiers draw the grid larger or smaller. Type ▸ Insert
+special character ▸ Glyph by code point… is the same thing for a character
+whose number you know.
 
 **Features.** Below Case: common and discretionary ligatures on or off,
 lining or old-style figures, proportional or tabular, fractions, and

@@ -15,6 +15,7 @@ pub mod cursor;
 pub mod docking;
 pub mod file_ops;
 pub mod find;
+pub mod glyph_index;
 #[cfg(test)]
 pub(crate) mod headless_frame;
 pub mod icons;

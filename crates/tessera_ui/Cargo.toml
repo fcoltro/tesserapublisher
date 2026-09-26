@@ -48,6 +48,9 @@ thiserror.workspace = true
 # carries zbus and an async runtime for a store this module chooses not to
 # use. Re-check when the `v1` feature stops naming the Linux store.
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
+# The Glyphs panel: each character's name and kind, to search and sort by.
+unicode_names2.workspace = true
+unicode-general-category.workspace = true
 
 [dev-dependencies]
 zip.workspace = true

@@ -882,6 +882,10 @@ mod tests {
             shortcuts: crate::keys::Bindings::default(),
             workspaces: crate::workspace::Workspace::usual(),
             workspace: None,
+            glyphs: crate::view::glyphs::GlyphMemory {
+                recent: vec!['§'],
+                favourites: vec!['→'],
+            },
         };
 
         for page in Page::ALL {
@@ -898,6 +902,11 @@ mod tests {
                     // Kept: these are what a check *found*, not what anybody set.
                     last_checked: 1_700_000_000,
                     seen: Some("9.9.9".to_string()),
+                },
+                // Kept: a collection somebody made, not a setting.
+                glyphs: crate::view::glyphs::GlyphMemory {
+                    recent: vec!['§'],
+                    favourites: vec!['→'],
                 },
                 ..Preferences::default()
             },

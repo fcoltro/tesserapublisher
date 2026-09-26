@@ -219,6 +219,14 @@ pub struct Preferences {
     /// that a list of workspaces does not give on its own.
     #[serde(default)]
     pub workspace: Option<String>,
+
+    /// The Glyphs panel's favourites, and the characters inserted lately.
+    ///
+    /// Not a setting — nothing anybody resets to put things back to normal —
+    /// but kept between runs, as InDesign keeps its recently used glyphs: an
+    /// en dash or a section sign wanted today is wanted tomorrow.
+    #[serde(default)]
+    pub glyphs: crate::view::glyphs::GlyphMemory,
 }
 
 fn yes() -> bool {
@@ -265,6 +273,7 @@ impl Default for Preferences {
             shortcuts: crate::keys::Bindings::default(),
             workspaces: crate::workspace::Workspace::usual(),
             workspace: None,
+            glyphs: Default::default(),
         }
     }
 }
@@ -463,6 +472,10 @@ mod tests {
             shortcuts: crate::keys::Bindings::default(),
             workspaces: crate::workspace::Workspace::usual(),
             workspace: None,
+            glyphs: crate::view::glyphs::GlyphMemory {
+                recent: vec!['§', '—'],
+                favourites: vec!['→'],
+            },
         };
         written.save_to(&path).expect("save failed");
 
