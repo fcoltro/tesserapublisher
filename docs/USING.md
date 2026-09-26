@@ -106,6 +106,17 @@ it. It is set in a paragraph style that you choose under the preview
 the character style leaves alone shows as that paragraph has it: "13 pt, as in
 Body".
 
+An object style is previewed as a box in a column of text. It is drawn with
+the style's fill, stroke, opacity and shadow, and the text runs round it as the
+style's wrap says. The box is drawn on the first object that follows the style
+(or a plain rectangle when none does), so what the style leaves alone shows as
+that object has it. Fill and stroke colours come from the same swatch tiles as
+text, with [None] for no fill. The stroke's weight, alignment, ends, joins and
+dash pattern, the shadow's offset, blur and colour, the blend mode, and the
+wrap's distances and sides are all set there. General counts the objects that
+follow the style and those with changes of their own, and the arrows select
+each one in turn.
+
 **Tabs.** Press Tab in a frame and the text after it goes to the next stop.
 The stops are in the inspector's Paragraph section: a position from the left
 edge of the column, whether the text sits left, centred, right or on its

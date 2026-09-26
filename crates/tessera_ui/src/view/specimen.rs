@@ -362,6 +362,251 @@ pub(crate) fn character(ui: &mut Ui, state: &mut TesseraApp, id: CharacterStyleI
     }
 }
 
+/// The object style `id`, drawn: a box in a column of greyed text, with the
+/// style's fill, stroke, opacity and shadow, the text running round it as
+/// the style's wrap says.
+///
+/// What the style leaves alone is each object's own, so it is drawn on the
+/// first object following it — its shape, its proportions and everything the
+/// style does not state — or, when nothing follows it yet, on a plain new
+/// rectangle. The caption says which. egui draws it, not the page's
+/// renderer: a gradient is laid left to right, and a blend mode is the
+/// page's to show.
+pub(crate) fn object(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::ObjectStyleId,
+) {
+    use tessera_document::nodes::{FrameKind, StrokeAlign, TextWrap, WrapTo};
+    use tessera_document::object_style::ObjectFormat;
+
+    let doc = state.active().document();
+    let first = doc
+        .paint_order()
+        .into_iter()
+        .find_map(|frame| doc.frame(frame).filter(|f| f.style == Some(id)));
+    let (base, ellipse, aspect, on) = match first {
+        Some(frame) => (
+            ObjectFormat {
+                wrap: Some(frame.wrap),
+                ..ObjectFormat::sampled_from(frame)
+            },
+            matches!(frame.kind, FrameKind::Ellipse),
+            (frame.bounds.width / frame.bounds.height.max(1.0)) as f32,
+            "on the first object that follows it",
+        ),
+        None => (
+            ObjectFormat {
+                fill: Some(crate::command::NO_FILL),
+                stroke: Some(Some(tessera_document::nodes::Stroke::new(
+                    Color::BLACK,
+                    1.0,
+                ))),
+                blend: Some(tessera_document::blending::Blending::PLAIN),
+                shadow: Some(None),
+                wrap: Some(TextWrap::None),
+            },
+            false,
+            1.4,
+            "on a plain new rectangle",
+        ),
+    };
+    let look = doc.resolved_object_style(id).over(&base);
+    let alpha = look.blend.map_or(1.0, |b| b.alpha());
+    let resolve = |colour: &Color| -> Color32 {
+        let [r, g, b, a] = doc.resolve_colour(colour).to_rgb_f32();
+        srgb([r, g, b, a * alpha])
+    };
+    let fill: Vec<(f32, Color32)> = match &look.fill {
+        Some(paint) => match (paint.solid(), paint.gradient()) {
+            (Some(colour), _) => vec![(0.0, resolve(colour))],
+            (None, Some(gradient)) => gradient
+                .stops()
+                .iter()
+                .map(|stop| (stop.at, resolve(&stop.colour)))
+                .collect(),
+            (None, None) => Vec::new(),
+        },
+        None => Vec::new(),
+    };
+    let stroke = look.stroke.clone().flatten();
+    let stroke_colour = stroke.as_ref().map(|s| resolve(&s.color));
+    let shadow = look.shadow.clone().flatten().map(|sh| {
+        let [r, g, b, a] = doc.resolve_colour(&sh.colour).to_rgb_f32();
+        egui::epaint::Shadow {
+            offset: [
+                sh.offset.0.clamp(-40.0, 40.0) as i8,
+                sh.offset.1.clamp(-40.0, 40.0) as i8,
+            ],
+            blur: sh.blur.clamp(0.0, 60.0) as u8,
+            spread: 0,
+            color: srgb([r, g, b, a * alpha]),
+        }
+    });
+    let wrap = look.wrap.unwrap_or(TextWrap::None);
+    let said = super::styles::object_summary(id, state);
+
+    frame(ui, |ui| {
+        let width = ui.available_width();
+        let (paper, response) = ui.allocate_exact_size(Vec2::new(width, 150.0), Sense::hover());
+        response.on_hover_text(
+            "Drawn here for a look; the page is the proof. A gradient is laid \
+             left to right, and a blend mode shows on the page.",
+        );
+        let painter = ui.painter_at(paper);
+        paint_paper(&painter, paper);
+
+        // The column, and the object in it: a little in from the column's
+        // left, so a wrap to both sides, or to the left, has room to show.
+        let column = paper.shrink(MARGIN);
+        let height = 70.0;
+        let object_width = (height * aspect).clamp(48.0, column.width() * 0.42);
+        let object = Rect::from_min_size(
+            egui::pos2(
+                column.left() + column.width() * 0.16,
+                column.top() + 2.0 * NEIGHBOUR_PITCH + 6.0,
+            ),
+            Vec2::new(object_width, height),
+        );
+
+        // The text. Each line is tested against the band the wrap keeps
+        // clear, and cut to what is left of it on the sides it may use.
+        let grey = Color32::from_gray(222);
+        let standoff = wrap.standoff().unwrap_or_default();
+        let clear = Rect::from_min_max(
+            egui::pos2(
+                object.left() - standoff.left.min(40.0) as f32,
+                object.top() - standoff.top.min(40.0) as f32,
+            ),
+            egui::pos2(
+                object.right() + standoff.right.min(40.0) as f32,
+                object.bottom() + standoff.bottom.min(40.0) as f32,
+            ),
+        );
+        let mut y = column.top();
+        while y + 3.0 <= column.bottom() {
+            let line = Rect::from_min_size(
+                egui::pos2(column.left(), y + 3.0),
+                Vec2::new(column.width(), 3.0),
+            );
+            let in_band = line.bottom() > clear.top() && line.top() < clear.bottom();
+            let pieces: Vec<Rect> = match wrap {
+                TextWrap::None => vec![line],
+                _ if !in_band => vec![line],
+                TextWrap::Jump => Vec::new(),
+                TextWrap::Bounds { .. } | TextWrap::Contour { .. } => {
+                    let left =
+                        Rect::from_min_max(line.min, egui::pos2(clear.left(), line.bottom()));
+                    let right = Rect::from_min_max(egui::pos2(clear.right(), line.top()), line.max);
+                    let keep = |r: Rect| (r.width() >= 12.0).then_some(r);
+                    match wrap.sides() {
+                        WrapTo::Both => [keep(left), keep(right)].into_iter().flatten().collect(),
+                        WrapTo::Left => keep(left).into_iter().collect(),
+                        WrapTo::Right => keep(right).into_iter().collect(),
+                        WrapTo::Largest => {
+                            let wider = if left.width() > right.width() {
+                                left
+                            } else {
+                                right
+                            };
+                            keep(wider).into_iter().collect()
+                        }
+                    }
+                }
+            };
+            for piece in pieces {
+                painter.rect_filled(piece, 1.5, grey);
+            }
+            y += NEIGHBOUR_PITCH;
+        }
+
+        // The object: its shadow, its fill, its stroke.
+        let radius = object.size() / 2.0;
+        if let Some(shadow) = shadow {
+            painter.add(shadow.as_shape(object, if ellipse { radius.x } else { 0.0 }));
+        }
+        match fill.as_slice() {
+            [] => {}
+            [(_, colour)] if ellipse => {
+                painter.add(egui::Shape::ellipse_filled(
+                    object.center(),
+                    radius,
+                    *colour,
+                ));
+            }
+            [(_, colour)] => {
+                painter.rect_filled(object, 0.0, *colour);
+            }
+            stops => {
+                // A ramp, left to right, stop by stop.
+                let mut mesh = egui::Mesh::default();
+                for pair in stops.windows(2) {
+                    let (a, b) = (pair[0], pair[1]);
+                    let x0 = object.left() + object.width() * a.0.clamp(0.0, 1.0);
+                    let x1 = object.left() + object.width() * b.0.clamp(0.0, 1.0);
+                    let i = mesh.vertices.len() as u32;
+                    for (x, y, c) in [
+                        (x0, object.top(), a.1),
+                        (x1, object.top(), b.1),
+                        (x1, object.bottom(), b.1),
+                        (x0, object.bottom(), a.1),
+                    ] {
+                        mesh.colored_vertex(egui::pos2(x, y), c);
+                    }
+                    mesh.add_triangle(i, i + 1, i + 2);
+                    mesh.add_triangle(i, i + 2, i + 3);
+                }
+                painter.add(egui::Shape::mesh(mesh));
+            }
+        }
+        if let (Some(s), Some(colour)) = (&stroke, stroke_colour) {
+            let weight = (s.width as f32).clamp(0.0, 20.0);
+            let edge = match s.align {
+                StrokeAlign::Center => object,
+                StrokeAlign::Inside => object.shrink(weight / 2.0),
+                StrokeAlign::Outside => object.expand(weight / 2.0),
+            };
+            let line = Stroke::new(weight, colour);
+            if ellipse {
+                painter.add(egui::Shape::ellipse_stroke(
+                    edge.center(),
+                    edge.size() / 2.0,
+                    line,
+                ));
+            } else if s.is_dashed() {
+                let path = [
+                    edge.left_top(),
+                    edge.right_top(),
+                    edge.right_bottom(),
+                    edge.left_bottom(),
+                    edge.left_top(),
+                ];
+                let dash = s.dashes.first().copied().unwrap_or(0.0) as f32;
+                let gap = s.dashes.get(1).copied().unwrap_or(2.0) as f32;
+                if dash <= 0.0 {
+                    painter.extend(egui::Shape::dotted_line(
+                        &path,
+                        colour,
+                        (gap + weight).max(2.0),
+                        (weight / 2.0).max(0.5),
+                    ));
+                } else {
+                    painter.extend(egui::Shape::dashed_line(
+                        &path,
+                        line,
+                        dash.max(1.0),
+                        gap.max(1.0),
+                    ));
+                }
+            } else {
+                painter.rect_stroke(edge, 0.0, line, egui::StrokeKind::Middle);
+            }
+        }
+
+        caption_with(ui, &said, on, |_| {});
+    });
+}
+
 /// Text as a case asks for it to be drawn.
 fn cased(text: &str, case: Option<Case>) -> String {
     match case {

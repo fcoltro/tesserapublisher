@@ -642,7 +642,7 @@ fn content(ui: &mut Ui, state: &mut TesseraApp, stated: &[(StylePage, String)]) 
             return;
         }
         let kind = state.styles_window.kind;
-        if kind != StyleKind::Object {
+        {
             egui::Frame::new()
                 .inner_margin(egui::Margin {
                     left: 20,
@@ -663,7 +663,11 @@ fn content(ui: &mut Ui, state: &mut TesseraApp, stated: &[(StylePage, String)]) 
                                 super::specimen::character(ui, state, id);
                             }
                         }
-                        StyleKind::Object => {}
+                        StyleKind::Object => {
+                            if let Some(id) = state.styles_window.object {
+                                super::specimen::object(ui, state, id);
+                            }
+                        }
                     }
                 });
         }
@@ -1017,14 +1021,12 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
     let page = state.styles_window.current_page();
 
     // What it states. Each row is a dot and, when it is stated, the value.
-    let mut format = style.format.clone();
-    let mut changed = false;
-
     if page != StylePage::General {
-        style_ui::card(ui, None, |ui| {
-            object_page(ui, page, &mut format, &mut changed)
-        });
-        if changed {
+        let lineage = object_lineage(state, style.based_on);
+        let palette = palette(state);
+        let mut format = style.format.clone();
+        object_page(ui, page, &mut format, &lineage, &palette);
+        if format != style.format {
             apply(
                 state,
                 Command::RestyleObjectStyle {
@@ -1036,7 +1038,8 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
         return;
     }
 
-    // The name, and what it is based on.
+    // The name, and what it is based on. A style already based on this one
+    // is not offered: basing this on it would close a loop.
     let mut name = style.name.clone();
     let mut based_on = style.based_on;
     let based_label = based_on
@@ -1053,7 +1056,9 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut based_on, None, "Nothing");
                         for (other, other_name) in &listed {
-                            if *other == id {
+                            if *other == id
+                                || state.active().document().object_style_inherits(*other, id)
+                            {
                                 continue;
                             }
                             ui.selectable_value(&mut based_on, Some(*other), other_name);
@@ -1066,6 +1071,7 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
             );
         });
     });
+    uses_card(ui, state, UsedStyle::Object(id));
     let looks_like = if style.based_on.is_some() {
         based_label.clone()
     } else {
@@ -1092,20 +1098,50 @@ fn object_side(ui: &mut Ui, state: &mut TesseraApp, show: Show) {
     }
 }
 
+/// What an object style based on `based_on` inherits: its chain of styles,
+/// and below them nothing — an object style leaves the rest to each object,
+/// which keeps its own.
+fn object_lineage(
+    state: &TesseraApp,
+    based_on: Option<tessera_document::ids::ObjectStyleId>,
+) -> Lineage<ObjectFormat> {
+    let doc = state.active().document();
+    let mut seen = Vec::new();
+    let mut ancestors = Vec::new();
+    let mut next = based_on;
+    while let Some(id) = next
+        && !seen.contains(&id)
+    {
+        seen.push(id);
+        let Some(style) = doc.object_styles.get(id) else {
+            break;
+        };
+        ancestors.push((style.name.clone(), style.format.clone()));
+        next = style.based_on;
+    }
+    Lineage {
+        ancestors,
+        floor: None,
+        unstated: "the object's own",
+    }
+}
+
 /// One page of an object style's properties.
-fn object_page(ui: &mut Ui, page: StylePage, format: &mut ObjectFormat, changed: &mut bool) {
+fn object_page(
+    ui: &mut Ui,
+    page: StylePage,
+    format: &mut ObjectFormat,
+    lineage: &Lineage<ObjectFormat>,
+    palette: &Palette,
+) {
     match page {
-        StylePage::Fill => object_fill(ui, format, changed),
-        StylePage::Stroke => object_stroke(ui, format, changed),
-        StylePage::Transparency => object_transparency(ui, format, changed),
-        StylePage::Shadow => object_shadow(ui, format, changed),
-        StylePage::TextWrap => {
-            *changed |= states(ui, "Text wrap", &mut format.wrap, || {
-                tessera_document::nodes::TextWrap::None
-            });
-        }
+        StylePage::Fill => object_fill(ui, format, lineage, palette),
+        StylePage::Stroke => object_stroke(ui, format, lineage, palette),
+        StylePage::Transparency => object_transparency(ui, format, lineage),
+        StylePage::Shadow => object_shadow(ui, format, lineage),
+        StylePage::TextWrap => object_wrap(ui, format, lineage),
         // Listed rather than caught by a wildcard, so a page added to the
-        // column has to say what it draws.
+        // sidebar has to say what it draws.
         StylePage::General
         | StylePage::BasicCharacter
         | StylePage::AdvancedCharacter
@@ -1122,159 +1158,689 @@ fn object_page(ui: &mut Ui, page: StylePage, format: &mut ObjectFormat, changed:
     }
 }
 
+/// "No fill": the colour at no alpha, as the inspector's [None] leaves it,
+/// so turning a fill back on does not start from black.
+fn is_no_fill(colour: &Color) -> bool {
+    matches!(colour, Color::Rgb { a, .. } | Color::Cmyk { a, .. } if *a <= 0.0)
+}
+
+/// A paint in a few words, for a row and the summary.
+fn paint_name(paint: &tessera_document::paint::Paint) -> String {
+    match paint.solid() {
+        Some(colour) if is_no_fill(colour) => "[None]".to_string(),
+        Some(colour) => colour_name(colour),
+        None => "a gradient".to_string(),
+    }
+}
+
 /// What an object format states, under the page it is set on.
 fn object_terms(format: &ObjectFormat) -> Vec<(StylePage, String)> {
     let mut out = Vec::new();
-    if format.fill.is_some() {
-        out.push((StylePage::Fill, "fill".to_string()));
+    if let Some(fill) = &format.fill {
+        let said = match paint_name(fill).as_str() {
+            "[None]" => "no fill".to_string(),
+            name => format!("{name} fill"),
+        };
+        out.push((StylePage::Fill, said));
     }
     match &format.stroke {
-        Some(Some(s)) => out.push((
-            StylePage::Stroke,
-            format!("{} stroke", points(s.width as f32)),
-        )),
+        Some(Some(s)) => {
+            let mut said = format!(
+                "{} {} stroke",
+                points(s.width as f32),
+                colour_name(&s.color)
+            );
+            if s.is_dashed() {
+                said.push_str(", dashed");
+            }
+            out.push((StylePage::Stroke, said));
+        }
         Some(None) => out.push((StylePage::Stroke, "no stroke".to_string())),
         None => {}
     }
     if let Some(blend) = &format.blend {
-        out.push((
-            StylePage::Transparency,
-            format!("opacity {:.0}%", blend.alpha() * 100.0),
-        ));
+        let mut said = format!("opacity {:.0}%", blend.alpha() * 100.0);
+        if blend.mode != tessera_document::blending::BlendMode::Normal {
+            said.push_str(&format!(", {}", blend_name(blend.mode).to_lowercase()));
+        }
+        out.push((StylePage::Transparency, said));
     }
     match &format.shadow {
-        Some(Some(_)) => out.push((StylePage::Shadow, "shadow".to_string())),
+        Some(Some(shadow)) => out.push((
+            StylePage::Shadow,
+            format!("shadow, {} pt blur", number(shadow.blur as f32)),
+        )),
         Some(None) => out.push((StylePage::Shadow, "no shadow".to_string())),
         None => {}
     }
     if let Some(wrap) = &format.wrap {
-        out.push((
-            StylePage::TextWrap,
-            match wrap {
-                tessera_document::nodes::TextWrap::None => "no text wrap",
-                _ => "text wrap",
-            }
-            .to_string(),
-        ));
+        use tessera_document::nodes::TextWrap;
+        let said = match wrap {
+            TextWrap::None => "no text wrap",
+            TextWrap::Bounds { .. } => "text wraps round its box",
+            TextWrap::Contour { .. } => "text wraps round its shape",
+            TextWrap::Jump => "text jumps it",
+        };
+        out.push((StylePage::TextWrap, said.to_string()));
     }
     out
 }
 
-fn object_fill(ui: &mut Ui, format: &mut ObjectFormat, changed: &mut bool) {
-    *changed |= states(ui, "Fill", &mut format.fill, || {
-        tessera_document::paint::Paint::Solid(Color::BLACK)
-    });
-    if let Some(fill) = &mut format.fill {
-        named_row(ui, "Colour", |ui| {
-            let [r, g, b, a] = fill.representative().to_rgb_f32();
-            let mut rgba = [r, g, b, a];
-            if crate::view::panels::swatch_picker(ui, &mut rgba) {
-                *fill = tessera_document::paint::Paint::Solid(Color::Rgb {
-                    r: rgba[0],
-                    g: rgba[1],
-                    b: rgba[2],
-                    a: rgba[3],
-                });
-                *changed = true;
-            }
-        });
+/// What an object style states, in a line under its preview.
+pub(crate) fn object_summary(
+    id: tessera_document::ids::ObjectStyleId,
+    state: &TesseraApp,
+) -> String {
+    let doc = state.active().document();
+    let Some(style) = doc.object_styles.get(id) else {
+        return String::new();
+    };
+    let said: Vec<String> = object_terms(&style.format)
+        .into_iter()
+        .map(|(_, term)| term)
+        .collect();
+    if said.is_empty() {
+        "States nothing of its own yet".to_string()
+    } else {
+        let mut line = said.join(" · ");
+        if let Some(first) = line.get_mut(0..1) {
+            first.make_ascii_uppercase();
+        }
+        line
     }
 }
 
-fn object_stroke(ui: &mut Ui, format: &mut ObjectFormat, changed: &mut bool) {
+fn blend_name(mode: tessera_document::blending::BlendMode) -> &'static str {
+    use tessera_document::blending::BlendMode;
+    match mode {
+        BlendMode::Normal => "Normal",
+        BlendMode::Multiply => "Multiply",
+        BlendMode::Screen => "Screen",
+        BlendMode::Overlay => "Overlay",
+    }
+}
+
+fn object_fill(
+    ui: &mut Ui,
+    format: &mut ObjectFormat,
+    lineage: &Lineage<ObjectFormat>,
+    palette: &Palette,
+) {
+    use tessera_document::paint::Paint;
+    style_ui::card(ui, None, |ui| {
+        stated_row(
+            ui,
+            "Fill",
+            &mut format.fill,
+            &lineage.find(|f| f.fill.clone()),
+            || Paint::Solid(BLACK_INK),
+            |ui, fill, ghost| paint_summary(ui, palette, fill, ghost),
+        );
+    });
+    let Some(fill) = &mut format.fill else {
+        return;
+    };
+    if fill.gradient().is_some() {
+        style_ui::card(ui, None, |ui| {
+            super::panel_ui::hint(
+                ui,
+                "A gradient, taken from an object. Choosing a colour below \
+                 replaces it; a gradient is edited on an object and taken up \
+                 with Redefine style.",
+            );
+        });
+    }
+    let mut colour = match fill.solid() {
+        Some(colour) => colour.clone(),
+        None => Color::Rgb {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.0,
+        },
+    };
+    let before = colour.clone();
+    colour_cards(ui, palette, &mut colour, true, "fill");
+    if colour != before {
+        *fill = Paint::Solid(colour);
+    }
+}
+
+/// A paint as a row shows it: a chip and a name.
+fn paint_summary(
+    ui: &mut Ui,
+    palette: &Palette,
+    paint: &tessera_document::paint::Paint,
+    ghost: bool,
+) {
+    match paint.solid() {
+        Some(colour) if is_no_fill(colour) => style_ui::none_chip(ui),
+        Some(colour) => chip(ui, palette.shown(colour)),
+        None => chip(ui, paint.representative().to_rgb_f32()),
+    }
+    ui.label(egui::RichText::new(paint_name(paint)).color(if ghost {
+        Theme::text_muted()
+    } else {
+        Theme::text_primary()
+    }));
+}
+
+/// The dash patterns a stroke is offered, as multiples of its weight:
+/// the inspector's three.
+const DASHES: [&[f64]; 3] = [&[], &[3.0, 2.0], &[0.0, 2.0]];
+
+fn object_stroke(
+    ui: &mut Ui,
+    format: &mut ObjectFormat,
+    lineage: &Lineage<ObjectFormat>,
+    palette: &Palette,
+) {
+    use tessera_document::nodes::{LineCap, LineJoin, Stroke, StrokeAlign};
     // The nesting shows here, and it is the point: "no stroke" is a value a
     // style has to be able to state, so the dot states *something* and the
     // switch says whether that something is a stroke or none.
-    *changed |= states(ui, "Stroke", &mut format.stroke, || None);
-    if let Some(stroke) = &mut format.stroke {
+    style_ui::card(ui, None, |ui| {
+        stated_row(
+            ui,
+            "Stroke",
+            &mut format.stroke,
+            &lineage.find(|f| f.stroke.clone()),
+            || Some(Stroke::new(Color::BLACK, 1.0)),
+            |ui, stroke, ghost| match stroke {
+                Some(s) => {
+                    chip(ui, palette.shown(&s.color));
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} {}",
+                            points(s.width as f32),
+                            colour_name(&s.color)
+                        ))
+                        .color(if ghost {
+                            Theme::text_muted()
+                        } else {
+                            Theme::text_primary()
+                        }),
+                    );
+                }
+                None => {
+                    ui.colored_label(Theme::text_muted(), "No stroke");
+                }
+            },
+        );
+    });
+    let Some(stroke) = &mut format.stroke else {
+        return;
+    };
+    style_ui::card(ui, Some("Line"), |ui| {
         named_row(ui, "Has a stroke", |ui| {
             let mut has = stroke.is_some();
             if style_ui::switch(ui, &mut has, "Has a stroke", false) {
-                *stroke = if has {
-                    Some(tessera_document::nodes::Stroke::new(Color::BLACK, 1.0))
-                } else {
-                    None
-                };
-                *changed = true;
+                *stroke = has.then(|| Stroke::new(Color::BLACK, 1.0));
             }
         });
-        if let Some(s) = stroke {
-            named_row(ui, "Width", |ui| {
-                ui.spacing_mut().interact_size.x = style_ui::NUMBER_WIDTH;
-                *changed |= ui
-                    .add(
-                        egui::DragValue::new(&mut s.width)
-                            .speed(0.1)
-                            .range(0.0..=144.0)
-                            .suffix(" pt"),
-                    )
-                    .changed();
+        let Some(s) = stroke else {
+            return;
+        };
+        named_row(ui, "Weight", |ui| {
+            let mut width = s.width as f32;
+            if number_field(ui, "Weight", &mut width, 0.1, 0.0..=144.0, " pt") {
+                s.width = f64::from(width);
+            }
+        });
+        // Alignment changes geometry rather than appearance, which is why
+        // the inspector puts it first and so does this.
+        named_row(ui, "Alignment", |ui| {
+            style_ui::segmented(
+                ui,
+                "Stroke alignment",
+                &mut s.align,
+                &[
+                    (style_ui::Segment::Text("Centre"), StrokeAlign::Center),
+                    (style_ui::Segment::Text("Inside"), StrokeAlign::Inside),
+                    (style_ui::Segment::Text("Outside"), StrokeAlign::Outside),
+                ],
+                false,
+            );
+        });
+        named_row(ui, "Ends", |ui| {
+            style_ui::segmented(
+                ui,
+                "Line ends",
+                &mut s.cap,
+                &[
+                    (
+                        style_ui::Segment::Icon(Icon::CapButt, "Butt cap"),
+                        LineCap::Butt,
+                    ),
+                    (
+                        style_ui::Segment::Icon(Icon::CapRound, "Round cap"),
+                        LineCap::Round,
+                    ),
+                    (
+                        style_ui::Segment::Icon(Icon::CapSquare, "Projecting square cap"),
+                        LineCap::Square,
+                    ),
+                ],
+                false,
+            );
+        });
+        named_row(ui, "Joins", |ui| {
+            style_ui::segmented(
+                ui,
+                "Line joins",
+                &mut s.join,
+                &[
+                    (
+                        style_ui::Segment::Icon(Icon::JoinMiter, "Miter join"),
+                        LineJoin::Miter,
+                    ),
+                    (
+                        style_ui::Segment::Icon(Icon::JoinRound, "Round join"),
+                        LineJoin::Round,
+                    ),
+                    (
+                        style_ui::Segment::Icon(Icon::JoinBevel, "Bevel join"),
+                        LineJoin::Bevel,
+                    ),
+                ],
+                false,
+            );
+        });
+        named_row(ui, "Pattern", |ui| {
+            let unit = s.width.max(0.1);
+            let current = DASHES.iter().position(|pattern| {
+                pattern.len() == s.dashes.len()
+                    && pattern
+                        .iter()
+                        .zip(&s.dashes)
+                        .all(|(p, d)| (p * unit - d).abs() < 0.01)
             });
-        }
+            // A pattern none of the three is still a pattern: shown as none
+            // chosen rather than as solid, which it is not.
+            let mut chosen = current.unwrap_or(usize::MAX);
+            if style_ui::segmented(
+                ui,
+                "Line pattern",
+                &mut chosen,
+                &[
+                    (
+                        style_ui::Segment::Icon(Icon::StrokeSolid, "Solid stroke"),
+                        0,
+                    ),
+                    (
+                        style_ui::Segment::Icon(Icon::StrokeDashed, "Dashed stroke"),
+                        1,
+                    ),
+                    (
+                        style_ui::Segment::Icon(Icon::StrokeDotted, "Dotted stroke"),
+                        2,
+                    ),
+                ],
+                false,
+            ) {
+                s.dashes = DASHES[chosen].iter().map(|d| d * unit).collect();
+                // Zero-length dashes only draw as dots with round caps.
+                if chosen == 2 {
+                    s.cap = LineCap::Round;
+                }
+            }
+            if current.is_none() {
+                ui.colored_label(Theme::text_muted(), "a pattern of its own");
+            }
+        });
+    });
+    if let Some(s) = stroke {
+        colour_cards(ui, palette, &mut s.color, false, "stroke");
     }
 }
 
-fn object_transparency(ui: &mut Ui, format: &mut ObjectFormat, changed: &mut bool) {
-    *changed |= states(ui, "Opacity", &mut format.blend, || {
-        tessera_document::blending::Blending::PLAIN
-    });
-    if let Some(blend) = &mut format.blend {
-        named_row(ui, "Amount", |ui| {
-            let mut percent = blend.alpha() * 100.0;
-            style_ui::slider_look(ui);
-            if ui
-                .add(
-                    egui::Slider::new(&mut percent, 0.0..=100.0)
-                        .suffix("%")
-                        .fixed_decimals(0),
+fn object_transparency(ui: &mut Ui, format: &mut ObjectFormat, lineage: &Lineage<ObjectFormat>) {
+    use tessera_document::blending::{BlendMode, Blending};
+    style_ui::card(ui, None, |ui| {
+        stated_row(
+            ui,
+            "Opacity",
+            &mut format.blend,
+            &lineage.find(|f| f.blend),
+            || Blending::PLAIN,
+            |ui, blend, _| {
+                let mut percent = blend.alpha() * 100.0;
+                style_ui::slider_look(ui);
+                if crate::icons::speak_as(
+                    ui.add(
+                        egui::Slider::new(&mut percent, 0.0..=100.0)
+                            .suffix("%")
+                            .fixed_decimals(0),
+                    ),
+                    "Opacity",
                 )
                 .changed()
-            {
-                blend.opacity = percent / 100.0;
-                *changed = true;
-            }
-        });
-    }
+                {
+                    blend.opacity = percent / 100.0;
+                }
+            },
+        );
+        if let Some(blend) = &mut format.blend {
+            named_row(ui, "Blend mode", |ui| {
+                let options: Vec<(style_ui::Segment<'_>, BlendMode)> = BlendMode::ALL
+                    .iter()
+                    .map(|mode| (style_ui::Segment::Text(blend_name(*mode)), *mode))
+                    .collect();
+                style_ui::segmented(ui, "Blend mode", &mut blend.mode, &options, false);
+            });
+        }
+    });
 }
 
-fn object_shadow(ui: &mut Ui, format: &mut ObjectFormat, changed: &mut bool) {
-    *changed |= states(ui, "Shadow", &mut format.shadow, || {
-        Some(tessera_document::shadow::Shadow::TYPICAL)
+fn object_shadow(ui: &mut Ui, format: &mut ObjectFormat, lineage: &Lineage<ObjectFormat>) {
+    use tessera_document::shadow::{MOST_BLUR, Shadow};
+    style_ui::card(ui, None, |ui| {
+        stated_row(
+            ui,
+            "Shadow",
+            &mut format.shadow,
+            &lineage.find(|f| f.shadow.clone()),
+            || Some(Shadow::TYPICAL),
+            |ui, shadow, ghost| {
+                let said = if shadow.is_some() {
+                    "Casts a shadow"
+                } else {
+                    "No shadow"
+                };
+                ui.label(egui::RichText::new(said).color(if ghost {
+                    Theme::text_muted()
+                } else {
+                    Theme::text_primary()
+                }));
+            },
+        );
     });
-    if let Some(shadow) = &mut format.shadow {
+    let Some(shadow) = &mut format.shadow else {
+        return;
+    };
+    style_ui::card(ui, Some("Drop shadow"), |ui| {
         named_row(ui, "Casts a shadow", |ui| {
             let mut casts = shadow.is_some();
             if style_ui::switch(ui, &mut casts, "Casts a shadow", false) {
-                *shadow = if casts {
-                    Some(tessera_document::shadow::Shadow::TYPICAL)
-                } else {
-                    None
-                };
-                *changed = true;
+                *shadow = casts.then_some(Shadow::TYPICAL);
             }
         });
+        let Some(sh) = shadow else {
+            return;
+        };
+        for (label, value) in [
+            ("Offset across", &mut sh.offset.0),
+            ("Offset down", &mut sh.offset.1),
+        ] {
+            named_row(ui, label, |ui| {
+                let mut v = *value as f32;
+                if number_field(ui, label, &mut v, 0.25, -144.0..=144.0, " pt") {
+                    *value = f64::from(v);
+                }
+            });
+        }
+        named_row(ui, "Blur", |ui| {
+            style_ui::slider_look(ui);
+            crate::icons::speak_as(
+                ui.add(
+                    egui::Slider::new(&mut sh.blur, 0.0..=MOST_BLUR)
+                        .suffix(" pt")
+                        .max_decimals(1),
+                ),
+                "Blur",
+            );
+        });
+        named_row(ui, "Colour", |ui| {
+            // With its alpha: how much of a shadow shows *is* its alpha.
+            let mut picked = style_ui::srgb(sh.colour.to_rgb_f32());
+            if crate::icons::speak_as(
+                egui::widgets::color_picker::color_edit_button_srgba(
+                    ui,
+                    &mut picked,
+                    egui::widgets::color_picker::Alpha::OnlyBlend,
+                ),
+                "Shadow colour",
+            )
+            .changed()
+            {
+                let [r, g, b, a] = picked.to_srgba_unmultiplied();
+                sh.colour = Color::Rgb {
+                    r: f32::from(r) / 255.0,
+                    g: f32::from(g) / 255.0,
+                    b: f32::from(b) / 255.0,
+                    a: f32::from(a) / 255.0,
+                };
+            }
+        });
+    });
+}
+
+fn object_wrap(ui: &mut Ui, format: &mut ObjectFormat, lineage: &Lineage<ObjectFormat>) {
+    use tessera_document::nodes::{Insets, TextWrap, WrapTo};
+
+    #[derive(Clone, Copy, PartialEq)]
+    enum How {
+        Off,
+        Bounds,
+        Contour,
+        Jump,
+    }
+    fn how(wrap: &TextWrap) -> How {
+        match wrap {
+            TextWrap::None => How::Off,
+            TextWrap::Bounds { .. } => How::Bounds,
+            TextWrap::Contour { .. } => How::Contour,
+            TextWrap::Jump => How::Jump,
+        }
+    }
+
+    style_ui::card(ui, None, |ui| {
+        stated_row(
+            ui,
+            "Text wrap",
+            &mut format.wrap,
+            &lineage.find(|f| f.wrap),
+            || TextWrap::None,
+            |ui, wrap, ghost| {
+                let mut chosen = how(wrap);
+                if style_ui::segmented(
+                    ui,
+                    "Wrap mode",
+                    &mut chosen,
+                    &[
+                        (style_ui::Segment::Icon(Icon::WrapNone, "No wrap"), How::Off),
+                        (
+                            style_ui::Segment::Icon(Icon::WrapBounds, "Around the box"),
+                            How::Bounds,
+                        ),
+                        (
+                            style_ui::Segment::Icon(Icon::WrapContour, "Around the shape"),
+                            How::Contour,
+                        ),
+                        (
+                            style_ui::Segment::Icon(Icon::WrapJump, "Jump over"),
+                            How::Jump,
+                        ),
+                    ],
+                    ghost,
+                ) {
+                    // What was set carries across a change of mode, as the
+                    // inspector carries it: the standoff and the sides.
+                    let standoff = wrap.standoff().unwrap_or_default();
+                    let sides = wrap.sides();
+                    *wrap = match chosen {
+                        How::Off => TextWrap::None,
+                        How::Bounds => TextWrap::Bounds { standoff, sides },
+                        How::Contour => TextWrap::Contour {
+                            standoff: standoff.top,
+                            sides,
+                        },
+                        How::Jump => TextWrap::Jump,
+                    };
+                }
+            },
+        );
+    });
+    let Some(wrap) = &mut format.wrap else {
+        return;
+    };
+    let sides_row = |ui: &mut Ui, sides: &mut WrapTo| {
+        named_row(ui, "Wrap to", |ui| {
+            style_ui::segmented(
+                ui,
+                "Wrap to",
+                sides,
+                &[
+                    (style_ui::Segment::Text("Largest"), WrapTo::Largest),
+                    (style_ui::Segment::Text("Both"), WrapTo::Both),
+                    (style_ui::Segment::Text("Left"), WrapTo::Left),
+                    (style_ui::Segment::Text("Right"), WrapTo::Right),
+                ],
+                false,
+            );
+        });
+    };
+    match wrap {
+        TextWrap::Bounds { standoff, sides } => {
+            style_ui::card(ui, Some("Distance from text"), |ui| {
+                let Insets {
+                    top,
+                    bottom,
+                    left,
+                    right,
+                } = standoff;
+                for (label, value) in [
+                    ("Top", top),
+                    ("Bottom", bottom),
+                    ("Left", left),
+                    ("Right", right),
+                ] {
+                    named_row(ui, label, |ui| {
+                        let mut v = *value as f32;
+                        if number_field(ui, label, &mut v, 0.25, 0.0..=720.0, " pt") {
+                            *value = f64::from(v);
+                        }
+                    });
+                }
+                sides_row(ui, sides);
+            });
+        }
+        TextWrap::Contour { standoff, sides } => {
+            style_ui::card(ui, Some("Distance from text"), |ui| {
+                named_row(ui, "All round", |ui| {
+                    let mut v = *standoff as f32;
+                    if number_field(ui, "Distance from text", &mut v, 0.25, 0.0..=720.0, " pt") {
+                        *standoff = f64::from(v);
+                    }
+                });
+                sides_row(ui, sides);
+            });
+        }
+        TextWrap::None | TextWrap::Jump => {}
     }
 }
 
-/// Whether a format states a property at all: the row's dot.
-///
-/// Returns whether it moved. `fresh` supplies the value the property takes
-/// when it is first stated, so stating it never leaves the format holding
-/// something meaningless.
-fn states<T>(ui: &mut Ui, label: &str, slot: &mut Option<T>, fresh: impl FnOnce() -> T) -> bool {
-    let mut changed = false;
-    style_ui::row(ui, |ui| {
-        let stated = slot.is_some();
-        if style_ui::state_dot(ui, stated, label).clicked() {
-            *slot = if stated { None } else { Some(fresh()) };
-            changed = true;
-        }
-        style_ui::name_cell(ui, label, slot.is_some());
-        if slot.is_none() {
-            ui.colored_label(Theme::text_muted(), "left to the object");
+/// Choosing a colour for a style: the palette's swatches as tiles — with
+/// [None] first when `none` is offered, for a fill — a tint when the colour
+/// is a swatch, and a colour of its own.
+fn colour_cards(ui: &mut Ui, palette: &Palette, colour: &mut Color, none: bool, salt: &str) {
+    // Tiles rather than a list: a colour is found by its colour first and
+    // its name second, and a grid shows a dozen swatches in the room a list
+    // shows four.
+    style_ui::card(ui, Some("Swatches"), |ui| {
+        ui.push_id(salt, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::Vec2::splat(4.0);
+                if none {
+                    let chosen = is_no_fill(colour);
+                    if style_ui::none_tile(ui, chosen).clicked() && !chosen {
+                        let [r, g, b, _] = colour.to_rgb_f32();
+                        *colour = Color::Rgb { r, g, b, a: 0.0 };
+                    }
+                }
+                for (name, value, shown) in &palette.entries {
+                    // A swatch is chosen whatever its tint: the tint is a
+                    // second question, asked below.
+                    let chosen = match (&*colour, value) {
+                        (Color::Swatch { name: a, .. }, Color::Swatch { name: b, .. }) => a == b,
+                        (a, b) => a == b,
+                    };
+                    if style_ui::swatch_tile(ui, *shown, name, chosen).clicked() && !chosen {
+                        let tint = match &*colour {
+                            Color::Swatch { tint, .. } => *tint,
+                            _ => 1.0,
+                        };
+                        *colour = match value {
+                            Color::Swatch { name, .. } => Color::Swatch {
+                                name: name.clone(),
+                                tint,
+                            },
+                            other => other.clone(),
+                        };
+                    }
+                }
+            });
+        });
+        if palette.entries.len() == 2 {
+            super::panel_ui::hint(
+                ui,
+                "The document has no swatches of its own yet. A swatch named here \
+                 recolours every style using it when it is edited.",
+            );
         }
     });
-    changed
+
+    if none && is_no_fill(colour) {
+        return;
+    }
+    style_ui::card(ui, Some("Adjust"), |ui| {
+        ui.push_id(salt, |ui| {
+            if let Color::Swatch { tint, .. } = colour {
+                named_row(ui, "Tint", |ui| {
+                    let mut percent = f64::from(*tint) * 100.0;
+                    style_ui::slider_look(ui);
+                    if crate::icons::speak_as(
+                        ui.add(
+                            egui::Slider::new(&mut percent, 0.0..=100.0)
+                                .suffix("%")
+                                .fixed_decimals(0),
+                        ),
+                        "Tint",
+                    )
+                    .changed()
+                    {
+                        *tint = (percent / 100.0) as f32;
+                    }
+                });
+            }
+            named_row(ui, "Custom", |ui| {
+                // In sRGB, which is what the page and the tiles above draw a
+                // colour's numbers as. egui's `Rgba` picker takes them as
+                // linear light and showed Brand red as a pink beside its own
+                // tile.
+                let mut picked = style_ui::srgb(palette.shown(colour));
+                picked = egui::Color32::from_rgb(picked.r(), picked.g(), picked.b());
+                if crate::icons::speak_as(
+                    egui::widgets::color_picker::color_edit_button_srgba(
+                        ui,
+                        &mut picked,
+                        egui::widgets::color_picker::Alpha::Opaque,
+                    ),
+                    "Custom colour",
+                )
+                .changed()
+                {
+                    *colour = Color::Rgb {
+                        r: f32::from(picked.r()) / 255.0,
+                        g: f32::from(picked.g()) / 255.0,
+                        b: f32::from(picked.b()) / 255.0,
+                        a: 1.0,
+                    };
+                }
+                ui.colored_label(Theme::text_muted(), "a colour of its own, not a swatch");
+            });
+        });
+    });
 }
 
 // --- what a style inherits ---------------------------------------------------
@@ -1469,10 +2035,10 @@ pub(crate) fn shown_in(state: &mut TesseraApp, id: CharacterStyleId) -> Option<P
     }
     let first = style_uses(state, UsedStyle::Character(id))
         .into_iter()
-        .next()?;
+        .find_map(|(place, _)| place.text().cloned())?;
     let doc = state.active().document();
-    doc.story(first.0.story)?
-        .paragraph_run_at(first.0.range.start)?
+    doc.story(first.story)?
+        .paragraph_run_at(first.range.start)?
         .style
         .filter(|p| doc.paragraph_styles.contains_key(*p))
 }
@@ -1485,9 +2051,9 @@ pub(crate) fn first_use_in_context(
     id: CharacterStyleId,
 ) -> Option<(String, String, String)> {
     const SIDE: usize = 56;
-    let (first, _) = style_uses(state, UsedStyle::Character(id))
+    let first = style_uses(state, UsedStyle::Character(id))
         .into_iter()
-        .next()?;
+        .find_map(|(place, _)| place.text().cloned())?;
     let story = state.active().document().story(first.story)?;
     let paragraph = story.paragraph_bounds(first.range.clone());
     let clean = |text: &str| -> String {
@@ -1942,12 +2508,65 @@ fn settings_summary(
 pub enum UsedStyle {
     Paragraph(ParagraphStyleId),
     Character(CharacterStyleId),
+    Object(tessera_document::ids::ObjectStyleId),
+}
+
+/// One place a style is used: words in a story, or an object on a page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StyleUse {
+    Text(crate::find::Hit),
+    Object(tessera_document::ids::FrameId),
+}
+
+impl StyleUse {
+    fn text(&self) -> Option<&crate::find::Hit> {
+        match self {
+            StyleUse::Text(hit) => Some(hit),
+            StyleUse::Object(_) => None,
+        }
+    }
+}
+
+/// Every object following an object style, in reading order, each with
+/// whether it holds anything differently from the style — the same test the
+/// cascade uses to decide what a style change leaves alone.
+fn uses_of_object_style(
+    doc: &tessera_document::document::Document,
+    id: tessera_document::ids::ObjectStyleId,
+) -> Vec<(StyleUse, bool)> {
+    doc.paint_order()
+        .into_iter()
+        .filter(|frame| doc.frame(*frame).is_some_and(|f| f.style == Some(id)))
+        .map(|frame| {
+            let own = doc
+                .object_overrides(frame)
+                .is_some_and(|overrides| !overrides.is_empty());
+            (StyleUse::Object(frame), own)
+        })
+        .collect()
+}
+
+/// Select an object and bring its spread into view, as a click on it in the
+/// Layers panel does, leaving any text being typed in first.
+fn reveal_object(state: &mut TesseraApp, frame: tessera_document::ids::FrameId) {
+    state.edit_master(None);
+    crate::view::viewport::finish_editing(state);
+    state.active_mut().selection.set(frame);
+    let doc = state.active().document();
+    let spread = doc.page_of_frame(frame).and_then(|page| {
+        doc.spread_ids()
+            .position(|spread| doc.pages_of(spread).contains(&page))
+    });
+    if let Some(spread) = spread {
+        state.active_mut().current_spread = spread;
+    }
+    state.reveal = Some(frame);
 }
 
 /// Every place `which` is used, in reading order, each with whether it
 /// carries formatting of its own: found again only when the document has
 /// changed since, or the window is asking about another style.
-fn style_uses(state: &mut TesseraApp, which: UsedStyle) -> Vec<(crate::find::Hit, bool)> {
+fn style_uses(state: &mut TesseraApp, which: UsedStyle) -> Vec<(StyleUse, bool)> {
     let document = state.active;
     let revision = state.active().document().revision();
     if let Some(found) = &state.styles_window.uses
@@ -1958,9 +2577,16 @@ fn style_uses(state: &mut TesseraApp, which: UsedStyle) -> Vec<(crate::find::Hit
         return found.uses.clone();
     }
     let doc = state.active().document();
+    let text = |found: Vec<(crate::find::Hit, bool)>| {
+        found
+            .into_iter()
+            .map(|(hit, own)| (StyleUse::Text(hit), own))
+            .collect::<Vec<_>>()
+    };
     let found = match which {
-        UsedStyle::Paragraph(id) => crate::find::uses_of_paragraph_style(doc, id),
-        UsedStyle::Character(id) => crate::find::uses_of_character_style(doc, id),
+        UsedStyle::Paragraph(id) => text(crate::find::uses_of_paragraph_style(doc, id)),
+        UsedStyle::Character(id) => text(crate::find::uses_of_character_style(doc, id)),
+        UsedStyle::Object(id) => uses_of_object_style(doc, id),
     };
     state.styles_window.uses = Some(crate::app::FoundUses {
         style: which,
@@ -1990,6 +2616,7 @@ fn uses_card(ui: &mut Ui, state: &mut TesseraApp, which: UsedStyle) {
     let (one, many) = match which {
         UsedStyle::Paragraph(_) => ("paragraph uses it", "paragraphs use it"),
         UsedStyle::Character(_) => ("place in the text", "places in the text"),
+        UsedStyle::Object(_) => ("object follows it", "objects follow it"),
     };
     let mut go: Option<usize> = None;
     style_ui::card_with_action(
@@ -2020,7 +2647,10 @@ fn uses_card(ui: &mut Ui, state: &mut TesseraApp, which: UsedStyle) {
     );
     if let Some(i) = go {
         state.styles_window.visited = Some((which, i));
-        crate::view::find::reveal(state, &uses[i].0);
+        match &uses[i].0 {
+            StyleUse::Text(hit) => crate::view::find::reveal(state, hit),
+            StyleUse::Object(frame) => reveal_object(state, *frame),
+        }
     }
 }
 
@@ -3100,88 +3730,7 @@ fn character_colour(
         return;
     };
 
-    // Tiles rather than a list: a colour is found by its colour first and
-    // its name second, and a grid shows a dozen swatches in the room a list
-    // shows four.
-    style_ui::card(ui, Some("Swatches"), |ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::Vec2::splat(4.0);
-            for (name, value, shown) in &palette.entries {
-                // A swatch is chosen whatever its tint: the tint is a second
-                // question, asked below.
-                let chosen = match (&*colour, value) {
-                    (Color::Swatch { name: a, .. }, Color::Swatch { name: b, .. }) => a == b,
-                    (a, b) => a == b,
-                };
-                if style_ui::swatch_tile(ui, *shown, name, chosen).clicked() && !chosen {
-                    let tint = match &*colour {
-                        Color::Swatch { tint, .. } => *tint,
-                        _ => 1.0,
-                    };
-                    *colour = match value {
-                        Color::Swatch { name, .. } => Color::Swatch {
-                            name: name.clone(),
-                            tint,
-                        },
-                        other => other.clone(),
-                    };
-                }
-            }
-        });
-        if palette.entries.len() == 2 {
-            super::panel_ui::hint(
-                ui,
-                "The document has no swatches of its own yet. A swatch named here \
-                 recolours every style using it when it is edited.",
-            );
-        }
-    });
-
-    style_ui::card(ui, Some("Adjust"), |ui| {
-        if let Color::Swatch { tint, .. } = colour {
-            named_row(ui, "Tint", |ui| {
-                let mut percent = f64::from(*tint) * 100.0;
-                style_ui::slider_look(ui);
-                if crate::icons::speak_as(
-                    ui.add(
-                        egui::Slider::new(&mut percent, 0.0..=100.0)
-                            .suffix("%")
-                            .fixed_decimals(0),
-                    ),
-                    "Tint",
-                )
-                .changed()
-                {
-                    *tint = (percent / 100.0) as f32;
-                }
-            });
-        }
-        named_row(ui, "Custom", |ui| {
-            // In sRGB, which is what the page and the tiles above draw a
-            // colour's numbers as. egui's `Rgba` picker takes them as linear
-            // light and showed Brand red as a pink beside its own tile.
-            let mut picked = style_ui::srgb(palette.shown(colour));
-            picked = egui::Color32::from_rgb(picked.r(), picked.g(), picked.b());
-            if crate::icons::speak_as(
-                egui::widgets::color_picker::color_edit_button_srgba(
-                    ui,
-                    &mut picked,
-                    egui::widgets::color_picker::Alpha::Opaque,
-                ),
-                "Custom colour",
-            )
-            .changed()
-            {
-                *colour = Color::Rgb {
-                    r: f32::from(picked.r()) / 255.0,
-                    g: f32::from(picked.g()) / 255.0,
-                    b: f32::from(picked.b()) / 255.0,
-                    a: 1.0,
-                };
-            }
-            ui.colored_label(Theme::text_muted(), "a colour of its own, not a swatch");
-        });
-    });
+    colour_cards(ui, palette, colour, false, "character");
 }
 
 // --- property rows ----------------------------------------------------------
@@ -4713,5 +5262,171 @@ mod tests {
             "{after:?}"
         );
         assert!(before.chars().count() <= 60 && after.chars().count() <= 60);
+    }
+
+    /// Two rectangles following an object style that fills them black, the
+    /// style's id, and the rectangles in the order they were drawn.
+    fn two_boxes() -> (
+        TesseraApp,
+        tessera_document::ids::ObjectStyleId,
+        [tessera_document::ids::FrameId; 2],
+    ) {
+        use tessera_document::paint::Paint;
+        let mut state = TesseraApp::headless();
+        let mut boxes = Vec::new();
+        for x in [0.0, 300.0] {
+            apply(
+                &mut state,
+                Command::AddRectangle(tessera_geometry::DocRect {
+                    x,
+                    y: 0.0,
+                    width: 100.0,
+                    height: 60.0,
+                }),
+            );
+            boxes.push(state.active().selection.single().expect("drawn"));
+        }
+        apply(&mut state, Command::AddObjectStyle);
+        let id = *state
+            .active()
+            .document()
+            .object_style_order
+            .last()
+            .expect("style");
+        apply(
+            &mut state,
+            Command::RestyleObjectStyle {
+                id,
+                format: Box::new(ObjectFormat {
+                    fill: Some(Paint::Solid(Color::BLACK)),
+                    ..ObjectFormat::default()
+                }),
+            },
+        );
+        for frame in &boxes {
+            apply(
+                &mut state,
+                Command::ApplyObjectStyle {
+                    id: *frame,
+                    style: id,
+                },
+            );
+        }
+        (state, id, [boxes[0], boxes[1]])
+    }
+
+    fn editing_object(
+        state: &mut TesseraApp,
+        id: tessera_document::ids::ObjectStyleId,
+        page: StylePage,
+    ) {
+        state.styles_window.kind = StyleKind::Object;
+        state.styles_window.object = Some(id);
+        state.styles_window.editing = true;
+        state.styles_window.page = page;
+    }
+
+    #[test]
+    fn an_object_style_counts_its_objects_and_goes_to_each() {
+        use tessera_document::paint::Paint;
+        let (mut state, id, [first, second]) = two_boxes();
+        // The second one given a fill of its own: it still follows the
+        // style, and now differs from it.
+        if let Some(frame) = state.active_mut().document_mut().frame_mut(second) {
+            frame.fill = Paint::Solid(Color::WHITE);
+        }
+        let uses = uses_of_object_style(state.active().document(), id);
+        assert_eq!(
+            uses,
+            [
+                (StyleUse::Object(first), false),
+                (StyleUse::Object(second), true)
+            ]
+        );
+
+        editing_object(&mut state, id, StylePage::General);
+        state.active_mut().selection.clear();
+        let ctx = window();
+        click(&ctx, &mut state, "Next use");
+        assert_eq!(state.active().selection.single(), Some(first));
+        click(&ctx, &mut state, "Next use");
+        assert_eq!(state.active().selection.single(), Some(second));
+        assert_eq!(state.reveal, Some(second), "and it is brought into view");
+    }
+
+    #[test]
+    fn what_an_object_page_counts_is_what_its_reset_clears() {
+        use tessera_document::nodes::{Insets, Stroke, TextWrap, WrapTo};
+        use tessera_document::paint::Paint;
+        let full = ObjectFormat {
+            fill: Some(Paint::Solid(Color::BLACK)),
+            stroke: Some(Some(Stroke::new(Color::BLACK, 1.0))),
+            blend: Some(tessera_document::blending::Blending::PLAIN),
+            shadow: Some(Some(tessera_document::shadow::Shadow::TYPICAL)),
+            wrap: Some(TextWrap::Bounds {
+                standoff: Insets::uniform(4.0),
+                sides: WrapTo::Both,
+            }),
+        };
+        assert_eq!(object_terms(&full).len(), 5, "one term a property");
+        let mut emptied = full.clone();
+        for page in StylePage::for_kind(StyleKind::Object) {
+            let mut cleared = full.clone();
+            clear_object_page(*page, &mut cleared);
+            assert!(
+                !object_terms(&cleared).iter().any(|(p, _)| p == page),
+                "{page:?} still counts something after its reset"
+            );
+            clear_object_page(*page, &mut emptied);
+        }
+        assert!(emptied.is_empty(), "{emptied:?}");
+    }
+
+    #[test]
+    fn a_fill_can_be_stated_as_none() {
+        let (mut state, id, [first, _]) = two_boxes();
+        editing_object(&mut state, id, StylePage::Fill);
+        click(&window(), &mut state, "[None]");
+        let fill = state.active().document().object_styles[id]
+            .format
+            .fill
+            .clone()
+            .expect("still stated");
+        assert!(fill.solid().is_some_and(is_no_fill), "{fill:?} is no fill");
+        let frame_fill = state
+            .active()
+            .document()
+            .frame(first)
+            .expect("frame")
+            .fill
+            .clone();
+        assert!(
+            frame_fill.solid().is_some_and(is_no_fill),
+            "and the objects following it lose theirs"
+        );
+    }
+
+    #[test]
+    fn a_wrap_nothing_states_is_stated_from_the_object_s_own_and_then_chosen() {
+        // No style above says anything about the wrap, so the row names no
+        // value — "the object's own" — and a click on that states it.
+        use tessera_document::nodes::TextWrap;
+        let (mut state, id, _) = two_boxes();
+        editing_object(&mut state, id, StylePage::TextWrap);
+        assert_eq!(
+            state.active().document().object_styles[id].format.wrap,
+            None
+        );
+        let ctx = window();
+        click(&ctx, &mut state, "the object's own");
+        assert_eq!(
+            state.active().document().object_styles[id].format.wrap,
+            Some(TextWrap::None)
+        );
+        click(&ctx, &mut state, "Around the box");
+        assert!(matches!(
+            state.active().document().object_styles[id].format.wrap,
+            Some(TextWrap::Bounds { .. })
+        ));
     }
 }

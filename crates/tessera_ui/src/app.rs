@@ -265,7 +265,7 @@ pub struct FoundUses {
     pub style: crate::view::styles::UsedStyle,
     pub document: DocumentKey,
     pub revision: u64,
-    pub uses: Vec<(crate::find::Hit, bool)>,
+    pub uses: Vec<(crate::view::styles::StyleUse, bool)>,
 }
 
 impl StylesWindow {

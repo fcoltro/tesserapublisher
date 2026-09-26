@@ -563,6 +563,46 @@ pub(crate) fn tag(ui: &mut Ui, text: &str) {
 /// A colour as a tile to choose: the colour in a rounded block, its name
 /// under it.
 pub(crate) fn swatch_tile(ui: &mut Ui, rgba: [f32; 4], name: &str, chosen: bool) -> Response {
+    tile(ui, name, chosen, |painter, block| {
+        painter.rect_filled(block, 6.0, Theme::panel_bg_solid());
+        painter.rect_filled(block, 6.0, srgb(rgba));
+    })
+}
+
+/// [None] as a tile: white, struck through in red, the way every Adobe
+/// palette draws no colour at all.
+pub(crate) fn none_tile(ui: &mut Ui, chosen: bool) -> Response {
+    tile(ui, "[None]", chosen, paint_none)
+}
+
+/// [None] as a small chip beside a name.
+pub(crate) fn none_chip(ui: &mut Ui) {
+    let (spot, _) = ui.allocate_exact_size(Vec2::new(28.0, 18.0), Sense::hover());
+    paint_none(ui.painter(), spot);
+    ui.painter().rect_stroke(
+        spot,
+        4.0,
+        Stroke::new(1.0, Theme::border()),
+        egui::StrokeKind::Inside,
+    );
+}
+
+fn paint_none(painter: &egui::Painter, block: Rect) {
+    painter.rect_filled(block, 5.0, Color32::WHITE);
+    painter.line_segment(
+        [block.left_bottom(), block.right_top()],
+        Stroke::new(1.5, Color32::from_rgb(0xE0, 0x30, 0x30)),
+    );
+}
+
+/// A tile: whatever `block` paints in a rounded block, the name under it,
+/// the chosen one on the accent's ground and ringed.
+fn tile(
+    ui: &mut Ui,
+    name: &str,
+    chosen: bool,
+    block: impl FnOnce(&egui::Painter, Rect),
+) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(78.0, 64.0), Sense::click());
     let painter = ui.painter();
     if chosen {
@@ -578,14 +618,13 @@ pub(crate) fn swatch_tile(ui: &mut Ui, rgba: [f32; 4], name: &str, chosen: bool)
             egui::StrokeKind::Inside,
         );
     }
-    let block = Rect::from_center_size(
+    let area = Rect::from_center_size(
         egui::pos2(rect.center().x, rect.top() + 22.0),
         Vec2::new(54.0, 30.0),
     );
-    painter.rect_filled(block, 6.0, Theme::panel_bg_solid());
-    painter.rect_filled(block, 6.0, srgb(rgba));
+    block(&painter.with_clip_rect(area), area);
     painter.rect_stroke(
-        block,
+        area,
         6.0,
         Stroke::new(
             if chosen { 2.0 } else { 1.0 },
@@ -605,10 +644,7 @@ pub(crate) fn swatch_tile(ui: &mut Ui, rgba: [f32; 4], name: &str, chosen: bool)
     job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - 6.0);
     let galley = painter.layout_job(job);
     painter.galley(
-        egui::pos2(
-            rect.center().x - galley.size().x / 2.0,
-            block.bottom() + 6.0,
-        ),
+        egui::pos2(rect.center().x - galley.size().x / 2.0, area.bottom() + 6.0),
         galley,
         if chosen {
             Theme::text_primary()
