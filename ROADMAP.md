@@ -73,7 +73,7 @@ Never "done" until shipping; re-checked at the close of every milestone.
   and five deliberate, commented, bracketed gestures. The rule was wrong, not
   the code — which is the argument for asserting a rule rather than stating
   one.*
-- [ ] **The application is operable from the keyboard alone**, and every
+- [~] **The application is operable from the keyboard alone**, and every
   control carries an accessible name through egui's AccessKit support.
   Retrofitting this costs many times what designing for it does, and a
   publishing tool that a screen reader cannot describe is not finished.
@@ -160,9 +160,44 @@ Never "done" until shipping; re-checked at the close of every milestone.
     `accesskit_node_builder` returns `None` otherwise — so a sighted person
     pays nothing for it. The test proves descent from the canvas node and
     that the upper object's bounds sit above the lower's.
-  - **Nobody has run a screen reader against any of it.** Still true, and
-    not a line of code away: it needs a person with NVDA or VoiceOver at the
-    window.
+  - **Nobody has run a screen reader against any of it.** Answered on
+    2026-09-23, below.
+
+  **2026-09-23 — NVDA at the window, on Windows, and what it heard.** The
+  first run of a real screen reader found three kinds of fault the tests had
+  passed, because each test asked whether a control *had* a name and none
+  asked whether the name said anything.
+
+  - **A field was its number** (`2fc5c09`). The Properties panel read "spin
+    button, 264.58 mm" for X, Y, W and H alike, and "button" for a colour
+    swatch — rotation, opacity, stroke weight, miter limit and zoom the same.
+    egui's number box clears its own name so the value is not read twice, and
+    the word printed beside it is a separate label Tab never lands on. Now
+    every labelled row hands its word to its field: `FieldLabel` and the
+    dialogs' `field()` name the first widget they add, and the control bar,
+    status bar and swatches name theirs directly. W and H are spoken as Width
+    and Height. The unnamed-control test counts number fields and colour
+    swatches, draws the control bar and status bar too, and runs with
+    nothing, a shape and a text frame selected.
+  - **A drop-down or a box was named by nothing** (`01cdb8d`). NVDA found
+    the New Document dialog's facing-pages box as "check box, checked" and
+    no more. A combo box takes its id from its salt, not from the row it sits
+    in, so the row's word never reached it: 22 across the dialogs, the style
+    editor and the Type section, and the style editor's "this style states
+    it" boxes had no caption at all. Each is named for the setting it holds.
+    A new test opens nine dialogs over a text frame, draws them twice so the
+    windows lay out, and requires the facing-pages box by name, so it cannot
+    pass on dialogs that did not draw.
+  - **Tab stopped on "unknown"** (`eaca08e`). The docks' splitter, focusable
+    like any draggable egui widget, and the rulers' zero-point square. The
+    splitter is now "Right dock width", a splitter; the zero point is a
+    button, and Enter or Space resets the origin as a double-click does,
+    since a key cannot drag it. The docked-panel test fails on any focusable
+    node with no role.
+
+  **Left:** VoiceOver on macOS and Orca on Linux, both unverified; and the
+  windows rebuilt in the panel pass, from 2026-09-24, have not been walked
+  with NVDA since.
 - [x] **Performance is measured, not asserted.** A guard over a 500-frame
   document holds resolve and scene-build time under one whole frame. Baseline
   on the development machine, 2026-09-03: **0.41 ms**, roughly fifty times
@@ -993,12 +1028,26 @@ travel with the code.
     under test, where egui's default row height *equals* the compact height, so
     a style that never changed would have passed as one that did.
 
-### The panel pass (2026-09-24 to 2026-09-26)
+### The panel pass (2026-09-23 to 2026-09-27)
 
 One window at a time, each rebuilt around the question a person brings to
 it, with the model work each needed landing in the same commit. The commit
 of each carries the full account; this is the index.
 
+- [x] **The New Document dialog, as InDesign's (2026-09-23).** It was one
+  narrow column mixing three label styles, with facing pages a lone box
+  under the word "Facing" and one number for all four margins. Print and
+  Screen tabs now choose what the job is for and bring that intent's
+  defaults — paper, facing pages and a 3 mm bleed for a press; pixel sizes,
+  single pages and no bleed for a screen. Under them, a grid of preset cards,
+  each page drawn at its own proportions and turned for Landscape; beside it
+  the chosen size's details: width and height, orientation, pages and facing
+  pages, columns and gutter, four linked margins (inside and outside when
+  pages face), bleed and slug, and the colour note with the resolution
+  warning. The dialog keeps its height across tabs, so switching does not
+  move it under the pointer. Screen sizes carry their orientation, since
+  Full HD on its side is a story and matching either way round named both —
+  a test found that (`9d5884a`).
 - [x] **The style windows.** The paragraph style window shows what an
   unstated property inherits and from whom ("18 pt, from Body"), and ticking
   it starts from that value rather than one chosen in the code (`fdb6c7f`).
