@@ -1378,8 +1378,10 @@ fn resolve_one<'a>(
 
         FrameKind::Table(table) => {
             // Cells hold stories like any text frame, so a composing input
-            // method reaches them the same way.
-            let laid = crate::table::lay_out(table, doc, shaper, |id| {
+            // method reaches them the same way, and read their markers off
+            // the page the table stands on, as a text frame there does.
+            let styles = OnPage::new(doc, variables_for(doc, id, on, running));
+            let laid = crate::table::lay_out(table, doc, &styles, shaper, |id| {
                 story_of(doc, composed, id).cloned()
             });
             ResolvedKind::Table {
@@ -2351,6 +2353,58 @@ Some body copy.",
         assert_eq!(
             on(pages[2]),
             glyphs_for(&mut shaper, "iii|iii|Autumn|7 September 2026|")
+        );
+    }
+
+    #[test]
+    fn a_table_cell_reads_its_markers_off_the_page_the_table_stands_on() {
+        use tessera_document::variables::TextVariable;
+        use tessera_text::variables::Marker;
+        let mut doc = Document::default();
+        let second = doc.add_page();
+        doc.set_variables(vec![TextVariable::custom("Title", "Autumn")]);
+        let text = format!(
+            "p. {} {}",
+            Marker::PageNumber.character(),
+            Marker::Variable(0).character()
+        );
+        let mut texts = vec![text, String::new()].into_iter();
+        let table = tessera_document::table::new(1, 2, 300.0, || {
+            doc.add_story(Story::new(texts.next().unwrap_or_default()))
+        });
+        let bounds = doc.pages[second].bounds;
+        let layer = doc.default_layer().expect("a layer");
+        let id = doc.add_frame(layer, {
+            let mut f = rect(bounds.x + 20.0, bounds.y + 20.0, 300.0, 40.0);
+            f.kind = FrameKind::Table(table);
+            f
+        });
+
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+        let item = resolved
+            .items
+            .iter()
+            .find(|i| i.frame == id)
+            .expect("the table");
+        let ResolvedKind::Table { laid, .. } = &item.kind else {
+            panic!("not a table");
+        };
+        let cell = laid
+            .cells
+            .iter()
+            .find(|c| c.row == 0 && c.column == 0)
+            .expect("the first cell");
+        let glyphs: Vec<u32> = cell
+            .shaped
+            .lines
+            .iter()
+            .flat_map(|l| l.glyphs().map(|g| g.glyph_id))
+            .collect();
+        assert_eq!(
+            glyphs,
+            glyphs_for(&mut shaper, "p. 2 Autumn"),
+            "a page number and a variable in a cell, not \"p. # \""
         );
     }
 

@@ -2632,7 +2632,8 @@ master story cannot share one layout and an ordinary story keys as before.
   (format 34), InDesign's "Include Prefix when Numbering Pages", a checkbox
   in the section box and IDML's `IncludeSectionPrefix` on import. Off, the
   folio reads "1" and the Pages panel follows it, as its comment argues.
-- Not built: a variable in a table cell. *The chapter number is built
+- *Every variable once listed here as not built — chapter number, last
+  page number, file name, date, and a variable in a table cell — is built
   (2026-09-27, milestone 15).* *"Last page number", file name and date variables are built
   (2026-09-27, milestone 15).*
 
@@ -3198,8 +3199,13 @@ and running headers (milestone 10).
   appendix lettered A — keeps its own number and the next counts on from
   it. Stored rather than worked out at layout, so a chapter exported on
   its own says what it says in the book. Format 36.
-- [ ] 3. **Variables inside table cells.** A day. Merge fields go through the
-  same machinery, so this is what makes a field work in a cell.
+- [x] 3. **Variables inside table cells.** A day. Merge fields go through the
+  same machinery, so this is what makes a field work in a cell. *Done
+  2026-09-27.* A cell was shaped against the bare document, which knows no
+  page, so every marker in it read as its placeholder — "p. #". Cells are
+  now shaped against the page the table stands on (`OnPage`, as a text
+  frame there is), so a page number, a chapter number, any text variable
+  and, later, a merge field read in a cell as they read beside it.
 - [ ] 4. **A shared reader for CSV and tab-separated text**: a header row,
   quoted fields, UTF-8 and UTF-16. Hours to a day. Both the merge and
   importing a table read through it.
@@ -3267,8 +3273,8 @@ below are its items 1 to 3.
   interface, placing).
 - [ ] 6. **"Objects move with page edge"** when a page is resized
   (milestone 12).
-- [ ] 7. **Chapter number as a variable, and a variable in a table cell**
-  (milestone 10).
+- [x] 7. **Chapter number as a variable, and a variable in a table cell**
+  (milestone 10). *Done 2026-09-27, as milestone 15's items 2 and 3.*
 - [ ] 8. **Single-word justification** (milestone 9).
 - [ ] 9. **The story editor shows styles** (milestone 12).
 

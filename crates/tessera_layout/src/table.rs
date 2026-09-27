@@ -76,9 +76,15 @@ impl LaidTable {
 /// `story_of` resolves a cell's id to its text, so this does not need to know
 /// how a document stores stories — and so a composing input method can splice
 /// its preview in exactly as it does for a text frame.
+///
+/// `styles` is what the cells are shaped against: the document's styles and
+/// what the page the table stands on says its markers read as, so a page
+/// number, a chapter number or a merge field in a cell reads as it would in
+/// a text frame on the same page.
 pub fn lay_out(
     table: &Table,
     doc: &Document,
+    styles: &dyn tessera_text::story::Styles,
     shaper: &mut Shaper,
     mut story_of: impl FnMut(tessera_document::ids::StoryId) -> Option<Story>,
 ) -> LaidTable {
@@ -128,7 +134,7 @@ pub fn lay_out(
                 .and_then(|f| f.colour)
                 .unwrap_or(tessera_color::Color::BLACK);
             let color = doc.resolve_colour(&color);
-            let mut shaped = shaper.shape(&story, doc, inner);
+            let mut shaped = shaper.shape(&story, styles, inner);
             shaped.resolve_colours(|c| doc.resolve_colour(c));
             let needs = shaped.height + cell.inset.top + cell.inset.bottom;
             measured.push(Measured {
@@ -251,7 +257,7 @@ mod tests {
         let mut shaper = Shaper::new();
         let stories: Vec<(StoryId, Story)> =
             doc.stories.iter().map(|(id, s)| (id, s.clone())).collect();
-        lay_out(table, doc, &mut shaper, |id| {
+        lay_out(table, doc, doc, &mut shaper, |id| {
             stories
                 .iter()
                 .find(|(k, _)| *k == id)
