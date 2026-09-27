@@ -73,6 +73,46 @@ fn yes() -> bool {
     true
 }
 
+/// Which chapter a document is, for the chapter number variable.
+///
+/// InDesign's "Document Chapter Numbering": a document is a chapter of a
+/// book, and its number is either its own or the one after the chapter
+/// before it in the book. Stored on the document, not worked out from the
+/// book when it is laid out, for the reason page numbers are: a chapter
+/// is laid out, exported and printed on its own, and must say the same
+/// thing then as in the book. The book writes it in
+/// (`tessera_layout::book::continue_numbering`), as it does the first page
+/// number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Chapter {
+    pub number: u32,
+    #[serde(default)]
+    pub style: Numbering,
+    /// Take the number after the previous document's in a book. Off, the
+    /// document keeps `number` whatever the book around it does — an
+    /// appendix numbered A in a book of chapters.
+    #[serde(default = "yes")]
+    pub follows_book: bool,
+}
+
+impl Default for Chapter {
+    /// Chapter one, in arabic, numbered on by a book.
+    fn default() -> Self {
+        Self {
+            number: 1,
+            style: Numbering::Arabic,
+            follows_book: true,
+        }
+    }
+}
+
+impl Chapter {
+    /// The number as it prints: "3", "iii", "C".
+    pub fn label(self) -> String {
+        self.style.label(self.number as usize)
+    }
+}
+
 /// One page's number, as its section writes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageNumber {

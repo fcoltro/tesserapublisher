@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 35;
+pub const FORMAT_VERSION: u32 = 36;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -113,6 +113,10 @@ pub fn load(path: &Path) -> Result<Document, FormatError> {
 /// ago follows exactly the path a document written two versions ago does, and
 /// each step only has to know about its own change.
 fn migrate(value: &mut serde_json::Value, from: u32) {
+    // 35 -> 36: a document says which chapter it is (`chapter`), and a
+    // variable can print it. **No step**: absent reads as chapter one in
+    // arabic, numbered on by a book, which is what a chapter number would
+    // have said of every earlier document.
     // 34 -> 35: text variables gained the file name, date and last page
     // number kinds. **No step**: every earlier variable is a kind that
     // still exists. The version moves so an older build refuses a document

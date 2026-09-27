@@ -862,8 +862,9 @@ fn the_format_version_is_twenty_six() {
     // 32 endnotes — where the notes go, and the list's recipe — at the foot
     // and no list before; 33 an index entry's span, the marker's page before;
     // 34 a section's prefix left off the number, always on before; 35 the
-    // file name, date and last page number variables, which did not exist.
-    assert_eq!(format::FORMAT_VERSION, 35);
+    // file name, date and last page number variables, which did not exist;
+    // 36 a document's chapter number, chapter one before.
+    assert_eq!(format::FORMAT_VERSION, 36);
 }
 
 #[test]

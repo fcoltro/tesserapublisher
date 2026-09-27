@@ -25,28 +25,44 @@ use crate::resolve::{LinkTarget, ResolvedDocument};
 pub fn continue_numbering(documents: &mut [Document]) -> Vec<bool> {
     let mut changed = vec![false; documents.len()];
     let mut next: Option<u32> = None;
+    // Chapters number on the same way: each that follows the book takes
+    // the number after the chapter before it. One that does not — an
+    // appendix lettered A — keeps its own, and the next counts on from it.
+    let mut chapter: Option<u32> = None;
     for (index, doc) in documents.iter_mut().enumerate() {
+        if let Some(previous) = chapter
+            && doc.chapter.follows_book
+            && doc.chapter.number != previous.saturating_add(1)
+        {
+            let mut numbered = doc.chapter;
+            numbered.number = previous.saturating_add(1);
+            doc.set_chapter(numbered);
+            changed[index] = true;
+        }
+        chapter = Some(doc.chapter.number);
         let first = doc.page_ids().next();
         if let Some(start) = next
             && let Some(first) = first
         {
             let mut sections = doc.sections.clone();
+            let mut renumbered = false;
             match sections.iter_mut().find(|s| s.first == first) {
                 Some(section) => {
                     if section.start != Some(start) {
                         section.start = Some(start);
-                        changed[index] = true;
+                        renumbered = true;
                     }
                 }
                 None => {
                     let mut section = Section::starting_at(first);
                     section.start = Some(start);
                     sections.insert(0, section);
-                    changed[index] = true;
+                    renumbered = true;
                 }
             }
-            if changed[index] {
+            if renumbered {
                 doc.set_sections(sections);
+                changed[index] = true;
             }
         }
         // Where the next document picks up: after this one's last page.
@@ -282,6 +298,42 @@ mod tests {
         docs[1].set_sections(vec![section]);
         continue_numbering(&mut docs);
         assert_eq!(labels(&docs[1]), vec!["iv", "v"]);
+    }
+
+    #[test]
+    fn chapter_numbers_count_on_and_an_appendix_keeps_its_own() {
+        use tessera_document::sections::Chapter;
+        use tessera_text::story::Numbering;
+        let mut docs = vec![
+            chapter(1, "One"),
+            chapter(1, "Two"),
+            chapter(1, "Appendix"),
+            chapter(1, "Index"),
+        ];
+        // The book starts at chapter three; the appendix is lettered A and
+        // says so for itself.
+        docs[0].set_chapter(Chapter {
+            number: 3,
+            ..Chapter::default()
+        });
+        docs[2].set_chapter(Chapter {
+            number: 1,
+            style: Numbering::UpperAlpha,
+            follows_book: false,
+        });
+        let changed = continue_numbering(&mut docs);
+        let labels: Vec<String> = docs.iter().map(|d| d.chapter.label()).collect();
+        assert_eq!(
+            labels,
+            ["3", "4", "A", "2"],
+            "the index counts on from A's 1"
+        );
+        assert_eq!(changed, vec![false, true, true, true]);
+        assert_eq!(
+            continue_numbering(&mut docs),
+            vec![false, false, false, false],
+            "numbered once, nothing to save the second time"
+        );
     }
 
     #[test]

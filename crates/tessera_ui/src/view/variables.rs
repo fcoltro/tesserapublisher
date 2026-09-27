@@ -154,6 +154,13 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                         PageScope::Document,
                     ));
                 }
+                if ui
+                    .add_enabled(!full, egui::Button::new("Add chapter number"))
+                    .on_hover_text("Set in Numbering and section options")
+                    .clicked()
+                {
+                    draft.push(TextVariable::chapter_number("Chapter number"));
+                }
             });
 
             ui.add_space(Theme::space_2());
@@ -297,6 +304,9 @@ fn one(
                     egui::WidgetType::TextEdit,
                     None,
                 );
+            }
+            VariableKind::ChapterNumber => {
+                ui.colored_label(Theme::text_muted(), "from the numbering options");
             }
             VariableKind::LastPageNumber { scope } => {
                 crate::icons::reads_as(

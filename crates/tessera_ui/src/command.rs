@@ -677,6 +677,9 @@ pub enum Command {
     /// Replace where page numbering restarts. The whole list at once, so a
     /// section dialog is one undo entry.
     SetSections(Vec<tessera_document::sections::Section>),
+    /// Say which chapter of a book the document is: its number, how it is
+    /// written, and whether a book numbers it on.
+    SetChapter(tessera_document::sections::Chapter),
     /// Replace the document's text variables. The whole list, for the same
     /// reason — and because a story names a variable by its position.
     SetVariables(Vec<tessera_document::variables::TextVariable>),
@@ -2180,6 +2183,10 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::SetSections(sections) => {
             state.active_mut().document_mut().set_sections(sections);
+        }
+
+        Command::SetChapter(chapter) => {
+            state.active_mut().document_mut().set_chapter(chapter);
         }
 
         Command::SetVariables(variables) => {

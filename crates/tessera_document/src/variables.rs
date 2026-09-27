@@ -52,6 +52,9 @@ pub enum VariableKind {
     /// The number of the last page, of the document or of the section the
     /// page is in — "page 3 of 12".
     LastPageNumber { scope: PageScope },
+    /// The document's chapter number, as its numbering options write it
+    /// ([`crate::sections::Chapter`]).
+    ChapterNumber,
 }
 
 /// Which of the document's dates a [`VariableKind::Date`] reads.
@@ -291,6 +294,13 @@ impl TextVariable {
                 of,
                 format: format.into(),
             },
+        }
+    }
+
+    pub fn chapter_number(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            kind: VariableKind::ChapterNumber,
         }
     }
 

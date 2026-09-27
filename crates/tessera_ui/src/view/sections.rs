@@ -11,7 +11,7 @@
 use egui::Ui;
 use tessera_document::document::Document;
 use tessera_document::ids::PageId;
-use tessera_document::sections::Section;
+use tessera_document::sections::{Chapter, Section};
 use tessera_text::story::Numbering;
 
 use crate::app::TesseraApp;
@@ -31,6 +31,8 @@ pub struct SectionsWindow {
     /// Whether the count continues from the page before rather than
     /// starting at `draft.start`.
     pub continues: bool,
+    /// The document's chapter numbering, as the fields show it.
+    pub chapter: Chapter,
 }
 
 impl SectionsWindow {
@@ -59,6 +61,7 @@ impl SectionsWindow {
         });
         self.continues = draft.start.is_none();
         self.draft = Some(draft);
+        self.chapter = doc.chapter;
         self.page = Some(page);
         self.open = true;
     }
@@ -154,6 +157,37 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                 });
             });
 
+            // The whole document's, not the page's: InDesign keeps "Document
+            // Chapter Numbering" in this same box.
+            ui.add_space(Theme::space_2());
+            ui.label(egui::RichText::new("Document chapter numbering").strong());
+            let chapter = &mut window.chapter;
+            ui.checkbox(
+                &mut chapter.follows_book,
+                "Continue from the previous document in the book",
+            )
+            .on_hover_text("A book numbers this chapter on from the one before it");
+            ui.add_enabled_ui(!chapter.follows_book, |ui| {
+                crate::view::panels::field(ui, "Chapter number", |ui| {
+                    let mut number = f64::from(chapter.number);
+                    ui.add(
+                        egui::DragValue::new(&mut number)
+                            .range(1.0..=9999.0)
+                            .speed(0.2)
+                            .fixed_decimals(0),
+                    );
+                    chapter.number = number.round() as u32;
+                });
+            });
+            crate::view::panels::field(ui, "Chapter style", |ui| {
+                numbering_combo_salted(
+                    ui,
+                    "chapter-numbering",
+                    "Chapter style",
+                    &mut chapter.style,
+                );
+            });
+
             ui.add_space(Theme::space_2());
             ui.horizontal(|ui| {
                 go = ui.add(super::primary_button("OK")).clicked();
@@ -168,7 +202,14 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
     }
     if go {
         let sections = window.sections_after(state.active().document());
-        apply(state, Command::SetSections(sections));
+        // One undo step for the box, whichever parts of it changed.
+        apply(
+            state,
+            Command::Together(vec![
+                Command::SetSections(sections),
+                Command::SetChapter(window.chapter),
+            ]),
+        );
         window.open = false;
     }
     state.numbering = window;
@@ -176,6 +217,16 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
 
 /// The five ways a page can count, chosen from a list.
 pub(crate) fn numbering_combo(ui: &mut Ui, numbering: &mut Numbering) {
+    numbering_combo_salted(ui, "section-numbering", "Numbering", numbering);
+}
+
+/// The same, with its own id, for a box that shows two.
+pub(crate) fn numbering_combo_salted(
+    ui: &mut Ui,
+    salt: &str,
+    name: &str,
+    numbering: &mut Numbering,
+) {
     let choices = [
         (Numbering::Arabic, "1, 2, 3"),
         (Numbering::LowerAlpha, "a, b, c"),
@@ -188,7 +239,7 @@ pub(crate) fn numbering_combo(ui: &mut Ui, numbering: &mut Numbering) {
         .find(|(n, _)| n == numbering)
         .map_or("1, 2, 3", |(_, label)| *label);
     crate::icons::reads_as(
-        egui::ComboBox::from_id_salt("section-numbering")
+        egui::ComboBox::from_id_salt(salt)
             .selected_text(shown)
             .show_ui(ui, |ui| {
                 for (choice, label) in choices {
@@ -196,7 +247,7 @@ pub(crate) fn numbering_combo(ui: &mut Ui, numbering: &mut Numbering) {
                 }
             })
             .response,
-        "Numbering",
+        name,
         egui::WidgetType::ComboBox,
         None,
     );

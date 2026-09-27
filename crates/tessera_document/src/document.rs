@@ -177,6 +177,11 @@ pub struct Document {
     /// page; see [`crate::sections`].
     #[serde(default)]
     pub sections: Vec<crate::sections::Section>,
+    /// Which chapter of a book this is, for the chapter number variable.
+    /// Chapter one where a file says nothing, as every document before it
+    /// was.
+    #[serde(default)]
+    pub chapter: crate::sections::Chapter,
 
     /// The text variables this document defines, in marker order: a story's
     /// `Marker::Variable(n)` is the `n`th of these. See [`crate::variables`].
@@ -259,6 +264,7 @@ impl Document {
                 ..DocumentSetup::default()
             },
             sections: Vec::new(),
+            chapter: crate::sections::Chapter::default(),
             variables: Vec::new(),
             contents: crate::contents::Contents::default(),
             index: crate::contents::Index::default(),
@@ -753,6 +759,12 @@ impl Document {
     /// edits one is one undo entry.
     pub fn set_sections(&mut self, sections: Vec<crate::sections::Section>) {
         self.sections = sections;
+        self.touch();
+    }
+
+    /// Say which chapter of a book this is.
+    pub fn set_chapter(&mut self, chapter: crate::sections::Chapter) {
+        self.chapter = chapter;
         self.touch();
     }
 

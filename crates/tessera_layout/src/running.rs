@@ -106,7 +106,8 @@ impl Running {
                 VariableKind::Custom(_)
                 | VariableKind::FileName { .. }
                 | VariableKind::Date { .. }
-                | VariableKind::LastPageNumber { .. } => None,
+                | VariableKind::LastPageNumber { .. }
+                | VariableKind::ChapterNumber => None,
             })
             .collect();
         let anchors = Self::read_anchors(doc, items);

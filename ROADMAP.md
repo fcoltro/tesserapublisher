@@ -2632,8 +2632,8 @@ master story cannot share one layout and an ordinary story keys as before.
   (format 34), InDesign's "Include Prefix when Numbering Pages", a checkbox
   in the section box and IDML's `IncludeSectionPrefix` on import. Off, the
   folio reads "1" and the Pages panel follows it, as its comment argues.
-- Not built: chapter numbers as a variable, and a variable in a table
-  cell. *"Last page number", file name and date variables are built
+- Not built: a variable in a table cell. *The chapter number is built
+  (2026-09-27, milestone 15).* *"Last page number", file name and date variables are built
   (2026-09-27, milestone 15).*
 
 ---
@@ -3189,7 +3189,15 @@ and running headers (milestone 10).
   "until a date crate arrives", now hold real dates; a file saved before
   has none and prints none rather than today. The output date moves with
   the clock only in a document that prints it. Format 35.
-- [ ] 2. **Variables: chapter number.** A day.
+- [x] 2. **Variables: chapter number.** A day. *Done 2026-09-27.* A
+  document says which chapter it is (`Document::chapter`: a number, a
+  style, and whether a book numbers it on), in the Numbering and section
+  options box as InDesign keeps it, one undo step with the sections. The
+  book numbers chapters on in the same pass as pages
+  (`continue_numbering`); a chapter that does not follow the book — an
+  appendix lettered A — keeps its own number and the next counts on from
+  it. Stored rather than worked out at layout, so a chapter exported on
+  its own says what it says in the book. Format 36.
 - [ ] 3. **Variables inside table cells.** A day. Merge fields go through the
   same machinery, so this is what makes a field work in a cell.
 - [ ] 4. **A shared reader for CSV and tab-separated text**: a header row,

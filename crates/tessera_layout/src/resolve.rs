@@ -1190,6 +1190,7 @@ fn variable_text(
         VariableKind::RunningHeader { style, which } => {
             running.header(on, *style, *which).unwrap_or_default()
         }
+        VariableKind::ChapterNumber => doc.chapter.label(),
         VariableKind::FileName { folder, extension } => {
             doc.file_facts().file_name(*folder, *extension)
         }
@@ -2351,6 +2352,33 @@ Some body copy.",
             on(pages[2]),
             glyphs_for(&mut shaper, "iii|iii|Autumn|7 September 2026|")
         );
+    }
+
+    #[test]
+    fn the_chapter_number_variable_prints_the_chapter_in_its_style() {
+        use tessera_document::sections::Chapter;
+        use tessera_document::variables::TextVariable;
+        use tessera_text::story::Numbering;
+        use tessera_text::variables::Marker;
+        let text = format!("Chapter {}", Marker::Variable(0).character());
+        let (mut doc, folio, _) = a_master_folio(2, &text);
+        doc.set_variables(vec![TextVariable::chapter_number("Chapter")]);
+        doc.set_chapter(Chapter {
+            number: 4,
+            style: Numbering::UpperRoman,
+            follows_book: true,
+        });
+        let pages: Vec<PageId> = doc.page_ids().collect();
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+        for page in pages {
+            let item = resolved
+                .items
+                .iter()
+                .find(|i| i.frame == folio && i.on == Some(page))
+                .expect("resolved");
+            assert_eq!(glyphs_of(item), glyphs_for(&mut shaper, "Chapter IV"));
+        }
     }
 
     #[test]
