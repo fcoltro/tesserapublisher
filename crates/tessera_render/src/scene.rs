@@ -706,8 +706,8 @@ fn build_inner(
                 draw_text(&mut scene, transform, item.bounds, shaped, color, proof);
             }
 
-            ResolvedKind::Table { laid, stroke } => {
-                draw_table(&mut scene, transform, item.bounds, laid, stroke, proof);
+            ResolvedKind::Table { laid, .. } => {
+                draw_table(&mut scene, transform, item.bounds, laid, &stroke_of, proof);
             }
         }
 
@@ -759,7 +759,7 @@ fn paint_extent(kind: &ResolvedKind, rect: Rect) -> Rect {
         ResolvedKind::Text { .. } => 0.0,
         // A table's rules are centred on its edges, so half of the outermost
         // one falls outside the grid.
-        ResolvedKind::Table { stroke, .. } => stroke.as_ref().map(|s| s.width / 2.0).unwrap_or(0.0),
+        ResolvedKind::Table { laid, .. } => laid.rule_reach(),
     };
     rect.inflate(reach, reach)
 }
@@ -771,15 +771,16 @@ fn paint_extent(kind: &ResolvedKind, rect: Rect) -> Rect {
 /// them is half inside the cell below and to the right. Text last, because a
 /// rule drawn over a descender is the sort of thing that looks like a font bug.
 ///
-/// The rules are drawn from the grid's own edges rather than four to a cell:
-/// per-cell borders put two strokes on every interior boundary, which at a
-/// hairline is a line of double weight everywhere except the outside.
+/// The rules are the layout's (`LaidTable::rules`): one line per shared
+/// edge rather than four to a cell, which would put two strokes on every
+/// interior boundary, and none across a merged cell. Each is drawn with the
+/// whole stroke — caps, dashes, the hairline floor — as any frame's is.
 fn draw_table(
     scene: &mut Scene,
     transform: Affine,
     bounds: DocRect,
     laid: &tessera_layout::table::LaidTable,
-    stroke: &Option<tessera_document::nodes::Stroke>,
+    stroke_of: &dyn Fn(&Stroke) -> KurboStroke,
     proof: Option<&Proof>,
 ) {
     let origin = |x: f64, y: f64| (bounds.x + x, bounds.y + y);
@@ -806,32 +807,17 @@ fn draw_table(
         }
     }
 
-    if let Some(s) = stroke
-        && s.width > 0.0
-    {
-        let rule = KurboStroke::new(s.width);
-        let colour = ink(&s.color, proof);
-        let (width, height) = laid.size();
-        for x in &laid.column_edges {
-            let (x0, y0) = origin(*x, 0.0);
-            scene.stroke(
-                &rule,
-                transform,
-                colour,
-                None,
-                &Line::new((x0, y0), (x0, y0 + height)),
-            );
-        }
-        for y in &laid.row_edges {
-            let (x0, y0) = origin(0.0, *y);
-            scene.stroke(
-                &rule,
-                transform,
-                colour,
-                None,
-                &Line::new((x0, y0), (x0 + width, y0)),
-            );
-        }
+    for rule in &laid.rules {
+        scene.stroke(
+            &stroke_of(&rule.stroke),
+            transform,
+            ink(&rule.stroke.color, proof),
+            None,
+            &Line::new(
+                origin(rule.from.0, rule.from.1),
+                origin(rule.to.0, rule.to.1),
+            ),
+        );
     }
 
     for cell in &laid.cells {

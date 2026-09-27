@@ -3220,8 +3220,22 @@ and running headers (milestone 10).
   shift every later field a column. A header's `@Photo` is an image field,
   InDesign's convention. Blank names, repeated names, ragged and blank
   rows are made into a grid and each change is said in `Data::notes`.
-- [ ] 5. **Tables: a stroke for each side of a cell, and alternating row
-  fills.** A day.
+- [x] 5. **Tables: a stroke for each side of a cell, and alternating row
+  fills.** A day. *Done 2026-09-27.* Table ▸ Table options… sets the
+  table's rule, its alternating fills (first and next rows, a tint, rows
+  skipped at the head and foot) and the sides of the cell being edited,
+  as one undo step. A cell's side is its own stroke, the table's, or a
+  stroke of no width for none; **an edge is shared**, so setting one sets
+  the neighbour's facing side too, and where a document disagrees the
+  cell below or to the right wins. **The rules are worked out once, in the
+  layout** (`LaidTable::rules`), as straight runs with their strokes, and
+  the screen and the PDF both draw that list. That fixed a fault found on
+  the way: both painters drew every grid line end to end, so **a merged
+  cell was crossed by the rules of the cells it swallowed**. Neighbouring
+  pieces in one stroke are joined, so a dash runs unbroken across a row.
+  A cell's own fill wins over the pattern. Rules keep their dashes and
+  caps on screen now, as every other stroke does; their colours reach the
+  separations. Format 37.
 - [ ] 6. **Tables: drag column and row edges to resize.** A day.
 - [ ] 7. **Tables: convert text to a table and back, sort rows, import a CSV
   as a table.** A day or two.

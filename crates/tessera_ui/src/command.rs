@@ -69,6 +69,26 @@ pub enum Command {
         row: usize,
         column: usize,
     },
+    /// Draw `sides` of the cell at `row`, `column` as `stroke` — `None` for
+    /// the table's own, a stroke of no width for none — and the facing side
+    /// of each neighbour, so a shared edge says one thing.
+    SetCellEdges {
+        id: FrameId,
+        row: usize,
+        column: usize,
+        sides: Vec<tessera_document::table::Side>,
+        stroke: Option<tessera_document::nodes::Stroke>,
+    },
+    /// The table's own rule, drawn wherever a cell does not say otherwise.
+    SetTableStroke {
+        id: FrameId,
+        stroke: Option<tessera_document::nodes::Stroke>,
+    },
+    /// Fill the table's rows in turn, or stop.
+    SetAlternatingFills {
+        id: FrameId,
+        alternating: Option<tessera_document::table::AlternatingFills>,
+    },
     /// A grid of empty cells filling `bounds`.
     ///
     /// The rows are a starting height; the layout pass grows them to whatever
@@ -1234,6 +1254,44 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 return;
             };
             table.split(row, column, tessera_document::ids::StoryId::default);
+            finish_table_edit(state, id, table);
+        }
+
+        Command::SetCellEdges {
+            id,
+            row,
+            column,
+            sides,
+            stroke,
+        } => {
+            let Some(FrameKind::Table(mut table)) =
+                state.active().document().frame(id).map(|f| f.kind.clone())
+            else {
+                return;
+            };
+            for side in sides {
+                table.set_side(row, column, side, stroke.clone());
+            }
+            finish_table_edit(state, id, table);
+        }
+
+        Command::SetTableStroke { id, stroke } => {
+            let Some(FrameKind::Table(mut table)) =
+                state.active().document().frame(id).map(|f| f.kind.clone())
+            else {
+                return;
+            };
+            table.stroke = stroke;
+            finish_table_edit(state, id, table);
+        }
+
+        Command::SetAlternatingFills { id, alternating } => {
+            let Some(FrameKind::Table(mut table)) =
+                state.active().document().frame(id).map(|f| f.kind.clone())
+            else {
+                return;
+            };
+            table.alternating = alternating.map(Box::new);
             finish_table_edit(state, id, table);
         }
 

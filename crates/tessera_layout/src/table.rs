@@ -19,6 +19,7 @@
 //! whose boundary moves without disturbing anything already measured above it.
 
 use tessera_document::document::Document;
+use tessera_document::nodes::Stroke;
 use tessera_document::table::{Slot, Table};
 use tessera_geometry::DocRect;
 use tessera_text::shape::{Column, ShapedText};
@@ -59,9 +60,29 @@ pub struct LaidTable {
     pub column_edges: Vec<f64>,
     /// The y of every row boundary, `rows + 1` of them, from zero.
     pub row_edges: Vec<f64>,
+    /// The lines to draw, each with its own stroke, colours resolved.
+    /// Worked out here, once, so the screen and the PDF draw the same rules
+    /// rather than each deciding which edges a merged cell hides.
+    pub rules: Vec<LaidRule>,
+}
+
+/// One straight rule, from one point to another in the frame's own space.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LaidRule {
+    pub from: (f64, f64),
+    pub to: (f64, f64),
+    pub stroke: Stroke,
 }
 
 impl LaidTable {
+    /// Half the widest rule: how far the table's ink reaches past its grid,
+    /// since a rule is centred on its edge.
+    pub fn rule_reach(&self) -> f64 {
+        self.rules
+            .iter()
+            .map(|r| r.stroke.width / 2.0)
+            .fold(0.0, f64::max)
+    }
     /// The whole grid's size.
     pub fn size(&self) -> (f64, f64) {
         (
@@ -212,16 +233,90 @@ pub fn lay_out(
             text_area,
             shaped: flowed.text,
             overset_lines: flowed.overset_lines,
-            fill: cell.fill.as_ref().map(|p| doc.resolve_paint(p)),
+            // The cell's own, else the row's turn in the alternating fills.
+            fill: cell
+                .fill
+                .as_ref()
+                .or_else(|| {
+                    table
+                        .alternating
+                        .as_ref()
+                        .and_then(|a| a.fill_for_row(m.row, rows))
+                })
+                .map(|p| doc.resolve_paint(p)),
             color: doc.resolve_colour(&m.color),
         });
     }
 
+    let rules = rules_of(table, doc, &column_edges, &row_edges);
     LaidTable {
         cells,
         column_edges,
         row_edges,
+        rules,
     }
+}
+
+/// Every rule the table draws, as straight runs.
+///
+/// Each grid line is read a unit at a time — a column's width of a row
+/// boundary, a row's height of a column boundary — and a unit inside a
+/// spanning cell draws nothing, so a merged cell is not crossed by the lines
+/// of the cells it swallowed. Neighbouring units drawn with the same stroke
+/// are joined into one run, so a dash pattern runs on unbroken across a row
+/// and the PDF says one line where it means one.
+fn rules_of(
+    table: &Table,
+    doc: &Document,
+    column_edges: &[f64],
+    row_edges: &[f64],
+) -> Vec<LaidRule> {
+    use tessera_document::table::Rule;
+    let owners = table.owners();
+    let (rows, columns) = (table.rows(), table.columns());
+    let mut rules: Vec<LaidRule> = Vec::new();
+    let mut push = |from: (f64, f64), to: (f64, f64), stroke: Option<&Stroke>| {
+        let Some(stroke) = stroke.filter(|s| s.width > 0.0) else {
+            return;
+        };
+        // Joined onto the run before when it carries straight on in the same
+        // stroke.
+        if let Some(last) = rules.last_mut()
+            && last.to == from
+            && last.stroke == *stroke
+            && (last.from.0 == to.0 || last.from.1 == to.1)
+        {
+            last.to = to;
+            return;
+        }
+        rules.push(LaidRule {
+            from,
+            to,
+            stroke: stroke.clone(),
+        });
+    };
+    for (row, &y) in row_edges.iter().enumerate().take(rows + 1) {
+        for column in 0..columns {
+            if let Rule::Drawn(stroke) = table.rule_across(&owners, row, column) {
+                push(
+                    (column_edges[column], y),
+                    (column_edges[column + 1], y),
+                    stroke,
+                );
+            }
+        }
+    }
+    for (column, &x) in column_edges.iter().enumerate().take(columns + 1) {
+        for row in 0..rows {
+            if let Rule::Drawn(stroke) = table.rule_down(&owners, row, column) {
+                push((x, row_edges[row]), (x, row_edges[row + 1]), stroke);
+            }
+        }
+    }
+    for rule in &mut rules {
+        rule.stroke.color = doc.resolve_colour(&rule.stroke.color);
+    }
+    rules
 }
 
 /// The document's enum mapped onto the shaper's, as `resolve_one` does for a
@@ -353,6 +448,108 @@ mod tests {
     }
 
     #[test]
+    fn a_merged_cell_is_not_crossed_by_the_rules_of_the_cells_it_swallowed() {
+        use tessera_color::Color;
+        let (doc, mut table) = a_table(2, 3, "x");
+        table.stroke = Some(Stroke::new(Color::BLACK, 0.5));
+        let whole_grid = lay(&doc, &table);
+        // Three runs across (top, middle, bottom) and four down, each joined
+        // into one line from end to end.
+        assert_eq!(whole_grid.rules.len(), 7, "{:?}", whole_grid.rules);
+
+        table.merge(
+            0,
+            0,
+            Span {
+                columns: 3,
+                rows: 1,
+            },
+        );
+        let merged = lay(&doc, &table);
+        let (x1, x2) = (merged.column_edges[1], merged.column_edges[2]);
+        let y1 = merged.row_edges[1];
+        for rule in &merged.rules {
+            let vertical = rule.from.0 == rule.to.0;
+            let inner_column = rule.from.0 == x1 || rule.from.0 == x2;
+            if vertical && inner_column {
+                assert!(
+                    rule.from.1 >= y1 - 1e-9,
+                    "an inner column rule crosses the merged top row: {rule:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_cell_s_own_side_wins_over_the_table_rule_and_no_width_draws_nothing() {
+        use tessera_color::Color;
+        use tessera_document::table::Side;
+        let (doc, mut table) = a_table(2, 2, "x");
+        table.stroke = Some(Stroke::new(Color::BLACK, 0.5));
+        // A heavy rule above the second row, under the first cell only.
+        table.set_side(1, 0, Side::Top, Some(Stroke::new(Color::BLACK, 2.0)));
+        // No rule between the two cells of the first row.
+        table.set_side(0, 0, Side::Right, Some(Stroke::new(Color::BLACK, 0.0)));
+        let laid = lay(&doc, &table);
+        let y1 = laid.row_edges[1];
+        let x1 = laid.column_edges[1];
+        let heavy: Vec<_> = laid
+            .rules
+            .iter()
+            .filter(|r| r.stroke.width == 2.0)
+            .collect();
+        assert_eq!(heavy.len(), 1, "{:?}", laid.rules);
+        assert_eq!(heavy[0].from, (0.0, y1));
+        assert_eq!(heavy[0].to, (x1, y1), "under the first cell only");
+        assert!(
+            !laid
+                .rules
+                .iter()
+                .any(|r| r.from.0 == x1 && r.to.0 == x1 && r.from.1 < y1),
+            "no rule between the first row's cells"
+        );
+    }
+
+    #[test]
+    fn rows_are_filled_in_turn_past_the_heading_and_a_cell_s_own_fill_wins() {
+        use tessera_color::Color;
+        use tessera_document::paint::Paint;
+        use tessera_document::table::AlternatingFills;
+        let (doc, mut table) = a_table(5, 1, "x");
+        let grey = Paint::Solid(Color::Rgb {
+            r: 0.9,
+            g: 0.9,
+            b: 0.9,
+            a: 1.0,
+        });
+        let red = Paint::Solid(Color::Rgb {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        });
+        table.alternating = Some(Box::new(AlternatingFills {
+            skip_first: 1,
+            ..AlternatingFills::every_other_row(grey.clone())
+        }));
+        if let Some(Slot::Cell(cell)) = table.at_mut(3, 0) {
+            cell.fill = Some(red.clone());
+        }
+        let laid = lay(&doc, &table);
+        let fill_of = |row: usize| {
+            laid.cells
+                .iter()
+                .find(|c| c.row == row)
+                .and_then(|c| c.fill.clone())
+        };
+        assert_eq!(fill_of(0), None, "the heading is skipped");
+        assert_eq!(fill_of(1), Some(grey.clone()));
+        assert_eq!(fill_of(2), None);
+        assert_eq!(fill_of(3), Some(red), "the cell's own fill wins");
+        assert_eq!(fill_of(4), None);
+    }
+
+    #[test]
     fn a_cell_spanning_rows_is_given_room_by_the_last_row_it_covers() {
         // Growing the first row instead would move every boundary below it,
         // undoing measurements already taken.
@@ -395,6 +592,7 @@ mod tests {
             rows: Vec::new(),
             cells: Vec::new(),
             stroke: None,
+            alternating: None,
         };
         let laid = lay(&doc, &table);
         assert_eq!(laid.size(), (0.0, 0.0));

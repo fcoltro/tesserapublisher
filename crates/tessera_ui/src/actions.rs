@@ -345,6 +345,8 @@ pub enum Run {
     },
     MergeSelectedCells,
     SplitSelectedCell,
+    /// The table's rule, its alternating fills, and the edited cell's sides.
+    TableOptions,
 }
 
 /// When an action may be reached from the keyboard.
@@ -437,7 +439,8 @@ pub fn guard(run: Run) -> Guard {
         Run::TableRow { .. }
         | Run::TableColumn { .. }
         | Run::MergeSelectedCells
-        | Run::SplitSelectedCell => Guard::Always,
+        | Run::SplitSelectedCell
+        | Run::TableOptions => Guard::Always,
         // Only useful while typing, like the table commands.
         Run::Insert(_) => Guard::Always,
         Run::Command(
@@ -870,6 +873,12 @@ pub fn all() -> &'static [Action] {
             Run::MergeSelectedCells,
         ),
         a("Split cell", None, Group::Table, Run::SplitSelectedCell),
+        a(
+            "Table options\u{2026}",
+            None,
+            Group::Table,
+            Run::TableOptions,
+        ),
         a("Delete", Some("Del"), Group::Edit, Command(Delete)),
         a(
             "Select all",
@@ -1672,6 +1681,12 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
                     },
                 );
             }
+        }
+
+        Run::TableOptions => {
+            let mut window = std::mem::take(&mut state.table_options);
+            window.open(state);
+            state.table_options = window;
         }
 
         Run::SplitSelectedCell => {

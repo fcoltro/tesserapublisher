@@ -76,6 +76,11 @@ pub struct Cell {
     pub inset: Insets,
     #[serde(default)]
     pub vertical: VerticalJustify,
+    /// The rule on each side, where it is not the table's. Boxed: four
+    /// strokes would make every cell, and every covered slot beside it, the
+    /// size of the rare cell that has them.
+    #[serde(default, skip_serializing_if = "plain_edges")]
+    pub edges: Box<CellEdges>,
 }
 
 impl Cell {
@@ -89,6 +94,93 @@ impl Cell {
             // every table anybody makes.
             inset: Insets::uniform(2.0),
             vertical: VerticalJustify::Top,
+            edges: Box::default(),
+        }
+    }
+}
+
+fn plain_edges(edges: &CellEdges) -> bool {
+    edges.is_plain()
+}
+
+/// The rules on a cell's four sides.
+///
+/// `None` draws the table's own stroke there; a stroke draws that instead,
+/// and a stroke of no width draws nothing — how a heading row loses the rule
+/// between its cells, or a total gets a heavier one above it.
+///
+/// **An edge is shared.** A cell's right side is its neighbour's left, and
+/// only one line is drawn there: the side that is set wins, and where both
+/// are, the cell below or to the right does, as it is the later one read.
+/// Setting an edge through a command sets both sides, so the two never
+/// disagree in a document a person made; the rule is for one that does.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CellEdges {
+    #[serde(default)]
+    pub top: Option<Stroke>,
+    #[serde(default)]
+    pub right: Option<Stroke>,
+    #[serde(default)]
+    pub bottom: Option<Stroke>,
+    #[serde(default)]
+    pub left: Option<Stroke>,
+}
+
+impl CellEdges {
+    /// Every side the table's.
+    pub fn is_plain(&self) -> bool {
+        self.top.is_none() && self.right.is_none() && self.bottom.is_none() && self.left.is_none()
+    }
+}
+
+/// Rows filled in turn: `first` rows in one colour, then `next` in another,
+/// and round again — InDesign's alternating fills. The first `skip_first`
+/// rows (a heading) and the last `skip_last` (a total) are left out, and a
+/// cell's own fill wins over the pattern, so a highlighted cell stays
+/// highlighted.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AlternatingFills {
+    pub first: u16,
+    #[serde(default)]
+    pub first_fill: Option<Paint>,
+    pub next: u16,
+    #[serde(default)]
+    pub next_fill: Option<Paint>,
+    #[serde(default)]
+    pub skip_first: u16,
+    #[serde(default)]
+    pub skip_last: u16,
+}
+
+impl AlternatingFills {
+    /// Every other row: one row in `fill`, one plain.
+    pub fn every_other_row(fill: Paint) -> Self {
+        Self {
+            first: 1,
+            first_fill: Some(fill),
+            next: 1,
+            next_fill: None,
+            skip_first: 0,
+            skip_last: 0,
+        }
+    }
+
+    /// The fill row `row` of `rows` takes from the pattern, if any.
+    pub fn fill_for_row(&self, row: usize, rows: usize) -> Option<&Paint> {
+        let skip_first = usize::from(self.skip_first);
+        let skip_last = usize::from(self.skip_last);
+        if row < skip_first || row + skip_last >= rows {
+            return None;
+        }
+        let (first, next) = (usize::from(self.first), usize::from(self.next));
+        let cycle = first + next;
+        if cycle == 0 {
+            return None;
+        }
+        if (row - skip_first) % cycle < first {
+            self.first_fill.as_ref()
+        } else {
+            self.next_fill.as_ref()
         }
     }
 }
@@ -130,13 +222,14 @@ pub struct Table {
     pub rows: Vec<f64>,
     /// `rows.len() * columns.len()` slots, row-major.
     pub cells: Vec<Slot>,
-    /// The rule drawn between and around cells.
-    ///
-    /// One stroke for the whole table to begin with. Per-edge strokes are what
-    /// a table eventually needs and they are a much larger model; this is the
-    /// half that makes a table legible, and it is honest about being that.
+    /// The rule drawn between and around cells, where a cell's own
+    /// [`CellEdges`] do not say otherwise.
     #[serde(default)]
     pub stroke: Option<Stroke>,
+    /// Rows filled in turn, under any cell's own fill. Boxed for the size of
+    /// every frame kind, as a cell's edges are.
+    #[serde(default)]
+    pub alternating: Option<Box<AlternatingFills>>,
 }
 
 impl Table {
@@ -262,10 +355,203 @@ pub fn new(
             .map(|_| Slot::Cell(Cell::new(make_story())))
             .collect(),
         stroke: None,
+        alternating: None,
+    }
+}
+
+/// One side of a cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Side {
+    Top,
+    Right,
+    Bottom,
+    Left,
+}
+
+impl Side {
+    pub const ALL: [Side; 4] = [Side::Top, Side::Right, Side::Bottom, Side::Left];
+}
+
+/// What one unit of a grid line — a column's width of a row boundary, or a
+/// row's height of a column boundary — is drawn as.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Rule<'a> {
+    /// Inside a cell that spans across it: nothing is drawn.
+    Inside,
+    /// Between two cells, or on the table's edge: this stroke, if any.
+    Drawn(Option<&'a Stroke>),
+}
+
+impl CellEdges {
+    pub fn side(&self, side: Side) -> Option<&Stroke> {
+        match side {
+            Side::Top => self.top.as_ref(),
+            Side::Right => self.right.as_ref(),
+            Side::Bottom => self.bottom.as_ref(),
+            Side::Left => self.left.as_ref(),
+        }
+    }
+
+    pub fn side_mut(&mut self, side: Side) -> &mut Option<Stroke> {
+        match side {
+            Side::Top => &mut self.top,
+            Side::Right => &mut self.right,
+            Side::Bottom => &mut self.bottom,
+            Side::Left => &mut self.left,
+        }
     }
 }
 
 impl Table {
+    /// Which cell covers each slot, as its row and column: row-major, one
+    /// per slot. A covered slot says nothing of its owner in the model, so
+    /// this is worked out from the spans rather than stored twice.
+    pub fn owners(&self) -> Vec<Option<(usize, usize)>> {
+        let (rows, columns) = (self.rows(), self.columns());
+        let mut owners = vec![None; rows * columns];
+        for row in 0..rows {
+            for column in 0..columns {
+                let Some(Slot::Cell(cell)) = self.at(row, column) else {
+                    continue;
+                };
+                let down = usize::from(cell.span.rows.max(1));
+                let across = usize::from(cell.span.columns.max(1));
+                for r in row..(row + down).min(rows) {
+                    for c in column..(column + across).min(columns) {
+                        owners[r * columns + c] = Some((row, column));
+                    }
+                }
+            }
+        }
+        owners
+    }
+
+    fn owning_cell(&self, owner: Option<(usize, usize)>) -> Option<&Cell> {
+        let (row, column) = owner?;
+        self.at(row, column)?.cell()
+    }
+
+    /// The row boundary above `row` (`0..=rows`), under `column`: what is
+    /// drawn there, from the cell below's top, the cell above's bottom, or
+    /// the table's stroke. `owners` is [`Table::owners`], worked out once.
+    pub fn rule_across(
+        &self,
+        owners: &[Option<(usize, usize)>],
+        row: usize,
+        column: usize,
+    ) -> Rule<'_> {
+        let columns = self.columns();
+        let above = row
+            .checked_sub(1)
+            .and_then(|r| owners.get(r * columns + column))
+            .copied()
+            .flatten();
+        let below = (row < self.rows())
+            .then(|| owners.get(row * columns + column))
+            .flatten()
+            .copied()
+            .flatten();
+        if above.is_some() && above == below {
+            return Rule::Inside;
+        }
+        let set = self
+            .owning_cell(below)
+            .and_then(|c| c.edges.top.as_ref())
+            .or_else(|| {
+                self.owning_cell(above)
+                    .and_then(|c| c.edges.bottom.as_ref())
+            });
+        Rule::Drawn(set.or(self.stroke.as_ref()))
+    }
+
+    /// The column boundary left of `column` (`0..=columns`), beside `row`,
+    /// the same way.
+    pub fn rule_down(
+        &self,
+        owners: &[Option<(usize, usize)>],
+        row: usize,
+        column: usize,
+    ) -> Rule<'_> {
+        let columns = self.columns();
+        let left = column
+            .checked_sub(1)
+            .and_then(|c| owners.get(row * columns + c))
+            .copied()
+            .flatten();
+        let right = (column < columns)
+            .then(|| owners.get(row * columns + column))
+            .flatten()
+            .copied()
+            .flatten();
+        if left.is_some() && left == right {
+            return Rule::Inside;
+        }
+        let set = self
+            .owning_cell(right)
+            .and_then(|c| c.edges.left.as_ref())
+            .or_else(|| self.owning_cell(left).and_then(|c| c.edges.right.as_ref()));
+        Rule::Drawn(set.or(self.stroke.as_ref()))
+    }
+
+    /// Draw `side` of the cell at `row`, `column` as `stroke` — `None` for
+    /// the table's own — and the facing side of every neighbour along it,
+    /// so the one line both share says one thing.
+    pub fn set_side(&mut self, row: usize, column: usize, side: Side, stroke: Option<Stroke>) {
+        let owners = self.owners();
+        let (rows, columns) = (self.rows(), self.columns());
+        let Some(Slot::Cell(cell)) = self.at(row, column) else {
+            return;
+        };
+        let down = usize::from(cell.span.rows.max(1)).min(rows - row);
+        let across = usize::from(cell.span.columns.max(1)).min(columns - column);
+        // The slots on the far side of this edge, and the side they face it
+        // with.
+        let (facing, neighbours): (Side, Vec<(usize, usize)>) = match side {
+            Side::Top => (
+                Side::Bottom,
+                row.checked_sub(1)
+                    .map(|r| (column..column + across).map(|c| (r, c)).collect())
+                    .unwrap_or_default(),
+            ),
+            Side::Bottom => (
+                Side::Top,
+                if row + down < rows {
+                    (column..column + across).map(|c| (row + down, c)).collect()
+                } else {
+                    Vec::new()
+                },
+            ),
+            Side::Left => (
+                Side::Right,
+                column
+                    .checked_sub(1)
+                    .map(|c| (row..row + down).map(|r| (r, c)).collect())
+                    .unwrap_or_default(),
+            ),
+            Side::Right => (
+                Side::Left,
+                if column + across < columns {
+                    (row..row + down).map(|r| (r, column + across)).collect()
+                } else {
+                    Vec::new()
+                },
+            ),
+        };
+        let mut owning: Vec<(usize, usize)> = neighbours
+            .into_iter()
+            .filter_map(|(r, c)| owners[r * columns + c])
+            .collect();
+        owning.dedup();
+        for (r, c) in owning {
+            if let Some(cell) = self.at_mut(r, c).and_then(Slot::cell_mut) {
+                *cell.edges.side_mut(facing) = stroke.clone();
+            }
+        }
+        if let Some(cell) = self.at_mut(row, column).and_then(Slot::cell_mut) {
+            *cell.edges.side_mut(side) = stroke;
+        }
+    }
+
     /// Put a row in at `at`, pushing the rest down.
     ///
     /// **A cell spanning across the new boundary grows to keep covering it.**

@@ -863,8 +863,10 @@ fn the_format_version_is_twenty_six() {
     // and no list before; 33 an index entry's span, the marker's page before;
     // 34 a section's prefix left off the number, always on before; 35 the
     // file name, date and last page number variables, which did not exist;
-    // 36 a document's chapter number, chapter one before.
-    assert_eq!(format::FORMAT_VERSION, 36);
+    // 36 a document's chapter number, chapter one before; 37 a cell's own
+    // edges and a table's alternating fills, the table's rule and no fill
+    // before.
+    assert_eq!(format::FORMAT_VERSION, 37);
 }
 
 #[test]

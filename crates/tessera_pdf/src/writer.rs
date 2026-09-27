@@ -425,14 +425,17 @@ fn item_colours(kind: &ResolvedKind) -> Vec<Color> {
             text_colours(shaped, color, &mut colours);
             (None, None)
         }
-        ResolvedKind::Table { laid, stroke } => {
+        ResolvedKind::Table { laid, .. } => {
             for cell in &laid.cells {
                 if let Some(fill) = &cell.fill {
                     colours.extend(fill.colours());
                 }
                 text_colours(&cell.shaped, &cell.color, &mut colours);
             }
-            (None, stroke.as_ref())
+            // Every rule's, since a cell's own edge can be in a colour the
+            // table's stroke is not — a spot plate would miss it otherwise.
+            colours.extend(laid.rules.iter().map(|r| r.stroke.color.clone()));
+            (None, None)
         }
     };
     if let Some(fill) = fill {
@@ -2000,7 +2003,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
             // Cell fills, then the rules, then the text — the same order the
             // renderer uses, and for the same reason: a fill painted after a
             // rule covers the half of it that falls inside the cell.
-            ResolvedKind::Table { laid, stroke } => {
+            ResolvedKind::Table { laid, .. } => {
                 for cell in &laid.cells {
                     let Some(fill) = cell.fill.as_ref().filter(|f| paint_visible(f)) else {
                         continue;
@@ -2023,27 +2026,24 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                     content.restore_state();
                 }
 
-                if let Some(s) = stroke
-                    && s.width > 0.0
-                    && colour_alpha(&s.color) > 0.0
+                // The layout's rules: one line per shared edge, none across a
+                // merged cell, each in its own stroke — the same list the
+                // screen draws, so the two cannot disagree about an edge.
+                for rule in laid
+                    .rules
+                    .iter()
+                    .filter(|r| colour_alpha(&r.stroke.color) > 0.0)
                 {
-                    // One line per grid edge, not four per cell: per-cell
-                    // borders put two strokes on every interior boundary, and
-                    // at a hairline that is a double-weight line everywhere
-                    // except around the outside.
-                    let (width, height) = laid.size();
                     content.save_state();
-                    apply_stroke(&mut content, s, &painting);
-                    for x in &laid.column_edges {
-                        let x0 = (item.bounds.x + x) as f32;
-                        content.move_to(x0, to_pdf_y(page, item.bounds.y, 0.0) as f32);
-                        content.line_to(x0, to_pdf_y(page, item.bounds.y + height, 0.0) as f32);
-                    }
-                    for y in &laid.row_edges {
-                        let y0 = to_pdf_y(page, item.bounds.y + y, 0.0) as f32;
-                        content.move_to(item.bounds.x as f32, y0);
-                        content.line_to((item.bounds.x + width) as f32, y0);
-                    }
+                    apply_stroke(&mut content, &rule.stroke, &painting);
+                    content.move_to(
+                        (item.bounds.x + rule.from.0) as f32,
+                        to_pdf_y(page, item.bounds.y + rule.from.1, 0.0) as f32,
+                    );
+                    content.line_to(
+                        (item.bounds.x + rule.to.0) as f32,
+                        to_pdf_y(page, item.bounds.y + rule.to.1, 0.0) as f32,
+                    );
                     content.stroke();
                     content.restore_state();
                 }

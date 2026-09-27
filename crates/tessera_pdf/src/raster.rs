@@ -640,7 +640,11 @@ pub fn cut_out(resolved: &ResolvedDocument, frames: &[FrameId]) -> Option<Resolv
 /// where its stroke reaches, and out to where its shadow falls.
 fn painted(item: &ResolvedItem) -> DocRect {
     let b = item.bounds;
-    let reach = stroke_of(&item.kind).map_or(0.0, |s| (s.width / 2.0 + s.offset()).max(0.0));
+    let reach = match &item.kind {
+        // Each rule has its own weight; the widest reaches furthest.
+        ResolvedKind::Table { laid, .. } => laid.rule_reach(),
+        kind => stroke_of(kind).map_or(0.0, |s| (s.width / 2.0 + s.offset()).max(0.0)),
+    };
     let corners = [
         DocPoint {
             x: b.x - reach,
@@ -684,7 +688,6 @@ fn stroke_of(kind: &ResolvedKind) -> Option<&tessera_document::nodes::Stroke> {
     match kind {
         ResolvedKind::Rectangle { stroke, .. }
         | ResolvedKind::Ellipse { stroke, .. }
-        | ResolvedKind::Table { stroke, .. }
         | ResolvedKind::Path { stroke, .. }
         | ResolvedKind::Graphic { stroke, .. } => stroke.as_ref(),
         _ => None,

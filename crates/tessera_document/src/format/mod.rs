@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 36;
+pub const FORMAT_VERSION: u32 = 37;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -113,6 +113,11 @@ pub fn load(path: &Path) -> Result<Document, FormatError> {
 /// ago follows exactly the path a document written two versions ago does, and
 /// each step only has to know about its own change.
 fn migrate(value: &mut serde_json::Value, from: u32) {
+    // 36 -> 37: a table cell may draw each side its own way (`edges`), and
+    // a table may fill its rows in turn (`alternating`). **No step**: absent
+    // reads as every side the table's and no pattern, which is what every
+    // earlier table drew. The version moves so an older build refuses a
+    // table whose rules and fills it would draw wrong.
     // 35 -> 36: a document says which chapter it is (`chapter`), and a
     // variable can print it. **No step**: absent reads as chapter one in
     // arabic, numbered on by a book, which is what a chapter number would
