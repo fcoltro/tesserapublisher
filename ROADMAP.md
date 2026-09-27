@@ -3147,98 +3147,97 @@ the easiest to the hardest. The milestones above keep the full account of
 each; this list is the order of work. Sizes are estimates: **hours**, **a
 day**, **days**, **a week or more**.
 
-Each item says who can do it: **code** is work Claude can do alone;
-**person** needs someone at a Windows machine, usually with Claude driving
-the app and taking screenshots; **hardware** needs a machine, a licence or a
-device this project does not have yet.
+**Features first, platforms last** (decided 2026-09-27). Every feature is
+built before anything is checked by hand on Windows, Linux or macOS, so each
+platform is looked at once, over the finished application, rather than again
+after every change. Tiers 1 to 4 are code; tier 5 is the checking, and needs
+a person at the machine or hardware this project does not have yet.
 
 When an item is done, tick it here *and* in its milestone, in the same
 commit.
 
+## Features
+
 ### Tier 1 — hours each
 
-- [ ] 1. **See the new blue T** in the title bar and in Explorer, and
-  double-click a `.tsrdf` file to open it (milestone 8). *Person.*
-- [ ] 2. **The bridge answers while the New Document dialog is up**, so a
+- [ ] 1. **The bridge answers while the New Document dialog is up**, so a
   model can fill a document the person is about to replace (milestone 13).
   Check whether it still does; hold tool calls until the dialog closes.
-  *Code.*
-- [ ] 3. **`describe_shapes` ids as plain numbers** instead of the
-  document's `{idx, version}` form (milestone 13). *Code.*
-- [ ] 4. **Text variables: file name, date, last page number**
-  (milestone 10). *Code.*
-- [ ] 5. **Facing-page sides named inside and outside** against the spine
-  (milestone 4). *Code.*
-- [ ] 6. **A tool call through Claude Code's own MCP client**, which is
-  still owed because the CLI's login had lapsed (milestone 13). *Person,
-  briefly.*
+- [ ] 2. **`describe_shapes` ids as plain numbers** instead of the
+  document's `{idx, version}` form (milestone 13).
+- [ ] 3. **Text variables: file name, date, last page number**
+  (milestone 10).
+- [ ] 4. **Facing-page sides named inside and outside** against the spine
+  (milestone 4).
 
 ### Tier 2 — about a day each
 
-- [ ] 7. **Look at the panel pass on Windows**: every panel rebuilt on
-  2026-09-24 to 27, and the image and PDF export dialogs (the interface).
-  *Person.*
-- [ ] 8. **Walk the rebuilt panels with NVDA** (cross-cutting
-  requirements). *Person.*
-- [ ] 9. **Hand-check the typography**: manual and optical kerning,
-  justification settings, glyph scaling (milestone 9). *Person.*
-- [ ] 10. **Input methods on Windows** (milestone 2.5). *Person.*
-- [ ] 11. **The first real AI Console turn**, with a key or a local model
-  (milestone 14). *Person.*
-- [ ] 12. **A placed PDF's page, and which box it is cropped to** (the
-  interface, placing). *Code.*
-- [ ] 13. **"Objects move with page edge"** when a page is resized
-  (milestone 12). *Code.*
-- [ ] 14. **Chapter number as a variable, and a variable in a table cell**
-  (milestone 10). *Code.*
-- [ ] 15. **Single-word justification** (milestone 9). *Code.*
-- [ ] 16. **The story editor shows styles** (milestone 12). *Code.*
+- [ ] 5. **A placed PDF's page, and which box it is cropped to** (the
+  interface, placing).
+- [ ] 6. **"Objects move with page edge"** when a page is resized
+  (milestone 12).
+- [ ] 7. **Chapter number as a variable, and a variable in a table cell**
+  (milestone 10).
+- [ ] 8. **Single-word justification** (milestone 9).
+- [ ] 9. **The story editor shows styles** (milestone 12).
 
 ### Tier 3 — days each
 
-- [ ] 17. **Export in the background**, with progress, since a long document
-  at 300 ppi takes a while. *Code.*
-- [ ] 18. **SVG export.** *Code.*
-- [ ] 19. **Cross-references edited in place**, and imported inside a table
-  cell as references rather than words (milestone 11). *Code.*
-- [ ] 20. **Hyperlinks**: anchored-text destinations, a link's appearance on
-  screen, IDML hyperlinks (milestone 12). *Code.*
-- [ ] 21. **Footnote text edited on the canvas** (milestone 11). *Code.*
-- [ ] 22. **Type on a path**: the caret on the curve, drag handles for
+- [ ] 10. **Export in the background**, with progress, since a long document
+  at 300 ppi takes a while.
+- [ ] 11. **SVG export.**
+- [ ] 12. **Cross-references edited in place**, and imported inside a table
+  cell as references rather than words (milestone 11).
+- [ ] 13. **Hyperlinks**: anchored-text destinations, a link's appearance on
+  screen, IDML hyperlinks (milestone 12).
+- [ ] 14. **Footnote text edited on the canvas** (milestone 11).
+- [ ] 15. **Type on a path**: the caret on the curve, drag handles for
   start, end and flip, and path text as a wrap obstacle (milestone 9).
-  *Code.*
-- [ ] 23. **Book**: chapters in the Pages panel, styles kept the same across
-  chapters, an index across the book (milestone 11). *Code.*
-- [ ] 24. **More Photoshop files**: ZIP-compressed, Lab, 1-bit and 32-bit.
-  *Code.*
-- [ ] 25. **Spelling**: sound-alike suggestions, two-edit corrections,
-  compound words (milestone 12). *Code.*
-- [ ] 26. **The story editor updates live** with the page (milestone 12).
-  *Code.*
-- [ ] 27. **Split `command::apply`** (126 cases) into smaller pieces. Nothing
-  a person sees, but every later change gets safer. *Code.*
+- [ ] 16. **Book**: chapters in the Pages panel, styles kept the same across
+  chapters, an index across the book (milestone 11).
+- [ ] 17. **More Photoshop files**: ZIP-compressed, Lab, 1-bit and 32-bit.
+- [ ] 18. **Spelling**: sound-alike suggestions, two-edit corrections,
+  compound words (milestone 12).
+- [ ] 19. **The story editor updates live** with the page (milestone 12).
+- [ ] 20. **Split `command::apply`** (126 cases) into smaller pieces. Nothing
+  a person sees, but every later change gets safer.
 
 ### Tier 4 — a week or more each
 
-- [ ] 28. **HTML export.** *Code.*
-- [ ] 29. **EPUB export.** *Code.*
-- [ ] 30. **Placing EPS**, which needs a PostScript interpreter. *Code.*
+- [ ] 21. **HTML export.**
+- [ ] 22. **EPUB export.**
+- [ ] 23. **Placing EPS**, which needs a PostScript interpreter.
 
-### Tier 5 — needs other machines, people or money
+## Platforms — once every feature is built
 
+### Tier 5 — checking by hand, Windows first
+
+On Windows, a person at the machine with Claude driving the app and taking
+screenshots; Linux and macOS need machines of their own.
+
+- [ ] 24. **Windows, the whole interface**: every panel rebuilt on
+  2026-09-24 to 27, the image and PDF export dialogs, and everything tiers
+  1 to 4 add (the interface).
+- [ ] 25. **Windows, the new blue T** in the title bar and in Explorer, and
+  a `.tsrdf` file opened by double-clicking it (milestone 8).
+- [ ] 26. **Windows, the typography**: manual and optical kerning,
+  justification settings, glyph scaling (milestone 9).
+- [ ] 27. **Windows, input methods** (milestone 2.5).
+- [ ] 28. **Windows, NVDA** over every panel (cross-cutting requirements).
+- [ ] 29. **A tool call through Claude Code's own MCP client**, still owed
+  because the CLI's login had lapsed (milestone 13).
+- [ ] 30. **The first real AI Console turn**, with a key or a local model
+  (milestone 14).
 - [ ] 31. **Linux, used hands-on**: Wayland and X11, fractional scaling,
-  IME, file dialogs (milestone 8). *Hardware.*
-- [ ] 32. **macOS, used hands-on**: Retina, menu bar, IME, and the code that
-  opens a double-clicked file, which must be written on a Mac
-  (milestone 8). *Hardware.*
-- [ ] 33. **VoiceOver on macOS and Orca on Linux** (cross-cutting
-  requirements). *Hardware.*
-- [ ] 34. **Colour management confirmed on Linux and macOS** (milestone 5).
-  *Hardware.*
-- [ ] 35. **Code signing and notarization**, which needs certificates and
-  developer accounts (milestone 8). *Hardware.*
-- [ ] 36. **Font subsetting checked on a real RIP**, not only in Acrobat
-  (milestone 6). *Hardware.*
+  IME, file dialogs, Orca (milestone 8).
+- [ ] 32. **macOS, used hands-on**: Retina, menu bar, IME, VoiceOver, and
+  the code that opens a double-clicked file, which must be written on a Mac
+  (milestone 8).
+- [ ] 33. **Colour management confirmed on Linux and macOS** (milestone 5).
+- [ ] 34. **Code signing and notarization**, which needs certificates and
+  developer accounts (milestone 8).
+- [ ] 35. **Font subsetting checked on a real RIP**, not only in Acrobat
+  (milestone 6).
 
 **Decided and not on this list:** Package lists fonts and does not copy
 them, because a licence to set type is not a licence to hand the file on
