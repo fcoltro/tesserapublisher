@@ -4230,11 +4230,14 @@ name = "tessera_pdf"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "hayro",
  "hayro-write",
  "image",
  "kurbo",
  "pdf-writer",
+ "png 0.18.1",
  "serde",
+ "slotmap",
  "subsetter",
  "tessera_color",
  "tessera_document",

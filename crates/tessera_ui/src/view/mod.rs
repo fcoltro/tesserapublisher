@@ -20,6 +20,7 @@ pub mod glyph;
 pub mod glyphs;
 pub mod hyperlink;
 pub mod identity;
+pub mod image_export;
 pub mod invert_host;
 pub mod layers;
 pub mod links;
@@ -139,6 +140,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     // and everything in them is judged against the document behind.
     settings::show(ui.ctx(), state);
     export_dialog::show(ui.ctx(), state);
+    image_export::show(ui.ctx(), state);
     print_dialog::show(ui.ctx(), state);
     new_document::show(ui.ctx(), state);
     step_repeat::show(ui.ctx(), state);

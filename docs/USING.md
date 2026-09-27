@@ -478,6 +478,18 @@ than claim it: a printer's preflight believes the file, so a document claiming
 X-1a it does not meet passes their check and fails on the press instead of in
 the studio.
 
+**Pictures** — File ▸ Export PNG or JPEG… — makes a picture of every page, of
+a range of pages, or of the selection, cut out to what it paints, strokes and
+shadows included; with something selected it starts on the selection. Choose
+the resolution — 72 ppi is a pixel to a point, 144 for a high-density screen,
+300 for print — whether a PNG's paper is white or clear, a JPEG's quality, and
+whether to take in the bleed. The dialog says how many pictures and how many
+pixels before anything is written. Several pages are numbered after the name
+chosen — *Brochure-01.png*, *Brochure-02.png* — and every file records its
+resolution, so another program places it at the size it was made for. A
+picture is the page as it prints, without frame edges or guides, in the
+colours the screen shows.
+
 **Package** — File ▸ Package — collects the document, its links and a summary a
 printer can read. Fonts are *listed*, not copied: a licence to set type is not a
 licence to pass the font on, and the PDF carries subsetted outlines, which is

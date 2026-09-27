@@ -37,6 +37,13 @@ pub enum PdfError {
     CannotConform(Vec<String>),
     #[error("could not read {0}: {1}")]
     Unreadable(std::path::PathBuf, String),
+    #[error(
+        "at this resolution a page would be {width} by {height} pixels, and a picture \
+         can be at most {most} a side"
+    )]
+    TooLarge { width: u64, height: u64, most: u32 },
+    #[error("could not write the picture: {0}")]
+    Encode(String),
 }
 
 impl From<std::io::Error> for PdfError {

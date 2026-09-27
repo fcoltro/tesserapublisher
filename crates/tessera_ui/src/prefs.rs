@@ -197,6 +197,11 @@ pub struct Preferences {
     #[serde(default = "crate::view::export_dialog::Preset::usual")]
     pub export_presets: Vec<crate::view::export_dialog::Preset>,
 
+    /// What pictures File ▸ Export PNG or JPEG… makes: the format, the
+    /// resolution, the paper, the quality and the bleed, as last chosen.
+    #[serde(default)]
+    pub image_export: tessera_pdf::raster::ImageOptions,
+
     /// Named arrangements of the panels.
     #[serde(default = "crate::workspace::Workspace::usual")]
     pub workspaces: Vec<crate::workspace::Workspace>,
@@ -295,6 +300,7 @@ impl Default for Preferences {
             recovery_copy: yes(),
             recovery_seconds: default_recovery_seconds(),
             export_presets: crate::view::export_dialog::Preset::usual(),
+            image_export: tessera_pdf::raster::ImageOptions::default(),
             docking: crate::docking::Docking::default(),
             updates: crate::update::Checking::default(),
             polygon_sides: default_polygon_sides(),
@@ -499,6 +505,13 @@ mod tests {
             recovery_copy: false,
             recovery_seconds: 42,
             export_presets: crate::view::export_dialog::Preset::usual(),
+            image_export: tessera_pdf::raster::ImageOptions {
+                format: tessera_pdf::raster::Format::Jpeg,
+                ppi: 300.0,
+                transparent: true,
+                quality: 55,
+                bleed: true,
+            },
             docking: crate::docking::Docking::default(),
             updates: crate::update::Checking::default(),
             polygon_sides: 6,

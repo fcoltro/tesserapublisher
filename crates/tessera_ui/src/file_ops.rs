@@ -480,6 +480,63 @@ pub fn export_pdf(state: &mut TesseraApp) {
     set_error(state, result);
 }
 
+/// Ask where the pictures go, and make them.
+pub fn export_images(state: &mut TesseraApp) {
+    let format = state.prefs.image_export.format;
+    let suggested = state
+        .active()
+        .current_path
+        .as_ref()
+        .and_then(|p| p.file_stem())
+        .map_or_else(
+            || "Untitled".to_string(),
+            |s| s.to_string_lossy().into_owned(),
+        );
+    let Some(path) = rfd::FileDialog::new()
+        .add_filter(format.label(), &[format.extension()])
+        .set_file_name(format!("{suggested}.{}", format.extension()))
+        .save_file()
+    else {
+        return; // cancelled
+    };
+    state.status = Some(match export_images_to(state, &path) {
+        Ok(said) => Status::info(said),
+        Err(why) => Status::error(why),
+    });
+}
+
+/// The pictures the image export dialog describes, written from `chosen`:
+/// that name for one picture, numbered after it for several. Says what was
+/// written, or why nothing was.
+pub fn export_images_to(state: &mut TesseraApp, chosen: &Path) -> Result<String, String> {
+    use crate::view::image_export;
+
+    let options = state.prefs.image_export;
+    let window = state.image_export.clone();
+    let resolved = state.resolve_uncached();
+    let (pictured, numbers) =
+        image_export::chosen(state, &resolved, window.which, (window.from, window.to))?;
+    let pictures = tessera_pdf::raster::page_images(&pictured, &options)
+        .map_err(|e| format!("Could not export: {e}"))?;
+    let names = image_export::file_names(chosen, &numbers, options.format);
+    for (picture, path) in pictures.iter().zip(&names) {
+        tessera_io::atomic::write_atomic(path, &picture.bytes)
+            .map_err(|e| format!("Could not write {}: {e}", path.display()))?;
+    }
+    let kind = options.format.label();
+    Ok(match names.as_slice() {
+        [one] => format!("Exported {kind} {}", one.display()),
+        [first, .., last] => format!(
+            "Exported {} {kind} pictures, {} to {}",
+            names.len(),
+            first.display(),
+            last.file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+        ),
+        [] => "Nothing was exported.".to_string(),
+    })
+}
+
 pub fn open(state: &mut TesseraApp) {
     let Some(path) = rfd::FileDialog::new()
         .add_filter(FILTER_NAME, &[EXTENSION])
@@ -566,6 +623,59 @@ mod tests {
         let dir = std::env::temp_dir().join("tessera_file_ops");
         std::fs::create_dir_all(&dir).expect("temp dir");
         dir.join(name)
+    }
+
+    #[test]
+    fn pages_are_written_as_numbered_pictures_and_a_selection_as_one() {
+        use crate::view::image_export::Which;
+        use tessera_pdf::raster::Format;
+
+        let dir = std::env::temp_dir().join("tessera_file_ops_pictures");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let mut state = TesseraApp::headless();
+        apply(&mut state, Command::AddPage);
+        let page = state.first_page_bounds();
+        apply(
+            &mut state,
+            Command::AddRectangle(DocRect {
+                x: page.x + 20.0,
+                y: page.y + 20.0,
+                width: 30.0,
+                height: 10.0,
+            }),
+        );
+        state.prefs.image_export.ppi = 36.0;
+
+        state.image_export.which = Which::All;
+        let said = export_images_to(&mut state, &dir.join("Proof.png")).expect("exported");
+        let first = dir.join("Proof-1.png");
+        let second = dir.join("Proof-2.png");
+        assert!(first.exists() && second.exists(), "{said}");
+        assert!(
+            !dir.join("Proof.png").exists(),
+            "the name is a stem for several"
+        );
+        assert!(said.contains("2 PNG pictures"), "{said}");
+        let (w, h) = image::image_dimensions(&first).expect("a picture");
+        assert_eq!(
+            (f64::from(w), f64::from(h)),
+            ((page.width / 2.0).round(), (page.height / 2.0).round()),
+            "36 ppi is half a point a pixel"
+        );
+
+        state.image_export.which = Which::Selection;
+        state.prefs.image_export.format = Format::Jpeg;
+        state.prefs.image_export.ppi = 72.0;
+        export_images_to(&mut state, &dir.join("Box")).expect("exported");
+        let (w, h) = image::image_dimensions(dir.join("Box.jpg")).expect("a JPEG");
+        assert_eq!((w, h), (31, 11), "the box and its hairline");
+
+        state.active_mut().selection.clear();
+        assert_eq!(
+            export_images_to(&mut state, &dir.join("Nothing.png")),
+            Err("Nothing is selected.".to_string())
+        );
     }
 
     fn bounds() -> DocRect {

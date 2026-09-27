@@ -184,6 +184,10 @@ pdf-writer = "0.15"
 # without embedding it must still show text.
 hayro       = "0.7"
 hayro-write = "0.7"
+# PNG written directly rather than through `image`, which cannot record the
+# resolution a picture was made at (the `pHYs` chunk). Already in the tree:
+# `image` reads PNG with it.
+png         = "0.18"
 # `variable-fonts` is off. It exists to instance a variable font at chosen
 # axis coordinates, and the PDF writer never asks for that — it calls
 # `subset`, which passes no coordinates and refuses CFF2 either way, so the

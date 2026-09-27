@@ -21,6 +21,10 @@ flate2.workspace = true
 kurbo.workspace = true
 pdf-writer.workspace = true
 hayro-write.workspace = true
+# Pages as pictures: the written PDF rendered, and PNG written directly for
+# the resolution it records (`raster`).
+hayro.workspace = true
+png.workspace = true
 subsetter.workspace = true
 thiserror.workspace = true
 # For `Standard`, which travels in an export preset.
@@ -34,3 +38,5 @@ tessera_color.workspace = true
 tessera_document.workspace = true
 tessera_layout.workspace = true
 tessera_text.workspace = true
+# Frame ids for a test that cuts one object out of several.
+slotmap.workspace = true

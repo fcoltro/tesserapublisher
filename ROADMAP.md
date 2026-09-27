@@ -1107,6 +1107,19 @@ of each carries the full account; this is the index.
   document. A group's never-drawn fill is no colour at all rather than black.
   Type's default black stays RGB, since the export prints it on the black
   plate and it is never a stored colour to be named.
+- [x] **Pages and selections export as PNG and JPEG (2026-09-27).** File ▸
+  Export PNG or JPEG… takes every page, a range, or the selection. A picture
+  is drawn from the PDF the writer makes, not from the canvas
+  (`tessera_pdf::raster`): the pages are written plain, for no press, and
+  rendered with `hayro` at the resolution asked — so a picture is the page as
+  it prints, fonts, placed PDFs and shadows included, and the rule that no
+  export is made from the screen's scene holds. A selection becomes a
+  one-page document the size of what it paints. PNG on white or clear paper,
+  JPEG at a chosen quality, bleed optional; both record their resolution
+  (`pHYs`, JFIF density). The dialog's sentence says what will be made and
+  refuses a picture past 65,535 pixels a side; its choices are remembered.
+  **Left:** SVG, EPUB and HTML export; exporting in the background, since a
+  long document at 300 ppi takes a while.
 - [ ] **Not yet looked at on Windows.** Each panel is proved by headless
   interface tests driven through the accessibility tree and was looked at
   in screenshots, dark and light, on Linux. The Windows build has not been

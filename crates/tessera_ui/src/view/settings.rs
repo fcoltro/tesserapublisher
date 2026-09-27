@@ -906,6 +906,10 @@ mod tests {
             recovery_copy: false,
             recovery_seconds: 11,
             export_presets: crate::view::export_dialog::Preset::usual(),
+            image_export: tessera_pdf::raster::ImageOptions {
+                ppi: 300.0,
+                ..Default::default()
+            },
             docking: crate::docking::Docking::default(),
             updates: crate::update::Checking {
                 enabled: false,
@@ -952,6 +956,12 @@ mod tests {
                 // Kept: how a panel is being looked at, as where the panels
                 // are docked is.
                 swatch_tiles: true,
+                // Kept: what the last picture export was, remembered for the
+                // next, as the export presets are.
+                image_export: tessera_pdf::raster::ImageOptions {
+                    ppi: 300.0,
+                    ..Default::default()
+                },
                 ..Preferences::default()
             },
             "a setting is reachable but not restorable, so it is on no page"
