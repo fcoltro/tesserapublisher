@@ -1133,6 +1133,20 @@ of each carries the full account; this is the index.
   sRGB chunk in a PNG, sRGB or the press's in the rest. Options open the
   result when done. Every file was read back by a second reader (Pillow) as
   well as by the tests.
+- [x] **PDF export as InDesign has it (2026-09-27).** File ▸ Export PDF is
+  a preset on top and four sections — General, Compression, Marks and
+  bleeds, Output — with five presets shipped (screen proof, the two
+  PDF/X presses, high quality print, smallest file) and a changed choice
+  shown as Custom; old saved presets still read. Pages are a range or
+  spreads, through the same `tessera_pdf::pages` as pictures and print.
+  The writer now takes bleed and slug separately, keeps colours or converts
+  them (PDF/X always converts), leaves bookmarks or hyperlinks out, deflates
+  content streams, and always writes an Info dictionary: title from the
+  file's name, author, creator and creation date. Pictures are downsampled
+  by the largest size each is drawn at, above a threshold and never up,
+  and compressed Automatic (a JPEG passes through byte for byte), JPEG at
+  a quality, or ZIP; CMYK pictures stay lossless. The PDF opens when
+  written if asked.
 - [ ] **Not yet looked at on Windows.** Each panel is proved by headless
   interface tests driven through the accessibility tree and was looked at
   in screenshots, dark and light, on Linux. The Windows build has not been

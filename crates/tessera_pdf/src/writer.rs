@@ -54,6 +54,49 @@ impl From<std::io::Error> for PdfError {
     }
 }
 
+/// What a page shows: its bleed — the trim itself when the bleed is left
+/// out — and its slug around that when the slug is taken in.
+fn imaged(page: &tessera_layout::ResolvedPage, options: &ExportOptions) -> DocRect {
+    if !options.slug {
+        return page.bleed;
+    }
+    let (a, b) = (page.bleed, page.slug);
+    let (x0, y0) = (a.x.min(b.x), a.y.min(b.y));
+    let (x1, y1) = (
+        (a.x + a.width).max(b.x + b.width),
+        (a.y + a.height).max(b.y + b.height),
+    );
+    DocRect {
+        x: x0,
+        y: y0,
+        width: x1 - x0,
+        height: y1 - y0,
+    }
+}
+
+/// `seconds` since 1970 as a PDF date, in UTC.
+fn date_of(seconds: u64) -> pdf_writer::Date {
+    let days = (seconds / 86_400) as i64;
+    let time = seconds % 86_400;
+    // Howard Hinnant's days-to-civil, for the proleptic Gregorian calendar.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u8;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u8;
+    let year = (yoe + era * 400 + i64::from(month <= 2)) as u16;
+    pdf_writer::Date::new(year)
+        .month(month)
+        .day(day)
+        .hour((time / 3_600) as u8)
+        .minute((time % 3_600 / 60) as u8)
+        .second((time % 60) as u8)
+        .utc_offset_hour(0)
+}
+
 /// Convert a document-space y to PDF space.
 ///
 /// PDF's origin is bottom-left; the document's is top-left. **This is the only
@@ -415,14 +458,31 @@ fn text_colours(shaped: &ShapedText, fallback: &Color, out: &mut Vec<Color>) {
 }
 
 fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>, PdfError> {
-    let ink = Ink::for_intent(options.intent.as_ref());
+    // Into the press's inks when asked, and always for a PDF/X file, which
+    // promises it; a plain PDF may keep its colours as they are.
+    let ink = if options.convert || options.standard != Standard::Plain {
+        Ink::for_intent(options.intent.as_ref())
+    } else {
+        Ink::Rgb
+    };
     // The page comes from the resolved document rather than from a parameter,
     // so the screen and the PDF cannot disagree about where the trim is.
-    // Milestone 3 makes this every page; today it is the first.
-    let pages = if resolved.pages.is_empty() {
+    let mut pages = if resolved.pages.is_empty() {
         vec![default_page()]
     } else {
         resolved.pages.clone()
+    };
+    // Without the bleed the page stops at the trim: the boxes, the clip and
+    // the marks all read the bleed, so it is set to the trim once here.
+    if !options.bleed {
+        for page in &mut pages {
+            page.bleed = page.bounds;
+        }
+    }
+    let bookmarks: &[tessera_layout::Bookmark] = if options.bookmarks {
+        &resolved.bookmarks
+    } else {
+        &[]
     };
     let mut pdf = Pdf::new();
     let mut next = 1;
@@ -437,7 +497,13 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
     let page_ids: Vec<_> = pages.iter().map(|_| alloc()).collect();
     let fonts = collect_fonts(resolved, &mut alloc)?;
     let states = collect_states(resolved, &mut alloc);
-    let pictures = collect_pictures(resolved, &mut alloc, &ink, options.standard);
+    let pictures = collect_pictures(
+        resolved,
+        &mut alloc,
+        &ink,
+        options.standard,
+        &options.pictures,
+    );
     let shadows = collect_shadows(resolved, &mut alloc);
     let plates = collect_plates(resolved, &ink, &mut alloc);
     if options.standard == Standard::X1a && pictures.iter().any(Picture::is_transparent) {
@@ -456,8 +522,8 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
 
     // The outline, when there are headings to list: one item per bookmark,
     // nested by level, each going to its page.
-    let outline_id = (!resolved.bookmarks.is_empty()).then(&mut alloc);
-    let bookmark_ids: Vec<Ref> = resolved.bookmarks.iter().map(|_| alloc()).collect();
+    let outline_id = (!bookmarks.is_empty()).then(&mut alloc);
+    let bookmark_ids: Vec<Ref> = bookmarks.iter().map(|_| alloc()).collect();
 
     let mut catalog = pdf.catalog(catalog_id);
     catalog.pages(page_tree_id);
@@ -487,23 +553,39 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
     // to decide the file conforms, which is exactly why it is written only after
     // `refusals` came back empty. A file carrying this key that does not conform
     // fails on press rather than in the studio.
+    //
+    // And for every file, what a reader's Properties show: its title, who
+    // made it, what made it, and when.
+    let info_id = alloc();
+    let mut info = pdf.document_info(info_id);
     if let Some(version) = options.standard.version_key() {
-        let info_id = alloc();
-        let mut info = pdf.document_info(info_id);
         info.pair(Name(b"GTS_PDFXVersion"), Str(version.as_bytes()));
-        info.title(TextStr("Tessera document"));
-        info.producer(TextStr("Tessera Publisher"));
         // A trapped state is required by PDF/X and there is no honest answer but
         // "unknown": Tessera does not trap, and claiming False would say the
         // file has been checked and needs none.
         info.trapped(pdf_writer::types::TrappingStatus::Unknown);
-        info.finish();
     }
+    info.title(TextStr(
+        options.title.as_deref().unwrap_or("Tessera document"),
+    ));
+    if let Some(author) = options.author.as_deref().filter(|a| !a.trim().is_empty()) {
+        info.author(TextStr(author));
+    }
+    info.creator(TextStr("Tessera Publisher"));
+    info.producer(TextStr("Tessera Publisher"));
+    if let Some(seconds) = options.created {
+        info.creation_date(date_of(seconds));
+    }
+    info.finish();
 
     // Every hyperlink, on the page whose trim holds its rectangle's centre;
     // the rectangles are allocated now so the page can name them before the
     // annotation objects are written.
-    let links = collect_links(resolved, &pages, &page_ids, &mut alloc);
+    let links = if options.hyperlinks {
+        collect_links(resolved, &pages, &page_ids, &mut alloc)
+    } else {
+        Vec::new()
+    };
 
     for (page_index, (resolved_page, page_id)) in
         pages.iter().zip(page_ids.iter().copied()).enumerate()
@@ -542,11 +624,12 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
         // proof.
         let reach = options.marks.reach();
         let bleed = resolved_page.bleed;
+        let shown = imaged(resolved_page, options);
         let media = Rect::new(
-            (bleed.x - page.x - reach) as f32,
-            (page.y + page.height - bleed.y - bleed.height - reach) as f32,
-            (bleed.x - page.x + bleed.width + reach) as f32,
-            (page.y + page.height - bleed.y + reach) as f32,
+            (shown.x - page.x - reach) as f32,
+            (page.y + page.height - shown.y - shown.height - reach) as f32,
+            (shown.x - page.x + shown.width + reach) as f32,
+            (page.y + page.height - shown.y + reach) as f32,
         );
         let trim = Rect::new(0.0, 0.0, page.width as f32, page.height as f32);
 
@@ -617,15 +700,20 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
         for link in mine {
             write_link(&mut pdf, link);
         }
-        pdf.stream(content_id, &content);
+        if options.compress {
+            pdf.stream(content_id, &crate::images::deflate(&content))
+                .filter(Filter::FlateDecode);
+        } else {
+            pdf.stream(content_id, &content);
+        }
         for shading in shadings.iter().flatten() {
             write_shading(&mut pdf, shading, &ink);
         }
     }
 
-    // Uncompressed in milestone 0 so the operators are assertable and a
-    // damaged file stays inspectable. Milestone 6 owns export quality and
-    // turns on compression there.
+    // Page content is compressed when `compress` asks, as the export dialog
+    // does; left as text otherwise, so the operators are assertable and a
+    // damaged file stays inspectable.
     write_pictures(&mut pdf, &pictures);
     write_shadows(&mut pdf, &shadows);
     write_plates(&mut pdf, &plates);
@@ -634,13 +722,7 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
         write_font(&mut pdf, font);
     }
     if let Some(outline) = outline_id {
-        write_outline(
-            &mut pdf,
-            outline,
-            &resolved.bookmarks,
-            &bookmark_ids,
-            &page_ids,
-        );
+        write_outline(&mut pdf, outline, bookmarks, &bookmark_ids, &page_ids);
     }
     for state in &states {
         write_state(&mut pdf, state);
@@ -1103,8 +1185,30 @@ fn collect_pictures(
     alloc: &mut impl FnMut() -> Ref,
     ink: &Ink,
     standard: Standard,
+    handling: &crate::Pictures,
 ) -> Vec<Picture> {
     let mut out: Vec<Picture> = Vec::new();
+
+    // The largest each file is drawn anywhere, in points: its coarsest use,
+    // which is the one downsampling must leave sharp.
+    let mut drawn: Vec<(&std::path::Path, (f64, f64))> = Vec::new();
+    for item in &resolved.items {
+        let ResolvedKind::Graphic {
+            source: Some(source),
+            inner,
+            natural,
+            ..
+        } = &item.kind
+        else {
+            continue;
+        };
+        let c = (item.transform.to_affine() * inner.to_affine()).as_coeffs();
+        let size = (natural.0 * c[0].hypot(c[1]), natural.1 * c[2].hypot(c[3]));
+        match drawn.iter_mut().find(|(path, _)| path == source) {
+            Some((_, most)) => *most = (most.0.max(size.0), most.1.max(size.1)),
+            None => drawn.push((source, size)),
+        }
+    }
 
     for item in &resolved.items {
         let ResolvedKind::Graphic { source, .. } = &item.kind else {
@@ -1130,10 +1234,15 @@ fn collect_pictures(
         // CMYK export has no RGB left in it. The pass-through that makes an RGB
         // export cheap is exactly what a converting export cannot have, and
         // that is a real cost rather than a shortcut worth looking for.
-        let ready = match ink {
-            Ink::Cmyk(conversion) => crate::images::to_cmyk(source, conversion),
-            Ink::Rgb => crate::images::prepare(source),
+        let largest = drawn
+            .iter()
+            .find(|(path, _)| path == source)
+            .map_or((1.0, 1.0), |(_, size)| *size);
+        let conversion = match ink {
+            Ink::Cmyk(conversion) => Some(conversion.as_ref()),
+            Ink::Rgb => None,
         };
+        let ready = crate::images::prepare_for(source, conversion, handling, largest);
         let Ok(ready) = ready else {
             continue;
         };
@@ -1584,10 +1693,11 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
     } = *w;
     let mut content = Content::new();
     // All existing emitters operate in document coordinates with a y flip.
-    // Translate that space to this page's trim origin, then clip artwork to bleed.
+    // Translate that space to this page's trim origin, then clip artwork to
+    // what the page shows: the bleed, and the slug when it is taken in.
     content.save_state();
     content.transform([1.0, 0.0, 0.0, 1.0, -page.x as f32, page.y as f32]);
-    let bleed = resolved_page.bleed;
+    let bleed = imaged(resolved_page, options);
     content.rect(
         bleed.x as f32,
         to_pdf_y(page, bleed.y, bleed.height) as f32,
@@ -2355,6 +2465,21 @@ fn write_font(pdf: &mut Pdf, font: &EmbeddedFont) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_date_is_the_calendar_s() {
+        let written = |seconds| {
+            let mut chunk = pdf_writer::Chunk::new();
+            chunk.indirect(Ref::new(1)).primitive(date_of(seconds));
+            String::from_utf8_lossy(chunk.as_bytes()).into_owned()
+        };
+        assert!(written(0).contains("D:19700101000000Z"), "{}", written(0));
+        assert!(
+            written(951_868_798).contains("D:20000229235958Z"),
+            "a leap day"
+        );
+        assert!(written(1_790_517_909).contains("D:20260927140509Z"));
+    }
     use tessera_geometry::DocPoint;
 
     fn page() -> DocRect {

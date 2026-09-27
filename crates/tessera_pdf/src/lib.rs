@@ -26,5 +26,5 @@ mod shadow;
 mod writer;
 
 pub use ink::Ink;
-pub use options::{ExportOptions, MARK_LENGTH, Marks, Standard};
+pub use options::{Compression, Downsample, ExportOptions, MARK_LENGTH, Marks, Pictures, Standard};
 pub use writer::{PdfError, export, export_with};

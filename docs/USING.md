@@ -478,6 +478,25 @@ than claim it: a printer's preflight believes the file, so a document claiming
 X-1a it does not meet passes their check and fails on the press instead of in
 the studio.
 
+The dialog is laid out as InDesign's is: a *Preset* on top, then four
+sections down the side. Presets hold every choice but the pages — *Screen
+proof*, *Press, PDF/X-4*, *Press, PDF/X-1a*, *High quality print* and
+*Smallest file size* — and a choice changed afterwards shows the set as
+*Custom*. *General* takes the standard, every page or a *Range* typed as
+InDesign types one (`1-3, 6, 9-`), pages or *Spreads* (a spread as one PDF
+page, and a page asked for brings its whole spread), whether bookmarks and
+hyperlinks go in, the author written into the file's properties beside its
+title and date, and whether to open the PDF when it is written.
+*Compression* downsamples pictures placed larger than they are used — above
+a resolution, down to another, judged by the largest place a picture is
+drawn and never upsampled — and compresses them: *Automatic* keeps a JPEG a
+JPEG and everything else whole, *JPEG* at a quality makes the smallest file,
+*ZIP* keeps every picture whole; text and line art can be compressed too.
+*Marks and bleeds* adds crop, bleed and registration marks and a colour bar,
+and takes in the document's bleed and slug. *Output* keeps colours as they
+are or converts them for the press; a PDF/X always converts. The sentence
+under the sections says what will be written.
+
 **Pictures** — File ▸ Export image… — makes PNG, JPEG, TIFF or WebP pictures,
 choosing as InDesign's Export JPEG and PNG dialogs do. *Pages* takes every
 page, a *Range* typed as InDesign writes one — `1-3, 6, 9-` — or the

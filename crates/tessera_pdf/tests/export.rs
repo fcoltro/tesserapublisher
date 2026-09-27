@@ -1549,3 +1549,418 @@ fn a_spot_in_the_middle_of_a_gradient_still_gets_a_plate() {
     let bytes = tessera_pdf::export(&doc).expect("export");
     assert!(String::from_utf8_lossy(&bytes).contains("PANTONE#20185#20C"));
 }
+
+// --- the export dialog's options --------------------------------------------
+
+/// The test page, bled 9 points all round and slugged 36.
+fn bled_and_slugged() -> tessera_layout::ResolvedPage {
+    tessera_layout::ResolvedPage {
+        bounds: page(),
+        margins: page(),
+        bleed: rect(-9.0, -9.0, 630.0, 810.0),
+        slug: rect(-36.0, -36.0, 684.0, 864.0),
+        columns: Vec::new(),
+    }
+}
+
+fn bled(mut doc: ResolvedDocument) -> ResolvedDocument {
+    doc.pages = vec![bled_and_slugged()];
+    doc
+}
+
+#[test]
+fn the_bleed_is_left_out_when_asked_and_the_slug_taken_in() {
+    let doc = bled(black_rect(rect(10.0, 10.0, 50.0, 50.0)));
+    let with = text_of(&doc, &ExportOptions::default());
+    assert!(
+        with.contains("/MediaBox [-9 -9 621 801]"),
+        "the bleed by default"
+    );
+
+    let without = text_of(
+        &doc,
+        &ExportOptions {
+            bleed: false,
+            ..Default::default()
+        },
+    );
+    assert!(
+        without.contains("/MediaBox [0 0 612 792]"),
+        "stops at the trim"
+    );
+    assert!(without.contains("/BleedBox [0 0 612 792]"));
+
+    let slugged = text_of(
+        &doc,
+        &ExportOptions {
+            slug: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        slugged.contains("/MediaBox [-36 -36 648 828]"),
+        "out to the slug"
+    );
+    assert!(
+        slugged.contains("/BleedBox [-9 -9 621 801]"),
+        "and the bleed is still the bleed"
+    );
+}
+
+#[test]
+fn a_plain_pdf_keeps_its_colours_when_asked_and_a_pdf_x_cannot() {
+    let doc = black_rect(rect(10.0, 10.0, 50.0, 50.0));
+    let kept = text_of(
+        &doc,
+        &ExportOptions {
+            intent: Some(cmyk_intent()),
+            convert: false,
+            ..Default::default()
+        },
+    );
+    assert!(kept.contains(" rg"), "RGB, as the colours are");
+    assert!(!kept.contains(" k\n"), "converted though asked not to be");
+
+    let converted = text_of(
+        &doc,
+        &ExportOptions {
+            intent: Some(cmyk_intent()),
+            ..Default::default()
+        },
+    );
+    assert!(converted.contains(" k\n"), "converted by default");
+
+    let x4 = text_of(
+        &doc,
+        &ExportOptions {
+            standard: Standard::X4,
+            intent: Some(cmyk_intent()),
+            convert: false,
+            ..Default::default()
+        },
+    );
+    assert!(x4.contains(" k\n"), "PDF/X promises the press's inks");
+}
+
+#[test]
+fn bookmarks_and_hyperlinks_are_left_out_when_asked() {
+    use tessera_layout::Bookmark;
+    let mut doc = black_rect(rect(10.0, 10.0, 50.0, 50.0));
+    doc.bookmarks = vec![Bookmark {
+        title: "Part One".into(),
+        page: 0,
+        level: 0,
+    }];
+    doc.items[0].links = vec![tessera_layout::ResolvedLink {
+        rects: vec![rect(10.0, 10.0, 50.0, 12.0)],
+        target: tessera_layout::LinkTarget::Url("https://example.org".into()),
+    }];
+    let all = text_of(&doc, &ExportOptions::default());
+    assert!(all.contains("/Outlines") && all.contains("/Annots"));
+
+    let neither = text_of(
+        &doc,
+        &ExportOptions {
+            bookmarks: false,
+            hyperlinks: false,
+            ..Default::default()
+        },
+    );
+    assert!(
+        !neither.contains("/Outlines"),
+        "an outline nobody asked for"
+    );
+    assert!(!neither.contains("/Annots"), "a link nobody asked for");
+}
+
+#[test]
+fn compressed_pages_are_smaller_and_still_draw() {
+    // A page with something on it: forty boxes, as a page of line art has.
+    let mut doc = black_rect(rect(100.0, 100.0, 200.0, 150.0));
+    let first = doc.items[0].clone();
+    for n in 0..40 {
+        let mut item = first.clone();
+        item.bounds = rect(20.0 + f64::from(n) * 12.0, 400.0, 8.0, 8.0);
+        doc.items.push(item);
+    }
+    let plain = tessera_pdf::export_with(&doc, &ExportOptions::default()).expect("export");
+    let packed = tessera_pdf::export_with(
+        &doc,
+        &ExportOptions {
+            compress: true,
+            ..Default::default()
+        },
+    )
+    .expect("export");
+    let text = String::from_utf8_lossy(&packed);
+    assert!(text.contains("/FlateDecode"), "the page is not compressed");
+    assert!(!text.contains(" re\n"), "the operators are still readable");
+    assert!(packed.len() < plain.len(), "compressed, and no smaller");
+
+    let path = std::env::temp_dir().join("tessera-pdf-export/compressed.pdf");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, &packed).unwrap();
+    let (pixels, (w, _)) = tessera_render::images::render_pdf(&path, 792).expect("renders");
+    let at = |x: u32, y: u32| {
+        let i = ((y * w + x) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
+    };
+    assert_eq!(at(150, 150), [0, 0, 0, 255], "the box is drawn");
+    assert_eq!(at(50, 50)[3], 0, "and nothing else");
+}
+
+#[test]
+fn the_file_says_its_title_author_maker_and_date() {
+    let text = text_of(
+        &black_rect(rect(10.0, 10.0, 50.0, 50.0)),
+        &ExportOptions {
+            title: Some("Harbour Days".into()),
+            author: Some("Ana Lima".into()),
+            created: Some(1_790_517_909),
+            ..Default::default()
+        },
+    );
+    assert!(text.contains("/Title (Harbour Days)"), "no title");
+    assert!(text.contains("/Author (Ana Lima)"), "no author");
+    assert!(text.contains("/Creator (Tessera Publisher)"), "no maker");
+    assert!(
+        text.contains("/CreationDate (D:20260927140509"),
+        "no date, or the wrong one"
+    );
+
+    let untitled = text_of(
+        &black_rect(rect(10.0, 10.0, 50.0, 50.0)),
+        &ExportOptions::default(),
+    );
+    assert!(untitled.contains("/Title (Tessera document)"));
+    assert!(!untitled.contains("/Author"), "an author nobody gave");
+    assert!(
+        !untitled.contains("/CreationDate"),
+        "a date nobody asked for"
+    );
+    assert!(
+        !untitled.contains("GTS_PDFXVersion"),
+        "an Info dictionary is not a PDF/X claim"
+    );
+}
+
+/// A PNG of `width` by `height` pixels of a noisy colour, so a JPEG of it
+/// has detail to lose.
+fn a_png(name: &str, width: u32, height: u32) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join("tessera-pdf-export");
+    std::fs::create_dir_all(&dir).expect("dir");
+    let path = dir.join(name);
+    let image = image::RgbImage::from_fn(width, height, |x, y| {
+        image::Rgb([
+            (x * 7 % 256) as u8,
+            (y * 13 % 256) as u8,
+            ((x + y) % 256) as u8,
+        ])
+    });
+    image.save(&path).expect("write");
+    path
+}
+
+/// The widths the file's images say they are.
+fn image_widths(text: &str) -> Vec<u32> {
+    text.split("/Subtype /Image")
+        .skip(1)
+        .filter_map(|after| {
+            let at = after.find("/Width ")? + 7;
+            after[at..]
+                .split(|c: char| !c.is_ascii_digit())
+                .next()?
+                .parse()
+                .ok()
+        })
+        .collect()
+}
+
+#[test]
+fn a_picture_placed_finer_than_asked_is_brought_down() {
+    // 1000 pixels in a 100-point frame is 720 pixels an inch.
+    let path = a_png("fine.png", 1000, 1000);
+    let doc = placed_at(path, rect(0.0, 0.0, 100.0, 100.0), (1000.0, 1000.0));
+    let doc = ResolvedDocument {
+        items: doc
+            .items
+            .into_iter()
+            .map(|mut item| {
+                if let ResolvedKind::Graphic { inner, .. } = &mut item.kind {
+                    *inner = Transform::from_affine(kurbo::Affine::scale(0.1));
+                }
+                item
+            })
+            .collect(),
+        ..doc
+    };
+    let whole = text_of(&doc, &ExportOptions::default());
+    assert_eq!(image_widths(&whole), [1000], "left alone unless asked");
+
+    let brought_down = text_of(
+        &doc,
+        &ExportOptions {
+            pictures: tessera_pdf::Pictures {
+                downsample: Some(tessera_pdf::Downsample {
+                    above: 300.0,
+                    to: 150.0,
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    assert_eq!(image_widths(&brought_down), [208], "720 ppi brought to 150");
+
+    let coarse_enough = text_of(
+        &doc,
+        &ExportOptions {
+            pictures: tessera_pdf::Pictures {
+                downsample: Some(tessera_pdf::Downsample {
+                    above: 800.0,
+                    to: 150.0,
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    assert_eq!(image_widths(&coarse_enough), [1000], "720 is not above 800");
+
+    let never_up = text_of(
+        &doc,
+        &ExportOptions {
+            pictures: tessera_pdf::Pictures {
+                downsample: Some(tessera_pdf::Downsample {
+                    above: 300.0,
+                    to: 900.0,
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        image_widths(&never_up),
+        [1000],
+        "downsampling never samples up"
+    );
+}
+
+#[test]
+fn a_jpeg_brought_down_is_still_a_jpeg() {
+    let path = a_jpeg("fine.jpg", 1000, 1000);
+    let mut doc = placed_at(path, rect(0.0, 0.0, 100.0, 100.0), (1000.0, 1000.0));
+    if let ResolvedKind::Graphic { inner, .. } = &mut doc.items[0].kind {
+        *inner = Transform::from_affine(kurbo::Affine::scale(0.1));
+    }
+    let text = text_of(
+        &doc,
+        &ExportOptions {
+            pictures: tessera_pdf::Pictures {
+                downsample: Some(tessera_pdf::Downsample {
+                    above: 300.0,
+                    to: 150.0,
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    assert_eq!(image_widths(&text), [208]);
+    assert!(
+        text.contains("/DCTDecode"),
+        "a JPEG came back as something else"
+    );
+}
+
+#[test]
+fn a_picture_used_twice_is_kept_fine_enough_for_its_largest_use() {
+    let path = a_png("twice-sized.png", 1000, 1000);
+    let use_at = |scale: f64, x: f64| {
+        let mut item = placed_at(
+            path.clone(),
+            rect(x, 0.0, 100.0 * scale * 10.0, 100.0),
+            (1000.0, 1000.0),
+        )
+        .items
+        .remove(0);
+        if let ResolvedKind::Graphic { inner, .. } = &mut item.kind {
+            *inner = Transform::from_affine(kurbo::Affine::scale(scale));
+        }
+        item
+    };
+    // Drawn 100 and 400 points wide: 720 and 180 pixels an inch.
+    let mut doc = empty_doc();
+    doc.items = vec![use_at(0.1, 0.0), use_at(0.4, 150.0)];
+    let text = text_of(
+        &doc,
+        &ExportOptions {
+            pictures: tessera_pdf::Pictures {
+                downsample: Some(tessera_pdf::Downsample {
+                    above: 150.0,
+                    to: 100.0,
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    // 180 ppi where it is largest, brought to 100: 1000 × 100/180.
+    assert_eq!(image_widths(&text), [556]);
+}
+
+#[test]
+fn pictures_are_compressed_as_asked() {
+    let png = a_png("to-compress.png", 64, 64);
+    let jpeg = a_jpeg("to-compress.jpg", 64, 64);
+    let with = |path: std::path::PathBuf, compression, intent| {
+        text_of(
+            &placed_at(path, rect(0.0, 0.0, 64.0, 64.0), (64.0, 64.0)),
+            &ExportOptions {
+                intent,
+                pictures: tessera_pdf::Pictures {
+                    compression,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+    };
+    use tessera_pdf::Compression::{Automatic, Jpeg, Zip};
+    assert!(!with(png.clone(), Automatic, None).contains("/DCTDecode"));
+    assert!(
+        with(jpeg.clone(), Automatic, None).contains("/DCTDecode"),
+        "a JPEG stays one"
+    );
+    assert!(
+        with(png.clone(), Jpeg, None).contains("/DCTDecode"),
+        "asked for JPEG"
+    );
+    assert!(
+        !with(jpeg.clone(), Zip, None).contains("/DCTDecode"),
+        "asked for ZIP"
+    );
+    // Asked for JPEG, a JPEG is already one: its own bytes, not a second
+    // generation.
+    let original = std::fs::read(&jpeg).expect("the file");
+    let bytes = tessera_pdf::export_with(
+        &placed_at(jpeg, rect(0.0, 0.0, 64.0, 64.0), (64.0, 64.0)),
+        &ExportOptions {
+            pictures: tessera_pdf::Pictures {
+                compression: Jpeg,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .expect("export");
+    assert!(
+        bytes.windows(original.len()).any(|w| w == original),
+        "the JPEG was encoded again"
+    );
+    assert!(
+        !with(png, Jpeg, Some(cmyk_intent())).contains("/DCTDecode"),
+        "a picture in the press's inks stays whole"
+    );
+}

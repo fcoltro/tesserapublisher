@@ -287,6 +287,10 @@ pub fn page_images(
                 ..crate::Marks::default()
             },
             intent: None,
+            // A picture has no outline pane and nothing to click.
+            bookmarks: false,
+            hyperlinks: false,
+            ..ExportOptions::default()
         },
     )?;
     let pdf = hayro::hayro_syntax::Pdf::new(Arc::new(written))

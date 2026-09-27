@@ -187,7 +187,8 @@ pub fn export_pdf_to_path(state: &mut TesseraApp, path: &Path) -> Result<(), Exp
     // export that ignored either would be one somebody had to check the file to
     // find out about.
     let options = state.export.options(state);
-    let resolved = state.resolve_uncached();
+    let groups = state.export.groups(state).map_err(ExportError::Pages)?;
+    let resolved = tessera_pdf::pages::assemble(&state.resolve_uncached(), &groups);
     let bytes = tessera_pdf::export_with(&resolved, &options)?;
     tessera_io::atomic::write_atomic(path, &bytes)?;
     state.status = Some(Status::info(format!("Exported {}", path.display())));
@@ -259,6 +260,9 @@ pub enum ExportError {
     /// The system's print path would not take the file.
     #[error("{0}")]
     Print(String),
+    /// The pages asked for cannot be read.
+    #[error("{0}")]
+    Pages(String),
 }
 
 /// Print `pages` of the active document by way of a PDF: written as a
@@ -477,6 +481,9 @@ pub fn export_pdf(state: &mut TesseraApp) {
         path.set_extension("pdf");
     }
     let result = export_pdf_to_path(state, &path);
+    if result.is_ok() && state.export.open_after {
+        crate::view::links::open_with_its_application(&path);
+    }
     set_error(state, result);
 }
 

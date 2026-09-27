@@ -135,8 +135,63 @@ impl Marks {
 /// How long a crop or bleed mark is drawn, in points.
 pub const MARK_LENGTH: f64 = 14.0;
 
+/// How placed pictures are compressed in the file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum Compression {
+    /// A JPEG stays a JPEG, byte for byte unless it is resampled; everything
+    /// else is compressed without loss.
+    #[default]
+    Automatic,
+    /// Every picture as JPEG at the chosen quality: the smallest file, at a
+    /// cost in detail. Its transparency stays lossless beside it.
+    Jpeg,
+    /// Every picture without loss: the largest file, the whole picture.
+    Zip,
+}
+
+impl Compression {
+    pub const ALL: [Compression; 3] = [Compression::Automatic, Compression::Jpeg, Compression::Zip];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Compression::Automatic => "Automatic",
+            Compression::Jpeg => "JPEG",
+            Compression::Zip => "ZIP",
+        }
+    }
+}
+
+/// Pictures placed finer than the page needs are brought down: any whose
+/// resolution where it is drawn is above `above` pixels an inch is resampled
+/// to `to` — InDesign's bicubic downsampling.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Downsample {
+    pub above: f64,
+    pub to: f64,
+}
+
+/// How the placed pictures go into the file.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Pictures {
+    pub downsample: Option<Downsample>,
+    pub compression: Compression,
+    /// JPEG quality, 1 to 100, when pictures are written as JPEG.
+    pub quality: u8,
+}
+
+impl Default for Pictures {
+    fn default() -> Self {
+        Pictures {
+            downsample: None,
+            compression: Compression::Automatic,
+            quality: 80,
+        }
+    }
+}
+
 /// Everything an export needs to know beyond the document itself.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExportOptions {
     pub standard: Standard,
     pub marks: Marks,
@@ -146,6 +201,53 @@ pub struct ExportOptions {
     /// borrow of a document in every caller so far, and a profile is a few
     /// hundred kilobytes copied once per export rather than per object.
     pub intent: Option<OutputIntent>,
+    /// Take in the bleed, where the page has one: the ink runs past the trim
+    /// and the media box holds it. Off, the page stops at the trim.
+    pub bleed: bool,
+    /// Take in the slug too: the notes and job information outside the
+    /// bleed.
+    pub slug: bool,
+    /// Convert colours into the press's inks when the press is a CMYK one.
+    /// Off, a plain PDF keeps its colours as they are — a screen proof of a
+    /// print job. A PDF/X file is always converted: that is what it promises.
+    pub convert: bool,
+    /// The outline pane: the document's headings, a click from each page.
+    pub bookmarks: bool,
+    /// Links in the text, and cross-references, as live links.
+    pub hyperlinks: bool,
+    /// Compress the pages' own drawing — text and line art — without loss.
+    /// Off by default here, so a page's operators can be read as text; the
+    /// export dialog turns it on.
+    pub compress: bool,
+    /// How placed pictures are sampled and compressed.
+    pub pictures: Pictures,
+    /// The document's title and author, as a reader's Properties show them.
+    pub title: Option<String>,
+    pub author: Option<String>,
+    /// When the file was made, in seconds since 1970, UTC. Given rather than
+    /// read from the clock, so the same export of the same document is the
+    /// same file.
+    pub created: Option<u64>,
+}
+
+impl Default for ExportOptions {
+    fn default() -> Self {
+        ExportOptions {
+            standard: Standard::Plain,
+            marks: Marks::default(),
+            intent: None,
+            bleed: true,
+            slug: false,
+            convert: true,
+            bookmarks: true,
+            hyperlinks: true,
+            compress: false,
+            pictures: Pictures::default(),
+            title: None,
+            author: None,
+            created: None,
+        }
+    }
 }
 
 impl ExportOptions {

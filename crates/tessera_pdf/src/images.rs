@@ -256,6 +256,12 @@ pub fn to_cmyk(path: &Path, conversion: &Conversion) -> Result<Prepared, Error> 
             .map_err(|e| Error::Unreadable(path.to_path_buf(), e.to_string()))?
             .to_rgba8()
     };
+    Ok(cmyk_from_rgba(&rgba, conversion))
+}
+
+/// Straight RGBA converted through `conversion` into inks, deflated, with
+/// its alpha as a mask when any of it is less than opaque.
+fn cmyk_from_rgba(rgba: &image::RgbaImage, conversion: &Conversion) -> Prepared {
     let (width, height) = rgba.dimensions();
 
     let mut inks: Vec<u8> = Vec::with_capacity((width * height * 4) as usize);
@@ -286,14 +292,181 @@ pub fn to_cmyk(path: &Path, conversion: &Conversion) -> Result<Prepared, Error> 
         }
     }
 
-    Ok(Prepared {
+    Prepared {
         width,
         height,
         coding: Coding::Flate,
         space: Space::Cmyk,
         data: deflate(&inks),
         alpha: any_transparent.then(|| deflate(&alpha)),
-    })
+    }
+}
+
+/// How finely a picture drawn at `drawn` points is sampled, in pixels an
+/// inch: the coarser of its two directions, which is the one a reader sees.
+pub(crate) fn lowest_ppi(pixels: (u32, u32), drawn: (f64, f64)) -> f64 {
+    let along = |pixels: u32, points: f64| f64::from(pixels) * 72.0 / points.max(f64::EPSILON);
+    along(pixels.0, drawn.0).min(along(pixels.1, drawn.1))
+}
+
+/// How many pixels a placed file is, without decoding it: a drawing at the
+/// resolution it is rendered at, a photograph from its header.
+fn pixel_size(path: &Path) -> Option<(u32, u32)> {
+    let rendered = |(w, h): (f64, f64)| {
+        let side = |points: f64| (points / 72.0 * VECTOR_PPI).round() as u32;
+        (side(w), side(h))
+    };
+    if tessera_render::images::is_pdf(path) {
+        tessera_render::images::pdf_size(path).map(rendered)
+    } else if tessera_render::images::is_svg(path) {
+        tessera_render::images::svg_size(path).map(rendered)
+    } else if tessera_render::psd::is_psd(path) {
+        tessera_render::psd::size(path)
+    } else {
+        image::image_dimensions(path).ok()
+    }
+}
+
+/// A placed file as this export's pictures ask: brought down to the
+/// resolution asked when it is drawn finer than asked — `drawn` is the
+/// largest it is drawn anywhere, in points, so no use of it goes soft — and
+/// compressed as asked.
+///
+/// **JPEG is for RGB only.** A CMYK JPEG in a PDF is stored inverted, as
+/// Adobe writes it, and readers disagree about undoing that; a CMYK
+/// picture is compressed without loss rather than risk printing its
+/// negative.
+///
+/// What is left alone is left exactly as [`prepare`] and [`to_cmyk`] leave
+/// it: a JPEG passed through byte for byte.
+pub fn prepare_for(
+    path: &Path,
+    conversion: Option<&Conversion>,
+    pictures: &crate::Pictures,
+    drawn: (f64, f64),
+) -> Result<Prepared, Error> {
+    use crate::Compression;
+
+    let plain = || match conversion {
+        Some(conversion) => to_cmyk(path, conversion),
+        None => prepare(path),
+    };
+    if pictures.downsample.is_none() && pictures.compression == Compression::Automatic {
+        return plain();
+    }
+    let scale = match (pictures.downsample, pixel_size(path)) {
+        (Some(down), Some(pixels)) if pixels.0 > 0 && pixels.1 > 0 => {
+            let ppi = lowest_ppi(pixels, drawn);
+            (ppi > down.above && down.to > 0.0).then(|| (down.to / ppi).min(1.0))
+        }
+        _ => None,
+    };
+    let is_jpeg_file =
+        !tessera_render::images::is_vector(path) && !tessera_render::psd::is_psd(path) && {
+            use std::io::Read;
+            let mut start = [0u8; 2];
+            std::fs::File::open(path)
+                .and_then(|mut file| file.read_exact(&mut start))
+                .is_ok_and(|()| is_jpeg(&start))
+        };
+    // JPEG out, for an RGB picture: when asked, or when the file was one.
+    let jpeg_out = match pictures.compression {
+        Compression::Jpeg => true,
+        Compression::Automatic => is_jpeg_file,
+        Compression::Zip => false,
+    };
+    let unchanged = scale.is_none()
+        && match pictures.compression {
+            Compression::Automatic => true,
+            // Already JPEG. (A CMYK picture stays lossless whatever is asked.)
+            Compression::Jpeg => is_jpeg_file,
+            // Lossless already, unless a JPEG would be passed through.
+            Compression::Zip => !(is_jpeg_file && conversion.is_none()),
+        };
+    if unchanged {
+        return plain();
+    }
+
+    let unreadable = |e: String| Error::Unreadable(path.to_path_buf(), e);
+    // The pixels, and a CMYK Photoshop file's own inks beside them.
+    let (mut rgba, mut inks) = if tessera_render::images::is_vector(path) {
+        let (raw, w, h) = vector_rgba(path)?;
+        let rgba = image::RgbaImage::from_raw(w, h, raw)
+            .ok_or_else(|| unreadable("malformed rendering".into()))?;
+        (rgba, None)
+    } else if tessera_render::psd::is_psd(path) {
+        let composite = photoshop(path, &std::fs::read(path)?)?;
+        let inks = composite
+            .inks
+            .filter(|_| conversion.is_some())
+            .and_then(|inks| image::RgbaImage::from_raw(composite.width, composite.height, inks));
+        let rgba = image::RgbaImage::from_raw(composite.width, composite.height, composite.rgba)
+            .ok_or_else(|| unreadable("malformed composite".into()))?;
+        (rgba, inks)
+    } else {
+        let bytes = std::fs::read(path)?;
+        let rgba = image::load_from_memory(&bytes)
+            .map_err(|e| unreadable(e.to_string()))?
+            .to_rgba8();
+        (rgba, None)
+    };
+    if let Some(scale) = scale {
+        // Bicubic, as InDesign's downsampling is: sharper than averaging and
+        // without the ringing of anything sharper still.
+        let (w, h) = rgba.dimensions();
+        let (nw, nh) = (
+            ((f64::from(w) * scale).round() as u32).max(1),
+            ((f64::from(h) * scale).round() as u32).max(1),
+        );
+        let filter = image::imageops::FilterType::CatmullRom;
+        rgba = image::imageops::resize(&rgba, nw, nh, filter);
+        // Four inks resample as four channels, as RGBA's four do.
+        inks = inks.map(|inks| image::imageops::resize(&inks, nw, nh, filter));
+    }
+
+    let (width, height) = rgba.dimensions();
+    match conversion {
+        Some(conversion) => Ok(match inks {
+            Some(inks) => {
+                let alpha: Vec<u8> = rgba.pixels().map(|p| p.0[3]).collect();
+                let any_transparent = alpha.iter().any(|&a| a != 255);
+                Prepared {
+                    width,
+                    height,
+                    coding: Coding::Flate,
+                    space: Space::Cmyk,
+                    data: deflate(inks.as_raw()),
+                    alpha: any_transparent.then(|| deflate(&alpha)),
+                }
+            }
+            None => cmyk_from_rgba(&rgba, conversion),
+        }),
+        None if jpeg_out => {
+            let mut ready = from_rgba(rgba.as_raw(), width, height);
+            if let Some(jpeg) = jpeg_bytes(&rgba, pictures.quality) {
+                ready.coding = Coding::Jpeg;
+                ready.data = jpeg;
+            }
+            Ok(ready)
+        }
+        None => Ok(from_rgba(rgba.as_raw(), width, height)),
+    }
+}
+
+/// The colour of `rgba` as a baseline JPEG, or `None` for one too big for
+/// JPEG's sixteen-bit sides — left lossless rather than refused.
+fn jpeg_bytes(rgba: &image::RgbaImage, quality: u8) -> Option<Vec<u8>> {
+    let (w, h) = rgba.dimensions();
+    let (w, h) = (u16::try_from(w).ok()?, u16::try_from(h).ok()?);
+    let rgb: Vec<u8> = rgba
+        .pixels()
+        .flat_map(|p| [p.0[0], p.0[1], p.0[2]])
+        .collect();
+    let mut out = Vec::new();
+    jpeg_encoder::Encoder::new(&mut out, quality.clamp(1, 100))
+        .encode(&rgb, w, h, jpeg_encoder::ColorType::Rgb)
+        .ok()?;
+    Some(out)
 }
 
 fn is_jpeg(bytes: &[u8]) -> bool {
