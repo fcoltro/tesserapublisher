@@ -19,6 +19,7 @@ vello.workspace = true
 image.workspace = true
 resvg.workspace = true
 usvg.workspace = true
+hayro.workspace = true
 tiny-skia.workspace = true
 pollster.workspace = true
 thiserror.workspace = true

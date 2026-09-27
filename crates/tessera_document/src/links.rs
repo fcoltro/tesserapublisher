@@ -73,15 +73,19 @@ impl Link {
 
 impl Link {
     /// Whether the artwork is drawn from a description rather than pixels,
-    /// and so has no resolution to be short of. By extension, which is what
-    /// decides how the file is read everywhere else in the application — see
-    /// `tessera_render::images::is_svg`, which this agrees with by
-    /// construction while there is one vector format.
+    /// and so has no resolution to be short of: an SVG, a PDF, or an
+    /// Illustrator file. By extension, which is what decides how the file is
+    /// read everywhere else in the application — see
+    /// `tessera_render::images::is_vector`, which this agrees with.
     pub fn is_vector(&self) -> bool {
         self.path
             .extension()
             .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
+            .is_some_and(|e| {
+                ["svg", "pdf", "ai"]
+                    .iter()
+                    .any(|v| e.eq_ignore_ascii_case(v))
+            })
     }
 }
 

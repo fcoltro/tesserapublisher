@@ -237,11 +237,28 @@ fn decode(path: &Path, longest_edge: Option<u32>) -> Option<Decoded> {
     if is_svg(path) {
         return decode_svg(path, longest_edge);
     }
-    let reader = image::ImageReader::open(path)
-        .ok()?
-        .with_guessed_format()
-        .ok()?;
-    let decoded = reader.decode().ok()?;
+    if is_pdf(path) {
+        let (rgba, (width, height)) = render_pdf(path, longest_edge.unwrap_or(0))?;
+        return Some(Decoded {
+            image: to_image(rgba, width, height),
+            pixels: (width, height),
+        });
+    }
+    let decoded = if crate::psd::is_psd(path) {
+        // The flattened picture every Photoshop file carries beside its layers.
+        let composite = crate::psd::read(&std::fs::read(path).ok()?).ok()?;
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_raw(
+            composite.width,
+            composite.height,
+            composite.rgba,
+        )?)
+    } else {
+        let reader = image::ImageReader::open(path)
+            .ok()?
+            .with_guessed_format()
+            .ok()?;
+        reader.decode().ok()?
+    };
 
     // Only ever down. Scaling a small picture up to fill a bucket would make a
     // blurred copy of it and charge memory for the blur.
@@ -266,6 +283,86 @@ pub fn is_svg(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
+}
+
+/// Whether this path is PDF artwork: a PDF, or an Illustrator file, which is
+/// a PDF inside when saved with PDF compatibility — Illustrator's default.
+///
+/// By extension, as [`is_svg`] is and for its reason.
+pub fn is_pdf(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("pdf") || e.eq_ignore_ascii_case("ai"))
+}
+
+/// Whether this path is artwork drawn by rendering, crisp at any size, rather
+/// than decoded pixels: an SVG or a PDF. Such artwork has no resolution of its
+/// own to report.
+pub fn is_vector(path: &Path) -> bool {
+    is_svg(path) || is_pdf(path)
+}
+
+fn open_pdf(path: &Path) -> Option<hayro::hayro_syntax::Pdf> {
+    let data = std::fs::read(path).ok()?;
+    hayro::hayro_syntax::Pdf::new(std::sync::Arc::new(data)).ok()
+}
+
+/// The size a PDF's first page is, in points: its crop box within its media
+/// box, turned as the page says it is turned — the size it prints at, which
+/// is the size it is placed at.
+///
+/// `None` for a file that does not open as a PDF, or has no pages.
+pub fn pdf_size(path: &Path) -> Option<(f64, f64)> {
+    let pdf = open_pdf(path)?;
+    let page = pdf.pages().first()?;
+    let (width, height) = page.render_dimensions();
+    (width > 0.0 && height > 0.0).then_some((f64::from(width), f64::from(height)))
+}
+
+/// Render a PDF's first page so its longest side is `longest_edge` pixels,
+/// or one pixel to the point at zero.
+///
+/// **Rendered, not scaled**, as an SVG is: a page of type placed small and
+/// then enlarged is drawn again at the new size. On a transparent ground, so
+/// what the page leaves unpainted shows what is behind the frame, as it does
+/// in print. Straight RGBA, like [`render_svg`], and capped as it is.
+pub fn render_pdf(path: &Path, longest_edge: u32) -> Option<(Vec<u8>, (u32, u32))> {
+    let pdf = open_pdf(path)?;
+    let page = pdf.pages().first()?;
+    let (natural_w, natural_h) = page.render_dimensions();
+    if !(natural_w > 0.0 && natural_h > 0.0) {
+        return None;
+    }
+    let longest = natural_w.max(natural_h);
+    let scale = if longest_edge > 0 {
+        longest_edge as f32 / longest
+    } else {
+        1.0
+    };
+    // The pixmap's sides are sixteen-bit, and a rendering past this costs more
+    // than any screen shows.
+    const MAX_EDGE: f32 = 8192.0;
+    let scale = scale.min(MAX_EDGE / longest).max(f32::MIN_POSITIVE);
+    let settings = hayro::RenderSettings {
+        x_scale: scale,
+        y_scale: scale,
+        ..Default::default()
+    };
+    let pixmap = hayro::render(
+        page,
+        &hayro::RenderCache::new(),
+        &hayro::hayro_interpret::InterpreterSettings::default(),
+        &settings,
+    );
+    let (width, height) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+    for pixel in pixmap.take_unpremultiplied() {
+        rgba.extend_from_slice(&[pixel.r, pixel.g, pixel.b, pixel.a]);
+    }
+    Some((rgba, (width, height)))
 }
 
 /// The size an SVG asks to be, in points.
@@ -440,6 +537,109 @@ mod tests {
         let path = an_svg("decode");
         let decoded = decode(&path, Some(200)).expect("decodes");
         assert_eq!(decoded.pixels, (200, 100));
+    }
+
+    #[test]
+    fn a_photoshop_file_goes_through_the_ordinary_decode_path() {
+        // Read for its flattened picture, then cached, budgeted and shrunk to
+        // the size asked for like any photograph.
+        let file = crate::psd::tests::Psd {
+            width: 40,
+            height: 20,
+            planes: vec![vec![200; 800], vec![40; 800], vec![90; 800]],
+            packed: true,
+            ..Default::default()
+        };
+        let path = std::env::temp_dir().join("tessera-decode.psd");
+        std::fs::write(&path, file.bytes()).expect("write");
+        assert_eq!(decode(&path, None).expect("decodes").pixels, (40, 20));
+        assert_eq!(decode(&path, Some(10)).expect("decodes").pixels, (10, 5));
+
+        std::fs::write(&path, b"8BPS but nothing after").expect("write");
+        assert!(decode(&path, None).is_none());
+    }
+
+    /// A PDF written by hand: one page `width` by `height` points, turned
+    /// `rotate` degrees, with a red square filling its left `height` points.
+    pub(crate) fn a_pdf(name: &str, width: u32, height: u32, rotate: u32) -> PathBuf {
+        let content = format!("1 0 0 rg 0 0 {height} {height} re f");
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            format!(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] /Rotate {rotate} \
+                 /Contents 4 0 R /Resources << >> >>"
+            ),
+            format!(
+                "<< /Length {} >>\nstream\n{content}\nendstream",
+                content.len()
+            ),
+        ];
+        let mut out = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (n, object) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", n + 1).as_bytes());
+        }
+        let xref = out.len();
+        out.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+        );
+        for offset in offsets {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+        let path = std::env::temp_dir().join(format!("tessera-pdf-{name}.pdf"));
+        std::fs::write(&path, out).expect("write");
+        path
+    }
+
+    #[test]
+    fn a_pdf_and_an_illustrator_file_are_vector_artwork() {
+        for name in ["advert.pdf", "LOGO.AI", "logo.svg"] {
+            assert!(is_vector(Path::new(name)), "{name}");
+        }
+        assert!(is_pdf(Path::new("logo.ai")) && !is_pdf(Path::new("logo.svg")));
+        assert!(!is_vector(Path::new("photo.jpg")));
+    }
+
+    #[test]
+    fn a_pdf_page_is_placed_at_the_size_it_prints() {
+        assert_eq!(pdf_size(&a_pdf("size", 200, 100, 0)), Some((200.0, 100.0)));
+        assert_eq!(
+            pdf_size(&a_pdf("turned", 200, 100, 90)),
+            Some((100.0, 200.0)),
+            "a page turned a quarter is as tall as it was wide"
+        );
+        let not = std::env::temp_dir().join("tessera-pdf-not.pdf");
+        std::fs::write(&not, b"not a pdf").unwrap();
+        assert_eq!(pdf_size(&not), None);
+        assert!(render_pdf(&not, 100).is_none());
+    }
+
+    #[test]
+    fn a_pdf_page_is_rendered_at_the_size_asked_for_on_a_clear_ground() {
+        let path = a_pdf("render", 200, 100, 0);
+        let (rgba, (width, height)) = render_pdf(&path, 400).expect("renders");
+        assert_eq!((width, height), (400, 200));
+        let at = |x: u32, y: u32| {
+            let i = ((y * width + x) * 4) as usize;
+            [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+        };
+        assert_eq!(at(50, 100), [255, 0, 0, 255], "the square, in red");
+        assert_eq!(
+            at(350, 100)[3],
+            0,
+            "what the page leaves unpainted is clear"
+        );
+        let decoded = decode(&path, Some(100)).expect("decodes like any picture");
+        assert_eq!(decoded.pixels, (100, 50));
     }
 
     /// A tiny PNG written to a temporary file.

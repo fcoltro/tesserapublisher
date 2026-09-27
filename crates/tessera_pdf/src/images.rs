@@ -72,10 +72,18 @@ impl Prepared {
 /// reported; refusing to write the whole PDF because of one picture would mean a
 /// job with a broken link cannot be proofed at all.
 pub fn prepare(path: &Path) -> Result<Prepared, Error> {
-    if tessera_render::images::is_svg(path) {
-        return prepare_svg(path);
+    if tessera_render::images::is_vector(path) {
+        return prepare_vector(path);
     }
     let bytes = std::fs::read(path)?;
+    if tessera_render::psd::is_psd(path) {
+        let composite = photoshop(path, &bytes)?;
+        return Ok(from_rgba(
+            &composite.rgba,
+            composite.width,
+            composite.height,
+        ));
+    }
 
     if is_jpeg(&bytes) {
         // Dimensions from the file's own header rather than by decoding it:
@@ -100,68 +108,22 @@ pub fn prepare(path: &Path) -> Result<Prepared, Error> {
         .map_err(|e| Error::Unreadable(path.to_path_buf(), e.to_string()))?;
     let rgba = decoded.to_rgba8();
     let (width, height) = rgba.dimensions();
+    Ok(from_rgba(rgba.as_raw(), width, height))
+}
 
-    let mut colour = Vec::with_capacity((width * height * 3) as usize);
-    let mut alpha = Vec::with_capacity((width * height) as usize);
-    let mut any_transparent = false;
-    for pixel in rgba.pixels() {
-        colour.extend_from_slice(&pixel.0[..3]);
-        alpha.push(pixel.0[3]);
-        any_transparent |= pixel.0[3] != 255;
-    }
-
-    Ok(Prepared {
-        width,
-        height,
-        coding: Coding::Flate,
-        space: Space::Rgb,
-        data: deflate(&colour),
-        alpha: any_transparent.then(|| deflate(&alpha)),
+/// A Photoshop file's flattened picture.
+fn photoshop(path: &Path, bytes: &[u8]) -> Result<tessera_render::psd::Composite, Error> {
+    tessera_render::psd::read(bytes).map_err(|why| {
+        Error::Unreadable(
+            path.to_path_buf(),
+            format!("not readable as Photoshop: {why:?}"),
+        )
     })
 }
 
-/// How finely a placed SVG is rendered for the page.
-///
-/// **Rasterised, and this is the compromise to know about.** Vector artwork
-/// ought to reach a PDF as vectors; the crate that does that conversion
-/// (`svg2pdf`) is built against `pdf-writer` 0.12 and this writes with 0.15,
-/// so their types cannot meet. Until they line up, an SVG is rendered at a
-/// resolution high enough that a press will not show it — 600 pixels per inch
-/// is twice what a 300ppi photograph gets and is the usual number for line
-/// work — and the limitation is written down here rather than discovered on a
-/// proof.
-const SVG_PPI: f64 = 600.0;
-
-/// A placed SVG rendered for the page, at [`SVG_PPI`].
-///
-/// One function because both the RGB path and the CMYK one need the same
-/// pixels; rendering twice would be slow and could disagree.
-fn svg_rgba(path: &Path) -> Result<(Vec<u8>, u32, u32), Error> {
-    let unreadable =
-        |why: &str| Error::Unreadable(path.to_path_buf(), format!("not readable as SVG: {why}"));
-
-    let (natural_w, natural_h) =
-        tessera_render::images::svg_size(path).ok_or_else(|| unreadable("it does not parse"))?;
-    if !(natural_w > 0.0 && natural_h > 0.0) {
-        return Err(unreadable("the drawing has no size"));
-    }
-
-    // Points to pixels at the chosen resolution, asked of the same renderer the
-    // screen uses so the proof and the page cannot disagree about the artwork.
-    let longest = natural_w.max(natural_h);
-    let edge = (longest / 72.0 * SVG_PPI)
-        .round()
-        .clamp(1.0, f64::from(u32::MAX)) as u32;
-
-    let (rgba, (width, height)) = tessera_render::images::render_svg(path, edge)
-        .ok_or_else(|| unreadable("it renders to nothing"))?;
-    Ok((rgba, width, height))
-}
-
-/// Render a placed SVG into pixels for embedding.
-fn prepare_svg(path: &Path) -> Result<Prepared, Error> {
-    let (rgba, width, height) = svg_rgba(path)?;
-
+/// Straight RGBA as deflated RGB, and its alpha as a mask when any of it is
+/// less than opaque.
+fn from_rgba(rgba: &[u8], width: u32, height: u32) -> Prepared {
     let mut colour = Vec::with_capacity((width * height * 3) as usize);
     let mut alpha = Vec::with_capacity((width * height) as usize);
     let mut any_transparent = false;
@@ -175,14 +137,72 @@ fn prepare_svg(path: &Path) -> Result<Prepared, Error> {
         any_transparent |= pixel[3] != 255;
     }
 
-    Ok(Prepared {
+    Prepared {
         width,
         height,
         coding: Coding::Flate,
         space: Space::Rgb,
         data: deflate(&colour),
         alpha: any_transparent.then(|| deflate(&alpha)),
-    })
+    }
+}
+
+/// How finely placed vector artwork is rendered, when it has to be.
+///
+/// **Rasterised, and this is the compromise to know about.** Vector artwork
+/// ought to reach a PDF as vectors; the crate that does that conversion for an
+/// SVG (`svg2pdf`) is built against `pdf-writer` 0.12 and this writes with
+/// 0.15, so their types cannot meet. Until they line up, an SVG is rendered at
+/// a resolution high enough that a press will not show it — 600 pixels per
+/// inch is twice what a 300ppi photograph gets and is the usual number for
+/// line work — and the limitation is written down here rather than discovered
+/// on a proof.
+///
+/// A placed PDF is copied across as vectors by the writer, and comes here only
+/// for an export converted into a press's inks: its own colours are whatever
+/// its maker chose, often RGB, and a CMYK export has no RGB left in it.
+const VECTOR_PPI: f64 = 600.0;
+
+/// A placed SVG or PDF rendered for the page, at [`VECTOR_PPI`].
+///
+/// One function because both the RGB path and the CMYK one need the same
+/// pixels; rendering twice would be slow and could disagree.
+fn vector_rgba(path: &Path) -> Result<(Vec<u8>, u32, u32), Error> {
+    let pdf = tessera_render::images::is_pdf(path);
+    let kind = if pdf { "PDF" } else { "SVG" };
+    let unreadable =
+        |why: &str| Error::Unreadable(path.to_path_buf(), format!("not readable as {kind}: {why}"));
+
+    let size = if pdf {
+        tessera_render::images::pdf_size(path)
+    } else {
+        tessera_render::images::svg_size(path)
+    };
+    let (natural_w, natural_h) = size.ok_or_else(|| unreadable("it does not parse"))?;
+    if !(natural_w > 0.0 && natural_h > 0.0) {
+        return Err(unreadable("the drawing has no size"));
+    }
+
+    // Points to pixels at the chosen resolution, asked of the same renderer the
+    // screen uses so the proof and the page cannot disagree about the artwork.
+    let longest = natural_w.max(natural_h);
+    let edge = (longest / 72.0 * VECTOR_PPI)
+        .round()
+        .clamp(1.0, f64::from(u32::MAX)) as u32;
+
+    let rendered = if pdf {
+        tessera_render::images::render_pdf(path, edge)
+    } else {
+        tessera_render::images::render_svg(path, edge)
+    };
+    let (rgba, (width, height)) = rendered.ok_or_else(|| unreadable("it renders to nothing"))?;
+    Ok((rgba, width, height))
+}
+
+/// Render placed vector artwork into pixels for embedding.
+fn prepare_vector(path: &Path) -> Result<Prepared, Error> {
+    let (rgba, width, height) = vector_rgba(path)?;
+    Ok(from_rgba(&rgba, width, height))
 }
 
 /// How many pixels are converted per call into Little CMS.
@@ -204,13 +224,32 @@ const CHUNK: usize = 1 << 16;
 /// Alpha survives. It is coverage, not colour, and has nothing to do with which
 /// inks the picture is made of.
 pub fn to_cmyk(path: &Path, conversion: &Conversion) -> Result<Prepared, Error> {
-    // An SVG is rendered rather than decoded, and then converted like any other
-    // picture: the inks a drawing prints in are the press's business, not the
-    // drawing's.
-    let rgba = if tessera_render::images::is_svg(path) {
-        let (raw, w, h) = svg_rgba(path)?;
-        image::RgbaImage::from_raw(w, h, raw)
-            .ok_or_else(|| Error::Unreadable(path.to_path_buf(), "malformed rendering".into()))?
+    // A drawing is rendered rather than decoded, and then converted like any
+    // other picture: the inks a drawing prints in are the press's business, not
+    // the drawing's.
+    let malformed = || Error::Unreadable(path.to_path_buf(), "malformed rendering".into());
+    let rgba = if tessera_render::images::is_vector(path) {
+        let (raw, w, h) = vector_rgba(path)?;
+        image::RgbaImage::from_raw(w, h, raw).ok_or_else(malformed)?
+    } else if tessera_render::psd::is_psd(path) {
+        let composite = photoshop(path, &std::fs::read(path)?)?;
+        if let Some(inks) = composite.inks {
+            // Already in inks, and the retoucher's own numbers: converted
+            // through RGB and back they would all move, and the black a
+            // retoucher kept to one plate would come back in all four.
+            let alpha: Vec<u8> = composite.rgba.iter().skip(3).step_by(4).copied().collect();
+            let any_transparent = alpha.iter().any(|&a| a != 255);
+            return Ok(Prepared {
+                width: composite.width,
+                height: composite.height,
+                coding: Coding::Flate,
+                space: Space::Cmyk,
+                data: deflate(&inks),
+                alpha: any_transparent.then(|| deflate(&alpha)),
+            });
+        }
+        image::RgbaImage::from_raw(composite.width, composite.height, composite.rgba)
+            .ok_or_else(malformed)?
     } else {
         let bytes = std::fs::read(path)?;
         image::load_from_memory(&bytes)
@@ -390,6 +429,84 @@ mod tests {
             assert_eq!(ready.width, 6, "{name} lost its width");
             assert_eq!(ready.height, 4, "{name} lost its height");
         }
+    }
+
+    /// A Photoshop file two pixels square: `mode` 3 for RGB or 4 for CMYK,
+    /// its planes stored raw one after another, and no layers.
+    fn a_psd(name: &str, mode: u16, planes: &[[u8; 4]]) -> std::path::PathBuf {
+        let mut out = b"8BPS".to_vec();
+        out.extend(1u16.to_be_bytes());
+        out.extend([0; 6]);
+        out.extend((planes.len() as u16).to_be_bytes());
+        out.extend(2u32.to_be_bytes());
+        out.extend(2u32.to_be_bytes());
+        out.extend(8u16.to_be_bytes());
+        out.extend(mode.to_be_bytes());
+        out.extend([0; 12]); // no palette, resources, layers or masks
+        out.extend(0u16.to_be_bytes());
+        for plane in planes {
+            out.extend(plane);
+        }
+        let dir = std::env::temp_dir().join("tessera-pdf-images");
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join(name);
+        std::fs::write(&path, out).expect("write");
+        path
+    }
+
+    #[test]
+    fn a_photoshop_file_reaches_the_page() {
+        let path = a_psd(
+            "placed.psd",
+            3,
+            &[[255, 0, 0, 9], [0, 255, 0, 9], [0, 0, 255, 9]],
+        );
+        let ready = prepare(&path).expect("reads");
+        assert_eq!((ready.width, ready.height, ready.space), (2, 2, Space::Rgb));
+        assert_eq!(
+            inflate(&ready.data),
+            [255, 0, 0, 0, 255, 0, 0, 0, 255, 9, 9, 9],
+            "the planes were not put back together into pixels"
+        );
+        assert!(ready.alpha.is_none());
+    }
+
+    #[test]
+    fn a_cmyk_photoshop_file_keeps_its_own_inks() {
+        // The retoucher's numbers, not a round trip through RGB: that would
+        // move every one of them, and put the black a retoucher kept on one
+        // plate back into all four.
+        let path = a_psd(
+            "inks.psd",
+            4,
+            &[
+                [0, 255, 255, 128],
+                [255, 255, 255, 128],
+                [255, 255, 255, 128],
+                [255, 255, 0, 128],
+            ],
+        );
+        let ready = to_cmyk(&path, &a_conversion()).expect("reads");
+        assert_eq!(ready.space, Space::Cmyk);
+        assert_eq!(
+            inflate(&ready.data),
+            [
+                255, 0, 0, 0, // cyan
+                0, 0, 0, 0, // paper
+                0, 0, 0, 255, // black alone
+                127, 127, 127, 127,
+            ]
+        );
+        assert!(ready.alpha.is_none());
+
+        // An RGB one is converted, like any photograph.
+        let rgb = a_psd(
+            "rgb-inks.psd",
+            3,
+            &[[255, 0, 0, 9], [0, 255, 0, 9], [0, 0, 255, 9]],
+        );
+        let ready = to_cmyk(&rgb, &a_conversion()).expect("reads");
+        assert_eq!((ready.space, inflate(&ready.data).len()), (Space::Cmyk, 16));
     }
 
     #[test]

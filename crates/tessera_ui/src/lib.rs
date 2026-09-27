@@ -53,7 +53,7 @@ pub use tools::Tool;
 /// and `tessera_pdf`, so a format added here is added to the screen and to the
 /// export at once.
 pub const PLACEABLE: &[&str] = &[
-    "png", "jpg", "jpeg", "tif", "tiff", "webp", "bmp", "gif", "svg",
+    "png", "jpg", "jpeg", "tif", "tiff", "webp", "bmp", "gif", "svg", "pdf", "ai", "psd", "psb",
 ];
 
 /// The `eframe::App` implementation.

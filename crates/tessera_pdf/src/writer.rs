@@ -430,10 +430,10 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
     let page_ids: Vec<_> = pages.iter().map(|_| alloc()).collect();
     let fonts = collect_fonts(resolved, &mut alloc)?;
     let states = collect_states(resolved, &mut alloc);
-    let pictures = collect_pictures(resolved, &mut alloc, &ink);
+    let pictures = collect_pictures(resolved, &mut alloc, &ink, options.standard);
     let shadows = collect_shadows(resolved, &mut alloc);
     let plates = collect_plates(resolved, &ink, &mut alloc);
-    if options.standard == Standard::X1a && pictures.iter().any(|p| p.ready.is_transparent()) {
+    if options.standard == Standard::X1a && pictures.iter().any(Picture::is_transparent) {
         return Err(PdfError::CannotConform(vec![
             "PDF/X-1a does not allow transparent artwork; use PDF/X-4".into(),
         ]));
@@ -997,10 +997,89 @@ struct Picture {
     /// The file it came from, which is what makes it reusable.
     source: std::path::PathBuf,
     id: Ref,
-    /// The `/SMask` object, when the artwork has an alpha channel.
-    mask: Option<Ref>,
     resource: String,
-    ready: crate::images::Prepared,
+    art: Art,
+}
+
+/// What a placed file becomes in the PDF.
+enum Art {
+    /// An image, and its `/SMask` when the artwork has an alpha channel.
+    Pixels {
+        ready: crate::images::Prepared,
+        mask: Option<Ref>,
+    },
+    /// A placed PDF's first page, copied across as a form: its own paths, type
+    /// and pictures, never rendered, so a logo stays sharp at any enlargement
+    /// and its text stays text. The chunk holds the form and everything it
+    /// reaches, numbered by this file's own allocator.
+    Page {
+        chunk: pdf_writer::Chunk,
+        /// The page's own size in points, which the form occupies from its
+        /// lower left.
+        size: (f64, f64),
+    },
+}
+
+impl Picture {
+    /// Whether this leans on transparency, which PDF/X-1a forbids.
+    ///
+    /// A copied page always does: it is written as an isolated transparency
+    /// group, as LaTeX writes an included PDF, so nothing it paints can blend
+    /// with what is under the frame. Under X-1a a placed PDF is rendered
+    /// instead (see [`copies_pages`]), so this refusal is a guard, not a path.
+    fn is_transparent(&self) -> bool {
+        match &self.art {
+            Art::Pixels { ready, .. } => ready.is_transparent(),
+            Art::Page { .. } => true,
+        }
+    }
+}
+
+/// Whether a placed PDF can be copied across as it is.
+///
+/// **Only into a plain export that keeps its colours.** The page's own colours
+/// are whatever its maker chose — RGB, more often than not — and its fonts
+/// may not be embedded; a PDF/X file promises neither can happen, and an
+/// export into a press's inks promises no RGB is left. Those render the page at
+/// 600 pixels per inch and convert it like a photograph, which is what an SVG
+/// gets everywhere, rather than write a file that is not what it says it is.
+fn copies_pages(ink: &Ink, standard: Standard) -> bool {
+    matches!(ink, Ink::Rgb) && standard == Standard::Plain
+}
+
+/// A placed PDF's first page as a form, and the id the page draws it by.
+///
+/// `None` when the file will not open as a PDF, or has no pages: skipped,
+/// like any other picture that cannot be read.
+fn copy_page(source: &std::path::Path, alloc: &mut impl FnMut() -> Ref) -> Option<(Ref, Art)> {
+    use hayro_write::{ChunkSettings, ExtractionQuery, hayro_syntax::Pdf as Source};
+
+    let bytes = std::fs::read(source).ok()?;
+    let placed = Source::new(std::sync::Arc::new(bytes)).ok()?;
+    let (width, height) = placed.pages().first()?.render_dimensions();
+    if !(width > 0.0 && height > 0.0) {
+        return None;
+    }
+    let copied = hayro_write::extract(
+        &placed,
+        Box::new(alloc),
+        ChunkSettings::default(),
+        // The blending space of the page's group: this export's own.
+        |group| {
+            group.color_space().device_rgb();
+        },
+        &[ExtractionQuery::new_xobject(0)],
+    )
+    .ok()?;
+    let id = *copied.root_refs.first()?.as_ref().ok()?;
+    let size = (f64::from(width), f64::from(height));
+    Some((
+        id,
+        Art::Page {
+            chunk: copied.chunk,
+            size,
+        },
+    ))
 }
 
 /// Read every placed file once, whatever it is placed into.
@@ -1016,6 +1095,7 @@ fn collect_pictures(
     resolved: &ResolvedDocument,
     alloc: &mut impl FnMut() -> Ref,
     ink: &Ink,
+    standard: Standard,
 ) -> Vec<Picture> {
     let mut out: Vec<Picture> = Vec::new();
 
@@ -1025,6 +1105,18 @@ fn collect_pictures(
         };
         let Some(source) = source else { continue };
         if out.iter().any(|p| &p.source == source) {
+            continue;
+        }
+        if tessera_render::images::is_pdf(source) && copies_pages(ink, standard) {
+            let Some((id, art)) = copy_page(source, alloc) else {
+                continue;
+            };
+            out.push(Picture {
+                source: source.clone(),
+                id,
+                resource: format!("Fm{}", out.len()),
+                art,
+            });
             continue;
         }
         // Converted through the press's own profile when there is one, so a
@@ -1044,24 +1136,29 @@ fn collect_pictures(
         out.push(Picture {
             source: source.clone(),
             id,
-            mask,
             resource: format!("Im{}", out.len()),
-            ready,
+            art: Art::Pixels { ready, mask },
         });
     }
 
     out
 }
 
-/// Write the image objects themselves.
+/// Write the image objects themselves, and the copied pages.
 fn write_pictures(pdf: &mut Pdf, pictures: &[Picture]) {
     use crate::images::Coding;
 
     for picture in pictures {
-        let ready = &picture.ready;
+        let (ready, mask) = match &picture.art {
+            Art::Pixels { ready, mask } => (ready, *mask),
+            Art::Page { chunk, .. } => {
+                pdf.extend(chunk);
+                continue;
+            }
+        };
 
         // The mask first, so its id is settled before the image names it.
-        if let (Some(mask_id), Some(alpha)) = (picture.mask, ready.alpha.as_ref()) {
+        if let (Some(mask_id), Some(alpha)) = (mask, ready.alpha.as_ref()) {
             let mut mask = pdf.image_xobject(mask_id, alpha);
             mask.width(ready.width as i32)
                 .height(ready.height as i32)
@@ -1086,7 +1183,7 @@ fn write_pictures(pdf: &mut Pdf, pictures: &[Picture]) {
             Coding::Jpeg => Filter::DctDecode,
             Coding::Flate => Filter::FlateDecode,
         });
-        if let Some(mask_id) = picture.mask {
+        if let Some(mask_id) = mask {
             image.s_mask(mask_id);
         }
         image.finish();
@@ -1581,7 +1678,10 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                     // the whole of where and how big it is. The y flip is part
                     // of it: PDF's image space runs top-down inside a
                     // bottom-up page, so without the negative height every
-                    // photograph would print upside down.
+                    // photograph would print upside down. A copied page sits
+                    // y-up from its lower left at its own size, and is scaled
+                    // to the size the link measured — the same size, unless
+                    // the file changed since — and turned the right way up.
                     let b = item.bounds;
                     content.rect(
                         b.x as f32,
@@ -1592,12 +1692,23 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                     content.clip_nonzero();
                     content.end_path();
                     let flip = kurbo::Affine::new([1.0, 0.0, 0.0, -1.0, 0.0, page.height]);
-                    // PDF's unit image square -> natural image points -> fitted
+                    let art = match picture.art {
+                        Art::Pixels { .. } => {
+                            kurbo::Affine::new([natural.0, 0.0, 0.0, -natural.1, 0.0, natural.1])
+                        }
+                        Art::Page { size, .. } => kurbo::Affine::new([
+                            natural.0 / size.0,
+                            0.0,
+                            0.0,
+                            -natural.1 / size.1,
+                            0.0,
+                            natural.1,
+                        ]),
+                    };
+                    // The picture's own space -> natural points -> fitted
                     // frame space -> document space -> PDF's y-up coordinates.
-                    let matrix = flip
-                        * kurbo::Affine::translate((b.x, b.y))
-                        * inner.to_affine()
-                        * kurbo::Affine::new([natural.0, 0.0, 0.0, -natural.1, 0.0, natural.1]);
+                    let matrix =
+                        flip * kurbo::Affine::translate((b.x, b.y)) * inner.to_affine() * art;
                     content.transform(matrix.as_coeffs().map(|v| v as f32));
                     content.x_object(Name(picture.resource.as_bytes()));
                     content.restore_state();
@@ -2246,6 +2357,23 @@ mod tests {
             width: 595.0,
             height: 842.0,
         }
+    }
+
+    #[test]
+    fn a_copied_page_counts_as_transparency() {
+        // It is written as an isolated transparency group. X-1a never gets
+        // one — a press export renders the page instead — and should that
+        // change, the export refuses rather than write a file X-1a forbids.
+        let copied = Picture {
+            source: "advert.pdf".into(),
+            id: Ref::new(1),
+            resource: "Fm0".into(),
+            art: Art::Page {
+                chunk: pdf_writer::Chunk::new(),
+                size: (200.0, 100.0),
+            },
+        };
+        assert!(copied.is_transparent());
     }
 
     /// A document point, in PDF coordinates.

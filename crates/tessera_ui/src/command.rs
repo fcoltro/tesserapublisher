@@ -2806,6 +2806,12 @@ fn measure_link(
     };
     let natural = if tessera_render::images::is_svg(&path) {
         tessera_render::images::svg_size(&path).unwrap_or((0.0, 0.0))
+    } else if tessera_render::images::is_pdf(&path) {
+        tessera_render::images::pdf_size(&path).unwrap_or((0.0, 0.0))
+    } else if tessera_render::psd::is_psd(&path) {
+        tessera_render::psd::size(&path)
+            .map(|(w, h)| (f64::from(w), f64::from(h)))
+            .unwrap_or((0.0, 0.0))
     } else {
         image::image_dimensions(&path)
             .map(|(w, h)| (f64::from(w), f64::from(h)))
@@ -2945,6 +2951,68 @@ mod tests {
             _ => panic!("nothing placed"),
         };
         (id, link)
+    }
+
+    #[test]
+    fn each_kind_of_artwork_is_placed_at_its_own_size() {
+        // A drawing has no pixels to count, a PDF page is measured in points
+        // as it prints, and a Photoshop file in the pixels of its composite.
+        // Read as a bitmap, any of them would be placed at nothing.
+        let dir = std::env::temp_dir().join("tessera-place-kinds");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let svg = dir.join("mark.svg");
+        std::fs::write(
+            &svg,
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="120" height="30"/>"#,
+        )
+        .unwrap();
+
+        let pdf = dir.join("advert.pdf");
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 150] /Resources << >> >>",
+        ];
+        let mut bytes = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (n, object) in objects.iter().enumerate() {
+            offsets.push(bytes.len());
+            bytes.extend(format!("{} 0 obj\n{object}\nendobj\n", n + 1).bytes());
+        }
+        let xref = bytes.len();
+        bytes.extend(b"xref\n0 4\n0000000000 65535 f \n");
+        for offset in offsets {
+            bytes.extend(format!("{offset:010} 00000 n \n").bytes());
+        }
+        bytes.extend(
+            format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").bytes(),
+        );
+        std::fs::write(&pdf, bytes).unwrap();
+
+        let psd = dir.join("retouched.psd");
+        let mut bytes = b"8BPS\0\x01\0\0\0\0\0\0\0\x03".to_vec();
+        bytes.extend(2u32.to_be_bytes()); // height
+        bytes.extend(7u32.to_be_bytes()); // width
+        bytes.extend([0, 8, 0, 3]); // eight-bit RGB
+        bytes.extend([0; 14]); // empty sections, raw samples
+        bytes.extend([0; 42]);
+        std::fs::write(&psd, bytes).unwrap();
+
+        for (path, size) in [
+            (svg, (120.0, 30.0)),
+            (pdf, (300.0, 150.0)),
+            (psd, (7.0, 2.0)),
+        ] {
+            let mut state = TesseraApp::headless();
+            let (_, link) = placed_picture(&mut state, &path);
+            assert_eq!(
+                state.active().document().links[link].natural,
+                size,
+                "{}",
+                path.display()
+            );
+        }
     }
 
     #[test]

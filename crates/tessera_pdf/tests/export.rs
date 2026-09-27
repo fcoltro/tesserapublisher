@@ -1138,6 +1138,214 @@ fn pdf_x1a_is_no_longer_refused_over_pictures() {
     assert!(bytes.starts_with(b"%PDF-"));
 }
 
+// --- placed PDF pages -------------------------------------------------------
+
+/// A one-page PDF drawn by `content`, written by hand so the test owns every
+/// byte of it, and its path.
+fn a_pdf(name: &str, width: u32, height: u32, rotate: u32, content: &str) -> std::path::PathBuf {
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] /Rotate {rotate} \
+             /Contents 4 0 R /Resources << >> >>"
+        ),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+    ];
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (n, object) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", n + 1).as_bytes());
+    }
+    let xref = out.len();
+    out.extend_from_slice(
+        format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+    );
+    for offset in offsets {
+        out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    let dir = std::env::temp_dir().join("tessera-pdf-export");
+    std::fs::create_dir_all(&dir).expect("dir");
+    let path = dir.join(format!("{name}.pdf"));
+    std::fs::write(&path, out).expect("write");
+    path
+}
+
+/// Red along the bottom left, blue towards the top right: nothing about it
+/// survives a flip or a quarter turn unchanged.
+const LOPSIDED: &str = "1 0 0 rg 0 0 100 50 re f 0 0 1 rg 150 60 30 30 re f";
+
+/// A placed file in a frame at `bounds`, measured at `natural`.
+fn placed_at(source: std::path::PathBuf, bounds: DocRect, natural: (f64, f64)) -> ResolvedDocument {
+    one(
+        ResolvedKind::Graphic {
+            inner: Transform::IDENTITY,
+            natural,
+            missing: false,
+            stroke: None,
+            source: Some(source),
+        },
+        bounds,
+    )
+}
+
+/// The exported file's first page, rendered a pixel to the point.
+fn printed(bytes: &[u8], name: &str) -> (Vec<u8>, (u32, u32)) {
+    let path = std::env::temp_dir()
+        .join("tessera-pdf-export")
+        .join(format!("{name}-out.pdf"));
+    std::fs::write(&path, bytes).expect("write");
+    tessera_render::images::render_pdf(&path, 792).expect("the export renders")
+}
+
+fn pixel(rendered: &(Vec<u8>, (u32, u32)), x: u32, y: u32) -> [u8; 4] {
+    let at = ((y * rendered.1.0 + x) * 4) as usize;
+    rendered.0[at..at + 4].try_into().unwrap()
+}
+
+#[test]
+fn a_placed_pdf_is_copied_across_as_vectors() {
+    // Rendered, a placed advert would print its type as pixels and go soft
+    // the moment the frame is enlarged. Copied as a form, it is the page its
+    // maker exported: the same paths, the same type, at any size.
+    let path = a_pdf("advert", 200, 100, 0, LOPSIDED);
+    let doc = placed_at(path, rect(100.0, 100.0, 200.0, 100.0), (200.0, 100.0));
+
+    let bytes = tessera_pdf::export(&doc).expect("export");
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("/Subtype /Form"), "the page is not a form");
+    assert!(
+        !text.contains("/Subtype /Image"),
+        "the page was rendered into pixels"
+    );
+    assert!(text.contains("/Fm0 Do"), "the page is never drawn");
+}
+
+#[test]
+fn a_placed_pdf_prints_as_the_screen_shows_it() {
+    // The screen renders the placed page; the export copies it. Were the two
+    // to disagree about which way is up, or about a page turned a quarter,
+    // the proof on screen would be a promise the file breaks. So the exported
+    // page is rendered back and set beside the screen's own rendering.
+    for rotate in [0, 90] {
+        let name = format!("lopsided-{rotate}");
+        let path = a_pdf(&name, 200, 100, rotate, LOPSIDED);
+        let screen = tessera_render::images::render_pdf(&path, 200).expect("renders");
+        let (w, h) = screen.1;
+        let doc = placed_at(
+            path,
+            rect(100.0, 100.0, f64::from(w), f64::from(h)),
+            (f64::from(w), f64::from(h)),
+        );
+
+        let bytes = tessera_pdf::export(&doc).expect("export");
+        let page = printed(&bytes, &name);
+        let mut red = 0;
+        // Away from the edges of shapes, where antialiasing may differ by a
+        // step without either being wrong.
+        for y in (5..h).step_by(10) {
+            for x in (5..w).step_by(10) {
+                let want = pixel(&screen, x, y);
+                let got = pixel(&page, 100 + x, 100 + y);
+                let near = want.iter().zip(got).all(|(a, b)| a.abs_diff(b) <= 8);
+                assert!(
+                    near,
+                    "turned {rotate}: at {x},{y} the screen shows {want:?}, the file {got:?}"
+                );
+                red += usize::from(want == [255, 0, 0, 255]);
+            }
+        }
+        assert!(red > 0, "the test page drew nothing to compare");
+    }
+}
+
+#[test]
+fn a_placed_pdf_fills_the_size_its_link_measured() {
+    // The link's measurement is what the frame fits. Should the file have
+    // grown or shrunk since, the page is stretched to that size, as a
+    // photograph's pixels are, rather than spill out of or fall short of what
+    // the layout planned.
+    let path = a_pdf("remeasured", 200, 100, 0, LOPSIDED);
+    let doc = placed_at(path, rect(0.0, 0.0, 400.0, 200.0), (400.0, 200.0));
+
+    let bytes = tessera_pdf::export(&doc).expect("export");
+    let page = printed(&bytes, "remeasured");
+    // The red block is the lower left 100 by 50 of the placed page; at twice
+    // the size it reaches 200 across and from 100 down to 200.
+    assert_eq!(pixel(&page, 190, 190), [255, 0, 0, 255]);
+    assert_eq!(pixel(&page, 190, 105), [255, 0, 0, 255]);
+    assert_eq!(pixel(&page, 210, 190)[3], 0, "the page grew past its size");
+}
+
+#[test]
+fn a_placed_pdf_is_rendered_for_a_press() {
+    // Its colours are its maker's, usually RGB, and its fonts may not be
+    // embedded: a PDF/X file promises neither. So a press export renders the
+    // page finely and converts it like a photograph instead of copying it.
+    let path = a_pdf("for-press", 200, 100, 0, LOPSIDED);
+    let doc = placed_at(path, rect(100.0, 100.0, 200.0, 100.0), (200.0, 100.0));
+    let options = ExportOptions {
+        standard: Standard::X4,
+        intent: Some(cmyk_intent()),
+        ..Default::default()
+    };
+
+    let text = text_of(&doc, &options);
+    assert!(!text.contains("/Fm0 Do"), "the page was copied into PDF/X");
+    assert!(text.contains("/Im0 Do"), "the page is never drawn");
+    assert!(
+        text.contains("/DeviceCMYK"),
+        "the page kept its own colours"
+    );
+}
+
+#[test]
+fn a_placed_pdf_is_rendered_for_an_rgb_press_too() {
+    // An RGB press keeps the page's colours, but PDF/X still promises every
+    // font is embedded, and a copied page cannot keep that promise for a file
+    // it did not write.
+    let path = a_pdf("for-rgb-press", 200, 100, 0, LOPSIDED);
+    let doc = placed_at(path, rect(100.0, 100.0, 200.0, 100.0), (200.0, 100.0));
+    let options = ExportOptions {
+        standard: Standard::X4,
+        intent: Some(an_intent()),
+        ..Default::default()
+    };
+
+    let text = text_of(&doc, &options);
+    assert!(!text.contains("/Fm0 Do"), "the page was copied into PDF/X");
+    assert!(text.contains("/Im0 Do"), "the page is never drawn");
+}
+
+#[test]
+fn an_opaque_placed_pdf_reaches_pdf_x1a() {
+    // Rendered and converted, a page that paints its whole ground is an
+    // opaque CMYK picture, which is everything X-1a asks of one.
+    let ground = format!("1 1 1 rg 0 0 200 100 re f {LOPSIDED}");
+    let path = a_pdf("opaque", 200, 100, 0, &ground);
+    let doc = placed_at(path, rect(100.0, 100.0, 200.0, 100.0), (200.0, 100.0));
+    let options = ExportOptions {
+        standard: Standard::X1a,
+        intent: Some(cmyk_intent()),
+        ..Default::default()
+    };
+
+    let text = text_of(&doc, &options);
+    assert!(text.contains("/Im0 Do"), "the page is never drawn");
+    assert!(!text.contains("/SMask"), "an opaque page carries a mask");
+}
+
 // --- drop shadows -----------------------------------------------------------
 
 fn with_shadow(

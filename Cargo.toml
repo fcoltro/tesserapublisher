@@ -172,6 +172,18 @@ resvg      = { version = "0.48", default-features = false }
 usvg       = { version = "0.48", default-features = false }
 tiny-skia  = "0.12"
 pdf-writer = "0.15"
+# PDF placed as artwork: an advertisement, a logo, a page from another
+# program — and an Illustrator file, which is a PDF inside when saved with PDF
+# compatibility, as Illustrator saves by default. `hayro` renders a page for
+# the screen, pure Rust as the rest of the stack is; `hayro-write` copies the
+# page into a plain exported PDF as a form, so the artwork prints as it was
+# supplied — its vectors and its type — rather than as pixels. Both
+# are the pair Typst places PDF with, and `hayro-write` writes with the same
+# `pdf-writer` this does, so its objects are ours. Their own copies of the
+# fourteen standard fonts are kept (`embed-fonts`): a PDF that names Helvetica
+# without embedding it must still show text.
+hayro       = "0.7"
+hayro-write = "0.7"
 # `variable-fonts` is off. It exists to instance a variable font at chosen
 # axis coordinates, and the PDF writer never asks for that — it calls
 # `subset`, which passes no coordinates and refuses CFF2 either way, so the

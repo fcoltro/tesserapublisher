@@ -400,6 +400,23 @@ of the ink, and seeing it now is better than seeing it on paper.
 
 ## Links
 
+**File ▸ Place** takes photographs — JPEG, PNG, TIFF, WebP, GIF, BMP — and
+Photoshop files (`.psd`, `.psb`), which place as the flattened picture
+Photoshop saves beside the layers, clear ground included; save them with
+*Maximize compatibility* on, or there is no such picture to place. It takes
+drawings too — SVG, PDF, and Illustrator files saved with PDF content, which is
+Illustrator's default — which have no pixels to run short of and are drawn again
+at whatever size the page is looked at. A PDF places its first page, at the
+size it prints.
+
+An exported PDF carries a placed PDF page as it is: its own paths and type,
+never turned into pixels. A PDF/X export, or one converted into a press's
+inks, renders the page at 600 pixels an inch instead, as it does an SVG,
+because a copied page may hold RGB colour or fonts it never embedded and a
+PDF/X file promises neither. A CMYK Photoshop file keeps its own ink numbers
+in a CMYK export rather than being converted through RGB and back. EPS files
+cannot be placed; save them as PDF.
+
 The **Links** panel lists every file the document shows, once each however
 many frames show it, by name: its picture, its pixels and the resolution it
 prints at, and at the right the page it is on — or the parent page it is

@@ -20,6 +20,7 @@ tessera_render.workspace = true
 flate2.workspace = true
 kurbo.workspace = true
 pdf-writer.workspace = true
+hayro-write.workspace = true
 subsetter.workspace = true
 thiserror.workspace = true
 # For `Standard`, which travels in an export preset.

@@ -297,6 +297,9 @@ fn format(path: &Path) -> String {
         "gif" => "GIF picture".to_string(),
         "bmp" => "BMP picture".to_string(),
         "svg" => "SVG drawing".to_string(),
+        "pdf" => "PDF document".to_string(),
+        "ai" => "Illustrator artwork".to_string(),
+        "psd" | "psb" => "Photoshop image".to_string(),
         "" => "File".to_string(),
         other => format!("{} file", other.to_uppercase()),
     }
@@ -1457,7 +1460,10 @@ mod tests {
 
         assert_eq!(format(Path::new("a/photo.JPG")), "JPEG picture");
         assert_eq!(format(Path::new("mark.svg")), "SVG drawing");
-        assert_eq!(format(Path::new("layout.psd")), "PSD file");
+        assert_eq!(format(Path::new("advert.pdf")), "PDF document");
+        assert_eq!(format(Path::new("logo.ai")), "Illustrator artwork");
+        assert_eq!(format(Path::new("retouched.PSD")), "Photoshop image");
+        assert_eq!(format(Path::new("layout.indd")), "INDD file");
         assert_eq!(format(Path::new("README")), "File");
     }
 

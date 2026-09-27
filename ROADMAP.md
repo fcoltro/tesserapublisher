@@ -1082,6 +1082,22 @@ of each carries the full account; this is the index.
   frame that passes text on lays out only as much as it can hold — 40 pages
   from 9.9 s to 0.1 s, 200 pages in 0.7 s, held line for line against the
   plain walk by tests.
+- [x] **PDF, Illustrator and Photoshop artwork can be placed (2026-09-27).**
+  A PDF's first page is drawn by rendering it, as an SVG is, at the size the
+  screen needs (`hayro`); an Illustrator file with PDF content is a PDF. An
+  exported PDF copies the page across as a form (`hayro-write`, on the same
+  `pdf-writer` as the writer) — its own vectors and type, stretched to the
+  size the link measured — and a test renders the export back and holds it
+  pixel for pixel against the screen, a turned page included. PDF/X and
+  press-ink exports render it at 600 ppi instead, since a copied page can
+  carry RGB and unembedded fonts that such a file promises it does not.
+  Photoshop files place as their composite, read by `tessera_render::psd`
+  rather than `zune-psd`, which reads a CMYK file's black as alpha:
+  PSD and PSB, 8 and 16 bits, grey, duotone, indexed, RGB and CMYK, raw or
+  run-length, with Photoshop's transparency and its white matte taken out.
+  A CMYK file's own inks go into a CMYK export untouched. **Left:** choosing
+  a PDF's page and which box it is cropped to; ZIP-compressed, Lab, 1-bit and
+  32-bit Photoshop files; EPS, which needs a PostScript interpreter.
 - [ ] **Not yet looked at on Windows.** Each panel is proved by headless
   interface tests driven through the accessibility tree and was looked at
   in screenshots, dark and light, on Linux. The Windows build has not been
