@@ -1390,7 +1390,7 @@ fn stroke_section(
     if ui.checkbox(&mut on, "Enable stroke").changed() {
         // Turning it on gives the stroke the model's own default: what
         // everything drew before the extra properties existed.
-        let stroke = on.then(|| Stroke::new(Color::BLACK, 1.0));
+        let stroke = on.then(|| Stroke::new(Color::BLACK_INK, 1.0));
         apply(state, Command::SetStroke { id, stroke });
         return;
     }
@@ -6420,6 +6420,55 @@ mod tests {
             );
         }
         state
+    }
+
+    #[test]
+    fn a_stroke_turned_on_is_a_black_ink_hairline() {
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx);
+        ctx.enable_accesskit();
+        let mut state = object_properties_fixture("rectangle");
+        let id = state.active().selection.single().unwrap();
+        apply(&mut state, Command::SetStroke { id, stroke: None });
+        let raw = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(288.0, 5000.0),
+            )),
+            ..Default::default()
+        };
+        let output = crate::headless_frame::frame(&ctx, raw(), |ui| inspector(ui, &mut state));
+        let bounds = output
+            .platform_output
+            .accesskit_update
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some("Enable stroke"))
+            .and_then(|(_, node)| node.bounds())
+            .expect("the switch");
+        let pos = egui::pos2(
+            ((bounds.x0 + bounds.x1) / 2.0) as f32,
+            ((bounds.y0 + bounds.y1) / 2.0) as f32,
+        );
+        for pressed in [true, false] {
+            let mut input = raw();
+            input.events = vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                },
+            ];
+            let _ = crate::headless_frame::frame(&ctx, input, |ui| inspector(ui, &mut state));
+        }
+        assert_eq!(
+            state.active().document().frame(id).unwrap().stroke,
+            Some(tessera_document::nodes::Stroke::new(Color::BLACK_INK, 1.0)),
+            "[Black], the black plate alone"
+        );
     }
 
     #[test]

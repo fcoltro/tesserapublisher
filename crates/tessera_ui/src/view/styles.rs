@@ -1345,7 +1345,7 @@ fn object_stroke(
             "Stroke",
             &mut format.stroke,
             &lineage.find(|f| f.stroke.clone()),
-            || Some(Stroke::new(Color::BLACK, 1.0)),
+            || Some(Stroke::new(Color::BLACK_INK, 1.0)),
             |ui, stroke, ghost| match stroke {
                 Some(s) => {
                     chip(ui, palette.shown(&s.color));
@@ -1375,7 +1375,7 @@ fn object_stroke(
         named_row(ui, "Has a stroke", |ui| {
             let mut has = stroke.is_some();
             if style_ui::switch(ui, &mut has, "Has a stroke", false) {
-                *stroke = has.then(|| Stroke::new(Color::BLACK, 1.0));
+                *stroke = has.then(|| Stroke::new(Color::BLACK_INK, 1.0));
             }
         });
         let Some(s) = stroke else {
@@ -4096,7 +4096,7 @@ fn decoration_editor(ui: &mut Ui, label: &str, value: &mut Option<Decoration>) {
             ],
             false,
         ) {
-            d.colour = own.then_some(Color::BLACK);
+            d.colour = own.then_some(Color::BLACK_INK);
         }
         if let Some(colour) = &mut d.colour {
             ui.add_space(Theme::space_2());
@@ -5391,6 +5391,58 @@ mod tests {
             clear_object_page(*page, &mut emptied);
         }
         assert!(emptied.is_empty(), "{emptied:?}");
+    }
+
+    #[test]
+    fn a_stroke_a_style_states_from_nothing_is_a_black_ink_hairline() {
+        use tessera_document::nodes::Stroke;
+        let (mut state, id, _) = two_boxes();
+        editing_object(&mut state, id, StylePage::Stroke);
+        let ctx = window();
+        let stroke = |state: &TesseraApp| {
+            state.active().document().object_styles[id]
+                .format
+                .stroke
+                .clone()
+        };
+        click_dot(&ctx, &mut state, "Stroke");
+        assert_eq!(
+            stroke(&state),
+            Some(Some(Stroke::new(Color::BLACK_INK, 1.0)))
+        );
+        click(&ctx, &mut state, "Has a stroke");
+        assert_eq!(stroke(&state), Some(None), "stated as none");
+        click(&ctx, &mut state, "Has a stroke");
+        assert_eq!(
+            stroke(&state),
+            Some(Some(Stroke::new(Color::BLACK_INK, 1.0))),
+            "and back on, in [Black]"
+        );
+    }
+
+    #[test]
+    fn an_underline_of_its_own_colour_starts_in_black_ink() {
+        let (mut state, _, child) = two_styles();
+        let mut edited = style(&state, child);
+        edited.format.character.underline = Some(tessera_text::story::Decoration {
+            on: true,
+            ..Default::default()
+        });
+        apply(
+            &mut state,
+            Command::EditParagraphStyle {
+                id: child,
+                style: edited,
+            },
+        );
+        editing(&mut state, child, StylePage::Decorations);
+        click(&window(), &mut state, "Its own");
+        let underline = style(&state, child)
+            .format
+            .character
+            .underline
+            .expect("stated");
+        assert_eq!(underline.colour, Some(Color::BLACK_INK));
     }
 
     #[test]

@@ -189,7 +189,11 @@ pub(crate) fn effects(
         .filter(|s| attr(*s, "Mode") == Some("Drop"))
         .map(|s| {
             let opacity = (attr_f64(s, "Opacity").unwrap_or(75.0) / 100.0).clamp(0.0, 1.0) as f32;
-            let colour = colours.get(attr(s, "EffectColor")).unwrap_or(Color::BLACK);
+            // InDesign's own default effect colour is [Black], the black
+            // plate alone.
+            let colour = colours
+                .get(attr(s, "EffectColor"))
+                .unwrap_or(Color::BLACK_INK);
             let colour = match colour {
                 Color::Rgb { r, g, b, .. } => Color::Rgb {
                     r,
@@ -560,4 +564,32 @@ fn tab_stops(node: Node) -> Option<Vec<TabStop>> {
         })
         .collect();
     if stops.is_empty() { None } else { Some(stops) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_drop_shadow_with_no_colour_named_is_black_ink() {
+        // InDesign's own default effect colour is [Black]: the black plate,
+        // at the shadow's opacity.
+        let graphic = roxmltree::Document::parse("<Graphic/>").unwrap();
+        let colours = Colours::read(graphic.root_element());
+        let item = roxmltree::Document::parse(
+            r#"<Rectangle><TransparencySetting><DropShadowSetting Mode="Drop" Opacity="40"/></TransparencySetting></Rectangle>"#,
+        )
+        .unwrap();
+        let (_, shadow) = effects(item.root_element(), &colours);
+        assert_eq!(
+            shadow.expect("a shadow").colour,
+            Color::Cmyk {
+                c: 0.0,
+                m: 0.0,
+                y: 0.0,
+                k: 1.0,
+                a: 0.4,
+            }
+        );
+    }
 }

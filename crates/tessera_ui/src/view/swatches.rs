@@ -1836,6 +1836,40 @@ mod tests {
     }
 
     #[test]
+    fn a_new_rectangle_is_stroked_with_the_built_in_black() {
+        // Its dot is on [Black], not on nothing: RGB black matched no row, and
+        // was an unnamed colour in every document.
+        let mut state = TesseraApp::headless();
+        a_rectangle(&mut state);
+        state.swatches_window.target = SwatchTarget::Stroke;
+        assert_eq!(on_selection(&state), Some(Entry::Black));
+    }
+
+    #[test]
+    fn what_a_new_document_draws_has_no_unnamed_colours() {
+        // A rectangle, an ellipse, a table and a group of the two: every
+        // default they carry is a built-in, or nothing at all. "Add unnamed
+        // colours" found R=0 G=0 B=0 in almost any document, from the
+        // default strokes and from a group's fill, which is never drawn.
+        let mut state = TesseraApp::headless();
+        let first = a_rectangle(&mut state);
+        let b = state.first_page_bounds();
+        apply(&mut state, Command::AddEllipse(b));
+        let second = state.active().selection.single().expect("selected");
+        apply(
+            &mut state,
+            Command::AddTable {
+                bounds: b,
+                rows: 2,
+                columns: 2,
+            },
+        );
+        state.active_mut().selection.replace_all([first, second]);
+        apply(&mut state, Command::GroupSelection);
+        assert_eq!(unnamed_count(&mut state), 0);
+    }
+
+    #[test]
     fn a_new_swatch_from_a_fill_that_is_already_one_is_its_colour_not_a_second_name() {
         let mut state = TesseraApp::headless();
         let red = Color::Cmyk {
@@ -2211,9 +2245,8 @@ mod tests {
                 paint: Paint::Solid(teal.clone()),
             },
         );
-        // A new rectangle's stroke is a colour of its own too; this is about
-        // the fill.
-        apply(&mut state, Command::SetStroke { id, stroke: None });
+        // The new rectangle's own hairline is [Black], named already, so the
+        // fill is the one colour without a name.
         assert_eq!(unnamed_count(&mut state), 1);
         whole_list(&mut state, Whole::NameUnnamed, &[]);
         assert_eq!(

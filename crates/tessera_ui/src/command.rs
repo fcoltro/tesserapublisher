@@ -1159,7 +1159,7 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             // columns of loose text rather than as a table, and a first
             // impression of nothing is worse than one of a plain grid.
             let mut table = table;
-            table.stroke = Some(tessera_document::nodes::Stroke::new(Color::BLACK, 0.5));
+            table.stroke = Some(tessera_document::nodes::Stroke::new(Color::BLACK_INK, 0.5));
             add(state, bounds, FrameKind::Table(table), Look::Bare);
         }
 
@@ -2526,7 +2526,7 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 // than being discarded — a swap that silently deleted a
                 // colour would be worse than one that had no effect.
                 None => (
-                    Paint::Solid(Color::BLACK),
+                    Paint::Solid(Color::BLACK_INK),
                     Some(tessera_document::nodes::Stroke::new(fill, 1.0)),
                 ),
             };
@@ -2539,7 +2539,7 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         Command::DefaultFillAndStroke(id) => {
             if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
                 f.fill = NO_FILL;
-                f.stroke = Some(tessera_document::nodes::Stroke::new(Color::BLACK, 1.0));
+                f.stroke = Some(tessera_document::nodes::Stroke::new(Color::BLACK_INK, 1.0));
             }
         }
 
@@ -2861,7 +2861,9 @@ fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, look: Look) {
             kind,
             fill: NO_FILL,
             stroke: match look {
-                Look::Outline => Some(tessera_document::nodes::Stroke::new(Color::BLACK, 1.0)),
+                // [Black], the black plate alone: RGB black would print a
+                // hairline in four inks that must all register.
+                Look::Outline => Some(tessera_document::nodes::Stroke::new(Color::BLACK_INK, 1.0)),
                 Look::Bare => None,
             },
             transform: Transform::IDENTITY,
@@ -3399,12 +3401,36 @@ mod tests {
     }
 
     #[test]
+    fn swapping_with_no_stroke_fills_with_black_ink() {
+        // The old fill becomes the stroke, and what fills in behind it is
+        // [Black], the black plate alone, not four inks.
+        let mut state = TesseraApp::headless();
+        let id = one_rect(&mut state);
+        apply(
+            &mut state,
+            Command::SetFill {
+                id,
+                paint: Paint::Solid(Color::WHITE),
+            },
+        );
+        apply(&mut state, Command::SetStroke { id, stroke: None });
+
+        apply(&mut state, Command::SwapFillAndStroke(id));
+
+        let frame = state.active().document().frame(id).expect("frame").clone();
+        assert_eq!(frame.fill, Paint::Solid(Color::BLACK_INK));
+        assert_eq!(frame.stroke, Some(Stroke::new(Color::WHITE, 1.0)));
+    }
+
+    #[test]
     fn a_new_shape_has_no_fill_and_a_black_hairline() {
         // What every drawing tool's default is, and for the reason: a shape
         // drawn to see where it will go is an outline, and a black slab on
         // the pasteboard — which is nearly black — was a shape nobody could
         // find. "No fill" is black at no alpha, so turning the fill on gets
-        // black rather than nothing.
+        // black rather than nothing. The hairline is [Black], the black plate
+        // alone: RGB black is four inks on a press, and a hairline in four
+        // inks fringes wherever the plates slip.
         let mut state = TesseraApp::headless();
         for command in [
             Command::AddRectangle(bounds()),
@@ -3414,8 +3440,65 @@ mod tests {
             let id = state.active().selection.single().expect("selected");
             let frame = state.active().document().frame(id).expect("frame").clone();
             assert_eq!(frame.fill, NO_FILL, "{:?}", frame.kind);
-            assert_eq!(frame.stroke, Some(Stroke::new(Color::BLACK, 1.0)));
+            assert_eq!(frame.stroke, Some(Stroke::new(Color::BLACK_INK, 1.0)));
         }
+    }
+
+    #[test]
+    fn a_new_table_is_ruled_in_black_ink() {
+        let mut state = TesseraApp::headless();
+        apply(
+            &mut state,
+            Command::AddTable {
+                bounds: DocRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 200.0,
+                    height: 100.0,
+                },
+                rows: 2,
+                columns: 2,
+            },
+        );
+        let id = state.active().selection.single().expect("selected");
+        let FrameKind::Table(table) = &state.active().document().frame(id).expect("frame").kind
+        else {
+            panic!("not a table");
+        };
+        assert_eq!(table.stroke, Some(Stroke::new(Color::BLACK_INK, 0.5)));
+    }
+
+    #[test]
+    fn a_new_rectangle_strokes_on_the_black_plate_alone() {
+        // Separated for a press, the default hairline is 100% K and nothing
+        // on the cyan, magenta or yellow plates. Every stroke colour the file
+        // sets is looked at, so a rich black anywhere is found.
+        let mut state = TesseraApp::headless();
+        let mut b = state.first_page_bounds();
+        b.x += 50.0;
+        b.y += 50.0;
+        b.width = 100.0;
+        b.height = 60.0;
+        apply(&mut state, Command::AddRectangle(b));
+        let options = tessera_pdf::ExportOptions {
+            intent: Some(tessera_document::intent::OutputIntent {
+                description: "CRPC6".to_string(),
+                profile: include_bytes!("../../../assets/profiles/CGATS21_CRPC6.icc").to_vec(),
+                rendering: tessera_document::intent::Rendering::default(),
+            }),
+            ..Default::default()
+        };
+        let bytes = tessera_pdf::export_with(&state.resolve_uncached(), &options).expect("export");
+        let text = String::from_utf8_lossy(&bytes);
+        let strokes: Vec<&str> = text
+            .lines()
+            .filter(|line| line.ends_with(" K") || line.ends_with(" RG"))
+            .collect();
+        assert!(!strokes.is_empty(), "no stroke colour was written");
+        assert!(
+            strokes.iter().all(|line| *line == "0 0 0 1 K"),
+            "a stroke separates onto more than the black plate: {strokes:?}"
+        );
     }
 
     #[test]
@@ -3442,7 +3525,7 @@ mod tests {
 
         let frame = state.active().document().frame(id).expect("frame").clone();
         assert_eq!(frame.fill, NO_FILL);
-        assert_eq!(frame.stroke, Some(Stroke::new(Color::BLACK, 1.0)));
+        assert_eq!(frame.stroke, Some(Stroke::new(Color::BLACK_INK, 1.0)));
     }
 
     #[test]

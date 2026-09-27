@@ -1098,6 +1098,15 @@ of each carries the full account; this is the index.
   A CMYK file's own inks go into a CMYK export untouched. **Left:** choosing
   a PDF's page and which box it is cropped to; ZIP-compressed, Lab, 1-bit and
   32-bit Photoshop files; EPS, which needs a PostScript interpreter.
+- [x] **Default black is [Black] (2026-09-27).** A new shape's hairline, a
+  table's rules, Default fill and stroke, a stroke switched on in Properties
+  or in an object style, an underline given its own colour, and an imported
+  InDesign shadow that names no colour are the black plate alone
+  (`Color::BLACK_INK`), not RGB black — which the export already sent to K
+  alone, but which "Add unnamed colours" found as R=0 G=0 B=0 in nearly every
+  document. A group's never-drawn fill is no colour at all rather than black.
+  Type's default black stays RGB, since the export prints it on the black
+  plate and it is never a stored colour to be named.
 - [ ] **Not yet looked at on Windows.** Each panel is proved by headless
   interface tests driven through the accessibility tree and was looked at
   in screenshots, dark and light, on Linux. The Windows build has not been

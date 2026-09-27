@@ -78,6 +78,29 @@ impl Color {
         b: 1.0,
         a: 1.0,
     };
+    /// Black as a press means it: the black plate alone, which the Swatches
+    /// panel lists as `[Black]`.
+    ///
+    /// **What a default that prints should be.** [`Self::BLACK`] is a screen
+    /// colour, and through a press's profile it comes out as four inks — a
+    /// hairline rule in four inks fringes the moment the plates are a hair out
+    /// of register. It looks the same on screen as `BLACK`.
+    pub const BLACK_INK: Self = Self::Cmyk {
+        c: 0.0,
+        m: 0.0,
+        y: 0.0,
+        k: 1.0,
+        a: 1.0,
+    };
+    /// Paper as a press means it: no ink at all, `[Paper]`, where RGB white
+    /// is a colour the press profile is asked about.
+    pub const PAPER_INK: Self = Self::Cmyk {
+        c: 0.0,
+        m: 0.0,
+        y: 0.0,
+        k: 0.0,
+        a: 1.0,
+    };
 
     /// Whether this colour must be looked up in a document before it means
     /// anything.

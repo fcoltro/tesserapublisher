@@ -38,21 +38,9 @@ pub(crate) const PAPER: &str = "[Paper]";
 pub(crate) const BLACK: &str = "[Black]";
 
 /// Paper as a press means it: no ink at all, not RGB white.
-pub(crate) const PAPER_INK: Color = Color::Cmyk {
-    c: 0.0,
-    m: 0.0,
-    y: 0.0,
-    k: 0.0,
-    a: 1.0,
-};
+pub(crate) const PAPER_INK: Color = Color::PAPER_INK;
 /// Black as a press means it: the black plate alone, not four inks.
-pub(crate) const BLACK_INK: Color = Color::Cmyk {
-    c: 0.0,
-    m: 0.0,
-    y: 0.0,
-    k: 1.0,
-    a: 1.0,
-};
+pub(crate) const BLACK_INK: Color = Color::BLACK_INK;
 
 /// The window, and the question a delete asks.
 pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {

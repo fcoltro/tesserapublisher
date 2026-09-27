@@ -2691,7 +2691,15 @@ impl Document {
             bounds,
             kind: FrameKind::Group(std::mem::take(&mut members)),
             transform: Transform::IDENTITY,
-            fill: Paint::Solid(tessera_color::Color::BLACK),
+            // A group paints nothing of its own, so no colour at all: an
+            // opaque black here was never drawn, but "Add unnamed colours"
+            // found it in every document with a group in it.
+            fill: Paint::Solid(tessera_color::Color::Rgb {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 0.0,
+            }),
             stroke: None,
             wrap: crate::nodes::TextWrap::None,
             blend: crate::blending::Blending::PLAIN,
