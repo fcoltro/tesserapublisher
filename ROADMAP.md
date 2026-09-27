@@ -3005,6 +3005,15 @@ the way ExtendScript sits outside InDesign.
   Cancel keeps it, Create does not; and the model's first frame landed on
   the pasteboard, because the page's `x` is 595 on a facing recto and the
   smoke test did not read it. The instructions say to; a model will.
+  **2026-09-27, the first of the two is fixed:** while the New Document
+  dialog is open, every tool call is refused with a sentence saying the
+  person is choosing what to make and to ask them to press Create or
+  Cancel (`tessera_bridge::DIALOG_OPEN`). It was worse than recorded: the
+  `new_document` tool wrote over the dialog's choices and closed it.
+  **Refused, not held** — the dialog opens by itself at launch, so a held
+  call would wait on someone who may not be there, and a client times out
+  saying nothing. `initialize`, `ping` and `tools/list` still answer, so a
+  model can connect while it waits.
 - [x] **Everything reachable** (2026-09-15, evening, by the user's ask:
   "all options, all popup window options, all tools, all settings").
   Three layers. *Every command*: `Command` derives serde and the bridge
@@ -3160,9 +3169,11 @@ commit.
 
 ### Tier 1 — hours each
 
-- [ ] 1. **The bridge answers while the New Document dialog is up**, so a
+- [x] 1. **The bridge answers while the New Document dialog is up**, so a
   model can fill a document the person is about to replace (milestone 13).
-  Check whether it still does; hold tool calls until the dialog closes.
+  *Done 2026-09-27:* every tool call is refused while the dialog is open,
+  saying why and what to ask for; refused rather than held, since the
+  dialog opens by itself at launch and a held call would hang a client.
 - [ ] 2. **`describe_shapes` ids as plain numbers** instead of the
   document's `{idx, version}` form (milestone 13).
 - [ ] 3. **Text variables: file name, date, last page number**

@@ -99,6 +99,10 @@ pub fn handle(state: &mut TesseraApp, line: &str) -> Option<String> {
             ),
             "ping" => result(id, json!({})),
             "tools/list" => result(id, json!({ "tools": tools::list() })),
+            "tools/call" if state.new_document.open => result(
+                id,
+                json!({ "content": [{ "type": "text", "text": DIALOG_OPEN }], "isError": true }),
+            ),
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
                 let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
@@ -124,6 +128,20 @@ pub fn handle(state: &mut TesseraApp, line: &str) -> Option<String> {
         Some(response.to_string())
     }
 }
+
+/// What every tool call is told while the New Document dialog is open.
+///
+/// The window opens that dialog by itself at launch, and the document behind
+/// it is a placeholder the person is choosing the size of: a frame a model
+/// made there went when Create replaced it, and the `new_document` tool wrote
+/// over the dialog's choices and closed it. So nothing runs until the person
+/// is done — **refused, not held**: a held call waits on someone who may not
+/// be there, and a client times out saying nothing, where this says what to
+/// ask for. The handshake and `tools/list` still answer, so a model can
+/// connect and learn the tools while it waits.
+pub const DIALOG_OPEN: &str = "The New Document dialog is open in the Tessera window: the \
+    person there is choosing what to make. Nothing was done. Ask them to press Create or \
+    Cancel, then try again.";
 
 /// Why a tool call gave no answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -238,6 +256,56 @@ mod tests {
             bridge.handle(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#),
             None
         );
+    }
+
+    #[test]
+    fn nothing_runs_while_the_new_document_dialog_is_open() {
+        let mut bridge = Bridge::new();
+        // What the window does at launch.
+        bridge.state.ask_what_to_make();
+        assert!(bridge.state.new_document.open, "the dialog opened");
+        bridge.state.new_document.pages = 7;
+
+        for (name, arguments) in [
+            (
+                "add_rectangle",
+                json!({ "x": 0, "y": 0, "width": 10, "height": 10 }),
+            ),
+            ("new_document", json!({ "pages": 2 })),
+            ("describe_document", json!({})),
+        ] {
+            let reply = call(
+                &mut bridge,
+                1,
+                "tools/call",
+                json!({ "name": name, "arguments": arguments }),
+            );
+            assert_eq!(reply["result"]["isError"], true, "{name} ran: {reply}");
+            assert_eq!(reply["result"]["content"][0]["text"], DIALOG_OPEN);
+        }
+        assert!(
+            bridge.state.active().document().frames.is_empty(),
+            "no frame on the placeholder"
+        );
+        assert!(bridge.state.new_document.open, "the dialog is still open");
+        assert_eq!(
+            bridge.state.new_document.pages, 7,
+            "the person's choices are theirs"
+        );
+        assert_eq!(bridge.state.documents.len(), 1, "no document was made");
+
+        // The handshake still answers, so a client can connect and wait.
+        assert!(call(&mut bridge, 2, "ping", json!({}))["result"].is_object());
+        assert!(call(&mut bridge, 3, "tools/list", json!({}))["result"]["tools"].is_array());
+
+        // Cancel, and the same call runs.
+        bridge.state.new_document.open = false;
+        tool(
+            &mut bridge,
+            "add_rectangle",
+            json!({ "x": 0, "y": 0, "width": 10, "height": 10 }),
+        );
+        assert_eq!(bridge.state.active().document().frames.len(), 1);
     }
 
     #[test]
