@@ -3149,6 +3149,61 @@ system prompt is set once and the selection is not.
 
 ---
 
+# Milestone 15 — Tables, Variables and Data Merge
+
+Planned 2026-09-27, and first in the order of work: the user chose these
+three as the next focus. They are one milestone because they lean on one
+another — a merge field is a variable, a variable has to work inside a table
+cell, a table and a merge both read a spreadsheet, and a catalogue is a merge
+into tables that run across pages.
+
+**Already built before this milestone:** a table is a frame kind whose cells
+each hold a story, so a cell has the whole text model; cells merge and
+split; rows and columns are inserted and removed; each cell has a fill, an
+inset and a vertical justification, and the table one stroke; rows grow to
+their tallest cell; Tab steps between cells; IDML tables import. Variables:
+current, next and previous page numbers, the section marker, custom text,
+and running headers (milestone 10).
+
+### Acceptance
+
+> Make a price list as a table that runs over three pages with its header
+> row repeated on each, styled by a table style. Put the file name and
+> today's date in the footer. Merge a spreadsheet of fifty people into name
+> badges, each with their photograph, several to a page, and export the
+> result as one PDF.
+
+### The work, easiest first
+
+- [ ] 1. **Variables: file name, date, last page number.** Hours.
+- [ ] 2. **Variables: chapter number.** A day.
+- [ ] 3. **Variables inside table cells.** A day. Merge fields go through the
+  same machinery, so this is what makes a field work in a cell.
+- [ ] 4. **A shared reader for CSV and tab-separated text**: a header row,
+  quoted fields, UTF-8 and UTF-16. Hours to a day. Both the merge and
+  importing a table read through it.
+- [ ] 5. **Tables: a stroke for each side of a cell, and alternating row
+  fills.** A day.
+- [ ] 6. **Tables: drag column and row edges to resize.** A day.
+- [ ] 7. **Tables: convert text to a table and back, sort rows, import a CSV
+  as a table.** A day or two.
+- [ ] 8. **Data merge, the core**: a Data Merge panel that chooses a source,
+  lists its fields, inserts a field at the caret, and previews record by
+  record. Days.
+- [ ] 9. **Data merge, the output**: one copy of the pages per record, into a
+  new document or straight to PDF; image fields; lines left empty by an
+  empty field removed; a report of what came out overset. Days.
+- [ ] 10. **Table and cell styles.** Days.
+- [ ] 11. **A table runs across frames and pages**, with header and footer
+  rows repeated. About a week — the hardest table item, and what long
+  tables and catalogues need.
+- [ ] 12. **Data merge, several records to a page**: labels, badges and
+  catalogue grids. Days.
+- [ ] 13. **Excel (`.xlsx`) as a table and as a merge source.** Days; it
+  brings a new dependency.
+
+---
+
 # What is left, easiest first (planned 2026-09-27)
 
 Everything still open in this file, gathered in one place and ordered from
@@ -3164,6 +3219,10 @@ a person at the machine or hardware this project does not have yet.
 
 When an item is done, tick it here *and* in its milestone, in the same
 commit.
+
+**First: Milestone 15** (tables, variables, data merge), chosen as the
+focus on 2026-09-27 and worked in its own order above. Items 3 and 7
+below are its items 1 to 3.
 
 ## Features
 
