@@ -57,6 +57,9 @@ publish = false
 # better answer. A held version without a written reason is the thing to avoid,
 # not a held version.
 [workspace.dependencies]
+# The clock, in the person's own time zone, for the date variables. Only
+# tessera_ui reads it; the model and layout carry a plain calendar Stamp.
+jiff = "0.2"
 tessera_geometry = { path = "crates/tessera_geometry" }
 tessera_color    = { path = "crates/tessera_color" }
 tessera_io       = { path = "crates/tessera_io" }

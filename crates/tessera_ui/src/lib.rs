@@ -10,6 +10,7 @@ pub mod app;
 pub mod book_ops;
 pub mod camera;
 pub mod catalogue;
+pub mod clock;
 pub mod command;
 pub mod cursor;
 pub mod docking;
@@ -67,6 +68,12 @@ impl eframe::App for TesseraApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.window_title()));
+        // The file name and date variables read these. Cheap when nothing
+        // changed, which is nearly every frame.
+        let now = clock::now();
+        for open in self.documents.values_mut() {
+            open.sync_file_facts(now);
+        }
         // Rides on a frame that was going to be drawn anyway; asks for none
         // of its own.
         self.autosave_if_due();

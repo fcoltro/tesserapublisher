@@ -212,6 +212,13 @@ pub struct Document {
     /// a revision counter carried across sessions would mean nothing.
     #[serde(skip)]
     revision: u64,
+
+    /// Where the document is saved and when it was made, saved and output,
+    /// for the file name and date variables. Not part of the document, so
+    /// not in `document.json`; changed through [`Document::set_file_facts`]
+    /// so the page redraws. See [`crate::variables::FileFacts`].
+    #[serde(skip)]
+    file: crate::variables::FileFacts,
 }
 
 impl Document {
@@ -259,6 +266,7 @@ impl Document {
             destinations: Vec::new(),
             footnotes: crate::footnotes::FootnoteOptions::default(),
             revision: 0,
+            file: crate::variables::FileFacts::default(),
         };
 
         let layer = doc.layers.insert(Layer::named("Layer 1"));
@@ -281,6 +289,22 @@ impl Document {
 
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// What the document knows about its file.
+    pub fn file_facts(&self) -> &crate::variables::FileFacts {
+        &self.file
+    }
+
+    /// Replace what the document knows about its file. Moves the revision
+    /// only when something changed, so the page redraws for a new name or
+    /// date and a caller can set the same facts every frame for nothing.
+    /// Not an edit — nothing here enters undo or makes the document unsaved.
+    pub fn set_file_facts(&mut self, facts: crate::variables::FileFacts) {
+        if self.file != facts {
+            self.file = facts;
+            self.revision += 1;
+        }
     }
 
     pub fn spread_ids(&self) -> impl Iterator<Item = SpreadId> + '_ {

@@ -35,6 +35,63 @@ fn an_empty_document_round_trips() {
 }
 
 #[test]
+fn the_dates_a_document_was_made_and_saved_survive_it_and_its_new_variables_too() {
+    use tessera_document::variables::{
+        DateOf, FileFacts, PageScope, Stamp, TextVariable, VariableKind,
+    };
+    let path = temp_path("dated.tsrdf");
+    let made = Stamp {
+        year: 2026,
+        month: 9,
+        day: 7,
+        hour: 9,
+        minute: 30,
+        second: 0,
+    };
+    let saved = Stamp { day: 27, ..made };
+    let mut doc = Document::new();
+    doc.set_file_facts(FileFacts {
+        created: Some(made),
+        modified: Some(saved),
+        ..FileFacts::default()
+    });
+    doc.set_variables(vec![
+        TextVariable::file_name("File", true, false),
+        TextVariable::date("Made", DateOf::Creation, "dd/MM/yy"),
+        TextVariable::last_page_number("Last", PageScope::Section),
+    ]);
+
+    format::save(&doc, &path).expect("save");
+    let loaded = format::load(&path).expect("load");
+
+    let facts = loaded.file_facts();
+    assert_eq!(facts.created, Some(made));
+    assert_eq!(facts.modified, Some(saved));
+    assert_eq!(
+        facts.path.as_deref(),
+        Some(std::path::absolute(&path).unwrap().as_path()),
+        "opening a file names it"
+    );
+    assert_eq!(loaded.variables, doc.variables);
+    assert!(matches!(
+        loaded.variables[1].kind,
+        VariableKind::Date {
+            of: DateOf::Creation,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn a_file_saved_before_dates_were_kept_has_none_rather_than_today() {
+    let path = temp_path("undated.tsrdf");
+    format::save(&Document::new(), &path).expect("save");
+    let loaded = format::load(&path).expect("load");
+    assert_eq!(loaded.file_facts().created, None);
+    assert_eq!(loaded.file_facts().modified, None);
+}
+
+#[test]
 fn a_document_with_a_rectangle_round_trips_exactly() {
     let path = temp_path("rect.tsrdf");
     let mut doc = Document::new();
@@ -804,8 +861,9 @@ fn the_format_version_is_twenty_six() {
     // justification, 100 / 100 / 100 before; 31 type on a path, none before;
     // 32 endnotes — where the notes go, and the list's recipe — at the foot
     // and no list before; 33 an index entry's span, the marker's page before;
-    // 34 a section's prefix left off the number, always on before.
-    assert_eq!(format::FORMAT_VERSION, 34);
+    // 34 a section's prefix left off the number, always on before; 35 the
+    // file name, date and last page number variables, which did not exist.
+    assert_eq!(format::FORMAT_VERSION, 35);
 }
 
 #[test]

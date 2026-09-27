@@ -103,7 +103,10 @@ impl Running {
             .iter()
             .filter_map(|v| match &v.kind {
                 VariableKind::RunningHeader { style, .. } => Some(*style),
-                VariableKind::Custom(_) => None,
+                VariableKind::Custom(_)
+                | VariableKind::FileName { .. }
+                | VariableKind::Date { .. }
+                | VariableKind::LastPageNumber { .. } => None,
             })
             .collect();
         let anchors = Self::read_anchors(doc, items);

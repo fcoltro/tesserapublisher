@@ -1168,17 +1168,55 @@ fn variables_for(doc: &Document, frame: FrameId, on: PageId, running: &Running) 
         variables: doc
             .variables
             .iter()
-            .map(|v| match &v.kind {
-                tessera_document::variables::VariableKind::Custom(text) => text.clone(),
-                tessera_document::variables::VariableKind::RunningHeader { style, which } => {
-                    running.header(on, *style, *which).unwrap_or_default()
-                }
-            })
+            .map(|v| variable_text(doc, &v.kind, on, running))
             .collect(),
         footnote_number: None,
         footnote_text: None,
         footnote_labels: Vec::new(),
         cross_references: cross_references_for(doc, frame, running, &label_of),
+    }
+}
+
+/// What a text variable of `kind` reads as on `on`.
+fn variable_text(
+    doc: &Document,
+    kind: &tessera_document::variables::VariableKind,
+    on: PageId,
+    running: &Running,
+) -> String {
+    use tessera_document::variables::{PageScope, VariableKind};
+    match kind {
+        VariableKind::Custom(text) => text.clone(),
+        VariableKind::RunningHeader { style, which } => {
+            running.header(on, *style, *which).unwrap_or_default()
+        }
+        VariableKind::FileName { folder, extension } => {
+            doc.file_facts().file_name(*folder, *extension)
+        }
+        VariableKind::Date { of, format } => doc
+            .file_facts()
+            .date(*of)
+            .map(|stamp| stamp.format(format))
+            .unwrap_or_default(),
+        VariableKind::LastPageNumber { scope } => {
+            // A parent page is in no section and no reading order, so it
+            // reads the document's last page — the one a folio on it will
+            // end up counting towards.
+            let numbers = doc.page_numbers();
+            let section = numbers
+                .iter()
+                .find(|(page, _)| *page == on)
+                .map(|(_, n)| n.section);
+            numbers
+                .iter()
+                .rev()
+                .find(|(_, n)| match (scope, section) {
+                    (PageScope::Section, Some(section)) => n.section == section,
+                    _ => true,
+                })
+                .map(|(_, n)| n.label.clone())
+                .unwrap_or_default()
+        }
     }
 }
 
@@ -2248,6 +2286,70 @@ Some body copy.",
         assert!(
             on(pages[0]).is_empty(),
             "no heading on page one, so nothing to say"
+        );
+    }
+
+    #[test]
+    fn file_name_date_and_last_page_number_variables_read_the_file_and_the_pages() {
+        use tessera_document::sections::Section;
+        use tessera_document::variables::{DateOf, FileFacts, PageScope, Stamp, TextVariable};
+        use tessera_text::story::Numbering;
+        use tessera_text::variables::Marker;
+        let text: String = (0..5)
+            .map(|i| Marker::Variable(i).character().to_string())
+            .collect::<Vec<_>>()
+            .join("|");
+        let (mut doc, folio, _) = a_master_folio(4, &text);
+        let pages: Vec<PageId> = doc.page_ids().collect();
+        // Page one is "1"; a section in lower roman runs i, ii, iii after it.
+        doc.set_sections(vec![Section {
+            first: pages[1],
+            start: Some(1),
+            style: Numbering::LowerRoman,
+            prefix: String::new(),
+            include_prefix: true,
+            marker: String::new(),
+        }]);
+        doc.set_variables(vec![
+            TextVariable::last_page_number("Of the document", PageScope::Document),
+            TextVariable::last_page_number("Of the section", PageScope::Section),
+            TextVariable::file_name("File", false, false),
+            TextVariable::date("Made", DateOf::Creation, "d MMMM yyyy"),
+            TextVariable::date("Saved", DateOf::Modification, "d MMMM yyyy"),
+        ]);
+        doc.set_file_facts(FileFacts {
+            path: Some(std::path::PathBuf::from("Autumn.tsrdf")),
+            created: Some(Stamp {
+                year: 2026,
+                month: 9,
+                day: 7,
+                hour: 20,
+                minute: 5,
+                second: 0,
+            }),
+            // Never saved: the saved date says nothing rather than a guess.
+            modified: None,
+            output: None,
+        });
+
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+        let on = |page: PageId| {
+            resolved
+                .items
+                .iter()
+                .find(|i| i.frame == folio && i.on == Some(page))
+                .map(glyphs_of)
+                .expect("resolved")
+        };
+        assert_eq!(
+            on(pages[0]),
+            glyphs_for(&mut shaper, "iii|1|Autumn|7 September 2026|"),
+            "page one's section ends on itself; the document on iii"
+        );
+        assert_eq!(
+            on(pages[2]),
+            glyphs_for(&mut shaper, "iii|iii|Autumn|7 September 2026|")
         );
     }
 

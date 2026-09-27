@@ -2632,8 +2632,9 @@ master story cannot share one layout and an ordinary story keys as before.
   (format 34), InDesign's "Include Prefix when Numbering Pages", a checkbox
   in the section box and IDML's `IncludeSectionPrefix` on import. Off, the
   folio reads "1" and the Pages panel follows it, as its comment argues.
-- Not built: chapter numbers as a variable, "last page number", file name
-  and date variables, and a variable in a table cell.
+- Not built: chapter numbers as a variable, and a variable in a table
+  cell. *"Last page number", file name and date variables are built
+  (2026-09-27, milestone 15).*
 
 ---
 
@@ -3175,7 +3176,19 @@ and running headers (milestone 10).
 
 ### The work, easiest first
 
-- [ ] 1. **Variables: file name, date, last page number.** Hours.
+- [x] 1. **Variables: file name, date, last page number.** Hours.
+  *Done 2026-09-27.* Three new kinds in Type ▸ Text variables: the file
+  name (with or without folder and extension), a date — made, saved or
+  output — in InDesign's pattern letters (`d MMMM yyyy`, `dd/MM/yy`,
+  `h:mm a`, text in quotes), and the last page number of the document or
+  of the section. **The layout never reads the clock**: the document
+  carries its file facts (`FileFacts`: path, made, saved, output) as plain
+  wall-clock `Stamp`s, and only `tessera_ui::clock` asks the time, in the
+  person's own zone through `jiff` — 23:30 in São Paulo is still today
+  there. `meta.json`'s `created` and `modified`, empty since milestone 0
+  "until a date crate arrives", now hold real dates; a file saved before
+  has none and prints none rather than today. The output date moves with
+  the clock only in a document that prints it. Format 35.
 - [ ] 2. **Variables: chapter number.** A day.
 - [ ] 3. **Variables inside table cells.** A day. Merge fields go through the
   same machinery, so this is what makes a field work in a cell.
@@ -3235,8 +3248,8 @@ below are its items 1 to 3.
   dialog opens by itself at launch and a held call would hang a client.
 - [ ] 2. **`describe_shapes` ids as plain numbers** instead of the
   document's `{idx, version}` form (milestone 13).
-- [ ] 3. **Text variables: file name, date, last page number**
-  (milestone 10).
+- [x] 3. **Text variables: file name, date, last page number**
+  (milestone 10). *Done 2026-09-27, as milestone 15's item 1.*
 - [ ] 4. **Facing-page sides named inside and outside** against the spine
   (milestone 4).
 

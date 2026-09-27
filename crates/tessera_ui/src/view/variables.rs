@@ -15,7 +15,7 @@
 //! as "(removed)" so the numbering is not a mystery.
 
 use egui::Ui;
-use tessera_document::variables::{TextVariable, VariableKind, Which};
+use tessera_document::variables::{DateOf, PageScope, TextVariable, VariableKind, Which};
 use tessera_text::story::ParagraphStyleId;
 use tessera_text::variables::Marker;
 
@@ -127,6 +127,34 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                     ));
                 }
             });
+            ui.horizontal(|ui| {
+                let full = draft.len() >= tessera_document::variables::MOST_VARIABLES;
+                if ui
+                    .add_enabled(!full, egui::Button::new("Add file name"))
+                    .clicked()
+                {
+                    draft.push(TextVariable::file_name("File name", false, false));
+                }
+                if ui
+                    .add_enabled(!full, egui::Button::new("Add date"))
+                    .clicked()
+                {
+                    draft.push(TextVariable::date(
+                        "Output date",
+                        DateOf::Output,
+                        tessera_document::variables::DEFAULT_DATE_FORMAT,
+                    ));
+                }
+                if ui
+                    .add_enabled(!full, egui::Button::new("Add last page number"))
+                    .clicked()
+                {
+                    draft.push(TextVariable::last_page_number(
+                        "Last page number",
+                        PageScope::Document,
+                    ));
+                }
+            });
 
             ui.add_space(Theme::space_2());
             ui.horizontal(|ui| {
@@ -218,6 +246,71 @@ fn one(
                         })
                         .response,
                     "Which on the page",
+                    egui::WidgetType::ComboBox,
+                    None,
+                );
+            }
+            VariableKind::FileName { folder, extension } => {
+                crate::icons::reads_as(
+                    ui.checkbox(folder, "Folder"),
+                    "Include the folder",
+                    egui::WidgetType::Checkbox,
+                    Some(*folder),
+                );
+                crate::icons::reads_as(
+                    ui.checkbox(extension, "Extension"),
+                    "Include the extension",
+                    egui::WidgetType::Checkbox,
+                    Some(*extension),
+                );
+            }
+            VariableKind::Date { of, format } => {
+                let name = |d: DateOf| match d {
+                    DateOf::Creation => "created",
+                    DateOf::Modification => "saved",
+                    DateOf::Output => "output",
+                };
+                crate::icons::reads_as(
+                    egui::ComboBox::from_id_salt(("date-of", i))
+                        .selected_text(name(*of))
+                        .show_ui(ui, |ui| {
+                            for d in [DateOf::Creation, DateOf::Modification, DateOf::Output] {
+                                ui.selectable_value(of, d, name(d));
+                            }
+                        })
+                        .response,
+                    "Which date",
+                    egui::WidgetType::ComboBox,
+                    None,
+                );
+                crate::icons::reads_as(
+                    ui.add(
+                        egui::TextEdit::singleline(format)
+                            .desired_width(110.0)
+                            .hint_text("d MMMM yyyy"),
+                    )
+                    .on_hover_text(
+                        "d dd day · M MM MMM MMMM month · yy yyyy year · \
+                         HH hh mm hour and minute · a AM/PM · 'text' as it is",
+                    ),
+                    "Date format",
+                    egui::WidgetType::TextEdit,
+                    None,
+                );
+            }
+            VariableKind::LastPageNumber { scope } => {
+                crate::icons::reads_as(
+                    egui::ComboBox::from_id_salt(("last-page-scope", i))
+                        .selected_text(match scope {
+                            PageScope::Document => "of the document",
+                            PageScope::Section => "of the section",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(scope, PageScope::Document, "of the document");
+                            ui.selectable_value(scope, PageScope::Section, "of the section");
+                        })
+                        .response,
+                    "Last page of",
                     egui::WidgetType::ComboBox,
                     None,
                 );

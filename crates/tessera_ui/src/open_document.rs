@@ -131,6 +131,45 @@ impl OpenDocument {
             .save_if_due(&self.document, directory, now, every)
     }
 
+    /// Replace what the document knows about its file. Not an edit: it
+    /// enters no undo and leaves the document as saved or unsaved as it was.
+    pub fn set_file_facts(&mut self, facts: tessera_document::variables::FileFacts) {
+        self.document.set_file_facts(facts);
+    }
+
+    /// Keep the document's file facts current, once a frame: its path, a
+    /// creation date for a document made here, and today for the output
+    /// date.
+    ///
+    /// The output date moves with the clock only when the document has a
+    /// variable that prints it, and then at most once a minute — each move
+    /// lays the document out again, which is worth it for a date on the page
+    /// and for nothing else.
+    pub fn sync_file_facts(&mut self, now: tessera_document::variables::Stamp) {
+        use tessera_document::variables::{DateOf, Stamp, VariableKind};
+        let mut facts = self.document.file_facts().clone();
+        facts.path = self
+            .current_path
+            .as_ref()
+            .map(|p| std::path::absolute(p).unwrap_or_else(|_| p.clone()));
+        if facts.created.is_none() && self.current_path.is_none() {
+            facts.created = Some(now);
+        }
+        let prints_today = self.document.variables.iter().any(|v| {
+            matches!(
+                v.kind,
+                VariableKind::Date {
+                    of: DateOf::Output,
+                    ..
+                }
+            )
+        });
+        if prints_today || facts.output.is_none() {
+            facts.output = Some(Stamp { second: 0, ..now });
+        }
+        self.document.set_file_facts(facts);
+    }
+
     /// The mutable document.
     ///
     /// **Only `crate::command` may call this.** Routing every change through

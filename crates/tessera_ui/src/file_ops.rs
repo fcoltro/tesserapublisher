@@ -39,7 +39,21 @@ pub fn save_to_path(state: &mut TesseraApp, path: &Path) -> Result<(), FormatErr
     }) {
         return Err(FormatError::AlreadyOpen(path.to_path_buf()));
     }
-    format::save(state.active().document(), path)?;
+    // The dates `meta.json` keeps: this save's moment, and a creation date
+    // for a document that has none — made before dates were kept, or
+    // imported. Put back if the save fails, so a date never claims a save
+    // that did not happen.
+    let before = state.active().document().file_facts().clone();
+    let now = crate::clock::now();
+    let mut facts = before.clone();
+    facts.created.get_or_insert(now);
+    facts.modified = Some(now);
+    facts.path = Some(std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()));
+    state.active_mut().set_file_facts(facts);
+    if let Err(error) = format::save(state.active().document(), path) {
+        state.active_mut().set_file_facts(before);
+        return Err(error);
+    }
     state.active_mut().current_path = Some(path.to_path_buf());
     state.active_mut().dirty = false;
     // The work is safe in the user's own file now, so the recovery copy is

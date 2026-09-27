@@ -11,10 +11,11 @@ pub struct Meta {
 }
 
 impl Meta {
+    /// `created` and `modified` start empty: `save` fills them from the
+    /// dates the application put on the document, as local wall-clock
+    /// ISO-8601 (`Stamp::iso`). A document nobody dated saves them empty,
+    /// which is honest where a fabricated date would not be.
     pub fn current() -> Self {
-        // ISO-8601 timestamps arrive with a date crate in milestone 3, when
-        // document metadata becomes user-visible. Empty is honest here; a
-        // fabricated date would not be.
         Self {
             format_version: super::FORMAT_VERSION,
             app_version: env!("CARGO_PKG_VERSION").to_string(),

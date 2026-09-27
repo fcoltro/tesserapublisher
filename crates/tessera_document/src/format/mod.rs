@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 34;
+pub const FORMAT_VERSION: u32 = 35;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -95,6 +95,14 @@ pub fn load(path: &Path) -> Result<Document, FormatError> {
             }
         }
     }
+    // A file saved before dates were kept has empty ones, and reads as
+    // having none rather than as having been made today.
+    document.set_file_facts(crate::variables::FileFacts {
+        path: Some(absolute),
+        created: crate::variables::Stamp::from_iso(&meta.created),
+        modified: crate::variables::Stamp::from_iso(&meta.modified),
+        output: None,
+    });
     Ok(document)
 }
 
@@ -105,6 +113,10 @@ pub fn load(path: &Path) -> Result<Document, FormatError> {
 /// ago follows exactly the path a document written two versions ago does, and
 /// each step only has to know about its own change.
 fn migrate(value: &mut serde_json::Value, from: u32) {
+    // 34 -> 35: text variables gained the file name, date and last page
+    // number kinds. **No step**: every earlier variable is a kind that
+    // still exists. The version moves so an older build refuses a document
+    // whose variables it could not read, rather than failing to parse it.
     // 33 -> 34: a section may leave its prefix off the page numbers
     // (`include_prefix`). **No step, on purpose**: absent reads as on,
     // which is what every earlier section did. The version moves so an
@@ -709,6 +721,12 @@ fn to_bytes(doc: &Document, version: u32) -> Result<Vec<u8>, FormatError> {
 
         let mut meta = Meta::current();
         meta.format_version = version;
+        // The dates the application put on the document: when it was made,
+        // and this save's moment, which it sets just before saving.
+        let facts = doc.file_facts();
+        let iso = |stamp: Option<crate::variables::Stamp>| stamp.map(|s| s.iso());
+        meta.created = iso(facts.created).unwrap_or_default();
+        meta.modified = iso(facts.modified).unwrap_or_default();
         let meta_bytes = serde_json::to_vec_pretty(&meta).map_err(|source| FormatError::Parse {
             entry: META_ENTRY,
             source,
