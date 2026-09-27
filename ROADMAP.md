@@ -2178,6 +2178,13 @@ milestone the layout is fixed: a tool strip, one inspector, and the canvas.
   written blind. A second instance no longer takes
   the first one's autosave copies for a crash's leavings; see finding 21 in
   `docs/reviews/2026-09-13-deep-bug-review.md`.
+  **2026-09-27, new artwork:** the mark is a blue T (`#3e4efa`) where it was
+  red, and the document icon a blue page carrying it in white (`164545d`).
+  Every icon is made from the two PNGs in `assets/` — the window icon and
+  the Windows `.ico` resources by `apps/tessera_app/build.rs`, the macOS and
+  Linux ones by `packaging/build.sh` — so the swap was the files and the one
+  test that samples the mark's colour. Not yet seen in a title bar or in
+  Explorer.
 - [ ] **Linux verified interactively** — Wayland and X11, fractional scaling,
   IME, native dialogs.
 - [ ] **macOS verified interactively** — Retina, menu bar conventions, IME.
