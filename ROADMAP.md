@@ -3206,9 +3206,20 @@ and running headers (milestone 10).
   now shaped against the page the table stands on (`OnPage`, as a text
   frame there is), so a page number, a chapter number, any text variable
   and, later, a merge field read in a cell as they read beside it.
-- [ ] 4. **A shared reader for CSV and tab-separated text**: a header row,
+- [x] 4. **A shared reader for CSV and tab-separated text**: a header row,
   quoted fields, UTF-8 and UTF-16. Hours to a day. Both the merge and
-  importing a table read through it.
+  importing a table read through it. *Done 2026-09-27*
+  (`tessera_import::delimited`), hand-written for the files people have
+  rather than the standard alone: comma, tab and **semicolon** — Excel's
+  CSV wherever the comma is the decimal mark — found from the header,
+  counting outside quotes; UTF-8 with or without a mark, UTF-16 with or
+  without one (Excel's "Unicode Text"), and **Windows-1252** for a file
+  that is not UTF-8, which is what Excel on Windows saves, so "Preço"
+  survives. Quoted fields hold separators, line breaks and doubled quotes;
+  a quote never closed is an error naming its row, since reading on would
+  shift every later field a column. A header's `@Photo` is an image field,
+  InDesign's convention. Blank names, repeated names, ragged and blank
+  rows are made into a grid and each change is said in `Data::notes`.
 - [ ] 5. **Tables: a stroke for each side of a cell, and alternating row
   fills.** A day.
 - [ ] 6. **Tables: drag column and row edges to resize.** A day.

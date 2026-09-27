@@ -1,6 +1,6 @@
 //! Reading other applications' documents.
 //!
-//! Two formats, and one rule for both: **what cannot be carried is dropped
+//! Three formats, and one rule for all: **what cannot be carried is dropped
 //! out loud.** An importer that silently approximates leaves a person
 //! trusting a page that is not the one they made. So every import returns the
 //! document *and* a list of what it could not bring — a table, a feature, an
@@ -11,7 +11,11 @@
 //!   colours, stories with footnotes and page-number markers.
 //! - [`docx`]: a Word document, as text. One story with its paragraph styles,
 //!   to place into a frame.
+//! - [`delimited`]: comma-, semicolon- and tab-separated data, for a data
+//!   merge and for a table. What it had to change to make a grid is said in
+//!   [`delimited::Data::notes`].
 
+pub mod delimited;
 pub mod docx;
 pub mod idml;
 mod xml;
