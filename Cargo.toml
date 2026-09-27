@@ -188,6 +188,13 @@ hayro-write = "0.7"
 # resolution a picture was made at (the `pHYs` chunk). Already in the tree:
 # `image` reads PNG with it.
 png         = "0.18"
+# TIFF written directly for CMYK, which `image`'s TIFF encoder does not
+# offer. Already in the tree: `image` reads TIFF with it.
+tiff        = "0.11"
+# JPEG in CMYK, progressive, with an embedded profile, none of which
+# `image`'s own JPEG encoder does. Pure Rust; its licence includes the
+# Independent JPEG Group's, acknowledged in ATTRIBUTION.md.
+jpeg-encoder = "0.7"
 # `variable-fonts` is off. It exists to instance a variable font at chosen
 # axis coordinates, and the PDF writer never asks for that — it calls
 # `subset`, which passes no coordinates and refuses CFF2 either way, so the

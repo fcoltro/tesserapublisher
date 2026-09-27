@@ -50,35 +50,8 @@ impl Pages {
 /// stay — the writer puts each on the page its geometry says, and one off
 /// every kept page is on none.
 pub fn only_pages(resolved: &ResolvedDocument, pages: Pages) -> ResolvedDocument {
-    let keep = pages.indices(resolved.pages.len());
-    let new_index = |old: usize| keep.iter().position(|k| *k == old);
-    let mut out = ResolvedDocument {
-        items: Vec::with_capacity(resolved.items.len()),
-        pages: keep.iter().map(|k| resolved.pages[*k].clone()).collect(),
-        bookmarks: Vec::new(),
-    };
-    for item in &resolved.items {
-        let mut item = item.clone();
-        item.links.retain_mut(|link| match &mut link.target {
-            tessera_layout::LinkTarget::Page(index) => match new_index(*index) {
-                Some(new) => {
-                    *index = new;
-                    true
-                }
-                None => false,
-            },
-            tessera_layout::LinkTarget::Url(_) => true,
-        });
-        out.items.push(item);
-    }
-    for bookmark in &resolved.bookmarks {
-        if let Some(new) = new_index(bookmark.page) {
-            let mut bookmark = bookmark.clone();
-            bookmark.page = new;
-            out.bookmarks.push(bookmark);
-        }
-    }
-    out
+    let chosen = pages.indices(resolved.pages.len());
+    tessera_pdf::pages::assemble(resolved, &tessera_pdf::pages::groups(&chosen, None))
 }
 
 /// Where the PDF to print is written: a file of its own in the system's

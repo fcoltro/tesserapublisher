@@ -1120,6 +1120,19 @@ of each carries the full account; this is the index.
   refuses a picture past 65,535 pixels a side; its choices are remembered.
   **Left:** SVG, EPUB and HTML export; exporting in the background, since a
   long document at 300 ppi takes a while.
+- [x] **Picture export as InDesign has it, and two formats more
+  (2026-09-27).** File ▸ Export image… writes PNG, JPEG, TIFF and lossless
+  WebP. Pages are a range typed as InDesign types one (`1-3, 6, 9-`), or
+  spreads, one picture each (`tessera_pdf::pages`, which printing now shares).
+  Colour is RGB, grey, or CMYK for JPEG and TIFF — through the document's
+  press, else the shipped CRPC6 — with pure black on the black plate alone,
+  as in a CMYK PDF. JPEG has InDesign's four qualities and progressive
+  encoding (`jpeg-encoder`, which also writes CMYK the Adobe way and embeds a
+  profile); TIFF is LZW with a predictor, CMYK or clear, written with `tiff`
+  directly since `image` offers neither. Profiles are embedded when asked: an
+  sRGB chunk in a PNG, sRGB or the press's in the rest. Options open the
+  result when done. Every file was read back by a second reader (Pillow) as
+  well as by the tests.
 - [ ] **Not yet looked at on Windows.** Each panel is proved by headless
   interface tests driven through the accessibility tree and was looked at
   in screenshots, dark and light, on Linux. The Windows build has not been

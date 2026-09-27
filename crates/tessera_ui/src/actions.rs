@@ -628,7 +628,7 @@ pub fn all() -> &'static [Action] {
         a("Save", Some("Ctrl+S"), Group::File, Save),
         a("Save as…", Some("Ctrl+Shift+S"), Group::File, SaveAs),
         a("Export PDF…", Some("Ctrl+Shift+E"), Group::File, ExportPdf),
-        a("Export PNG or JPEG…", None, Group::File, ExportImages),
+        a("Export image…", None, Group::File, ExportImages),
         a("Print…", Some("Ctrl+P"), Group::File, Print),
         // Beside Export, because packaging is the other way a job leaves the
         // studio and somebody looking for one will look where the other is.

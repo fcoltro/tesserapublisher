@@ -66,7 +66,7 @@ fn a_black_box() -> ResolvedDocument {
 }
 
 fn one(doc: &ResolvedDocument, options: &ImageOptions) -> raster::PageImage {
-    let mut pages = raster::page_images(doc, options).expect("pictures");
+    let mut pages = raster::page_images(doc, options, None).expect("pictures");
     assert_eq!(pages.len(), 1);
     pages.remove(0)
 }
@@ -260,6 +260,7 @@ fn every_page_is_a_picture_in_order() {
             ppi: 72.0,
             ..ImageOptions::default()
         },
+        None,
     )
     .expect("pictures");
     assert_eq!(pages.len(), 2);
@@ -296,6 +297,7 @@ fn a_page_too_big_to_be_a_picture_says_so() {
             ppi: 2400.0,
             ..ImageOptions::default()
         },
+        None,
     )
     .expect("20 points at 2400 ppi is 667 pixels");
     assert_eq!((fine[0].width, fine[0].height), (667, 333));
@@ -308,6 +310,7 @@ fn a_page_too_big_to_be_a_picture_says_so() {
             ppi: 2400.0,
             ..ImageOptions::default()
         },
+        None,
     )
     .expect_err("66,667 pixels across");
     assert!(matches!(
@@ -419,4 +422,345 @@ fn a_turned_or_shadowed_selection_is_cut_out_whole() {
         rect(0.0, 0.0, 26.0, 20.0),
         "out to where the shadow falls"
     );
+}
+
+// --- formats, colours and profiles ------------------------------------------
+
+use tessera_pdf::raster::Colour;
+
+fn crpc6() -> tessera_document::intent::OutputIntent {
+    let profile = include_bytes!("../../../assets/profiles/CGATS21_CRPC6.icc").to_vec();
+    tessera_document::intent::OutputIntent {
+        description: "CRPC6".to_string(),
+        profile,
+        rendering: tessera_document::intent::Rendering::default(),
+    }
+}
+
+fn made(options: ImageOptions, press: Option<&tessera_document::intent::OutputIntent>) -> Vec<u8> {
+    let mut pages = raster::page_images(&a_black_box(), &options, press).expect("pictures");
+    pages.remove(0).bytes
+}
+
+fn at_72(format: Format, colour: Colour) -> ImageOptions {
+    ImageOptions {
+        format,
+        colour,
+        ppi: 72.0,
+        ..ImageOptions::default()
+    }
+}
+
+/// The value of a TIFF tag, read back with the same crate a reader would.
+fn tiff_tag(bytes: &[u8], tag: tiff::tags::Tag) -> Option<tiff::decoder::ifd::Value> {
+    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(bytes)).expect("a TIFF");
+    decoder.find_tag(tag).expect("readable")
+}
+
+#[test]
+fn a_tiff_is_lossless_and_says_its_resolution() {
+    let bytes = made(
+        ImageOptions {
+            ppi: 150.0,
+            ..at_72(Format::Tiff, Colour::Rgb)
+        },
+        None,
+    );
+    assert!(
+        bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*"),
+        "not a TIFF"
+    );
+    let pixels = image::load_from_memory(&bytes).expect("reads").to_rgba8();
+    assert_eq!(pixels.dimensions(), (417, 208));
+    assert_eq!(pixels.get_pixel(100, 50).0, [0, 0, 0, 255]);
+    assert_eq!(pixels.get_pixel(300, 150).0, [255, 255, 255, 255]);
+
+    use tiff::decoder::ifd::Value;
+    use tiff::tags::Tag;
+    assert_eq!(
+        tiff_tag(&bytes, Tag::Compression).and_then(|v| v.into_u16().ok()),
+        Some(5),
+        "LZW"
+    );
+    assert_eq!(
+        tiff_tag(&bytes, Tag::Predictor).and_then(|v| v.into_u16().ok()),
+        Some(2),
+        "the horizontal predictor, which is what makes LZW pay on a photograph"
+    );
+    assert_eq!(
+        tiff_tag(&bytes, Tag::ResolutionUnit).and_then(|v| v.into_u16().ok()),
+        Some(2),
+        "per inch"
+    );
+    assert!(matches!(
+        tiff_tag(&bytes, Tag::XResolution),
+        Some(Value::Rational(15000, 100))
+    ));
+    assert!(
+        tiff_tag(&bytes, Tag::IccProfile).is_some(),
+        "sRGB, as asked"
+    );
+}
+
+#[test]
+fn a_cmyk_tiff_is_in_the_press_s_inks_and_carries_its_profile() {
+    let press = crpc6();
+    let bytes = made(at_72(Format::Tiff, Colour::Cmyk), Some(&press));
+    let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(&bytes)).expect("a TIFF");
+    assert_eq!(
+        decoder.colortype().expect("a colour type"),
+        tiff::ColorType::CMYK(8)
+    );
+    let tiff::decoder::DecodingResult::U8(inks) = decoder.read_image().expect("pixels") else {
+        panic!("eight bits a sample");
+    };
+    let at = |x: usize, y: usize| &inks[(y * 200 + x) * 4..(y * 200 + x) * 4 + 4];
+    assert_eq!(
+        at(50, 25),
+        [0, 0, 0, 255],
+        "solid black is the black plate alone"
+    );
+    assert_eq!(at(150, 75), [0, 0, 0, 0], "and the paper is no ink");
+    let profile = tiff_tag(&bytes, tiff::tags::Tag::IccProfile).expect("a profile");
+    let tiff::decoder::ifd::Value::List(values) = profile else {
+        panic!("the profile's bytes");
+    };
+    assert_eq!(values.len(), press.profile.len(), "the press's own profile");
+}
+
+#[test]
+fn cmyk_without_a_cmyk_press_is_refused() {
+    let refused = raster::page_images(&a_black_box(), &at_72(Format::Jpeg, Colour::Cmyk), None);
+    assert!(matches!(
+        refused,
+        Err(tessera_pdf::PdfError::CannotConform(_))
+    ));
+
+    let screen = tessera_color::managed::OutputProfile::screen().expect("sRGB");
+    let rgb_press = tessera_document::intent::OutputIntent {
+        description: "sRGB".into(),
+        profile: screen.bytes().to_vec(),
+        rendering: tessera_document::intent::Rendering::default(),
+    };
+    let refused = raster::page_images(
+        &a_black_box(),
+        &at_72(Format::Jpeg, Colour::Cmyk),
+        Some(&rgb_press),
+    );
+    assert!(
+        matches!(refused, Err(tessera_pdf::PdfError::CannotConform(_))),
+        "an RGB press makes no inks"
+    );
+}
+
+/// The JPEG marker segments before the picture, as (marker, payload).
+fn jpeg_segments(bytes: &[u8]) -> Vec<(u8, &[u8])> {
+    let mut out = Vec::new();
+    let mut at = 2;
+    while at + 4 <= bytes.len() && bytes[at] == 0xFF {
+        let marker = bytes[at + 1];
+        let length = usize::from(u16::from_be_bytes([bytes[at + 2], bytes[at + 3]]));
+        out.push((marker, &bytes[at + 4..at + 2 + length]));
+        if marker == 0xDA {
+            break;
+        }
+        at += 2 + length;
+    }
+    out
+}
+
+#[test]
+fn a_cmyk_jpeg_is_adobe_s_kind_with_the_press_profile() {
+    let press = crpc6();
+    let bytes = made(at_72(Format::Jpeg, Colour::Cmyk), Some(&press));
+    let segments = jpeg_segments(&bytes);
+    assert!(
+        segments
+            .iter()
+            .any(|(m, p)| *m == 0xEE && p.starts_with(b"Adobe")),
+        "no Adobe marker, so no reader would take it as CMYK"
+    );
+    let icc: Vec<u8> = segments
+        .iter()
+        .filter(|(m, p)| *m == 0xE2 && p.starts_with(b"ICC_PROFILE\0"))
+        .flat_map(|(_, p)| p[14..].to_vec())
+        .collect();
+    assert_eq!(icc, press.profile, "the press's profile, whole");
+    let sof = segments
+        .iter()
+        .find(|(m, _)| *m == 0xC0)
+        .expect("a baseline frame");
+    assert_eq!(sof.1[5], 4, "four components");
+}
+
+#[test]
+fn a_progressive_jpeg_is_one_and_a_profile_only_when_asked() {
+    let progressive = made(
+        ImageOptions {
+            progressive: true,
+            ..at_72(Format::Jpeg, Colour::Rgb)
+        },
+        None,
+    );
+    let markers: Vec<u8> = jpeg_segments(&progressive)
+        .iter()
+        .map(|(m, _)| *m)
+        .collect();
+    assert!(
+        markers.contains(&0xC2),
+        "no progressive frame in {markers:x?}"
+    );
+    assert!(markers.contains(&0xE2), "sRGB is embedded by default");
+
+    let plain = made(
+        ImageOptions {
+            embed_profile: false,
+            ..at_72(Format::Jpeg, Colour::Rgb)
+        },
+        None,
+    );
+    let markers: Vec<u8> = jpeg_segments(&plain).iter().map(|(m, _)| *m).collect();
+    assert!(markers.contains(&0xC0), "baseline unless asked");
+    assert!(!markers.contains(&0xE2), "a profile nobody asked for");
+}
+
+#[test]
+fn a_grey_picture_is_one_channel_of_lightness() {
+    // Pure red, whose lightness is about a fifth.
+    let doc = document(vec![filled(
+        FrameId::default(),
+        rect(0.0, 0.0, 100.0, 50.0),
+        Color::Rgb {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        },
+    )]);
+    for format in [Format::Png, Format::Jpeg, Format::Tiff, Format::WebP] {
+        let bytes = raster::page_images(&doc, &at_72(format, Colour::Grey), None)
+            .expect("pictures")
+            .remove(0)
+            .bytes;
+        let picture = image::load_from_memory(&bytes).expect("reads");
+        if format == Format::WebP {
+            // WebP has no grey of its own: three equal channels.
+            let [r, g, b, _] = picture.to_rgba8().get_pixel(50, 25).0;
+            assert!(r == g && g == b, "WebP grey is {r} {g} {b}");
+        } else {
+            assert!(
+                matches!(picture.color(), image::ColorType::L8),
+                "{format:?} came out {:?}",
+                picture.color()
+            );
+        }
+        let red = picture.to_luma8().get_pixel(50, 25).0[0];
+        assert!((50..=58).contains(&red), "{format:?}: red is {red}");
+    }
+}
+
+#[test]
+fn a_png_says_it_is_srgb_rather_than_carry_a_profile() {
+    let with = made(at_72(Format::Png, Colour::Rgb), None);
+    assert!(with.windows(4).any(|w| w == b"sRGB"));
+    assert!(!with.windows(4).any(|w| w == b"iCCP"));
+    let without = made(
+        ImageOptions {
+            embed_profile: false,
+            ..at_72(Format::Png, Colour::Rgb)
+        },
+        None,
+    );
+    assert!(!without.windows(4).any(|w| w == b"sRGB"));
+}
+
+#[test]
+fn a_webp_is_lossless_and_can_leave_the_paper_clear() {
+    let bytes = made(
+        ImageOptions {
+            transparent: true,
+            ..at_72(Format::WebP, Colour::Rgb)
+        },
+        None,
+    );
+    assert!(
+        bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP",
+        "not a WebP"
+    );
+    let pixels = image::load_from_memory(&bytes).expect("reads").to_rgba8();
+    assert_eq!(
+        pixels.get_pixel(50, 25).0,
+        [0, 0, 0, 255],
+        "lossless: exactly black"
+    );
+    assert_eq!(pixels.get_pixel(150, 75).0[3], 0, "the paper is clear");
+    assert!(bytes.windows(4).any(|w| w == b"ICCP"), "sRGB, as asked");
+}
+
+#[test]
+fn choices_a_file_cannot_hold_are_settled_before_it_is_made() {
+    let settled = |format, colour, transparent| {
+        ImageOptions {
+            format,
+            colour,
+            transparent,
+            ..ImageOptions::default()
+        }
+        .settled()
+    };
+    assert!(
+        !settled(Format::Jpeg, Colour::Rgb, true).transparent,
+        "JPEG has no alpha"
+    );
+    assert!(
+        !settled(Format::Tiff, Colour::Cmyk, true).transparent,
+        "CMYK's paper is the sheet"
+    );
+    assert!(!settled(Format::Tiff, Colour::Grey, true).transparent);
+    assert!(settled(Format::Tiff, Colour::Rgb, true).transparent);
+    assert!(settled(Format::Png, Colour::Grey, true).transparent);
+    assert_eq!(
+        settled(Format::Png, Colour::Cmyk, false).colour,
+        Colour::Rgb,
+        "PNG has no CMYK"
+    );
+    assert_eq!(
+        settled(Format::WebP, Colour::Cmyk, false).colour,
+        Colour::Rgb
+    );
+    assert_eq!(
+        settled(Format::Jpeg, Colour::Cmyk, false).colour,
+        Colour::Cmyk
+    );
+
+    // And a clear PNG in grey carries its alpha.
+    let bytes = made(
+        ImageOptions {
+            transparent: true,
+            ..at_72(Format::Png, Colour::Grey)
+        },
+        None,
+    );
+    let picture = image::load_from_memory(&bytes).expect("reads");
+    assert!(matches!(picture.color(), image::ColorType::La8));
+    assert_eq!(picture.to_luma_alpha8().get_pixel(150, 75).0[1], 0);
+}
+
+#[test]
+fn a_clear_tiff_marks_its_fourth_sample_as_alpha() {
+    let bytes = made(
+        ImageOptions {
+            transparent: true,
+            ..at_72(Format::Tiff, Colour::Rgb)
+        },
+        None,
+    );
+    assert_eq!(
+        tiff_tag(&bytes, tiff::tags::Tag::ExtraSamples).and_then(|v| v.into_u16().ok()),
+        Some(2),
+        "unassociated alpha"
+    );
+    let pixels = image::load_from_memory(&bytes).expect("reads").to_rgba8();
+    assert_eq!(pixels.get_pixel(150, 75).0[3], 0);
+    assert_eq!(pixels.get_pixel(50, 25).0, [0, 0, 0, 255]);
 }

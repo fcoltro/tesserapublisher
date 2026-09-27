@@ -482,7 +482,7 @@ pub fn export_pdf(state: &mut TesseraApp) {
 
 /// Ask where the pictures go, and make them.
 pub fn export_images(state: &mut TesseraApp) {
-    let format = state.prefs.image_export.format;
+    let format = state.prefs.image_export.picture.format;
     let suggested = state
         .active()
         .current_path
@@ -493,30 +493,54 @@ pub fn export_images(state: &mut TesseraApp) {
             |s| s.to_string_lossy().into_owned(),
         );
     let Some(path) = rfd::FileDialog::new()
-        .add_filter(format.label(), &[format.extension()])
+        .add_filter(format.label(), format.extensions())
         .set_file_name(format!("{suggested}.{}", format.extension()))
         .save_file()
     else {
         return; // cancelled
     };
     state.status = Some(match export_images_to(state, &path) {
-        Ok(said) => Status::info(said),
+        Ok((said, written)) => {
+            if state.prefs.image_export.open_after {
+                match written.as_slice() {
+                    [one] => crate::view::links::open_with_its_application(one),
+                    [first, ..] => crate::view::links::reveal_in_file_manager(first),
+                    [] => {}
+                }
+            }
+            Status::info(said)
+        }
         Err(why) => Status::error(why),
     });
 }
 
 /// The pictures the image export dialog describes, written from `chosen`:
 /// that name for one picture, numbered after it for several. Says what was
-/// written, or why nothing was.
-pub fn export_images_to(state: &mut TesseraApp, chosen: &Path) -> Result<String, String> {
+/// written and where, or why nothing was.
+pub fn export_images_to(
+    state: &mut TesseraApp,
+    chosen: &Path,
+) -> Result<(String, Vec<PathBuf>), String> {
     use crate::view::image_export;
 
-    let options = state.prefs.image_export;
+    let choices = state.prefs.image_export;
+    let options = choices.picture.settled();
     let window = state.image_export.clone();
     let resolved = state.resolve_uncached();
-    let (pictured, numbers) =
-        image_export::chosen(state, &resolved, window.which, (window.from, window.to))?;
-    let pictures = tessera_pdf::raster::page_images(&pictured, &options)
+    let (pictured, numbers) = image_export::chosen(
+        state,
+        &resolved,
+        window.which,
+        &window.range,
+        choices.spreads,
+    )?;
+    let press = match options.colour {
+        tessera_pdf::raster::Colour::Cmyk => Some(image_export::press(state).ok_or_else(|| {
+            "CMYK needs a press profile: name a CMYK press in Document Setup.".to_string()
+        })?),
+        _ => None,
+    };
+    let pictures = tessera_pdf::raster::page_images(&pictured, &options, press.as_ref())
         .map_err(|e| format!("Could not export: {e}"))?;
     let names = image_export::file_names(chosen, &numbers, options.format);
     for (picture, path) in pictures.iter().zip(&names) {
@@ -524,7 +548,7 @@ pub fn export_images_to(state: &mut TesseraApp, chosen: &Path) -> Result<String,
             .map_err(|e| format!("Could not write {}: {e}", path.display()))?;
     }
     let kind = options.format.label();
-    Ok(match names.as_slice() {
+    let said = match names.as_slice() {
         [one] => format!("Exported {kind} {}", one.display()),
         [first, .., last] => format!(
             "Exported {} {kind} pictures, {} to {}",
@@ -534,7 +558,8 @@ pub fn export_images_to(state: &mut TesseraApp, chosen: &Path) -> Result<String,
                 .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
         ),
         [] => "Nothing was exported.".to_string(),
-    })
+    };
+    Ok((said, names))
 }
 
 pub fn open(state: &mut TesseraApp) {
@@ -628,7 +653,7 @@ mod tests {
     #[test]
     fn pages_are_written_as_numbered_pictures_and_a_selection_as_one() {
         use crate::view::image_export::Which;
-        use tessera_pdf::raster::Format;
+        use tessera_pdf::raster::{Colour, Format};
 
         let dir = std::env::temp_dir().join("tessera_file_ops_pictures");
         let _ = std::fs::remove_dir_all(&dir);
@@ -645,12 +670,14 @@ mod tests {
                 height: 10.0,
             }),
         );
-        state.prefs.image_export.ppi = 36.0;
+        state.prefs.image_export.picture.ppi = 36.0;
 
         state.image_export.which = Which::All;
-        let said = export_images_to(&mut state, &dir.join("Proof.png")).expect("exported");
+        let (said, written) =
+            export_images_to(&mut state, &dir.join("Proof.png")).expect("exported");
         let first = dir.join("Proof-1.png");
         let second = dir.join("Proof-2.png");
+        assert_eq!(written, [first.clone(), second.clone()]);
         assert!(first.exists() && second.exists(), "{said}");
         assert!(
             !dir.join("Proof.png").exists(),
@@ -664,9 +691,18 @@ mod tests {
             "36 ppi is half a point a pixel"
         );
 
+        state.image_export.which = Which::Range;
+        state.image_export.range = "2".into();
+        state.prefs.image_export.picture.format = Format::Tiff;
+        state.prefs.image_export.picture.colour = Colour::Grey;
+        export_images_to(&mut state, &dir.join("Second")).expect("exported");
+        let grey = image::open(dir.join("Second.tif")).expect("a TIFF");
+        assert!(matches!(grey.color(), image::ColorType::L8));
+
         state.image_export.which = Which::Selection;
-        state.prefs.image_export.format = Format::Jpeg;
-        state.prefs.image_export.ppi = 72.0;
+        state.prefs.image_export.picture.format = Format::Jpeg;
+        state.prefs.image_export.picture.colour = Colour::Rgb;
+        state.prefs.image_export.picture.ppi = 72.0;
         export_images_to(&mut state, &dir.join("Box")).expect("exported");
         let (w, h) = image::image_dimensions(dir.join("Box.jpg")).expect("a JPEG");
         assert_eq!((w, h), (31, 11), "the box and its hairline");

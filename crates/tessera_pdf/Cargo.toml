@@ -25,6 +25,8 @@ hayro-write.workspace = true
 # the resolution it records (`raster`).
 hayro.workspace = true
 png.workspace = true
+tiff.workspace = true
+jpeg-encoder.workspace = true
 subsetter.workspace = true
 thiserror.workspace = true
 # For `Standard`, which travels in an export preset.
@@ -40,3 +42,5 @@ tessera_layout.workspace = true
 tessera_text.workspace = true
 # Frame ids for a test that cuts one object out of several.
 slotmap.workspace = true
+# Reading back what `raster` writes, as a reader of the file would.
+tiff.workspace = true

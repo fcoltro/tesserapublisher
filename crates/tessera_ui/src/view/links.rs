@@ -1186,7 +1186,7 @@ pub(crate) fn reveal_in_file_manager(path: &Path) {
 
 /// Open the file in whatever the system opens it with — InDesign's Edit
 /// Original. Best effort, as revealing it is.
-fn open_with_its_application(path: &Path) {
+pub(crate) fn open_with_its_application(path: &Path) {
     #[cfg(target_os = "windows")]
     {
         let _ = std::process::Command::new("explorer").arg(path).spawn();

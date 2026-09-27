@@ -19,6 +19,7 @@ mod images;
 mod ink;
 mod marks;
 mod options;
+pub mod pages;
 pub mod raster;
 mod separation;
 mod shadow;

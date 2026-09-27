@@ -97,3 +97,13 @@ without embedding it. They come from PDFium and carry its licence:
 > SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 The BSD licence is compatible with GPL-3.0-or-later.
+
+## JPEG encoding
+
+Pictures are written as JPEG with [jpeg-encoder](https://github.com/vstroebel/jpeg-encoder)
+(MIT OR Apache-2.0), whose licence also carries the Independent JPEG Group's,
+since parts of it derive from their work:
+
+> This software is based in part on the work of the Independent JPEG Group.
+
+The IJG licence is compatible with GPL-3.0-or-later.

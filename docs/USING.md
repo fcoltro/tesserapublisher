@@ -478,17 +478,27 @@ than claim it: a printer's preflight believes the file, so a document claiming
 X-1a it does not meet passes their check and fails on the press instead of in
 the studio.
 
-**Pictures** — File ▸ Export PNG or JPEG… — makes a picture of every page, of
-a range of pages, or of the selection, cut out to what it paints, strokes and
-shadows included; with something selected it starts on the selection. Choose
-the resolution — 72 ppi is a pixel to a point, 144 for a high-density screen,
-300 for print — whether a PNG's paper is white or clear, a JPEG's quality, and
-whether to take in the bleed. The dialog says how many pictures and how many
-pixels before anything is written. Several pages are numbered after the name
-chosen — *Brochure-01.png*, *Brochure-02.png* — and every file records its
+**Pictures** — File ▸ Export image… — makes PNG, JPEG, TIFF or WebP pictures,
+choosing as InDesign's Export JPEG and PNG dialogs do. *Pages* takes every
+page, a *Range* typed as InDesign writes one — `1-3, 6, 9-` — or the
+*Selection*, cut out to what it paints, strokes and shadows included; with
+something selected it starts on the selection. *As Spreads* makes a spread one
+picture, and a page asked for brings its whole spread. Then the *Image*: the
+resolution — 72 ppi is a pixel to a point, 144 for a high-density screen, 300
+for print — and the colours: RGB, grey, or CMYK for JPEG and TIFF, converted
+through the document's press or, with none named, the coated press a print
+document starts with. A JPEG has four qualities, Low to Maximum, or any number,
+and can be progressive, arriving coarse and sharpening as a web page loads it;
+PNG, TIFF and WebP are lossless and can leave the paper clear. *Options*
+embeds the colour profile — sRGB, or the press's for CMYK, which is large, and
+the dialog says how large — takes in the bleed, and opens the picture when it
+is written, or shows several in their folder.
+
+The dialog says in a sentence what will be made before anything is written.
+Several pictures are numbered after the name chosen — *Brochure-01.png*,
+*Brochure-02-03.png* for a spread — and every file but a WebP records its
 resolution, so another program places it at the size it was made for. A
-picture is the page as it prints, without frame edges or guides, in the
-colours the screen shows.
+picture is the page as it prints, without frame edges or guides.
 
 **Package** — File ▸ Package — collects the document, its links and a summary a
 printer can read. Fonts are *listed*, not copied: a licence to set type is not a
