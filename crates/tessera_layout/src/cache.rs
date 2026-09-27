@@ -80,6 +80,13 @@ impl ResolveCache {
         &self.resolved
     }
 
+    /// The layout last asked for, without asking again: at most a frame old
+    /// on a canvas that resolves every frame. For what reads the page and
+    /// may not change it — a cursor over a table's edge, a hit test.
+    pub fn last(&self) -> &ResolvedDocument {
+        &self.resolved
+    }
+
     /// How many times the document has really been resolved. For tests, and
     /// for a diagnostics panel later.
     pub fn resolves(&self) -> u64 {

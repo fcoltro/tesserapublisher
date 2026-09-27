@@ -204,6 +204,11 @@ impl OpenDocument {
             .get_composing(&self.document, shaper, scope, composing.as_ref())
     }
 
+    /// The canvas's layout as it was last drawn, without laying out again.
+    pub fn last_resolved(&self) -> &ResolvedDocument {
+        self.resolved.last()
+    }
+
     /// The document laid out in `scope` without disturbing the canvas's
     /// layout: nothing composed, since what is being typed shows on the
     /// canvas and not in a thumbnail.

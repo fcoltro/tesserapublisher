@@ -3236,7 +3236,21 @@ and running headers (milestone 10).
   A cell's own fill wins over the pattern. Rules keep their dashes and
   caps on screen now, as every other stroke does; their colours reach the
   separations. Format 37.
-- [ ] 6. **Tables: drag column and row edges to resize.** A day.
+- [x] 6. **Tables: drag column and row edges to resize.** A day. *Done
+  2026-09-27.* With a table selected or a cell being edited, the pointer
+  over a column's right edge or a row's bottom turns to the resize cursor,
+  and the edge follows the drag live; letting go is one undo step
+  (`Command::SetTableSizes`), and the frame keeps as wide as its grid. A
+  column takes the width the pointer gives it and the ones after move
+  along, as InDesign's plain drag does; a row is measured from the height
+  it is **seen** at, not its stored minimum, since a row that grew to fit
+  its text is taller than that. Only a chosen table's edges answer the
+  pointer, or no table could be selected or moved. Measured along the
+  table's own axes, so a turned table's column follows the pointer along
+  the table. The hit test reads the layout the canvas last drew
+  (`ResolveCache::last`), so a cursor never lays the page out. Rules,
+  fills and sizes now keep the caret in its cell: only a change that can
+  remove the cell being edited ends the editing.
 - [ ] 7. **Tables: convert text to a table and back, sort rows, import a CSV
   as a table.** A day or two.
 - [ ] 8. **Data merge, the core**: a Data Merge panel that chooses a source,

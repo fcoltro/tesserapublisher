@@ -1289,6 +1289,83 @@ pub(crate) fn cell_at(
         .map(|c| (c.row, c.column))
 }
 
+/// The table boundary under `pos` that a drag can pull: a column's right
+/// edge or a row's bottom, of the table selected or being edited. Also the
+/// height each of its rows is laid out at, which a row drag measures from.
+///
+/// Only a table somebody has chosen: every edge of every table on a page
+/// grabbing the pointer would make a table impossible to select or move.
+/// Read from the layout last drawn, so it needs nothing it could change.
+pub(crate) fn table_edge_at(
+    state: &TesseraApp,
+    rect: Rect,
+    pos: egui::Pos2,
+) -> Option<(FrameId, crate::tools::TableEdge, Vec<f64>)> {
+    use crate::tools::TableEdge;
+    use tessera_document::nodes::FrameKind;
+    use tessera_layout::resolve::ResolvedKind;
+
+    let open = state.active();
+    let id = match (&open.editing, open.editing_cell) {
+        (Some((id, _)), Some(_)) => *id,
+        _ => open.selection.single()?,
+    };
+    let frame = open.document().frame(id)?;
+    if !matches!(frame.kind, FrameKind::Table(_)) {
+        return None;
+    }
+    let local = frame.to_local(doc_pos(state, rect, pos));
+    let (x, y) = (local.x - frame.bounds.x, local.y - frame.bounds.y);
+    let item = open.last_resolved().items.iter().find(|i| i.frame == id)?;
+    let ResolvedKind::Table { laid, .. } = &item.kind else {
+        return None;
+    };
+    let tolerance = hit_tolerance(state);
+    let (width, height) = laid.size();
+    let laid_rows: Vec<f64> = laid.row_edges.windows(2).map(|w| w[1] - w[0]).collect();
+    let near = |value: f64, edge: f64| (value - edge).abs() <= tolerance;
+    if (-tolerance..=height + tolerance).contains(&y)
+        && let Some(n) = (1..laid.column_edges.len()).find(|&n| near(x, laid.column_edges[n]))
+    {
+        return Some((id, TableEdge::Column(n), laid_rows));
+    }
+    if (-tolerance..=width + tolerance).contains(&x)
+        && let Some(n) = (1..laid.row_edges.len()).find(|&n| near(y, laid.row_edges[n]))
+    {
+        return Some((id, TableEdge::Row(n), laid_rows));
+    }
+    None
+}
+
+/// How far a table edge has been dragged along its own axis, in the
+/// table's space — so a turned table's column follows the pointer along
+/// the table, not along the screen.
+fn table_drag_delta(
+    state: &TesseraApp,
+    frame: FrameId,
+    edge: crate::tools::TableEdge,
+    start: DocPoint,
+    current: DocPoint,
+) -> f64 {
+    let Some(f) = state.active().document().frame(frame) else {
+        return 0.0;
+    };
+    let (a, b) = (f.to_local(start), f.to_local(current));
+    match edge {
+        crate::tools::TableEdge::Column(_) => b.x - a.x,
+        crate::tools::TableEdge::Row(_) => b.y - a.y,
+    }
+}
+
+/// The resize cursor for a table boundary: across for a column, up and
+/// down for a row, as a page's edges have.
+fn table_edge_cursor(edge: crate::tools::TableEdge) -> crate::cursor::Cursor {
+    page_edge_cursor(match edge {
+        crate::tools::TableEdge::Column(_) => crate::tools::PageEdge::Right,
+        crate::tools::TableEdge::Row(_) => crate::tools::PageEdge::Bottom,
+    })
+}
+
 /// Every text frame holding more copy than it can show.
 ///
 /// Asked of the shaper, which is the only thing that knows: whether a story
@@ -2120,6 +2197,7 @@ fn canvas_cursor(
             }
             DragKind::Move { .. } => return Cursor::new(Icon::Move),
             DragKind::PageEdge { edge, .. } => return page_edge_cursor(*edge),
+            DragKind::TableEdge { edge, .. } => return table_edge_cursor(*edge),
             // An anchor drag keeps the crosshair it started with; a draw or a
             // marquee has no cursor of its own.
             DragKind::Anchor { .. }
@@ -2148,13 +2226,18 @@ fn canvas_cursor(
         Tool::DirectSelect => Cursor::new(Icon::Crosshair),
         Tool::Select => match grab_at(state, rect, pos) {
             Some(grabbed) => grip_cursor(&grabbed),
-            None => match move_target_at(state, rect, pos) {
-                Some(id) if state.active().selection.contains(id) => Cursor::new(Icon::Move),
-                Some(_) => Cursor::new(Icon::Select),
-                // Over nothing but a page's edge: the page can be pulled.
-                None => match page_edge_at(state, rect, pos) {
-                    Some((_, edge)) => page_edge_cursor(edge),
-                    None => Cursor::new(Icon::Select),
+            // A chosen table's boundary can be pulled, before the table
+            // itself can be moved.
+            None => match table_edge_at(state, rect, pos) {
+                Some((_, edge, _)) => table_edge_cursor(edge),
+                None => match move_target_at(state, rect, pos) {
+                    Some(id) if state.active().selection.contains(id) => Cursor::new(Icon::Move),
+                    Some(_) => Cursor::new(Icon::Select),
+                    // Over nothing but a page's edge: the page can be pulled.
+                    None => match page_edge_at(state, rect, pos) {
+                        Some((_, edge)) => page_edge_cursor(edge),
+                        None => Cursor::new(Icon::Select),
+                    },
                 },
             },
         },
@@ -2337,7 +2420,24 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
         return;
     }
 
+    // A chosen table's column or row boundary, pulled: before a move, so
+    // the edge is not taken for the table being dragged.
     if response.drag_started()
+        && let Some(pos) = response.interact_pointer_pos()
+        && let Some((frame, edge, laid_rows)) =
+            press_pos(ui, response).and_then(|p| table_edge_at(state, rect, p))
+        && let Some(tessera_document::nodes::FrameKind::Table(table)) =
+            state.active().document().frame(frame).map(|f| &f.kind)
+    {
+        let kind = DragKind::TableEdge {
+            frame,
+            edge,
+            columns: table.columns.clone(),
+            rows: table.rows.clone(),
+            laid_rows,
+        };
+        state.drag = Some(Drag::new(doc_pos(state, rect, pos), kind));
+    } else if response.drag_started()
         && let Some(pos) = response.interact_pointer_pos()
     {
         let at = doc_pos(state, rect, pos);
@@ -2419,6 +2519,32 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
                 .document_mut()
                 .set_page_size_of(page, w, h);
         }
+        // A table's boundary, the same way: the grid follows the pointer
+        // now, and one command settles it when the mouse comes up.
+        if let Some(Drag {
+            start,
+            current,
+            kind:
+                DragKind::TableEdge {
+                    frame,
+                    edge,
+                    columns,
+                    rows,
+                    laid_rows,
+                },
+        }) = state.drag.clone()
+        {
+            let delta = table_drag_delta(state, frame, edge, start, current);
+            let (columns, rows) = edge.resized(&columns, &rows, &laid_rows, delta);
+            // undo-bracketed: preview only; `drag_stopped` puts the sizes
+            // back and applies them through a Command.
+            if let Some(f) = state.active_mut().document_mut().frame_mut(frame)
+                && let tessera_document::nodes::FrameKind::Table(table) = &mut f.kind
+            {
+                table.columns = columns;
+                table.rows = rows;
+            }
+        }
         // Live move, without recording undo per frame.
         if let Some(Drag {
             kind: DragKind::Move { origins },
@@ -2489,6 +2615,34 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
                             page,
                             width: w,
                             height: h,
+                        },
+                    );
+                }
+            }
+            DragKind::TableEdge {
+                frame,
+                edge,
+                ref columns,
+                ref rows,
+                ref laid_rows,
+            } => {
+                let delta = table_drag_delta(state, frame, edge, drag.start, drag.current);
+                let (new_columns, new_rows) = edge.resized(columns, rows, laid_rows, delta);
+                // undo-bracketed: the sizes the drag began with go back, and
+                // the new ones arrive as one command.
+                if let Some(f) = state.active_mut().document_mut().frame_mut(frame)
+                    && let tessera_document::nodes::FrameKind::Table(table) = &mut f.kind
+                {
+                    table.columns.clone_from(columns);
+                    table.rows.clone_from(rows);
+                }
+                if new_columns != *columns || new_rows != *rows {
+                    apply(
+                        state,
+                        Command::SetTableSizes {
+                            id: frame,
+                            columns: new_columns,
+                            rows: new_rows,
                         },
                     );
                 }
@@ -3379,6 +3533,7 @@ fn draw_overlays(
             | DragKind::Scale { .. }
             | DragKind::Rotate { .. }
             | DragKind::PageEdge { .. }
+            | DragKind::TableEdge { .. }
             | DragKind::Anchor { .. }
             | DragKind::PathTextEnd { .. } => {}
         }
@@ -3945,6 +4100,92 @@ mod tests {
         assert!(top.y1 <= bottom.y0 + 1.0, "{top:?} above {bottom:?}");
         assert!(top.x1 > top.x0 && top.y1 > top.y0, "a real rectangle");
         let _ = upper;
+    }
+
+    #[test]
+    fn a_chosen_table_s_boundaries_are_found_and_a_drag_resizes_in_one_undo() {
+        use crate::tools::TableEdge;
+        use tessera_document::nodes::FrameKind;
+        let mut state = TesseraApp::headless();
+        let canvas = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 800.0));
+        let page = state.current_page().expect("a page");
+        let b = state.active().document().pages[page].bounds;
+        apply(
+            &mut state,
+            Command::AddTable {
+                bounds: DocRect {
+                    x: b.x + 50.0,
+                    y: b.y + 50.0,
+                    width: 300.0,
+                    height: 60.0,
+                },
+                rows: 2,
+                columns: 3,
+            },
+        );
+        let id = state.active().selection.single().expect("the table");
+        state.resolve_active();
+        let screen =
+            |state: &TesseraApp, x: f64, y: f64| to_screen_pos(state, canvas, DocPoint { x, y });
+        let (x0, y0) = (b.x + 50.0, b.y + 50.0);
+
+        // The boundary between the first two columns, halfway down.
+        let found = table_edge_at(&state, canvas, screen(&state, x0 + 100.0, y0 + 5.0));
+        assert_eq!(
+            found.as_ref().map(|f| (f.0, f.1)),
+            Some((id, TableEdge::Column(1)))
+        );
+        // The bottom of the first row, and the middle of a cell.
+        let laid_rows = found.expect("found").2;
+        let first_row = laid_rows[0];
+        assert!(matches!(
+            table_edge_at(&state, canvas, screen(&state, x0 + 150.0, y0 + first_row)),
+            Some((_, TableEdge::Row(1), _))
+        ));
+        assert_eq!(
+            table_edge_at(
+                &state,
+                canvas,
+                screen(&state, x0 + 50.0, y0 + first_row / 2.0)
+            ),
+            None
+        );
+
+        // Nothing when the table is not the one chosen.
+        state.active_mut().selection.clear();
+        assert_eq!(
+            table_edge_at(&state, canvas, screen(&state, x0 + 100.0, y0 + 5.0)),
+            None
+        );
+
+        // Pulling the first column 40 points wider: the one after moves
+        // along, the frame keeps up, and one undo puts it back.
+        let (columns, rows) =
+            TableEdge::Column(1).resized(&[100.0, 100.0, 100.0], &[12.0, 12.0], &laid_rows, 40.0);
+        assert_eq!(columns, [140.0, 100.0, 100.0]);
+        apply(&mut state, Command::SetTableSizes { id, columns, rows });
+        let frame = state.active().document().frame(id).expect("frame");
+        assert_eq!(
+            frame.bounds.width, 340.0,
+            "the frame is as wide as its grid"
+        );
+        let FrameKind::Table(table) = &frame.kind else {
+            panic!("a table");
+        };
+        assert_eq!(table.columns[0], 140.0);
+        apply(&mut state, Command::Undo);
+        let FrameKind::Table(table) = &state.active().document().frame(id).expect("frame").kind
+        else {
+            panic!("a table");
+        };
+        assert_eq!(table.columns[0], 100.0);
+
+        // A row is measured from the height it is seen at, and cannot be
+        // dragged thinner than a hairline's worth.
+        let (_, rows) = TableEdge::Row(1).resized(&[100.0], &[12.0], &[30.0], 10.0);
+        assert_eq!(rows, [40.0]);
+        let (_, rows) = TableEdge::Row(1).resized(&[100.0], &[12.0], &[30.0], -100.0);
+        assert_eq!(rows, [3.0]);
     }
 
     #[test]

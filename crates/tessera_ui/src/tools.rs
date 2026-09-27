@@ -207,6 +207,63 @@ pub enum DragKind {
         width: f64,
         height: f64,
     },
+    /// Dragging a table's column or row boundary. Carries the widths and
+    /// minimum heights the table had, and the heights its rows were laid out
+    /// at, so every step is measured from where the drag began.
+    TableEdge {
+        frame: FrameId,
+        edge: TableEdge,
+        columns: Vec<f64>,
+        rows: Vec<f64>,
+        laid_rows: Vec<f64>,
+    },
+}
+
+/// Which boundary of a table a drag is pulling: the right edge of column
+/// `n - 1`, or the bottom of row `n - 1` — `n` counting boundaries from the
+/// table's left or top, which never moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableEdge {
+    Column(usize),
+    Row(usize),
+}
+
+impl TableEdge {
+    /// The widths and minimum heights after a drag of `delta` along the
+    /// boundary's own axis, in the table's space.
+    ///
+    /// A column takes the width the pointer gives it, and the ones after it
+    /// move along, as InDesign's plain drag does. A row takes the height it
+    /// is **seen** at plus the drag — not its stored minimum, which a row
+    /// that grew to fit its text is taller than — and that becomes its
+    /// minimum; it cannot be dragged shorter than its text, since a row
+    /// grows to fit.
+    pub fn resized(
+        self,
+        columns: &[f64],
+        rows: &[f64],
+        laid_rows: &[f64],
+        delta: f64,
+    ) -> (Vec<f64>, Vec<f64>) {
+        const NARROWEST: f64 = 6.0;
+        const SHORTEST: f64 = 3.0;
+        let (mut columns, mut rows) = (columns.to_vec(), rows.to_vec());
+        match self {
+            TableEdge::Column(n) => {
+                if let Some(width) = n.checked_sub(1).and_then(|i| columns.get_mut(i)) {
+                    *width = (*width + delta).max(NARROWEST);
+                }
+            }
+            TableEdge::Row(n) => {
+                if let Some(i) = n.checked_sub(1)
+                    && let (Some(height), Some(seen)) = (rows.get_mut(i), laid_rows.get(i))
+                {
+                    *height = (seen + delta).max(SHORTEST);
+                }
+            }
+        }
+        (columns, rows)
+    }
 }
 
 /// Which edge of a page a drag is pulling. The left and top stay: a page's

@@ -89,6 +89,14 @@ pub enum Command {
         id: FrameId,
         alternating: Option<tessera_document::table::AlternatingFills>,
     },
+    /// Give a table's columns their widths and its rows their minimum
+    /// heights, as dragging their edges does. The frame is kept as wide as
+    /// its grid.
+    SetTableSizes {
+        id: FrameId,
+        columns: Vec<f64>,
+        rows: Vec<f64>,
+    },
     /// A grid of empty cells filling `bounds`.
     ///
     /// The rows are a starting height; the layout pass grows them to whatever
@@ -1018,6 +1026,19 @@ fn finish_table_edit(
     state.active_mut().editing_cell = None;
 }
 
+/// Put a table back whose cells are all where they were — a rule, a fill, a
+/// size changed. Unlike [`finish_table_edit`] the cell being edited is still
+/// there, so the caret stays in it.
+fn replace_table(
+    state: &mut crate::app::TesseraApp,
+    id: FrameId,
+    table: tessera_document::table::Table,
+) {
+    if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
+        frame.kind = FrameKind::Table(table);
+    }
+}
+
 pub fn apply(state: &mut TesseraApp, command: Command) {
     if command.mutates() {
         state.active_mut().record_history();
@@ -1272,7 +1293,7 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             for side in sides {
                 table.set_side(row, column, side, stroke.clone());
             }
-            finish_table_edit(state, id, table);
+            replace_table(state, id, table);
         }
 
         Command::SetTableStroke { id, stroke } => {
@@ -1282,7 +1303,7 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 return;
             };
             table.stroke = stroke;
-            finish_table_edit(state, id, table);
+            replace_table(state, id, table);
         }
 
         Command::SetAlternatingFills { id, alternating } => {
@@ -1292,7 +1313,27 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 return;
             };
             table.alternating = alternating.map(Box::new);
-            finish_table_edit(state, id, table);
+            replace_table(state, id, table);
+        }
+
+        Command::SetTableSizes { id, columns, rows } => {
+            let Some(FrameKind::Table(mut table)) =
+                state.active().document().frame(id).map(|f| f.kind.clone())
+            else {
+                return;
+            };
+            // Only as many as the table has: sizes for a grid that has since
+            // changed shape are not guessed onto the wrong columns.
+            if columns.len() != table.columns() || rows.len() != table.rows() {
+                return;
+            }
+            let width: f64 = columns.iter().sum();
+            table.columns = columns;
+            table.rows = rows;
+            replace_table(state, id, table);
+            if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
+                frame.bounds.width = width;
+            }
         }
 
         Command::AddTextFrame(bounds) => {
