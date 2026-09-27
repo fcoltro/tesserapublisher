@@ -30,6 +30,7 @@ pub mod preflight;
 pub mod prefs;
 pub mod print;
 pub mod recovery;
+pub mod reflow;
 pub mod selection;
 pub mod softproof;
 pub mod theme;

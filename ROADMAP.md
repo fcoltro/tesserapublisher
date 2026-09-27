@@ -1066,6 +1066,22 @@ of each carries the full account; this is the index.
   Adobe Swatch Exchange file or another document's swatches, renaming a
   clash rather than recolouring anything, and Save swatches writes `.ase`
   for InDesign, Illustrator and Photoshop (`tessera_document::swatch_exchange`).
+- [x] **Text flows onto new pages (2026-09-27).** Object ▸ Flow onto new
+  pages, a preflight fix for overset body text, a Word document placed as
+  body text, and typing past the end of body text each carry the thread on:
+  pages after the one the text ends on, each with a frame in its margins laid
+  out as the one before and threaded on (`tessera_layout::autoflow`). Pages
+  are added a page's rate at a time and the overshoot taken away, so a book
+  is laid out a handful of times rather than once a page. Body text is a
+  thread whose last frame fills its page's margins — InDesign's primary text
+  frame, found rather than marked. Taking away the pages shrinking text no
+  longer reaches is a preference, off. **Behind it, long threads stopped
+  costing the cube of their length**: each frame of a thread laid out every
+  frame before it again to find where its text started, and each of those
+  shaped the whole rest of the story. A pass now walks a thread once, and a
+  frame that passes text on lays out only as much as it can hold — 40 pages
+  from 9.9 s to 0.1 s, 200 pages in 0.7 s, held line for line against the
+  plain walk by tests.
 - [ ] **Not yet looked at on Windows.** Each panel is proved by headless
   interface tests driven through the accessibility tree and was looked at
   in screenshots, dark and light, on Linux. The Windows build has not been

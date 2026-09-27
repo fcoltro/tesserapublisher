@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 
 use tessera_document::document::Document;
-use tessera_document::ids::PageId;
+use tessera_document::ids::{FrameId, PageId};
 use tessera_document::nodes::FrameKind;
 use tessera_document::variables::{VariableKind, Which};
 use tessera_text::story::{
@@ -71,9 +71,24 @@ pub struct Running {
     /// the paragraph it stands in, markers dropped. The first anchor of a
     /// name wins; a document with two says the first.
     anchors: HashMap<String, (PageId, String)>,
+    /// Where each frame of a thread begins in its story, as this pass has
+    /// found it. Each frame's start is the end of the frame before, so a
+    /// thread is walked once a pass rather than once for every frame in it
+    /// — which made a book's thread cost the square of its length.
+    starts: std::cell::RefCell<HashMap<FrameId, usize>>,
 }
 
 impl Running {
+    /// Where `frame` begins in its story, if this pass has worked it out.
+    pub(crate) fn start_of(&self, frame: FrameId) -> Option<usize> {
+        self.starts.borrow().get(&frame).copied()
+    }
+
+    /// Note where `frame` begins, for every later frame of its thread.
+    pub(crate) fn remember_start(&self, frame: FrameId, start: usize) {
+        self.starts.borrow_mut().insert(frame, start);
+    }
+
     /// Read the headers off `items`, the pages' own resolved frames.
     ///
     /// Only the styles some running-header variable names are read, so a
@@ -94,7 +109,11 @@ impl Running {
         let anchors = Self::read_anchors(doc, items);
         let mut headers: HashMap<(PageId, ParagraphStyleId), (String, String)> = HashMap::new();
         if wanted.is_empty() {
-            return Self { headers, anchors };
+            return Self {
+                headers,
+                anchors,
+                starts: Default::default(),
+            };
         }
 
         for item in items {
@@ -136,7 +155,11 @@ impl Running {
                 }
             }
         }
-        Self { headers, anchors }
+        Self {
+            headers,
+            anchors,
+            starts: Default::default(),
+        }
     }
 
     /// What the running header in `style` says on `page`, if anything there is

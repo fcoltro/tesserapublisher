@@ -304,6 +304,18 @@ pub fn height_to_fit(doc: &Document, shaper: &mut Shaper, frame: FrameId) -> Opt
     Some(fits)
 }
 
+/// Lay out only the frames standing on `pages`, as [`resolve`] would lay
+/// them out — a thread flowing into them from earlier pages is followed
+/// there, so a frame's text starts where it does in the whole document.
+/// What a question about a few pages asks, rather than laying out a book.
+pub fn resolve_only(
+    doc: &Document,
+    shaper: &mut Shaper,
+    pages: &[tessera_document::ids::PageId],
+) -> ResolvedDocument {
+    resolve_pages(doc, shaper, pages, None)
+}
+
 /// The same, showing text an input method has not committed yet.
 pub fn resolve_composing(
     doc: &Document,
@@ -692,6 +704,9 @@ fn story_starts_at<'a>(
     composed: Option<(StoryId, &'a TextStory)>,
     running: &Running,
 ) -> usize {
+    if let Some(known) = running.start_of(frame).filter(|_| shortcuts()) {
+        return known;
+    }
     let chain = doc.thread_of(frame);
     let Some(at) = chain.iter().position(|f| *f == frame) else {
         return 0;
@@ -700,8 +715,15 @@ fn story_starts_at<'a>(
         return 0;
     }
 
-    let mut from = 0usize;
-    for id in &chain[..at] {
+    // From the latest frame before this one whose start the pass knows:
+    // frames are laid out in reading order, so that is usually the one
+    // just before, and the thread is walked once rather than once a frame.
+    let (resume, mut from) = (0..at)
+        .rev()
+        .find_map(|i| running.start_of(chain[i]).map(|start| (i, start)))
+        .filter(|_| shortcuts())
+        .unwrap_or((0, 0));
+    for (offset, id) in chain[resume..at].iter().enumerate() {
         let Some(before) = doc.frame(*id) else {
             continue;
         };
@@ -719,8 +741,10 @@ fn story_starts_at<'a>(
         let Some(on) = doc.page_of_frame(*id) else {
             continue;
         };
+        // Only where it stops is wanted, and it is not the last frame: laid
+        // out as far as it can hold.
         let flowed = compose_frame(
-            doc, shaper, *id, before, *story, text, from, on, running, composed,
+            doc, shaper, *id, before, *story, text, from, on, running, composed, true,
         );
         // A frame that held nothing hands the story on untouched rather than
         // restarting it: treating "placed nothing" as zero would loop the
@@ -728,6 +752,7 @@ fn story_starts_at<'a>(
         if let Some(to) = flowed.consumed_to {
             from = to;
         }
+        running.remember_start(chain[resume + offset + 1], from);
     }
     from
 }
@@ -744,6 +769,10 @@ fn compose_frame(
     on: PageId,
     running: &Running,
     composed: Option<(StoryId, &TextStory)>,
+    // Whether the frame passes text on — not the last of its thread — so
+    // only as much of the story as it can hold need be laid out. The last
+    // frame lays out the rest, since its overset is counted.
+    passes_on: bool,
 ) -> tessera_text::shape::Flowed {
     let FrameKind::Text { layout, .. } = &frame.kind else {
         unreachable!()
@@ -826,34 +855,6 @@ fn compose_frame(
     let mut variables = variables_for(doc, id, on, running);
     variables.footnote_labels = labels.clone();
     let styles = OnPage::new(doc, variables);
-    let shaped =
-        shaper.shape_around_with_objects(story, &styles, measure, from, &obstacles, &anchored);
-
-    // The footnotes, shaped at the column's measure and numbered as the
-    // references are, for the flow to set at the foot of whichever column
-    // their references land in. Shaped here because the flow has no shaper,
-    // and all of them rather than the ones after `from`: the flow keeps only
-    // those whose line it places. None when the notes are endnotes: they
-    // are gathered into a story of their own, and the foot stays copy.
-    let at_end = doc.footnotes.placement == tessera_document::footnotes::NotePlacement::End;
-    let notes: Vec<tessera_text::shape::Note> = story
-        .footnote_offsets()
-        .into_iter()
-        .zip(&story.footnotes)
-        .enumerate()
-        .filter(|_| !at_end)
-        .map(|(n, (at, note))| {
-            let label = labels
-                .get(n)
-                .cloned()
-                .unwrap_or_else(|| (n + 1).to_string());
-            let numbered = OnPage::new(doc, Variables::for_footnote_labelled(n as u32 + 1, label));
-            tessera_text::shape::Note {
-                at,
-                text: shaper.shape(note, &numbered, measure),
-            }
-        })
-        .collect();
     let options = doc.footnotes;
     let note_layout = tessera_text::shape::NoteLayout {
         space_before: options.space_before,
@@ -862,7 +863,128 @@ fn compose_frame(
             .rule
             .then_some((options.rule_weight, options.rule_fraction)),
     };
-    tessera_text::shape::flow_with_notes(shaped, &boxes, vertical, grid, &notes, &note_layout)
+    let at_end = doc.footnotes.placement == tessera_document::footnotes::NotePlacement::End;
+    let total = story.text.len();
+    let bounded = passes_on && shortcuts();
+
+    // A frame that passes text on is laid out a first guess's worth of the
+    // story at a time, doubled until the frame is full with room to spare;
+    // one that does not lays out the rest.
+    let mut until = if bounded {
+        from.saturating_add(first_guess())
+    } else {
+        usize::MAX
+    };
+    loop {
+        let shaped = shaper.shape_around_with_objects_until(
+            story, &styles, measure, from, until, &obstacles, &anchored,
+        );
+        let shaped_to = shaped_end(&story.text, from, until);
+
+        // The footnotes, shaped at the column's measure and numbered as the
+        // references are, for the flow to set at the foot of whichever column
+        // their references land in. Shaped here because the flow has no
+        // shaper, and only those whose references this frame could place:
+        // the flow keeps only those whose line it places. None when the notes
+        // are endnotes: they are gathered into a story of their own, and the
+        // foot stays copy.
+        let notes: Vec<tessera_text::shape::Note> = story
+            .footnote_offsets()
+            .into_iter()
+            .zip(&story.footnotes)
+            .enumerate()
+            .filter(|(_, (at, _))| !at_end && *at >= from && *at < shaped_to)
+            .map(|(n, (at, note))| {
+                let label = labels
+                    .get(n)
+                    .cloned()
+                    .unwrap_or_else(|| (n + 1).to_string());
+                let numbered =
+                    OnPage::new(doc, Variables::for_footnote_labelled(n as u32 + 1, label));
+                tessera_text::shape::Note {
+                    at,
+                    text: shaper.shape(note, &numbered, measure),
+                }
+            })
+            .collect();
+        let flowed = tessera_text::shape::flow_with_notes(
+            shaped,
+            &boxes,
+            vertical,
+            grid,
+            &notes,
+            &note_layout,
+        );
+        if !bounded || shaped_to >= total {
+            return flowed;
+        }
+        // Enough once the frame overflowed. The shaper lays out whole
+        // paragraphs, so a frame with lines left over has the line after its
+        // last in hand — and every rule that decides where a column breaks
+        // (keep with next, widows and orphans, keep together) reads no
+        // further than that line's paragraph and the one it follows, both
+        // laid out whole. The tests hold it against the plain walk.
+        if flowed.overset_lines > 0 {
+            return flowed;
+        }
+        until = from.saturating_add((until - from).saturating_mul(2));
+    }
+}
+
+/// How much of a story a frame that passes text on lays out at first: a
+/// little more than a page of body text holds. Doubled as often as it is short.
+const FIRST_GUESS: usize = 4096;
+
+/// Where the text the shaper laid out from `from`, bounded at `until`,
+/// ends: the end of the paragraph `until` falls inside, or `until` itself
+/// when it is a paragraph's start — and never before the end of the
+/// paragraph `from` is in, which is always laid out.
+fn shaped_end(text: &str, from: usize, until: usize) -> usize {
+    let total = text.len();
+    let end_of_paragraph = |at: usize| -> usize {
+        text.get(at..)
+            .and_then(|rest| rest.find('\n'))
+            .map_or(total, |i| at + i + 1)
+    };
+    let until = until.min(total);
+    let bounded = if until == 0 || text.as_bytes().get(until - 1) == Some(&b'\n') {
+        until
+    } else {
+        end_of_paragraph(until)
+    };
+    bounded.max(end_of_paragraph(from.min(total))).min(total)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whether a thread is walked once a pass and a frame that passes text
+    /// on laid out only as far as it holds. Switched off by the tests that
+    /// prove the two change nothing, for the plain walk to compare against.
+    static SHORTCUTS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    /// The first guess, when a test wants frame edges to fall elsewhere.
+    static GUESS: std::cell::Cell<usize> = const { std::cell::Cell::new(FIRST_GUESS) };
+}
+
+fn shortcuts() -> bool {
+    #[cfg(test)]
+    {
+        SHORTCUTS.with(std::cell::Cell::get)
+    }
+    #[cfg(not(test))]
+    {
+        true
+    }
+}
+
+fn first_guess() -> usize {
+    #[cfg(test)]
+    {
+        GUESS.with(std::cell::Cell::get)
+    }
+    #[cfg(not(test))]
+    {
+        FIRST_GUESS
+    }
 }
 
 /// The label of every footnote in `story`, for the frame `id` on page `on`.
@@ -1252,9 +1374,25 @@ fn resolve_one<'a>(
                 .unwrap_or(tessera_color::Color::BLACK);
             let colour = doc.resolve_colour(&colour);
             let from = story_starts_at(doc, shaper, id, composed, running);
+            let next = doc.next_in_thread(id);
             let flowed = compose_frame(
-                doc, shaper, id, frame, *story_id, story, from, on, running, composed,
+                doc,
+                shaper,
+                id,
+                frame,
+                *story_id,
+                story,
+                from,
+                on,
+                running,
+                composed,
+                next.is_some(),
             );
+            // Where the next frame begins is where this one stopped: noted,
+            // so the next is not laid out again from this one to find it.
+            if let Some(next) = next {
+                running.remember_start(next, flowed.consumed_to.unwrap_or(from));
+            }
 
             let mut shaped = flowed.text;
             shaped.resolve_colours(|c| doc.resolve_colour(c));
@@ -2830,5 +2968,237 @@ mod page_tests {
         assert_eq!(page.margins.width, page.bounds.width - 72.0);
         assert_eq!(page.bleed.width, page.bounds.width + 18.0);
         assert_eq!(page.slug, page.bounds, "no slug set means no slug drawn");
+    }
+}
+
+#[cfg(test)]
+mod long_threads {
+    use super::*;
+    use tessera_document::nodes::FrameKind;
+
+    /// A document of `pages` pages, a margin frame on each, all threaded,
+    /// holding `paragraphs` paragraphs of sixty words.
+    pub(crate) fn threaded_book(pages: usize, paragraphs: usize) -> Document {
+        let mut doc = Document::new();
+        doc.setup.facing_pages = false;
+        for _ in 1..pages {
+            doc.add_page();
+        }
+        doc.reflow_spreads();
+        let layer = doc.default_layer().expect("layer");
+        let words =
+            "The harbour wakes before the town does and the boats leave in the grey light. "
+                .repeat(4);
+        let text = vec![words; paragraphs].join("\n");
+        let story = doc.add_story(tessera_text::story::Story::new(&text));
+        let mut previous = None;
+        let ids: Vec<_> = doc.page_ids().collect();
+        for page in ids {
+            let bounds = doc.margin_rect(page).expect("margins");
+            let mut frame = super::tests_support::frame(bounds);
+            frame.kind = FrameKind::text(story);
+            let id = doc.add_frame(layer, frame);
+            if let Some(before) = previous {
+                assert!(doc.thread(before, id));
+            }
+            previous = Some(id);
+        }
+        doc
+    }
+
+    /// A frame's placed lines — where each starts and ends in the story and
+    /// where its baseline sits, in thousandths of a point — and its overset
+    /// when it is the last of its thread.
+    type Placed = (FrameId, Vec<(std::ops::Range<usize>, i64)>, usize);
+
+    /// Every text frame's placed lines.
+    fn placed(doc: &Document) -> Vec<Placed> {
+        let laid = resolve(doc, &mut Shaper::new());
+        let mut out: Vec<_> = laid
+            .items
+            .iter()
+            .filter_map(|item| match &item.kind {
+                ResolvedKind::Text {
+                    shaped,
+                    overset_lines,
+                    ..
+                } => Some((
+                    item.frame,
+                    shaped
+                        .lines
+                        .iter()
+                        .map(|l| (l.range.clone(), (l.baseline * 1000.0).round() as i64))
+                        .collect(),
+                    if doc.next_in_thread(item.frame).is_none() {
+                        *overset_lines
+                    } else {
+                        0
+                    },
+                )),
+                _ => None,
+            })
+            .collect();
+        out.sort_by_key(|(id, ..)| *id);
+        out
+    }
+
+    fn plainly<T>(f: impl FnOnce() -> T) -> T {
+        super::SHORTCUTS.with(|b| b.set(false));
+        let out = f();
+        super::SHORTCUTS.with(|b| b.set(true));
+        out
+    }
+
+    /// Laid out with the shortcuts, from first guesses small enough to
+    /// land a frame's edge anywhere, against the plain walk that lays every
+    /// earlier frame out again for every frame and the whole story each time.
+    fn same_either_way(doc: &Document) {
+        let whole = plainly(|| placed(doc));
+        assert!(
+            whole.iter().any(|(_, lines, _)| !lines.is_empty()),
+            "something was laid out"
+        );
+        for guess in [64, 200, 700, 1500, super::FIRST_GUESS] {
+            super::GUESS.with(|g| g.set(guess));
+            let quick = placed(doc);
+            super::GUESS.with(|g| g.set(super::FIRST_GUESS));
+            assert_eq!(quick.len(), whole.len());
+            for (a, b) in quick.iter().zip(&whole) {
+                assert_eq!(
+                    a, b,
+                    "frame {:?} differs with the shortcuts, first guess {guess}",
+                    a.0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_thread_laid_out_frame_by_frame_as_far_as_each_holds_is_the_same() {
+        same_either_way(&threaded_book(6, 40));
+    }
+
+    #[test]
+    fn headings_that_keep_with_the_next_paragraph_land_the_same() {
+        use tessera_text::story::{KeepOptions, KeepTogether, ParagraphFormat};
+        let mut doc = threaded_book(5, 30);
+        let story = match doc.frames.values().next().map(|f| f.kind.clone()) {
+            Some(FrameKind::Text { story, .. }) => story,
+            _ => panic!("a text frame"),
+        };
+        let text = doc.story(story).expect("story").text.clone();
+        let starts: Vec<usize> = std::iter::once(0)
+            .chain(text.match_indices('\n').map(|(i, _)| i + 1))
+            .collect();
+        let story = doc.story_mut(story).expect("story");
+        // Every third paragraph a heading kept with the next; every fifth
+        // kept together whole; the rest guarded against orphans.
+        for (n, at) in starts.iter().enumerate() {
+            let keep = match n % 5 {
+                0 => KeepOptions {
+                    with_next: true,
+                    together: KeepTogether::Off,
+                },
+                1 => KeepOptions {
+                    with_next: false,
+                    together: KeepTogether::All,
+                },
+                _ => KeepOptions {
+                    with_next: n % 3 == 0,
+                    together: KeepTogether::Ends { start: 2, end: 2 },
+                },
+            };
+            story.apply_paragraph_format(
+                *at..*at + 1,
+                &ParagraphFormat {
+                    keep: Some(keep),
+                    space_before: Some(if n % 3 == 0 { 14.0 } else { 0.0 }),
+                    ..Default::default()
+                },
+            );
+        }
+        same_either_way(&doc);
+    }
+
+    #[test]
+    fn footnotes_columns_and_frames_of_other_widths_land_the_same() {
+        let mut doc = threaded_book(6, 36);
+        let ids: Vec<FrameId> = doc.frames.keys().collect();
+        let story = match doc.frames[ids[0]].kind.clone() {
+            FrameKind::Text { story, .. } => story,
+            _ => panic!("a text frame"),
+        };
+        // A footnote in every fourth paragraph.
+        {
+            let story = doc.story_mut(story).expect("story");
+            let reference = tessera_text::variables::Marker::FootnoteReference.character();
+            let mut text = String::new();
+            for (n, paragraph) in story.text.clone().split('\n').enumerate() {
+                if n > 0 {
+                    text.push('\n');
+                }
+                text.push_str(paragraph);
+                if n % 4 == 1 {
+                    text.push(reference);
+                    story.footnotes.push(tessera_text::story::Story::new(
+                        "A note that runs to a line or two of its own, set at the foot.",
+                    ));
+                }
+            }
+            let footnotes = std::mem::take(&mut story.footnotes);
+            *story = tessera_text::story::Story::new(&text);
+            story.footnotes = footnotes;
+        }
+        // Two columns in some frames, and some narrower than the rest.
+        for (n, id) in ids.iter().enumerate() {
+            let frame = doc.frame_mut(*id).expect("frame");
+            if n % 2 == 1 {
+                frame.bounds.width *= 0.6;
+            }
+            if let FrameKind::Text { layout, .. } = &mut frame.kind
+                && n % 3 == 0
+            {
+                layout.columns = 2;
+                layout.gutter = 12.0;
+            }
+        }
+        same_either_way(&doc);
+    }
+
+    #[test]
+    #[ignore]
+    fn cost() {
+        for pages in [10, 20, 40, 80, 200] {
+            let doc = threaded_book(pages, pages * 6);
+            let start = std::time::Instant::now();
+            let laid = resolve(&doc, &mut Shaper::new());
+            eprintln!(
+                "{pages} pages: {:?} ({} items)",
+                start.elapsed(),
+                laid.items.len()
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests_support {
+    use tessera_document::nodes::{Frame, FrameKind};
+    pub(crate) fn frame(bounds: tessera_geometry::DocRect) -> Frame {
+        Frame {
+            bounds,
+            kind: FrameKind::Rectangle,
+            transform: tessera_geometry::Transform::IDENTITY,
+            fill: tessera_document::paint::Paint::Solid(tessera_color::Color::BLACK),
+            stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
+            shadow: None,
+            anchor: None,
+            style: None,
+            hidden: false,
+            locked: false,
+        }
     }
 }

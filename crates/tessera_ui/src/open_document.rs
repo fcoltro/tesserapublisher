@@ -86,6 +86,10 @@ pub struct OpenDocument {
     /// How many compound commands are under way: while any is, the changes
     /// they make are held in the one undo entry recorded before it began.
     pub(crate) holding: u32,
+
+    /// The revision the text being typed was last checked at for running
+    /// past its pages or falling short of them. See [`crate::reflow`].
+    pub(crate) reflowed_at: Option<u64>,
 }
 
 impl OpenDocument {
@@ -109,6 +113,7 @@ impl OpenDocument {
             pen_cursor: None,
             fitted: false,
             holding: 0,
+            reflowed_at: None,
         }
     }
 

@@ -847,6 +847,7 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
     if state.active().editing.is_some() {
         editing_input(ui, response, rect, state);
         spell_menu(response, state);
+        crate::reflow::while_typing(state);
         return;
     }
 

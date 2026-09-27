@@ -515,6 +515,7 @@ pub fn place_text(state: &mut TesseraApp, path: &Path) -> Result<(), tessera_imp
     });
     // The styles travel with the text and are merged inside the command, so
     // placing is one undo entry: the words and the styles they need.
+    state.status = None;
     crate::command::apply(
         state,
         crate::command::Command::PlaceText {
@@ -528,11 +529,18 @@ pub fn place_text(state: &mut TesseraApp, path: &Path) -> Result<(), tessera_imp
             },
         },
     );
+    // What the flow said, if the text went onto new pages, is said after
+    // the placing rather than instead of it.
+    let flowed = state
+        .status
+        .take()
+        .map(|said| format!(" {}", said.message))
+        .unwrap_or_default();
     state.status = Some(if imported.dropped.is_empty() {
-        Status::info(format!("Placed {}", path.display()))
+        Status::info(format!("Placed {}.{flowed}", path.display()))
     } else {
         Status::error(format!(
-            "Placed {} — not carried: {}",
+            "Placed {} — not carried: {}.{flowed}",
             path.display(),
             imported.dropped.0.join("; ")
         ))

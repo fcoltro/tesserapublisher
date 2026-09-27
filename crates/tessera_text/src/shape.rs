@@ -937,6 +937,20 @@ const SUPERIOR_RAISE: f32 = 0.333;
 /// nearer three quarters than a half.
 const SMALL_CAPS_SCALE: f32 = 0.7;
 
+/// The paragraph record that holds the byte `start`.
+///
+/// Found by halving, since the records run in order of their ranges: a
+/// search from the front for every paragraph of a book was the square of
+/// its length again. A story whose records are out of order — none should
+/// be — is searched from the front, so the answer is never wrong.
+fn paragraph_at(story: &Story, start: usize) -> Option<&crate::story::ParagraphRun> {
+    let at = story.paragraphs.partition_point(|p| p.range.end <= start);
+    match story.paragraphs.get(at) {
+        Some(p) if p.range.contains(&start) => Some(p),
+        _ => story.paragraphs.iter().find(|p| p.range.contains(&start)),
+    }
+}
+
 /// The story's text split into paragraphs, each with its start offset.
 ///
 /// The newline stays with the paragraph it ends, which is what makes the byte
@@ -2830,6 +2844,26 @@ impl Shaper {
         obstacles: &[crate::wrap::Obstacle],
         objects: &[InlineObject],
     ) -> Vec<Placed> {
+        self.layout_paragraphs_between(story, styles, width, from, usize::MAX, obstacles, objects)
+    }
+
+    /// The same, stopping before the first paragraph that begins at or
+    /// after `until` — though never before the one `from` is in.
+    ///
+    /// What a frame in the middle of a thread needs: it can only hold so
+    /// much, and laying out the rest of a book to find where its page ends
+    /// made a long thread cost the square of its length.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn layout_paragraphs_between(
+        &mut self,
+        story: &Story,
+        styles: &dyn Styles,
+        width: f64,
+        from: usize,
+        until: usize,
+        obstacles: &[crate::wrap::Obstacle],
+        objects: &[InlineObject],
+    ) -> Vec<Placed> {
         let floor = styles.document_default();
         let mut placed = Vec::new();
         let mut y = 0.0;
@@ -2839,11 +2873,14 @@ impl Shaper {
         let mut number = 0usize;
 
         for (paragraph_index, (start, text)) in paragraphs_of(&story.text).into_iter().enumerate() {
+            // Past the bound: the caller has what it asked for. The paragraph
+            // `from` is in always comes, so a bound at or before it still
+            // lays something out.
+            if start >= until && start > from {
+                break;
+            }
             let end = start + text.len();
-            let format = story
-                .paragraphs
-                .iter()
-                .find(|p| p.range.contains(&start))
+            let format = paragraph_at(story, start)
                 .map(|p| story.resolve_paragraph(p, styles))
                 .unwrap_or_default();
 
@@ -3385,6 +3422,32 @@ impl Shaper {
     ///
     /// One entry point for both, because a frame can perfectly well have text
     /// running round a picture beside it *and* a picture set into the copy.
+    /// The same, laying out no further than the paragraph `until` falls
+    /// in — or the one `from` is in, when that is later. The lines past it
+    /// are simply not there: for a frame that cannot hold them anyway, not
+    /// for one whose overset is counted.
+    #[allow(clippy::too_many_arguments)]
+    pub fn shape_around_with_objects_until(
+        &mut self,
+        story: &Story,
+        styles: &dyn Styles,
+        width: f64,
+        from: usize,
+        until: usize,
+        obstacles: &[crate::wrap::Obstacle],
+        objects: &[InlineObject],
+    ) -> ShapedText {
+        if until >= story.text.len() {
+            return self.shape_around_with_objects(story, styles, width, from, obstacles, objects);
+        }
+        if from >= story.text.len() && from > 0 {
+            return ShapedText::default();
+        }
+        let placed =
+            self.layout_paragraphs_between(story, styles, width, from, until, obstacles, objects);
+        Self::assemble(story, styles, &placed)
+    }
+
     pub fn shape_around_with_objects(
         &mut self,
         story: &Story,

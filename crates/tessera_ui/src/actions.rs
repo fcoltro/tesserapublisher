@@ -456,6 +456,7 @@ pub fn guard(run: Run) -> Guard {
             | ClearFill
             | ThreadSelection
             | UnthreadSelection
+            | FlowText
             | LockSelection
             | HideSelection,
         ) => Guard::NeedsSelection,
@@ -546,6 +547,7 @@ pub enum Cmd {
     RemoveOverrides,
     ThreadSelection,
     UnthreadSelection,
+    FlowText,
     DuplicatePage,
     Undo,
     Redo,
@@ -1263,6 +1265,12 @@ pub fn all() -> &'static [Action] {
             Command(UnthreadSelection),
         ),
         a(
+            "Flow onto new pages",
+            None,
+            Group::Object,
+            Command(FlowText),
+        ),
+        a(
             "Remove overrides on this page",
             None,
             Group::Layout,
@@ -1717,6 +1725,31 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
                     };
                     Command::UnthreadFrame { id }
                 }
+                Cmd::FlowText => {
+                    // The frame with the caret, or the first text frame
+                    // selected: any frame of a thread carries the thread on.
+                    let editing = state.active().editing.as_ref().map(|(f, _)| *f);
+                    let picked = editing.or_else(|| {
+                        state
+                            .active()
+                            .selection
+                            .as_slice()
+                            .iter()
+                            .copied()
+                            .find(|id| is_text_frame(state, *id))
+                    });
+                    let Some(id) = picked else {
+                        state.status = Some(crate::app::Status::info(
+                            "Select the text frame whose text should carry on onto new pages.",
+                        ));
+                        return;
+                    };
+                    if !runs_out(state, id) {
+                        state.status = Some(crate::app::Status::info("Its text fits already."));
+                        return;
+                    }
+                    Command::FlowText { id }
+                }
                 Cmd::RemoveOverrides => {
                     let Some(page) = crate::view::panels::current_page(state) else {
                         return;
@@ -1800,6 +1833,28 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
 ///
 /// The question "is there a thread to break", asked of the frame rather than of
 /// the selection, so that a selection of any size can be searched for one.
+fn is_text_frame(state: &crate::app::TesseraApp, id: tessera_document::ids::FrameId) -> bool {
+    matches!(
+        state.active().document().frame(id).map(|f| &f.kind),
+        Some(tessera_document::nodes::FrameKind::Text { .. })
+    )
+}
+
+/// Whether `id`'s thread has text left over at its end, asked of the
+/// canvas's own layout.
+fn runs_out(state: &mut crate::app::TesseraApp, id: tessera_document::ids::FrameId) -> bool {
+    let Some(&last) = state.active().document().thread_of(id).last() else {
+        return false;
+    };
+    state.resolve_active().items.iter().any(|item| {
+        item.frame == last
+            && matches!(
+                &item.kind,
+                tessera_layout::ResolvedKind::Text { overset_lines, .. } if *overset_lines > 0
+            )
+    })
+}
+
 fn leads_somewhere(state: &crate::app::TesseraApp, id: tessera_document::ids::FrameId) -> bool {
     matches!(
         state.active().document().frame(id).map(|f| &f.kind),

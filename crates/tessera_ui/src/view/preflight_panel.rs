@@ -80,6 +80,7 @@ enum Ask {
 #[derive(Debug, Clone, PartialEq)]
 enum Fix {
     FitFrame(FrameId),
+    FlowOn(FrameId),
     Relink(LinkId),
     Update(LinkId),
     UpdateAll(Vec<LinkId>),
@@ -644,12 +645,28 @@ fn fixes(
                 .frame(id)
                 .is_some_and(|f| matches!(f.kind, FrameKind::Text { .. })) =>
         {
-            vec![(
+            let fit = (
                 Icon::ScaleY,
                 "Fit frame to text",
                 "Make the frame just tall enough to hold the rest of its text",
                 Fix::FitFrame(id),
-            )]
+            );
+            // Body text — a frame filling its page's margins — carries on
+            // onto new pages; a caption is made to fit.
+            if crate::reflow::fills_margins(doc, id) {
+                vec![
+                    (
+                        Icon::AddFile,
+                        "Flow onto new pages",
+                        "Add pages after it, each with a frame in its margins threaded on, \
+                         until the text fits",
+                        Fix::FlowOn(id),
+                    ),
+                    fit,
+                ]
+            } else {
+                vec![fit]
+            }
         }
         (Rule::MissingLink, Subject::Link(link), _) => vec![
             (
@@ -957,6 +974,7 @@ fn run(state: &mut TesseraApp, ask: Ask) {
 fn mend(state: &mut TesseraApp, fix: Fix) {
     match fix {
         Fix::FitFrame(id) => apply(state, Command::FitFrameToText { id }),
+        Fix::FlowOn(id) => apply(state, Command::FlowText { id }),
         Fix::Relink(link) => {
             if let Some(path) = crate::file_ops::pick_artwork() {
                 apply(state, Command::Relink { link, path });
@@ -1212,6 +1230,41 @@ mod tests {
                 Rule::NoOutputIntent
             ]
         );
+    }
+
+    #[test]
+    fn overset_body_text_is_offered_new_pages_and_they_clear_it_in_one_step() {
+        let mut state = TesseraApp::headless();
+        let page = state.current_page().expect("a page");
+        let margins = state
+            .active()
+            .document()
+            .margin_rect(page)
+            .expect("margins");
+        apply(&mut state, Command::AddTextFrame(margins));
+        let body = state.active().selection.single().expect("the frame");
+        apply(
+            &mut state,
+            Command::SetText {
+                id: body,
+                text: "The harbour wakes before the town does and the boats leave. ".repeat(400),
+            },
+        );
+        let doc = state.active().document();
+        let problem = Problem {
+            rule: Rule::OversetText,
+            message: String::new(),
+            at: Where::Frame(body),
+            subject: Subject::None,
+        };
+        let labels: Vec<&str> = fixes(&problem, doc).iter().map(|f| f.1).collect();
+        assert_eq!(labels, ["Flow onto new pages", "Fit frame to text"]);
+        assert!(rules(&mut state).contains(&Rule::OversetText));
+        let depth = state.active().history.undo_depth();
+        mend(&mut state, Fix::FlowOn(body));
+        assert!(!rules(&mut state).contains(&Rule::OversetText));
+        assert!(state.active().document().page_ids().count() > 1);
+        assert_eq!(state.active().history.undo_depth(), depth + 1);
     }
 
     #[test]

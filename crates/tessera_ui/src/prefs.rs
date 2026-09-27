@@ -151,6 +151,24 @@ pub struct Preferences {
     #[serde(default = "yes")]
     pub dynamic_spelling: bool,
 
+    /// Whether a text document placed as body text — into a new frame, or
+    /// one filling its page's margins — carries on onto as many new pages as
+    /// it needs, each with a frame in its margins.
+    #[serde(default = "yes")]
+    pub flow_placed_text: bool,
+
+    /// Whether typing past the end of body text — a thread whose last frame
+    /// fills its page's margins — adds a page after it, threaded on:
+    /// InDesign's smart text reflow, for what its primary text frame is.
+    #[serde(default = "yes")]
+    pub reflow_adds_pages: bool,
+
+    /// Whether pages at the end of body text that it no longer reaches, and
+    /// that hold nothing else, are taken away as it shrinks. Off, as
+    /// InDesign has it: a page taken away is a surprise, a page left is not.
+    #[serde(default)]
+    pub reflow_removes_pages: bool,
+
     /// The model the console talks to, and how to reach it.
     #[serde(default)]
     pub assistant: Assistant,
@@ -286,6 +304,9 @@ impl Default for Preferences {
             workspace: None,
             glyphs: Default::default(),
             recent_books: Vec::new(),
+            flow_placed_text: true,
+            reflow_adds_pages: true,
+            reflow_removes_pages: false,
             swatch_tiles: false,
         }
     }
@@ -491,6 +512,9 @@ mod tests {
             },
             recent_books: vec!["novel.tesserabook".into()],
             swatch_tiles: true,
+            flow_placed_text: false,
+            reflow_adds_pages: false,
+            reflow_removes_pages: true,
         };
         written.save_to(&path).expect("save failed");
 

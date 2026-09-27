@@ -226,6 +226,9 @@ fn restore(state: &mut TesseraApp) {
             state.prefs.snapping = fresh.snapping;
             state.prefs.typographers_quotes = fresh.typographers_quotes;
             state.prefs.dynamic_spelling = fresh.dynamic_spelling;
+            state.prefs.flow_placed_text = fresh.flow_placed_text;
+            state.prefs.reflow_adds_pages = fresh.reflow_adds_pages;
+            state.prefs.reflow_removes_pages = fresh.reflow_removes_pages;
             state.prefs.assistant = fresh.assistant.clone();
             state.prefs.updates.enabled = fresh.updates.enabled;
         }
@@ -317,6 +320,38 @@ fn general(ui: &mut Ui, state: &mut TesseraApp) {
         "A red wave under any word the language\u{2019}s dictionary does not know, \
          as you type. Needs a dictionary in the dictionaries folder; without one \
          nothing is marked.",
+    );
+
+    heading(ui, "Text flow");
+    ui.checkbox(
+        &mut state.prefs.flow_placed_text,
+        "Flow placed text onto new pages",
+    );
+    note(
+        ui,
+        "A Word document placed as body text carries on onto as many pages as it \
+         needs, each with a frame in its margins threaded on from the last. Placed \
+         into a box of your own, it stays in the box.",
+    );
+    ui.checkbox(
+        &mut state.prefs.reflow_adds_pages,
+        "Add pages as body text grows",
+    );
+    note(
+        ui,
+        "Typing past the end of body text \u{2014} a thread whose last frame fills its \
+         page\u{2019}s margins \u{2014} adds a page after it, threaded on. Captions and \
+         boxes are left alone.",
+    );
+    ui.checkbox(
+        &mut state.prefs.reflow_removes_pages,
+        "Remove empty pages as it shrinks",
+    );
+    note(
+        ui,
+        "Pages at the end of body text that it no longer reaches are taken away, when \
+         nothing else is on them. Off unless asked for: a page taken away is a \
+         surprise, and a page left is not.",
     );
 
     heading(ui, "Assistant");
@@ -888,6 +923,9 @@ mod tests {
             },
             recent_books: vec!["novel.tesserabook".into()],
             swatch_tiles: true,
+            flow_placed_text: false,
+            reflow_adds_pages: false,
+            reflow_removes_pages: true,
         };
 
         for page in Page::ALL {

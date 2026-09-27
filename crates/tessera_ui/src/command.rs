@@ -737,6 +737,11 @@ pub enum Command {
         id: Option<FrameId>,
         text: PlacedText,
     },
+    /// Carry a text frame's thread onto new pages until its story fits:
+    /// see [`tessera_layout::autoflow`].
+    FlowText {
+        id: FrameId,
+    },
     /// Resize every page in the document.
     SetPageSize {
         width: f64,
@@ -2401,6 +2406,21 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                     },
                 );
             place_generated(state, story, into, |_, _| {});
+            // What placing a manuscript as body text means is setting all of
+            // it: the thread carries on onto as many pages as it needs, in the
+            // same undo step. Placed into a box of somebody's own, it stays
+            // there, overset, as the box was chosen for it.
+            let placed = id.or_else(|| state.active().selection.single());
+            if state.prefs.flow_placed_text
+                && let Some(frame) = placed
+                && crate::reflow::fills_margins(state.active().document(), frame)
+            {
+                flow_text(state, frame);
+            }
+        }
+
+        Command::FlowText { id } => {
+            flow_text(state, id);
         }
 
         Command::UpdateIndex => {
@@ -2697,6 +2717,39 @@ fn place_contents(state: &mut TesseraApp, story: Story, destinations: Vec<(Strin
     place_generated(state, story, into, |doc, id| {
         doc.contents.story = Some(id);
     });
+}
+
+/// Carry `id`'s thread onto new pages until its story fits, and say what
+/// came of it. Nothing is said when it fitted already and nothing was added.
+fn flow_text(state: &mut TesseraApp, id: FrameId) -> tessera_layout::autoflow::Flow {
+    let key = state.active;
+    let flow = tessera_layout::autoflow::flow_onto_new_pages(
+        state.documents[key].document_mut(),
+        &mut state.shaper,
+        id,
+        tessera_layout::autoflow::MOST_PAGES,
+    );
+    let added = flow.pages.len();
+    let pages = |n: usize| match n {
+        1 => "1 new page".to_string(),
+        n => format!("{n} new pages"),
+    };
+    if added > 0 {
+        state.status = Some(if flow.fits {
+            crate::app::Status::info(format!("The text flowed onto {}.", pages(added)))
+        } else {
+            crate::app::Status::error(format!(
+                "The text flowed onto {} and still does not fit: something in it \
+                 is too big for the page's margins.",
+                pages(added)
+            ))
+        });
+    } else if !flow.fits {
+        state.status = Some(crate::app::Status::error(
+            "The text does not fit, and a page more would not hold any of it.",
+        ));
+    }
+    flow
 }
 
 fn place_generated(

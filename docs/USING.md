@@ -91,6 +91,25 @@ of a frame, because overset text is invisible by definition.
 
 To break a thread: select the frames and **Object ▸ Unthread**.
 
+**Flowing onto new pages.** **Object ▸ Flow onto new pages** carries the
+selected frame's thread on until its text fits: a page after the one the text
+ends on, with a frame in its margins threaded on from the last, and as many
+more as the text needs — laid out as the frame they follow is, columns and
+all, and each on the parent of the page before. Pages after the story are
+pushed on, not written over. It is one step to undo.
+
+A Word document placed as body text (**File ▸ Place**, with nothing selected
+or into a frame filling its page's margins) flows onto new pages the same way
+as it is placed, and the status line says how many. Placed into a smaller box,
+it stays in the box.
+
+While you type in **body text** — a thread whose last frame fills its page's
+margins — running past its end adds a page after it, threaded on, inside the
+same step to undo as the words that needed it. A caption or a sidebar is left
+overset. Preferences ▸ General ▸ *Text flow* switches both off, and can also
+take away the pages at the end of body text it no longer reaches, when nothing
+else is on them; that one is off until asked for.
+
 **Styles** are in the Styles panel. Double-click one to edit it — the list is
 what you look at every few minutes, so the two dozen properties live in a window
 of their own.
@@ -419,8 +438,8 @@ it list only the errors or only the warnings.
 Problems are listed under the check that found them, one row per object with
 the page it is on. Click a row, or walk the list with *Next* and *Previous*,
 to select the object and bring it into view — on its parent page when that is
-where it is. The row gone to opens out with what fixes it: *Fit frame to
-text* for overset text, *Relink…* or *Update* for a file, *Choose a press…*,
+where it is. The row gone to opens out with what fixes it: *Flow onto new
+pages* for overset body text and *Fit frame to text* for any overset frame, *Relink…* or *Update* for a file, *Choose a press…*,
 and *Replace with…* for a missing font or an undefined colour, which changes
 it everywhere it is named. *Find missing…* and *Update all* fix every file at
 once. Each fix is one step to undo.
