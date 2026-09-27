@@ -568,6 +568,19 @@ pub enum Command {
         name: String,
         with: Option<String>,
     },
+    /// Move a swatch to stand before another, or at the end of the list.
+    MoveSwatch {
+        name: String,
+        before: Option<String>,
+    },
+    /// Put the swatches in order of their names.
+    SortSwatches,
+    /// Make a swatch of every colour used as itself rather than through
+    /// one, and point its uses at it.
+    NameUnnamedColours,
+    /// Bring swatches in from a file: see
+    /// [`tessera_document::document::Document::add_swatches`].
+    AddSwatches(Vec<tessera_document::nodes::Swatch>),
 
     /// Add a parent spread shaped like the document.
     AddMaster,
@@ -1974,6 +1987,29 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 .active_mut()
                 .document_mut()
                 .replace_swatch(&name, with.as_deref());
+        }
+
+        Command::MoveSwatch { name, before } => {
+            state
+                .active_mut()
+                .document_mut()
+                .move_swatch(&name, before.as_deref());
+        }
+
+        Command::SortSwatches => {
+            state.active_mut().document_mut().sort_swatches();
+        }
+
+        Command::NameUnnamedColours => {
+            use crate::view::swatch_editor::{BLACK_INK, PAPER_INK};
+            state
+                .active_mut()
+                .document_mut()
+                .name_unnamed_colours(&[PAPER_INK, BLACK_INK]);
+        }
+
+        Command::AddSwatches(swatches) => {
+            state.active_mut().document_mut().add_swatches(swatches);
         }
 
         Command::AddMaster => {

@@ -34,6 +34,7 @@ pub mod polygon;
 pub mod sections;
 pub mod shadow;
 mod swatch_edit;
+pub mod swatch_exchange;
 pub mod table;
 mod transfer;
 pub mod variables;
@@ -42,4 +43,7 @@ pub use document::{Document, StoryMap, ZMove};
 pub use history::History;
 pub use ids::{FrameId, LayerId, PageId, SpreadId, StoryId};
 pub use nodes::{Frame, FrameKind, Layer, Page, Spread, Stroke};
-pub use swatch_edit::{SwatchReferences, character_names_swatch, paragraph_names_swatch};
+pub use swatch_edit::{
+    SwatchMerge, SwatchReferences, character_names_swatch, colour_name, name_order,
+    paragraph_names_swatch,
+};

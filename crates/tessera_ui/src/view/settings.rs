@@ -887,6 +887,7 @@ mod tests {
                 favourites: vec!['→'],
             },
             recent_books: vec!["novel.tesserabook".into()],
+            swatch_tiles: true,
         };
 
         for page in Page::ALL {
@@ -910,6 +911,9 @@ mod tests {
                     favourites: vec!['→'],
                 },
                 recent_books: vec!["novel.tesserabook".into()],
+                // Kept: how a panel is being looked at, as where the panels
+                // are docked is.
+                swatch_tiles: true,
                 ..Preferences::default()
             },
             "a setting is reachable but not restorable, so it is on no page"

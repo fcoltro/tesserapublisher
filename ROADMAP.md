@@ -1056,6 +1056,16 @@ of each carries the full account; this is the index.
   `square-terminal`, a moon, a table of contents, a dashed text frame). A
   test holds that no two icons share a picture unless they are one idea
   under two names (`9c92436`).
+- [x] **Swatches, again (2026-09-27).** Apply puts a colour on at a tint,
+  [Black] at a tint being a grey on the black plate, and colours every
+  selected object in one step. Chips narrow the list to process, spot,
+  tints or unused, and Delete unused takes those in one step; rows or
+  tiles, each dragged to a new place; Sort by name. Add unnamed colours
+  names every colour used without a swatch by its numbers and points its
+  uses at it (`Document::name_unnamed_colours`). Load swatches brings in an
+  Adobe Swatch Exchange file or another document's swatches, renaming a
+  clash rather than recolouring anything, and Save swatches writes `.ase`
+  for InDesign, Illustrator and Photoshop (`tessera_document::swatch_exchange`).
 - [ ] **Not yet looked at on Windows.** Each panel is proved by headless
   interface tests driven through the accessibility tree and was looked at
   in screenshots, dark and light, on Linux. The Windows build has not been

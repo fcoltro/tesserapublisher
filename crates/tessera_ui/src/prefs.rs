@@ -233,6 +233,11 @@ pub struct Preferences {
     /// again through a file dialog every morning otherwise.
     #[serde(default)]
     pub recent_books: Vec<std::path::PathBuf>,
+
+    /// Whether the Swatches panel shows its colours as tiles rather than as
+    /// rows: a look along a palette, against a read down its names.
+    #[serde(default)]
+    pub swatch_tiles: bool,
 }
 
 fn yes() -> bool {
@@ -281,6 +286,7 @@ impl Default for Preferences {
             workspace: None,
             glyphs: Default::default(),
             recent_books: Vec::new(),
+            swatch_tiles: false,
         }
     }
 }
@@ -484,6 +490,7 @@ mod tests {
                 favourites: vec!['→'],
             },
             recent_books: vec!["novel.tesserabook".into()],
+            swatch_tiles: true,
         };
         written.save_to(&path).expect("save failed");
 

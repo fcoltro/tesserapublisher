@@ -330,10 +330,33 @@ Each row shows the colour, the space it is written in — CMYK, RGB, Lab, or
 *Tint* — and how many places use it: objects, text, styles and tints, not only
 fills and strokes. A click chooses a swatch and *Apply* puts it on the
 selection's **fill**, **stroke** or **text**, as the switch above the list
-says; the swatch the selection already wears carries a dot. Choosing and
-applying are two steps on purpose, so looking through the list with an object
-selected does not recolour it. Past eight swatches a filter narrows the list
-by name.
+says, at the **tint** in the box beside it — 100% is the colour itself, and
+less is lighter, toward the paper; [Black] at a tint is a grey on the black
+plate alone. The swatch the selection already wears carries a dot, and
+choosing it offers back the tint it is at. Choosing and applying are two
+steps on purpose, so looking through the list with an object selected does
+not recolour it; Apply colours every selected object in one step to undo.
+
+The chips above the list — *All*, *Process*, *Spot*, *Tints*, *Unused*, each
+with its count — narrow it to one kind, and a second click shows them all
+again. With *Unused* shown, *Delete unused* takes every swatch nothing uses
+in one step. Past eight swatches a filter narrows the list by name. The two
+buttons at the top show the list as rows or as **tiles**, a palette to look
+along with each colour named on hover, and Tessera remembers which. Drag a
+row or a tile to put it somewhere else in the list; a swatch's right-click
+menu has *Move up* and *Move down* too.
+
+The ••• menu does to the whole list:
+
+| | |
+| --- | --- |
+| *Load swatches…* | Brings in the swatches of an Adobe Swatch Exchange file (`.ase`, from InDesign, Illustrator or Photoshop) or of another Tessera document. One already here is left as it is; one whose name this document gives another colour comes in as *Name 2*, and loading the same file again brings nothing new |
+| *Save swatches…* | Writes them as an `.ase` file for those programs: a tint as the colour it makes, a spot still a spot |
+| *Add unnamed colours* | Makes a swatch of every colour used without one — named by its numbers, as *C=0 M=91 Y=76 K=0* — and points what used it at the swatch, so editing the swatch recolours them |
+| *Delete unused swatches* | As above |
+| *Sort by name* | Puts the list in order, *Blue 2* before *Blue 10* |
+
+A line under the list says what the last of these did.
 
 Double-click a swatch — or *Edit swatch…* — for the **Swatch window**. A
 colour is edited in its own numbers: a CMYK swatch as inks, with a slider for

@@ -256,6 +256,9 @@ pub enum Icon {
     Tint,
     /// A letter with a plus: type it where the cursor is.
     InsertText,
+    /// A list shown as rows, and as tiles.
+    ViewList,
+    ViewGrid,
 }
 
 impl Icon {
@@ -525,7 +528,9 @@ impl Icon {
             | Self::Objects
             | Self::MoveToLayer
             | Self::Tint
-            | Self::InsertText => &[],
+            | Self::InsertText
+            | Self::ViewList
+            | Self::ViewGrid => &[],
         }
     }
 
@@ -699,6 +704,8 @@ impl Icon {
             | Self::MoveToLayer
             | Self::Tint
             | Self::InsertText
+            | Self::ViewList
+            | Self::ViewGrid
             | Self::Swatches
             | Self::Styles
             | Self::Close
@@ -844,6 +851,8 @@ impl Icon {
             Self::MoveToLayer => s2!("SelectAndMove"),
             Self::Tint => s2!("Percentage"),
             Self::InsertText => s2!("TextAdd"),
+            Self::ViewList => s2!("ViewList"),
+            Self::ViewGrid => s2!("ViewGrid"),
             // Page-layout ideas Spectrum has no picture of: drawn here.
             Self::Scale
             | Self::TextCursor
@@ -1224,7 +1233,7 @@ fn texture(ctx: &egui::Context, icon: Icon, side: u32, degrees: f32) -> egui::Te
 /// **An icon missing from this list is missing from its own tests.** Seventeen
 /// were once, and three more — `Book`, `Pipette`, `Pi` — until the move to
 /// Spectrum, when a count taken by hand matched a list that was short.
-pub const ALL: [Icon; 158] = [
+pub const ALL: [Icon; 160] = [
     Icon::StrokeWeight,
     Icon::Disclosure,
     Icon::Book,
@@ -1383,6 +1392,8 @@ pub const ALL: [Icon; 158] = [
     Icon::MoveToLayer,
     Icon::Tint,
     Icon::InsertText,
+    Icon::ViewList,
+    Icon::ViewGrid,
 ];
 
 #[cfg(test)]
@@ -1591,6 +1602,6 @@ mod tests {
         // count is what is checked, and it is the enum's own count.
         let unique: std::collections::HashSet<_> = ALL.iter().collect();
         assert_eq!(unique.len(), ALL.len(), "an icon is listed twice");
-        assert_eq!(ALL.len(), 158);
+        assert_eq!(ALL.len(), 160);
     }
 }

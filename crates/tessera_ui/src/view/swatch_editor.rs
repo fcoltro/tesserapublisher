@@ -1666,7 +1666,7 @@ fn footer(ui: &mut Ui, state: &mut TesseraApp, swatch: &Swatch) {
     let mut apply_now = false;
     let entry = super::swatches::Entry::Named(swatch.name.clone());
     let ready =
-        super::swatches::apply_commands(state, &entry, state.swatches_window.target).is_some();
+        super::swatches::apply_commands(state, &entry, state.swatches_window.target, 1.0).is_some();
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(14, 10))
         .show(ui, |ui| {
@@ -1710,7 +1710,7 @@ fn footer(ui: &mut Ui, state: &mut TesseraApp, swatch: &Swatch) {
         state.swatches_window.chosen = Some(name);
     }
     if apply_now {
-        super::swatches::apply_entry(state, &entry);
+        super::swatches::apply_entry(state, &entry, 1.0);
     }
 }
 

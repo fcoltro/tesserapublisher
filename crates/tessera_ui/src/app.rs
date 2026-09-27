@@ -384,6 +384,35 @@ pub struct SwatchesWindow {
     /// were found at: a whole walk of the document per swatch, which the
     /// panel's counts would otherwise make on every frame.
     pub found: Option<FoundSwatchUses>,
+    /// The tint Apply puts the chosen colour on at, when it is not the
+    /// colour at full strength.
+    pub tint: Option<f32>,
+    /// Which swatches the panel lists.
+    pub show: SwatchShow,
+    /// What the last action on the whole list did — a load, a save, a
+    /// clean-up — said under the list until the next.
+    pub note: Option<String>,
+    /// The swatch being dragged to a new place in the list, while it is.
+    pub moving: Option<String>,
+    /// How many colours the document uses without a swatch, and the
+    /// document and revision that was counted at: every colour in it is
+    /// read to say so.
+    pub unnamed: Option<(DocumentKey, u64, usize)>,
+}
+
+/// Which swatches the Swatches panel lists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SwatchShow {
+    #[default]
+    All,
+    /// Mixes of the process inks, and Lab and RGB colours that print as one.
+    Process,
+    /// Inks of their own.
+    Spot,
+    /// Swatches that are a share of another.
+    Tints,
+    /// Swatches nothing uses.
+    Unused,
 }
 
 /// Where each swatch is used, as found at one revision of one document.
