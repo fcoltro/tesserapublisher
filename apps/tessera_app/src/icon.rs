@@ -44,16 +44,16 @@ mod tests {
     }
 
     #[test]
-    fn the_mark_is_the_red_it_is_drawn_in() {
-        // The logotype's field is #dc1414. Sampling the centre catches an
-        // artwork swapped for the wrong file, which the test above would not
-        // notice.
+    fn the_mark_is_the_blue_it_is_drawn_in() {
+        // The logotype is #3e4efa, and the centre of the square falls on the
+        // T's stem. Sampling it catches an artwork swapped for the wrong
+        // file, which the test above would not notice.
         let icon = load();
         let middle = ((SIZE / 2 * SIZE + SIZE / 2) * 4) as usize;
         let pixel = &icon.rgba[middle..middle + 3];
         assert!(
-            pixel[0] > pixel[1] + 40 && pixel[0] > pixel[2] + 40,
-            "the centre of the mark is red, not {pixel:?}"
+            pixel[2] > pixel[0] + 40 && pixel[2] > pixel[1] + 40,
+            "the centre of the mark is blue, not {pixel:?}"
         );
     }
 
