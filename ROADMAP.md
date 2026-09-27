@@ -993,6 +993,74 @@ travel with the code.
     under test, where egui's default row height *equals* the compact height, so
     a style that never changed would have passed as one that did.
 
+### The panel pass (2026-09-24 to 2026-09-26)
+
+One window at a time, each rebuilt around the question a person brings to
+it, with the model work each needed landing in the same commit. The commit
+of each carries the full account; this is the index.
+
+- [x] **The style windows.** The paragraph style window shows what an
+  unstated property inherits and from whom ("18 pt, from Body"), and ticking
+  it starts from that value rather than one chosen in the code (`fdb6c7f`).
+  Every style previews itself in its own face between greyed neighbours,
+  with a header, a sidebar of pages and a dot per property for stated or
+  inherited (`604ea13`). A character style is shown inside the paragraph
+  it first lands in, and its uses are counted and visited one by one
+  (`bdd338e`). An object style is drawn as a box in a column of text, and
+  fill, stroke, transparency, shadow and wrap can each be set in full
+  (`e73482e`).
+- [x] **Swatches.** A swatch is edited in its own numbers — CMYK stays
+  CMYK — beside how the press will print it, and says what uses it,
+  counted across text, styles and tints rather than fills alone. Deleting
+  one in use asks what its uses become. Four colour faults found on the way
+  are fixed where they start (`a7cd93a`).
+- [x] **Pages, twice.** Pages are chosen, singly or in runs, and every
+  action acts on the chosen ones; the list fills the rail and facing pages
+  meet at one spine (`578b103`). Then: Insert pages… for several at once,
+  a page size for the chosen pages, and each page's size said in the foot
+  of the panel (`f34b8f2`).
+- [x] **Layers.** Each layer shows its objects on the spread in view, by
+  kind and page; objects are hidden and locked on their own (`Frame`
+  gained both, left out of the file when false) and arranged between
+  layers by dragging (`70b40bc`).
+- [x] **Links.** The panel leads with what is wrong; each file shows its
+  picture, pixels, resolution and where it is used; Update all and Find
+  missing… fix every file at once. `Document::effective_ppi` measures
+  resolution through the frame's own transform, which preflight now uses
+  too (`683297f`).
+- [x] **Preflight.** A verdict first, then each problem as a row on its
+  object and page, walked in order, each offering its fix: fit frame to
+  text, relink, update, replace a font, repoint a colour name, choose a
+  press. Checks can be switched off, and are remembered (`ec942da`).
+- [x] **Glyphs.** Characters are found by Unicode name, by kind, by the
+  character pasted or by code, shown large with their name, and kept as
+  favourites between runs (`0499bb4`).
+- [x] **Book.** Each chapter says the pages it runs to, whether it is
+  open, unsaved or missing, and whether its numbers are the book's;
+  every change to the list is saved as it is made (`7c9b5eb`).
+- [x] **AI Console.** A conversation rather than a column of labels:
+  prompts and replies in bubbles, the model's steps in words with a tick
+  or a cross, a multi-line input with the prompts sent before, and Undo
+  this turn taking back all a turn did as one step (`4e83923`).
+- [x] **Properties.** One object is named — its kind, its words or file,
+  its layer and page — with Lock, Hide, Duplicate and Delete; several are
+  aligned, given one fill, stroke and opacity, grouped and arranged
+  together. `Command::Together` makes several changes one undo step
+  (`20f7ad5`).
+- [x] **The icons.** Every icon was checked against every place it is
+  drawn, and forty-two places changed where a picture was borrowed for a
+  second meaning — Export PDF drawn as Duplicate, Group as the Layers
+  stack, Update as the quarter turn that rotates objects. Thirty-four more
+  Spectrum 2 icons are vendored; six Spectrum does not have are drawn (a
+  book, an ampersand for Glyphs, sparkles for the AI Console in place of
+  `square-terminal`, a moon, a table of contents, a dashed text frame). A
+  test holds that no two icons share a picture unless they are one idea
+  under two names (`9c92436`).
+- [ ] **Not yet looked at on Windows.** Each panel is proved by headless
+  interface tests driven through the accessibility tree and was looked at
+  in screenshots, dark and light, on Linux. The Windows build has not been
+  run on any of it.
+
 ### What the design argues from
 
 Alan Cooper's *About Face* names what Tessera is: a **sovereign** application,
