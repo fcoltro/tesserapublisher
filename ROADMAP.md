@@ -274,8 +274,9 @@ Making the skeleton pleasant to use. No new file-format surface area.
 > milestone 0, the boxes stay unticked until a person performs the sentence in
 > the running application. The five items below that line came out of the
 > InDesign reading on 2026-09-03 — the reference point, shear, align and
-> distribute, corner options, and the remaining tools — and no code exists for
-> any of them.
+> distribute, corner options, and the remaining tools. **All five have been
+> built since** (2026-09-27: this note had said no code existed for any of
+> them).
 >
 > A first run on 2026-09-02 produced a punch list, worked through in
 > `docs/UX-PASS-1.md`: painted Lucide cursors, transform zones that do not
@@ -2459,7 +2460,9 @@ and not a list of controls.
     break. `CharacterFormat.kerning: Metrics | Optical` (format 29), a pair
     of buttons in the inspector, a choice in the style editor, and IDML's
     `KerningMethod` on import. **The eye has not judged it.**
-  - **H&J parameters** are not built. parley justifies by adjusting cluster
+  - *Superseded: H&J parameters are built — see "H&J meant writing a
+    breaker" above. This note is kept as what was believed at the time.*
+    **H&J parameters** are not built. parley justifies by adjusting cluster
     advances and exposes no minimum, optimum or maximum for word or letter
     spacing, and no glyph scaling. Controlling *how* it justifies means
     writing justification, which is a milestone of its own.
@@ -3134,6 +3137,112 @@ system prompt is set once and the selection is not.
   transcript*: saved beside the preferences at quit, its last 400 lines,
   read back at launch with a note that the model starts afresh. All by
   test; **the acceptance sentence is still unperformed** — no key here.
+
+---
+
+# What is left, easiest first (planned 2026-09-27)
+
+Everything still open in this file, gathered in one place and ordered from
+the easiest to the hardest. The milestones above keep the full account of
+each; this list is the order of work. Sizes are estimates: **hours**, **a
+day**, **days**, **a week or more**.
+
+Each item says who can do it: **code** is work Claude can do alone;
+**person** needs someone at a Windows machine, usually with Claude driving
+the app and taking screenshots; **hardware** needs a machine, a licence or a
+device this project does not have yet.
+
+When an item is done, tick it here *and* in its milestone, in the same
+commit.
+
+### Tier 1 — hours each
+
+- [ ] 1. **See the new blue T** in the title bar and in Explorer, and
+  double-click a `.tsrdf` file to open it (milestone 8). *Person.*
+- [ ] 2. **The bridge answers while the New Document dialog is up**, so a
+  model can fill a document the person is about to replace (milestone 13).
+  Check whether it still does; hold tool calls until the dialog closes.
+  *Code.*
+- [ ] 3. **`describe_shapes` ids as plain numbers** instead of the
+  document's `{idx, version}` form (milestone 13). *Code.*
+- [ ] 4. **Text variables: file name, date, last page number**
+  (milestone 10). *Code.*
+- [ ] 5. **Facing-page sides named inside and outside** against the spine
+  (milestone 4). *Code.*
+- [ ] 6. **A tool call through Claude Code's own MCP client**, which is
+  still owed because the CLI's login had lapsed (milestone 13). *Person,
+  briefly.*
+
+### Tier 2 — about a day each
+
+- [ ] 7. **Look at the panel pass on Windows**: every panel rebuilt on
+  2026-09-24 to 27, and the image and PDF export dialogs (the interface).
+  *Person.*
+- [ ] 8. **Walk the rebuilt panels with NVDA** (cross-cutting
+  requirements). *Person.*
+- [ ] 9. **Hand-check the typography**: manual and optical kerning,
+  justification settings, glyph scaling (milestone 9). *Person.*
+- [ ] 10. **Input methods on Windows** (milestone 2.5). *Person.*
+- [ ] 11. **The first real AI Console turn**, with a key or a local model
+  (milestone 14). *Person.*
+- [ ] 12. **A placed PDF's page, and which box it is cropped to** (the
+  interface, placing). *Code.*
+- [ ] 13. **"Objects move with page edge"** when a page is resized
+  (milestone 12). *Code.*
+- [ ] 14. **Chapter number as a variable, and a variable in a table cell**
+  (milestone 10). *Code.*
+- [ ] 15. **Single-word justification** (milestone 9). *Code.*
+- [ ] 16. **The story editor shows styles** (milestone 12). *Code.*
+
+### Tier 3 — days each
+
+- [ ] 17. **Export in the background**, with progress, since a long document
+  at 300 ppi takes a while. *Code.*
+- [ ] 18. **SVG export.** *Code.*
+- [ ] 19. **Cross-references edited in place**, and imported inside a table
+  cell as references rather than words (milestone 11). *Code.*
+- [ ] 20. **Hyperlinks**: anchored-text destinations, a link's appearance on
+  screen, IDML hyperlinks (milestone 12). *Code.*
+- [ ] 21. **Footnote text edited on the canvas** (milestone 11). *Code.*
+- [ ] 22. **Type on a path**: the caret on the curve, drag handles for
+  start, end and flip, and path text as a wrap obstacle (milestone 9).
+  *Code.*
+- [ ] 23. **Book**: chapters in the Pages panel, styles kept the same across
+  chapters, an index across the book (milestone 11). *Code.*
+- [ ] 24. **More Photoshop files**: ZIP-compressed, Lab, 1-bit and 32-bit.
+  *Code.*
+- [ ] 25. **Spelling**: sound-alike suggestions, two-edit corrections,
+  compound words (milestone 12). *Code.*
+- [ ] 26. **The story editor updates live** with the page (milestone 12).
+  *Code.*
+- [ ] 27. **Split `command::apply`** (126 cases) into smaller pieces. Nothing
+  a person sees, but every later change gets safer. *Code.*
+
+### Tier 4 — a week or more each
+
+- [ ] 28. **HTML export.** *Code.*
+- [ ] 29. **EPUB export.** *Code.*
+- [ ] 30. **Placing EPS**, which needs a PostScript interpreter. *Code.*
+
+### Tier 5 — needs other machines, people or money
+
+- [ ] 31. **Linux, used hands-on**: Wayland and X11, fractional scaling,
+  IME, file dialogs (milestone 8). *Hardware.*
+- [ ] 32. **macOS, used hands-on**: Retina, menu bar, IME, and the code that
+  opens a double-clicked file, which must be written on a Mac
+  (milestone 8). *Hardware.*
+- [ ] 33. **VoiceOver on macOS and Orca on Linux** (cross-cutting
+  requirements). *Hardware.*
+- [ ] 34. **Colour management confirmed on Linux and macOS** (milestone 5).
+  *Hardware.*
+- [ ] 35. **Code signing and notarization**, which needs certificates and
+  developer accounts (milestone 8). *Hardware.*
+- [ ] 36. **Font subsetting checked on a real RIP**, not only in Acrobat
+  (milestone 6). *Hardware.*
+
+**Decided and not on this list:** Package lists fonts and does not copy
+them, because a licence to set type is not a licence to hand the file on
+(milestone 6).
 
 ---
 
