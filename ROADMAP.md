@@ -3343,8 +3343,18 @@ and running headers (milestone 10).
   as before. **Left:** editing a cell's text from a continued frame (it is
   edited in the table's own); running on into a frame drawn by hand.
   Format 41.
-- [ ] 12. **Data merge, several records to a page**: labels, badges and
-  catalogue grids. Days.
+- [x] 12. **Data merge, several records to a page**: labels, badges and
+  catalogue grids. Days. *Done 2026-09-27.* "Several records to a page"
+  in the Data merge panel, with the gap across and down. One record is
+  everything on the template's first page, taken where the template puts
+  it; as many copies as fit go across then down inside the page's right
+  and bottom margins, and a new page takes the rest. Each record's objects
+  are deep copies on their own layers (`Document::copy_frames_mapped`,
+  which says which copy came from which frame, so its picture frame is
+  found), filled as a page-per-record merge is. The merge now knows which
+  record every frame shows (`Merged::frame_records`), so the report names
+  the right record when a page holds twelve. A template of several pages
+  merges its first, and says so.
 - [ ] 13. **Excel (`.xlsx`) as a table and as a merge source.** Days; it
   brings a new dependency.
 

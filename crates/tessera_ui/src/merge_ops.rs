@@ -31,10 +31,127 @@ use tessera_text::variables::Marker;
 pub struct Merged {
     pub document: Document,
     pub records: usize,
-    /// How many pages each record takes: the template's page count.
-    pub pages_per_record: usize,
+    /// How many pages the merged document has.
+    pub pages: usize,
+    /// Which record, from zero, each merged frame shows: how an overset
+    /// frame is traced to its record when a page holds several.
+    pub frame_records: HashMap<FrameId, usize>,
     /// What could not be done, record by record, in words.
     pub notes: Vec<String>,
+}
+
+/// Several records to a page: one record's objects repeated across and down
+/// the page, `across` and `down` points apart, then onto a new page —
+/// labels, badges, a catalogue grid.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Grid {
+    pub across: f64,
+    pub down: f64,
+}
+
+/// For each record, the copy of each template frame it shows.
+type Copies = Vec<HashMap<FrameId, FrameId>>;
+
+/// A copy of the template's pages per record, one after another.
+fn copies_by_page(doc: &mut Document, records: usize) -> Result<Copies, String> {
+    let pages: Vec<PageId> = doc.page_ids().collect();
+    // Record one fills the template's own pages; each after it a copy of
+    // them, moved to the end so the records run in order.
+    let originals: Vec<FrameId> = pages
+        .iter()
+        .flat_map(|p| doc.frames_on_page(*p))
+        .flat_map(|f| doc.descendants(f))
+        .collect();
+    let mut copies: Copies = vec![originals.iter().map(|f| (*f, *f)).collect()];
+    for _ in 1..records {
+        let mut map = HashMap::new();
+        for page in &pages {
+            let (copy, pairs) = doc
+                .duplicate_page_mapped(*page)
+                .ok_or("A page of the template could not be copied.")?;
+            let last = doc.page_ids().count() - 1;
+            doc.move_page(copy, last);
+            map.extend(pairs);
+        }
+        copies.push(map);
+    }
+    Ok(copies)
+}
+
+/// A copy of the objects on the template's first page per record, set out
+/// in rows across the page from where the template has them and onto new
+/// pages as they fill, inside the page's right and bottom margins.
+fn copies_in_grid(
+    doc: &mut Document,
+    records: usize,
+    grid: Grid,
+    notes: &mut Vec<String>,
+) -> Result<Copies, String> {
+    let pages: Vec<PageId> = doc.page_ids().collect();
+    let first = *pages.first().ok_or("The template has no page.")?;
+    if pages.len() > 1 {
+        notes.push(format!(
+            "Several records to a page merges the first page only; the other {} \
+             w{} left out.",
+            pages.len() - 1,
+            if pages.len() == 2 { "as" } else { "ere" }
+        ));
+        for page in pages.iter().skip(1).rev() {
+            for frame in doc.frames_on_page(*page) {
+                doc.remove_frame(frame);
+            }
+            doc.remove_page(*page);
+        }
+    }
+    let roots = doc.frames_on_page(first);
+    // One record's box: everything on the page, as it is seen.
+    let bounds: Vec<tessera_geometry::DocRect> =
+        roots.iter().filter_map(|f| doc.visual_bounds(*f)).collect();
+    let Some(record) = bounds.iter().copied().reduce(|a, b| {
+        let (x0, y0) = (a.x.min(b.x), a.y.min(b.y));
+        let (x1, y1) = (
+            (a.x + a.width).max(b.x + b.width),
+            (a.y + a.height).max(b.y + b.height),
+        );
+        tessera_geometry::DocRect {
+            x: x0,
+            y: y0,
+            width: x1 - x0,
+            height: y1 - y0,
+        }
+    }) else {
+        return Err("The template's first page has nothing on it to repeat.".into());
+    };
+    let page = doc.pages[first].bounds;
+    let margins = doc.setup.margins;
+    let (step_x, step_y) = (record.width + grid.across, record.height + grid.down);
+    let room_x = page.x + page.width - margins.outside - record.x;
+    let room_y = page.y + page.height - margins.bottom - record.y;
+    let fits = |room: f64, size: f64, step: f64| {
+        if step <= 0.0 || room < size {
+            1
+        } else {
+            (((room - size) / step).floor() as usize + 1).max(1)
+        }
+    };
+    let across = fits(room_x, record.width, step_x);
+    let down = fits(room_y, record.height, step_y);
+    let per_page = across * down;
+
+    let originals: Vec<FrameId> = roots.iter().flat_map(|f| doc.descendants(*f)).collect();
+    let mut copies: Copies = vec![originals.iter().map(|f| (*f, *f)).collect()];
+    let mut record_pages = vec![first];
+    for k in 1..records {
+        let (sheet, slot) = (k / per_page, k % per_page);
+        while record_pages.len() <= sheet {
+            record_pages.push(doc.add_page());
+        }
+        let on = doc.pages[record_pages[sheet]].bounds;
+        let dx = (on.x - page.x) + (slot % across) as f64 * step_x;
+        let dy = (on.y - page.y) + (slot / across) as f64 * step_y;
+        copies.push(doc.copy_frames_mapped(&roots, dx, dy).into_iter().collect());
+    }
+    Ok(copies)
 }
 
 /// `story` with its field markers replaced by `values`, each value in its
@@ -121,6 +238,7 @@ pub fn merge(
     data: &Data,
     data_dir: Option<&Path>,
     remove_blank: bool,
+    grid: Option<Grid>,
 ) -> Result<Merged, String> {
     let source = template
         .data_merge
@@ -134,31 +252,11 @@ pub fn merge(
     let mut doc = template.clone();
     doc.set_data_source(None);
     doc.set_merge_record(None);
-    let pages: Vec<PageId> = doc.page_ids().collect();
-
-    // Record one fills the template's own pages; each after it a copy of
-    // them, moved to the end so the records run in order.
-    let originals: Vec<FrameId> = pages
-        .iter()
-        .flat_map(|p| doc.frames_on_page(*p))
-        .flat_map(|f| doc.descendants(f))
-        .collect();
-    let mut records: Vec<HashMap<FrameId, FrameId>> =
-        vec![originals.iter().map(|f| (*f, *f)).collect()];
-    for _ in 1..data.records.len() {
-        let mut map = HashMap::new();
-        for page in &pages {
-            let (copy, pairs) = doc
-                .duplicate_page_mapped(*page)
-                .ok_or("A page of the template could not be copied.")?;
-            let last = doc.page_ids().count() - 1;
-            doc.move_page(copy, last);
-            map.extend(pairs);
-        }
-        records.push(map);
-    }
-
     let mut notes = Vec::new();
+    let records = match grid {
+        Some(grid) => copies_in_grid(&mut doc, data.records.len(), grid, &mut notes)?,
+        None => copies_by_page(&mut doc, data.records.len())?,
+    };
     for (k, (record, frames)) in data.records.iter().zip(&records).enumerate() {
         let values = values_for(&source, &names, record);
         // A story shown by two frames of one page is filled once.
@@ -216,10 +314,16 @@ pub fn merge(
         ));
     }
     doc.touch();
+    let frame_records = records
+        .iter()
+        .enumerate()
+        .flat_map(|(k, frames)| frames.values().map(move |f| (*f, k)))
+        .collect();
     Ok(Merged {
+        pages: doc.page_ids().count(),
         document: doc,
         records: data.records.len(),
-        pages_per_record: pages.len(),
+        frame_records,
         notes,
     })
 }
@@ -231,13 +335,6 @@ pub fn overset_records(
     resolved: &tessera_layout::resolve::ResolvedDocument,
 ) -> Vec<usize> {
     use tessera_layout::resolve::ResolvedKind;
-    let order: HashMap<PageId, usize> = merged
-        .document
-        .page_ids()
-        .enumerate()
-        .map(|(i, p)| (p, i))
-        .collect();
-    let per = merged.pages_per_record.max(1);
     let mut records: Vec<usize> = resolved
         .items
         .iter()
@@ -248,8 +345,8 @@ pub fn overset_records(
             }
             _ => false,
         })
-        .filter_map(|item| item.on.and_then(|p| order.get(&p)))
-        .map(|index| index / per + 1)
+        .filter_map(|item| merged.frame_records.get(&item.frame))
+        .map(|k| k + 1)
         .collect();
     records.sort_unstable();
     records.dedup();
@@ -305,6 +402,82 @@ mod tests {
     }
 
     #[test]
+    fn several_records_to_a_page_repeat_across_then_down_then_onto_a_new_page() {
+        use crate::command::{Command, apply};
+        let mut state = crate::app::TesseraApp::headless();
+        let page = state.first_page_bounds();
+        let margins = state.active().document().setup.margins;
+        // One badge in the page's top left, inside the margins.
+        let badge = DocRect {
+            x: page.x + margins.inside,
+            y: page.y + margins.top,
+            width: 150.0,
+            height: 60.0,
+        };
+        apply(&mut state, Command::AddTextFrame(badge));
+        let id = state.active().selection.single().expect("the frame");
+        apply(&mut state, Command::SetText { id, text: field(0) });
+        apply(
+            &mut state,
+            Command::SetDataSource(Some(DataSource {
+                path: "people.csv".into(),
+                fields: vec![MergeField {
+                    name: "Name".into(),
+                    image: false,
+                }],
+                pictures: Vec::new(),
+            })),
+        );
+        let doc = state.active().document().clone();
+        let grid = Grid {
+            across: 12.0,
+            down: 12.0,
+        };
+        let names = |n: usize| {
+            let mut csv = "Name\n".to_owned();
+            for i in 1..=n {
+                csv.push_str(&format!("Person {i}\n"));
+            }
+            tessera_import::delimited::read(csv.as_bytes()).expect("data")
+        };
+
+        let merged = merge(&doc, &names(10), None, true, Some(grid)).expect("merged");
+        assert_eq!(merged.pages, 1, "ten badges fit one page");
+        let frames: Vec<(tessera_geometry::DocRect, String)> = merged
+            .document
+            .frames_on_page(merged.document.page_ids().next().expect("a page"))
+            .into_iter()
+            .filter_map(|f| {
+                let frame = merged.document.frame(f)?;
+                let FrameKind::Text { story, .. } = &frame.kind else {
+                    return None;
+                };
+                Some((frame.bounds, merged.document.story(*story)?.text.clone()))
+            })
+            .collect();
+        assert_eq!(frames.len(), 10);
+        // The second record sits one badge and a gap to the right.
+        let second = frames
+            .iter()
+            .find(|(_, words)| words == "Person 2")
+            .expect("record two");
+        assert!((second.0.x - (badge.x + 150.0 + 12.0)).abs() < 1e-6);
+        assert!((second.0.y - badge.y).abs() < 1e-6, "on the same row");
+        // Every record once, in its own place.
+        let mut places: Vec<(i64, i64)> = frames
+            .iter()
+            .map(|(b, _)| (b.x.round() as i64, b.y.round() as i64))
+            .collect();
+        places.sort_unstable();
+        places.dedup();
+        assert_eq!(places.len(), 10);
+        assert_eq!(merged.frame_records.len(), 10);
+
+        let many = merge(&doc, &names(40), None, true, Some(grid)).expect("merged");
+        assert_eq!(many.pages, 2, "forty badges need a second page");
+    }
+
+    #[test]
     fn every_record_gets_its_own_pages_in_order() {
         use crate::command::{Command, apply};
         let mut state = crate::app::TesseraApp::headless();
@@ -340,7 +513,7 @@ mod tests {
         let doc = state.active().document().clone();
         let data = tessera_import::delimited::read(b"Name\nAna\nBo\nCy\n").expect("data");
 
-        let merged = merge(&doc, &data, None, true).expect("merged");
+        let merged = merge(&doc, &data, None, true, None).expect("merged");
         assert_eq!(merged.records, 3);
         assert_eq!(merged.document.page_ids().count(), 3, "a page a record");
         let texts: Vec<String> = merged

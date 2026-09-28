@@ -1191,6 +1191,28 @@ impl Document {
         Some((page, pairs))
     }
 
+    /// Deep copies of `roots` moved by `(dx, dy)`, each on its own layer,
+    /// saying which copy came from which frame — every root and every frame
+    /// inside a group, original first. For a data merge laying several
+    /// records on a page, which copies one record's objects into each place.
+    pub fn copy_frames_mapped(
+        &mut self,
+        roots: &[FrameId],
+        dx: f64,
+        dy: f64,
+    ) -> Vec<(FrameId, FrameId)> {
+        let copies = self.copy_page_frames(roots, dx, dy);
+        let mut pairs = Vec::new();
+        for (original, copy) in roots.iter().zip(&copies) {
+            pairs.extend(
+                self.descendants(*original)
+                    .into_iter()
+                    .zip(self.descendants(*copy)),
+            );
+        }
+        pairs
+    }
+
     /// Move a frame and its children by an offset.
     fn translate_deeply(&mut self, id: FrameId, dx: f64, dy: f64) {
         let children = match self.frames.get_mut(id) {

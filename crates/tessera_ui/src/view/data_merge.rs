@@ -35,6 +35,10 @@ pub struct DataMergeWindow {
     pub record: usize,
     /// Keep a line whose fields are all empty, rather than taking it out.
     pub keep_blank_lines: bool,
+    /// Several records to a page, and the space between them.
+    pub several: bool,
+    pub gap_across: f64,
+    pub gap_down: f64,
 }
 
 impl DataMergeWindow {
@@ -95,6 +99,10 @@ fn merged(state: &mut TesseraApp) -> Option<crate::merge_ops::Merged> {
             data,
             source.path.parent(),
             !window.keep_blank_lines,
+            window.several.then_some(crate::merge_ops::Grid {
+                across: window.gap_across,
+                down: window.gap_down,
+            }),
         ),
         None => Err(window
             .problem
@@ -113,7 +121,7 @@ fn merged(state: &mut TesseraApp) -> Option<crate::merge_ops::Merged> {
 
 /// What a merge made and what to look at, in one sentence and its notes.
 fn said(merged: &crate::merge_ops::Merged, overset: &[usize], what: &str) -> Status {
-    let pages = merged.records * merged.pages_per_record;
+    let pages = merged.pages;
     let mut words = format!(
         "{what}: {} record{}, {pages} page{}.",
         merged.records,
@@ -370,6 +378,28 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                     &mut window.keep_blank_lines,
                     "Keep lines left empty by empty fields",
                 );
+                ui.checkbox(&mut window.several, "Several records to a page")
+                    .on_hover_text(
+                        "The first page's objects repeated across and down the page: labels, badges",
+                    );
+                ui.add_enabled_ui(window.several, |ui| {
+                    ui.horizontal(|ui| {
+                        crate::view::panels::field(ui, "Gap across", |ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut window.gap_across)
+                                    .range(0.0..=288.0)
+                                    .suffix(" pt"),
+                            )
+                        });
+                        crate::view::panels::field(ui, "Gap down", |ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut window.gap_down)
+                                    .range(0.0..=288.0)
+                                    .suffix(" pt"),
+                            )
+                        });
+                    });
+                });
                 ui.add_enabled_ui(records > 0, |ui| {
                     ui.horizontal(|ui| {
                         create = ui.button("Create merged document").clicked();
