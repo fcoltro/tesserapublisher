@@ -2800,7 +2800,18 @@ line of copy. The renderer and the PDF writer draw them without knowing.
   five-page PDF from two chapter files. **Not built:** synchronising
   styles across chapters; an index across the book; a book's chapters
   shown in the Pages panel.
-- Not built: footnote text edited on the canvas (the box does it).
+- **Footnote text is edited on the canvas (2026-09-28)**, where it is
+  set: a click on a note at the foot of a column puts the caret in it, and
+  a click back in the copy leaves it. The flow keeps each note line's own
+  offsets and layout beside the ones it clears (`ShapedLine::note`,
+  `NoteLine`), so a note's lines come out as text of their own
+  (`ShapedText::note_text`, `note_at`) that the caret is placed and moved
+  by; the buffer holds the note, and `OpenDocument::write_back` puts it
+  back in the citing story's list, inside the session's undo entry. What
+  acts on "the story being edited" by id — styles, markers, Find — acts on
+  nothing while the caret is in a note, so none of it can write note
+  offsets into the copy. Not previewed: an input method's composition in
+  a note.
   Contents entries *are* hyperlinks now — see below.
 
 ---
@@ -3482,7 +3493,8 @@ below are its items 1 to 3.
   and a reference in a cell reads its page, which it never did.
 - [x] 13. **Hyperlinks**: anchored-text destinations, a link's appearance on
   screen, IDML hyperlinks (milestone 12). *Done 2026-09-28.*
-- [ ] 14. **Footnote text edited on the canvas** (milestone 11).
+- [x] 14. **Footnote text edited on the canvas** (milestone 11). *Done
+  2026-09-28.*
 - [ ] 15. **Type on a path**: the caret on the curve, drag handles for
   start, end and flip, and path text as a wrap obstacle (milestone 9).
 - [ ] 16. **Book**: chapters in the Pages panel, styles kept the same across

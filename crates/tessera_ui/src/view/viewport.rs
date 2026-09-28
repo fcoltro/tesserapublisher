@@ -503,13 +503,32 @@ fn caret_geometry(state: &mut TesseraApp) -> Option<CaretOnPage> {
 fn editing_layout(state: &mut TesseraApp) -> Option<tessera_text::shape::ShapedText> {
     let id = state.active().editing.as_ref()?.0;
     let cell = state.active().editing_cell;
+    // The note's marker, when the caret is in a note: its lines are found
+    // in the frame's layout by it.
+    let note_at = match state.active().editing_note {
+        Some(index) => {
+            let story = editing_story_of_frame(state, id)?;
+            Some(
+                *state
+                    .active()
+                    .document()
+                    .story(story)?
+                    .footnote_offsets()
+                    .get(index)?,
+            )
+        }
+        None => None,
+    };
     let item = state
         .resolve_active()
         .items
         .iter()
         .find(|item| item.frame == id)?;
     match &item.kind {
-        tessera_layout::ResolvedKind::Text { shaped, .. } => Some(shaped.clone()),
+        tessera_layout::ResolvedKind::Text { shaped, .. } => match note_at {
+            Some(at) => Some(shaped.note_text(at)),
+            None => Some(shaped.clone()),
+        },
         tessera_layout::ResolvedKind::Table { laid, .. } => {
             let (row, column) = cell?;
             laid.cells
@@ -963,6 +982,11 @@ fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
         && grab_at(state, rect, pos).is_none()
     {
         if over_editing_frame(state, rect, pos) {
+            if let Some(id) = state.active().editing.as_ref().map(|(id, _)| *id)
+                && state.active().editing_cell.is_none()
+            {
+                follow_into_note(state, rect, id, pos);
+            }
             if let Some(offset) = text_offset_at(state, rect, pos)
                 && let Some((_, buffer)) = state.active_mut().editing.as_mut()
             {
@@ -1067,14 +1091,9 @@ fn editing_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
         // undo-bracketed: live update without an entry per keystroke. The
         // editing session opened an entry when it began, in `begin_editing`,
         // and `close_word` opens another at each word boundary.
-        let cell = state.active().editing_cell;
-        if let Some(target) = editing_story(state, id, cell) {
-            // undo-bracketed: same session.
-            state
-                .active_mut()
-                .document_mut()
-                .replace_story_from_edit(target, story);
-        }
+        let _ = id;
+        // Undo-bracketed, same session: into the story, cell or note.
+        state.active_mut().write_back(story);
         state.active_mut().dirty = true;
         // Whitespace on its own arms nothing: the boundary it makes is only
         // worth an entry once there is a word before it.
@@ -1182,6 +1201,84 @@ fn guide_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tes
 pub fn finish_editing(state: &mut TesseraApp) {
     state.active_mut().editing = None;
     state.active_mut().editing_cell = None;
+    state.active_mut().editing_note = None;
+}
+
+/// The footnote under a point on screen in text frame `id`, by its index in
+/// the frame's story: asked of the layout, which alone knows where the
+/// notes were set.
+fn note_under(state: &TesseraApp, rect: Rect, id: FrameId, pos: egui::Pos2) -> Option<usize> {
+    use tessera_document::nodes::FrameKind;
+    let frame = state.active().document().frame(id)?;
+    let FrameKind::Text { story, .. } = frame.kind else {
+        return None;
+    };
+    let local = frame.to_local(doc_pos(state, rect, pos));
+    let (x, y) = (local.x - frame.bounds.x, local.y - frame.bounds.y);
+    let item = state
+        .active()
+        .last_resolved()
+        .items
+        .iter()
+        .find(|i| i.frame == id)?;
+    let tessera_layout::ResolvedKind::Text { shaped, .. } = &item.kind else {
+        return None;
+    };
+    let at = shaped.note_at(x, y)?;
+    state
+        .active()
+        .document()
+        .story(story)?
+        .footnote_offsets()
+        .iter()
+        .position(|o| *o == at)
+}
+
+/// Start editing footnote `index` of text frame `id` where it is set, at
+/// the foot of its column: InDesign's way, the note's words typed where
+/// they are read. The buffer holds the note; what it writes goes back into
+/// the citing story's list of notes.
+pub(crate) fn start_editing_note(state: &mut TesseraApp, id: FrameId, index: usize) -> bool {
+    use tessera_document::nodes::FrameKind;
+    let note = match state.active().document().frame(id).map(|f| &f.kind) {
+        Some(FrameKind::Text { story, .. }) => state
+            .active()
+            .document()
+            .story(*story)
+            .and_then(|s| s.footnotes.get(index))
+            .cloned(),
+        _ => None,
+    };
+    let Some(note) = note else {
+        return false;
+    };
+    let end = note.text.len();
+    let mut buffer = EditBuffer::new(note);
+    buffer.set_cursor(end);
+    state.active_mut().record_history();
+    state.active_mut().typed_since_entry = false;
+    state.active_mut().editing = Some((id, buffer));
+    state.active_mut().editing_cell = None;
+    state.active_mut().editing_note = None;
+    state.active_mut().editing_note = Some(index);
+    true
+}
+
+/// Move the edit between a frame's copy and its notes to follow a click:
+/// into the note under the pointer, or out of a note back into the copy.
+/// Whether it moved.
+fn follow_into_note(state: &mut TesseraApp, rect: Rect, id: FrameId, pos: egui::Pos2) -> bool {
+    let under = note_under(state, rect, id, pos);
+    if under == state.active().editing_note {
+        return false;
+    }
+    match under {
+        Some(index) => start_editing_note(state, id, index),
+        None => {
+            start_editing(state, id);
+            true
+        }
+    }
 }
 
 /// The story keystrokes reach, for a frame and an optional cell.
@@ -1208,14 +1305,9 @@ pub(crate) fn type_text(state: &mut TesseraApp, text: &str) -> bool {
     let id = *id;
     buffer.insert(text);
     let story = buffer.story().clone();
-    let cell = state.active().editing_cell;
-    // undo-bracketed: the editing session recorded its entry when it began.
-    if let Some(target) = editing_story(state, id, cell) {
-        state
-            .active_mut()
-            .document_mut()
-            .replace_story_from_edit(target, story);
-    }
+    let _ = id;
+    // Undo-bracketed: the editing session recorded its entry when it began.
+    state.active_mut().write_back(story);
     state.active_mut().dirty = true;
     if text.chars().any(|c| !c.is_whitespace()) {
         state.active_mut().typed_since_entry = true;
@@ -1244,6 +1336,11 @@ pub(crate) fn editing_story(
     cell: Option<(usize, usize)>,
 ) -> Option<tessera_document::ids::StoryId> {
     use tessera_document::nodes::FrameKind;
+    // A note is not one of the document's stories: what acts on "the story
+    // being edited" by its id acts on nothing while the caret is in one.
+    if state.active().editing_note.is_some() {
+        return None;
+    }
     match (state.active().document().frame(id).map(|f| &f.kind), cell) {
         (Some(FrameKind::Text { story, .. }), _) => Some(*story),
         (Some(FrameKind::Table(table)), Some((row, column))) => {
@@ -3167,7 +3264,13 @@ fn step_cell(state: &mut TesseraApp, back: bool) -> bool {
 /// cursor after the last character and there was no way to move it there.
 fn enter_text_edit(state: &mut TesseraApp, rect: Rect, pos: egui::Pos2, id: FrameId) {
     state.active_mut().selection.set(id);
-    start_editing(state, id);
+    // On a note at the foot of a column: into the note, where it is set.
+    match note_under(state, rect, id, pos) {
+        Some(index) => {
+            start_editing_note(state, id, index);
+        }
+        None => start_editing(state, id),
+    }
     if let Some(offset) = text_offset_at(state, rect, pos)
         && let Some((_, buffer)) = state.active_mut().editing.as_mut()
     {
@@ -3203,6 +3306,18 @@ pub(crate) fn start_editing_cell(
     state.active_mut().typed_since_entry = false;
     state.active_mut().editing = Some((id, buffer));
     state.active_mut().editing_cell = cell;
+    state.active_mut().editing_note = None;
+}
+
+/// The story a text frame shows, whatever is being edited in it.
+fn editing_story_of_frame(
+    state: &TesseraApp,
+    id: FrameId,
+) -> Option<tessera_document::ids::StoryId> {
+    match state.active().document().frame(id).map(|f| &f.kind) {
+        Some(tessera_document::nodes::FrameKind::Text { story, .. }) => Some(*story),
+        _ => None,
+    }
 }
 
 // --- overlays ---------------------------------------------------------------
@@ -4802,6 +4917,74 @@ mod tests {
             buffer.set_cursor(10);
         }
         assert_eq!(squiggle_rects(&mut state).len(), 1);
+    }
+
+    #[test]
+    fn a_footnote_is_edited_where_it_is_set() {
+        use tessera_document::nodes::FrameKind;
+        use tessera_text::variables::Marker;
+        let mut state = TesseraApp::headless();
+        let bounds = state.first_page_bounds();
+        apply(&mut state, Command::AddTextFrame(bounds));
+        let id = state.active().selection.single().unwrap();
+        apply(
+            &mut state,
+            Command::SetText {
+                id,
+                text: format!("Body{}.", Marker::FootnoteReference.character()),
+            },
+        );
+        let story = match state.active().document().frame(id).unwrap().kind {
+            FrameKind::Text { story, .. } => story,
+            _ => panic!("a text frame"),
+        };
+        let mut note = tessera_text::Story::new_footnote();
+        note.insert_text(note.text.len(), "A note.");
+        state
+            .active_mut()
+            .document_mut()
+            .story_mut(story)
+            .unwrap()
+            .footnotes = vec![note];
+        state.active_mut().document_mut().touch();
+        let copy = state.active().document().story(story).unwrap().text.clone();
+
+        assert!(start_editing_note(&mut state, id, 0));
+        // The caret is measured against the note's own lines, where the
+        // flow set them: under the copy, not over it.
+        let layout = editing_layout(&mut state).expect("the note's layout");
+        assert!(!layout.lines.is_empty(), "the note's lines were found");
+        let body = state
+            .resolve_active()
+            .items
+            .iter()
+            .find(|i| i.frame == id)
+            .and_then(|i| match &i.kind {
+                tessera_layout::ResolvedKind::Text { shaped, .. } => Some(shaped.lines[0].baseline),
+                _ => None,
+            })
+            .unwrap();
+        assert!(layout.lines[0].baseline > body, "at the foot of the column");
+        assert!(caret_geometry(&mut state).is_some());
+
+        assert!(type_text(&mut state, " More"));
+        let s = state.active().document().story(story).unwrap();
+        assert!(
+            s.footnotes[0].text.ends_with("A note. More"),
+            "{}",
+            s.footnotes[0].text
+        );
+        assert_eq!(s.text, copy, "the copy is untouched");
+        // Nothing that acts on "the story being edited" reaches the copy.
+        assert_eq!(editing_story(&state, id, None), None);
+
+        finish_editing(&mut state);
+        apply(&mut state, Command::Undo);
+        let s = state.active().document().story(story).unwrap();
+        assert!(
+            s.footnotes[0].text.ends_with("A note."),
+            "one undo takes it back"
+        );
     }
 
     #[test]

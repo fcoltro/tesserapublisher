@@ -1857,6 +1857,22 @@ pub struct ShapedLine {
     pub keep: LineKeep,
     /// Original paragraph layout, carried with the line for editing.
     pub hit: Option<crate::caret::LineLayout>,
+    /// For a line of a footnote set at the foot of a column: which note,
+    /// and what the line holds of the note's own text. `None` for copy.
+    pub note: Option<NoteLine>,
+}
+
+/// A footnote's line where the flow set it, as the note's own text knows
+/// it: kept beside the line's `range` and `hit`, which the flow clears so
+/// that the copy's caret and thread never mistake a note for copy.
+#[derive(Debug, Clone)]
+pub struct NoteLine {
+    /// Where the note's reference marker is, in the citing story.
+    pub at: usize,
+    /// What of the note's text the line holds, in its stored offsets.
+    pub range: std::ops::Range<usize>,
+    /// The note's own paragraph layout, moved with the line.
+    pub hit: Option<crate::caret::LineLayout>,
 }
 
 impl ShapedLine {
@@ -1884,6 +1900,51 @@ pub struct ShapedText {
 }
 
 impl ShapedText {
+    /// The lines of the footnote whose marker is at `at`, as text of its
+    /// own: where the flow set them, with the note's offsets and layout
+    /// back on them — what a caret in the note is placed and moved by.
+    /// Empty when this text shows none of it.
+    pub fn note_text(&self, at: usize) -> ShapedText {
+        let lines: Vec<ShapedLine> = self
+            .lines
+            .iter()
+            .filter_map(|line| {
+                let note = line.note.as_ref().filter(|n| n.at == at)?;
+                let mut own = line.clone();
+                own.range = note.range.clone();
+                own.hit = note.hit.clone();
+                own.note = None;
+                Some(own)
+            })
+            .collect();
+        ShapedText {
+            height: lines
+                .iter()
+                .map(|l| l.baseline + l.descent)
+                .fold(0.0, f64::max),
+            lines,
+            fonts: self.fonts.clone(),
+        }
+    }
+
+    /// The footnote a point falls on, by its marker's offset in the citing
+    /// story: the note whose line's box holds the point, in this text's
+    /// own space.
+    pub fn note_at(&self, x: f64, y: f64) -> Option<usize> {
+        self.lines.iter().find_map(|line| {
+            let note = line.note.as_ref()?;
+            let (left, right) = line
+                .glyphs()
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(l, r), g| {
+                    (l.min(g.x), r.max(g.x + g.advance))
+                });
+            let inside = y >= line.baseline - line.ascent
+                && y <= line.baseline + line.descent
+                && x >= left - 2.0
+                && x <= right + 2.0;
+            inside.then_some(note.at)
+        })
+    }
     pub fn glyph_count(&self) -> usize {
         self.lines.iter().map(ShapedLine::glyph_count).sum()
     }
@@ -2018,6 +2079,10 @@ fn same_row(a: f64, b: f64) -> bool {
 fn shift(line: &mut ShapedLine, dx: f64, dy: f64) {
     line.baseline += dy;
     if let Some(hit) = &mut line.hit {
+        hit.x += dx;
+        hit.y += dy;
+    }
+    if let Some(hit) = line.note.as_mut().and_then(|n| n.hit.as_mut()) {
         hit.x += dx;
         hit.y += dy;
     }
@@ -2500,7 +2565,13 @@ pub fn flow_with_notes(
                     run.font_index += base;
                 }
                 shift(&mut line, box_.x, y - top);
-                line.hit = None;
+                // The note's own offsets and layout, kept for a caret in
+                // it; the copy's are cleared so nothing reads it as copy.
+                line.note = Some(NoteLine {
+                    at: note.at,
+                    range: line.range.clone(),
+                    hit: line.hit.take(),
+                });
                 line.range = note.at..note.at;
                 line.keep = LineKeep::default();
                 if first {
@@ -3768,6 +3839,7 @@ impl Shaper {
                         x: paragraph.x,
                         y: dy,
                     }),
+                    note: None,
                 });
             }
 
@@ -5551,6 +5623,40 @@ mod tests {
     }
 
     #[test]
+    fn a_note_set_at_the_foot_keeps_its_own_text_for_a_caret() {
+        // The note's lines are cleared for the copy's sake, and kept beside:
+        // pulled out, they are the note's own text where the flow set it,
+        // and a point on one of them says which note it is.
+        let note = Note {
+            at: 15,
+            text: ruled(2),
+        };
+        let flowed = flow_with_notes(
+            ruled(3),
+            &[column(0.0, 0.0, 100.0, 100.0)],
+            Vertical::Top,
+            None,
+            &[note],
+            &NoteLayout::default(),
+        );
+        let own = flowed.text.note_text(15);
+        assert_eq!(own.lines.len(), 2);
+        assert_eq!(own.lines[0].range, 0..10, "the note's own offsets");
+        assert_eq!(own.lines[1].range, 10..20);
+        let copy_bottom = flowed.text.lines[2].baseline;
+        assert!(
+            own.lines[0].baseline > copy_bottom,
+            "where the flow set it, under the copy"
+        );
+        assert!(flowed.text.note_text(99).lines.is_empty(), "no such note");
+
+        let on = &own.lines[1];
+        assert_eq!(flowed.text.note_at(3.0, on.baseline - 1.0), Some(15));
+        let copy = &flowed.text.lines[0];
+        assert_eq!(flowed.text.note_at(3.0, copy.baseline - 1.0), None);
+    }
+
+    #[test]
     fn footnotes_are_stacked_at_the_foot_of_the_column_that_cites_them() {
         // Six lines of 12 in a column of 60, so five fit; a note on the
         // second line takes 24 and its rule's gap, so only two do.
@@ -7193,6 +7299,7 @@ mod tests {
                     rules: Vec::new(),
                     keep: LineKeep::default(),
                     hit: None,
+                    note: None,
                     runs: vec![ShapedRun {
                         font_index: 0,
                         size: 12.0,

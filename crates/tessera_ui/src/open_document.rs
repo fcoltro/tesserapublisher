@@ -65,6 +65,10 @@ pub struct OpenDocument {
     /// Folding the cell into the pair would have rewritten every one of the
     /// several dozen places that read `editing.0` to learn the frame.
     pub editing_cell: Option<(usize, usize)>,
+    /// The footnote being edited, by its index in the frame's story, when
+    /// the caret is in a note at the foot of a column rather than in the
+    /// copy. Beside `editing` for the reason `editing_cell` is.
+    pub editing_note: Option<usize>,
     /// Whether anything has been typed since the editing session's last undo
     /// entry. A word boundary opens a new entry only when there is a word to
     /// close: two spaces in a row are one thing typed, not two undo steps.
@@ -105,6 +109,7 @@ impl OpenDocument {
             current_spread: 0,
             editing: None,
             editing_cell: None,
+            editing_note: None,
             typed_since_entry: false,
             current_path: None,
             dirty: false,
@@ -205,7 +210,13 @@ impl OpenDocument {
         // that holds the edit buffer and the layout at once. A caller that had to
         // supply it would be a caller that could forget to — and forgetting
         // means a composition that is typed and never appears.
-        let composing = composing(&self.document, self.editing.as_ref(), self.editing_cell);
+        // A note's composition is not previewed: the layout splices it
+        // into a story, and a note is not one of the document's.
+        let composing = if self.editing_note.is_some() {
+            None
+        } else {
+            composing(&self.document, self.editing.as_ref(), self.editing_cell)
+        };
         self.resolved
             .get_composing(&self.document, shaper, scope, composing.as_ref())
     }
@@ -280,6 +291,40 @@ impl OpenDocument {
         self.selection.clear();
         self.editing = None;
         self.editing_cell = None;
+        self.editing_note = None;
+    }
+
+    /// Write the editing buffer's story back where it came from: the
+    /// frame's story, the cell's, or the footnote's inside the frame's
+    /// story. Inside the undo entry the editing session opened.
+    pub fn write_back(&mut self, edited: tessera_text::Story) {
+        use tessera_document::nodes::FrameKind;
+        let Some(id) = self.editing.as_ref().map(|(id, _)| *id) else {
+            return;
+        };
+        let (story, note) = match (self.document.frame(id).map(|f| &f.kind), self.editing_cell) {
+            (Some(FrameKind::Text { story, .. }), _) => (*story, self.editing_note),
+            (Some(FrameKind::Table(table)), Some((row, column))) => {
+                match table.at(row, column).and_then(|s| s.cell()) {
+                    Some(cell) => (cell.story, None),
+                    None => return,
+                }
+            }
+            _ => return,
+        };
+        match note {
+            Some(index) => {
+                if let Some(slot) = self
+                    .document
+                    .story_mut(story)
+                    .and_then(|s| s.footnotes.get_mut(index))
+                {
+                    *slot = edited;
+                }
+                self.document.touch();
+            }
+            None => self.document.replace_story_from_edit(story, edited),
+        }
     }
 
     /// The file's name, or `Untitled`, with unsaved work marked.

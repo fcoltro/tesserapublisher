@@ -1062,6 +1062,10 @@ fn editing_buffer_for(
 ) -> Option<&mut tessera_text::edit::EditBuffer> {
     let (id, _) = state.active().editing.as_ref()?;
     let editing = *id;
+    // In a note, the buffer holds the note, not the story that cites it.
+    if state.active().editing_note.is_some() {
+        return None;
+    }
     let shows = match state.active().document().frame(editing).map(|f| &f.kind) {
         Some(FrameKind::Text { story: s, .. }) => *s == story,
         Some(FrameKind::Table(table)) => state
@@ -1108,6 +1112,7 @@ fn finish_table_edit(
     // The caret was in a cell that may no longer exist.
     state.active_mut().editing = None;
     state.active_mut().editing_cell = None;
+    state.active_mut().editing_note = None;
 }
 
 /// Add a frame on the page after the last one `id`'s table runs into, where
@@ -1812,6 +1817,7 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 if editing_buffer_for(state, story).is_some() {
                     state.active_mut().editing = None;
                     state.active_mut().editing_cell = None;
+                    state.active_mut().editing_note = None;
                 }
                 state
                     .active_mut()
@@ -1845,6 +1851,7 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 if editing_buffer_for(state, story).is_some() {
                     state.active_mut().editing = None;
                     state.active_mut().editing_cell = None;
+                    state.active_mut().editing_note = None;
                 }
                 // As an edit, so a marker replaced away takes its anchored
                 // frame with it rather than leaving it pointing at nothing.
