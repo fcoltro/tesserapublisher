@@ -1,6 +1,10 @@
 name: CI
 
-on: [push, pull_request]
+# Run by hand only (Actions > CI > Run workflow), never on a push: the
+# checks are run locally before every push to main, and a push should not
+# start three machines building. Decided 2026-09-27.
+on:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
