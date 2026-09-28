@@ -11,6 +11,7 @@ pub mod canvas_toolbar;
 pub mod console;
 pub mod control;
 pub mod cross_reference;
+pub mod data_merge;
 pub mod docks;
 pub mod document_tabs;
 pub mod export_dialog;
@@ -148,6 +149,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     sections::show(ui.ctx(), state);
     variables::show(ui.ctx(), state);
     table_options::show(ui.ctx(), state);
+    data_merge::show(ui.ctx(), state);
     long_document::show(ui.ctx(), state);
     cross_reference::show(ui.ctx(), state);
     glyph::show(ui.ctx(), state);

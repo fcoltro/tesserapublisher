@@ -1735,7 +1735,8 @@ mod tests {
                 "AI Console",
                 "Glyphs",
                 "Book",
-                "Links"
+                "Links",
+                "Data merge"
             ]
         );
         assert_eq!(Group::Window.menu(), Some("Window"));

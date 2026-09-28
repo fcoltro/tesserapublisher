@@ -1174,6 +1174,28 @@ fn variables_for(doc: &Document, frame: FrameId, on: PageId, running: &Running) 
         footnote_text: None,
         footnote_labels: Vec::new(),
         cross_references: cross_references_for(doc, frame, running, &label_of),
+        fields: fields_for(doc),
+    }
+}
+
+/// What each merge field reads as: the record being shown, or the field's
+/// name in chevrons — InDesign's «Name» — so a template reads as one.
+fn fields_for(doc: &Document) -> Vec<String> {
+    let Some(source) = &doc.data_merge else {
+        return Vec::new();
+    };
+    match doc.merge_record() {
+        Some(values) => source
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(i, _)| values.get(i).cloned().unwrap_or_default())
+            .collect(),
+        None => source
+            .fields
+            .iter()
+            .map(|f| format!("\u{ab}{}\u{bb}", f.name))
+            .collect(),
     }
 }
 

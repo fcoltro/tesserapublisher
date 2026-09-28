@@ -3267,9 +3267,23 @@ and running headers (milestone 10).
   split. **Place data as table…** reads a data file through item 4's
   reader and says in the status line what it had to change. Each is one
   undo step.
-- [ ] 8. **Data merge, the core**: a Data Merge panel that chooses a source,
+- [x] 8. **Data merge, the core**: a Data Merge panel that chooses a source,
   lists its fields, inserts a field at the caret, and previews record by
-  record. Days.
+  record. Days. *Done 2026-09-27.* Window ▸ Data merge. A field in the
+  text is **one marker character**, `Marker::Field(n)`, naming the
+  document's `n`th field as a variable marker names its variable — so it
+  survives copy, find and change and every edit, and reads in a table
+  cell by item 3. The document **links** the data file and keeps its
+  field names (`Document::data_merge`, `tessera_document::merge`), so a
+  field reads «Name» when not previewing, and a missing file is a thing
+  said rather than a page gone blank. Choosing a new file keeps every
+  field where it was, so markers already in the text still read their
+  columns **by name**, and a record's values are found by name whatever
+  order the file puts its columns in. The previewed record is set on the
+  document from outside, as its file facts are: looking through records
+  is not an edit and never makes the document unsaved. A file that cannot
+  be read is said and names nothing. Picture fields (`@Photo`) are listed,
+  and placed by item 9. Format 38.
 - [ ] 9. **Data merge, the output**: one copy of the pages per record, into a
   new document or straight to PDF; image fields; lines left empty by an
   empty field removed; a report of what came out overset. Days.

@@ -308,6 +308,8 @@ pub enum Run {
     SectionOptions,
     /// Define the document's text variables, and put one at the caret.
     TextVariables,
+    /// The Data Merge panel.
+    DataMerge,
     /// A footnote reference at the caret, and a note to go with it.
     InsertFootnote,
     /// Reword the footnote the caret is at.
@@ -419,7 +421,7 @@ pub fn guard(run: Run) -> Guard {
         // Something has to be selected for these to mean anything.
         Run::StepAndRepeat => Guard::NeedsSelection,
         // Dialogs over the document, not over the text.
-        Run::SectionOptions | Run::TextVariables => Guard::Always,
+        Run::SectionOptions | Run::TextVariables | Run::DataMerge => Guard::Always,
         Run::TableOfContents | Run::GenerateIndex | Run::Endnotes | Run::InsertGlyph => {
             Guard::Always
         }
@@ -1343,6 +1345,7 @@ pub fn all() -> &'static [Action] {
         a("Glyphs", None, Group::Window, ToggleGlyphs),
         a("Book", None, Group::Window, ToggleBook),
         a("Links", Some("Ctrl+Shift+D"), Group::Window, ToggleLinks),
+        a("Data merge", None, Group::Window, Run::DataMerge),
         // Under Edit, where every application that is not macOS puts it, and
         // last in that menu because it is the one entry there that is not an
         // edit to the document.
@@ -1586,6 +1589,11 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             state.numbering = window;
         }
         Run::TextVariables => state.variables.open = true,
+        Run::DataMerge => {
+            let mut window = std::mem::take(&mut state.data_merge);
+            window.open(state);
+            state.data_merge = window;
+        }
         Run::InsertFootnote => {
             crate::view::viewport::type_text(
                 state,

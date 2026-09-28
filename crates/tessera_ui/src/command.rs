@@ -733,6 +733,8 @@ pub enum Command {
     /// Say which chapter of a book the document is: its number, how it is
     /// written, and whether a book numbers it on.
     SetChapter(tessera_document::sections::Chapter),
+    /// Name the data file the document merges and its fields, or none.
+    SetDataSource(Option<tessera_document::merge::DataSource>),
     /// Replace the document's text variables. The whole list, for the same
     /// reason — and because a story names a variable by its position.
     SetVariables(Vec<tessera_document::variables::TextVariable>),
@@ -2458,6 +2460,10 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::SetChapter(chapter) => {
             state.active_mut().document_mut().set_chapter(chapter);
+        }
+
+        Command::SetDataSource(source) => {
+            state.active_mut().document_mut().set_data_source(source);
         }
 
         Command::SetVariables(variables) => {

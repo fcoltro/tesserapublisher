@@ -137,6 +137,12 @@ impl OpenDocument {
         self.document.set_file_facts(facts);
     }
 
+    /// Show one record in the merge fields, or their names. Not an edit, as
+    /// file facts are not.
+    pub fn set_merge_record(&mut self, record: Option<Vec<String>>) {
+        self.document.set_merge_record(record);
+    }
+
     /// Keep the document's file facts current, once a frame: its path, a
     /// creation date for a document made here, and today for the output
     /// date.

@@ -24,6 +24,7 @@ pub mod intent;
 mod layer_edit;
 pub mod links;
 pub mod masters;
+pub mod merge;
 pub mod nodes;
 pub mod object_style;
 mod page_edit;

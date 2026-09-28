@@ -58,6 +58,9 @@ pub enum Marker {
     CrossReference,
     /// The document's `n`th text variable.
     Variable(u8),
+    /// The document's `n`th data merge field: reads as the record being
+    /// previewed or merged, and as the field's name in chevrons otherwise.
+    Field(u8),
 }
 
 /// The first character in the block the built-in markers occupy.
@@ -65,6 +68,9 @@ const BUILT_IN: u32 = 0xE000;
 /// The first character in the block variable markers occupy: `U+E100` is
 /// variable 0, `U+E1FF` variable 255.
 const VARIABLE: u32 = 0xE100;
+/// The first character in the block merge field markers occupy: `U+E300` is
+/// field 0. Not `U+E200`, which a test holds as ordinary text.
+const FIELD: u32 = 0xE300;
 
 impl Marker {
     /// The character that stands for this marker in a story.
@@ -80,6 +86,7 @@ impl Marker {
             Marker::TextAnchor => BUILT_IN + 7,
             Marker::CrossReference => BUILT_IN + 8,
             Marker::Variable(index) => VARIABLE + u32::from(index),
+            Marker::Field(index) => FIELD + u32::from(index),
         };
         char::from_u32(code).expect("a Private Use code point is a character")
     }
@@ -100,6 +107,7 @@ impl Marker {
             c if (VARIABLE..VARIABLE + 256).contains(&c) => {
                 Some(Marker::Variable((c - VARIABLE) as u8))
             }
+            c if (FIELD..FIELD + 256).contains(&c) => Some(Marker::Field((c - FIELD) as u8)),
             _ => None,
         }
     }
@@ -119,6 +127,7 @@ impl Marker {
             | Marker::FootnoteNumber => "#",
             Marker::SectionMarker
             | Marker::Variable(_)
+            | Marker::Field(_)
             | Marker::IndexEntry
             | Marker::TextAnchor => "",
             // Numbered from the story itself, so it never needs a page; the
@@ -158,6 +167,9 @@ pub struct Variables {
     /// story's own count of them; empty where the layout has not looked.
     #[allow(clippy::struct_field_names)]
     pub cross_references: Vec<String>,
+    /// What each data merge field reads as, by the document's index: the
+    /// record's values, or the fields' names in chevrons.
+    pub fields: Vec<String>,
 }
 
 impl Variables {
@@ -173,6 +185,11 @@ impl Variables {
             Marker::FootnoteNumber => self.footnote_text.as_deref().unwrap_or("#"),
             Marker::Variable(index) => self
                 .variables
+                .get(usize::from(index))
+                .map(String::as_str)
+                .unwrap_or(""),
+            Marker::Field(index) => self
+                .fields
                 .get(usize::from(index))
                 .map(String::as_str)
                 .unwrap_or(""),
@@ -229,6 +246,8 @@ mod tests {
             Marker::Variable(0),
             Marker::Variable(7),
             Marker::Variable(255),
+            Marker::Field(0),
+            Marker::Field(255),
         ];
         for marker in all {
             assert_eq!(Marker::of(marker.character()), Some(marker));

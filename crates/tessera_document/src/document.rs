@@ -182,6 +182,9 @@ pub struct Document {
     /// was.
     #[serde(default)]
     pub chapter: crate::sections::Chapter,
+    /// The data file this document is a template for, and its fields.
+    #[serde(default)]
+    pub data_merge: Option<crate::merge::DataSource>,
 
     /// The text variables this document defines, in marker order: a story's
     /// `Marker::Variable(n)` is the `n`th of these. See [`crate::variables`].
@@ -224,6 +227,13 @@ pub struct Document {
     /// so the page redraws. See [`crate::variables::FileFacts`].
     #[serde(skip)]
     file: crate::variables::FileFacts,
+
+    /// The values the merge fields read as: one record, in the order of
+    /// [`Document::data_merge`]'s fields, while it is being previewed or
+    /// merged; `None` shows each field's name. Set from outside through
+    /// [`Document::set_merge_record`], never saved.
+    #[serde(skip)]
+    merge_record: Option<Vec<String>>,
 }
 
 impl Document {
@@ -265,6 +275,7 @@ impl Document {
             },
             sections: Vec::new(),
             chapter: crate::sections::Chapter::default(),
+            data_merge: None,
             variables: Vec::new(),
             contents: crate::contents::Contents::default(),
             index: crate::contents::Index::default(),
@@ -273,6 +284,7 @@ impl Document {
             footnotes: crate::footnotes::FootnoteOptions::default(),
             revision: 0,
             file: crate::variables::FileFacts::default(),
+            merge_record: None,
         };
 
         let layer = doc.layers.insert(Layer::named("Layer 1"));
@@ -760,6 +772,27 @@ impl Document {
     pub fn set_sections(&mut self, sections: Vec<crate::sections::Section>) {
         self.sections = sections;
         self.touch();
+    }
+
+    /// Name the data file this document merges, or none.
+    pub fn set_data_source(&mut self, source: Option<crate::merge::DataSource>) {
+        self.data_merge = source;
+        self.touch();
+    }
+
+    /// The record the merge fields read as, if one is being shown.
+    pub fn merge_record(&self) -> Option<&[String]> {
+        self.merge_record.as_deref()
+    }
+
+    /// Show one record in the merge fields, or their names. Not an edit:
+    /// nothing enters undo, and the document is as saved as it was. Moves
+    /// the revision only when the values change, so the page redraws.
+    pub fn set_merge_record(&mut self, record: Option<Vec<String>>) {
+        if self.merge_record != record {
+            self.merge_record = record;
+            self.revision += 1;
+        }
     }
 
     /// Say which chapter of a book this is.
