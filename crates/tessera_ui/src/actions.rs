@@ -347,6 +347,15 @@ pub enum Run {
     SplitSelectedCell,
     /// The table's rule, its alternating fills, and the edited cell's sides.
     TableOptions,
+    /// The selected text frame as a table, or the selected table as text.
+    ConvertTextToTable,
+    ConvertTableToText,
+    /// Sort the rows below the first by the column of the cell being edited.
+    SortRows {
+        descending: bool,
+    },
+    /// Place a comma- or tab-separated file as a table.
+    PlaceDataAsTable,
 }
 
 /// When an action may be reached from the keyboard.
@@ -440,7 +449,11 @@ pub fn guard(run: Run) -> Guard {
         | Run::TableColumn { .. }
         | Run::MergeSelectedCells
         | Run::SplitSelectedCell
-        | Run::TableOptions => Guard::Always,
+        | Run::TableOptions
+        | Run::ConvertTextToTable
+        | Run::ConvertTableToText
+        | Run::SortRows { .. }
+        | Run::PlaceDataAsTable => Guard::Always,
         // Only useful while typing, like the table commands.
         Run::Insert(_) => Guard::Always,
         Run::Command(
@@ -878,6 +891,36 @@ pub fn all() -> &'static [Action] {
             None,
             Group::Table,
             Run::TableOptions,
+        ),
+        a(
+            "Convert text to table",
+            None,
+            Group::Table,
+            Run::ConvertTextToTable,
+        ),
+        a(
+            "Convert table to text",
+            None,
+            Group::Table,
+            Run::ConvertTableToText,
+        ),
+        a(
+            "Sort rows by this column, A to Z",
+            None,
+            Group::Table,
+            Run::SortRows { descending: false },
+        ),
+        a(
+            "Sort rows by this column, Z to A",
+            None,
+            Group::Table,
+            Run::SortRows { descending: true },
+        ),
+        a(
+            "Place data as table\u{2026}",
+            None,
+            Group::Table,
+            Run::PlaceDataAsTable,
         ),
         a("Delete", Some("Del"), Group::Edit, Command(Delete)),
         a(
@@ -1682,6 +1725,38 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
                 );
             }
         }
+
+        Run::ConvertTextToTable => {
+            if let Some(id) = state.active().selection.single() {
+                crate::apply(state, crate::Command::ConvertTextToTable { id });
+            }
+        }
+
+        Run::ConvertTableToText => {
+            let id = editing_cell(state)
+                .map(|(id, _, _)| id)
+                .or_else(|| state.active().selection.single());
+            if let Some(id) = id {
+                crate::apply(state, crate::Command::ConvertTableToText { id });
+            }
+        }
+
+        Run::SortRows { descending } => {
+            // The column the caret is in; the first row stays as a heading.
+            if let Some((id, _, column)) = editing_cell(state) {
+                crate::apply(
+                    state,
+                    crate::Command::SortTableRows {
+                        id,
+                        column,
+                        descending,
+                        skip: 1,
+                    },
+                );
+            }
+        }
+
+        Run::PlaceDataAsTable => crate::file_ops::place_data_as_table(state),
 
         Run::TableOptions => {
             let mut window = std::mem::take(&mut state.table_options);

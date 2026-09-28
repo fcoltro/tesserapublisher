@@ -34,6 +34,7 @@ pub mod recovery;
 pub mod reflow;
 pub mod selection;
 pub mod softproof;
+pub mod table_ops;
 pub mod theme;
 pub mod tools;
 pub mod transform;

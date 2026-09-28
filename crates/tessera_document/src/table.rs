@@ -552,6 +552,48 @@ impl Table {
         }
     }
 
+    /// Put the rows from `from` on in the order `order` gives — each entry
+    /// the index, counted from `from`, of the row that goes there — every row
+    /// keeping its cells and its height.
+    ///
+    /// `false`, changing nothing, when `order` is not an arrangement of those
+    /// rows, or when a cell among them spans rows: a row cannot move away
+    /// from the rows it shares a cell with, and splitting the cell to let it
+    /// would change the table rather than sort it.
+    pub fn reorder_rows(&mut self, from: usize, order: &[usize]) -> bool {
+        let (rows, columns) = (self.rows(), self.columns());
+        if from > rows || order.len() != rows - from {
+            return false;
+        }
+        let mut seen = order.to_vec();
+        seen.sort_unstable();
+        if seen.iter().enumerate().any(|(i, &n)| i != n) {
+            return false;
+        }
+        let owners = self.owners();
+        for row in from..rows {
+            for column in 0..columns {
+                if owners[row * columns + column].is_some_and(|(r, _)| r != row) {
+                    return false;
+                }
+                if let Some(Slot::Cell(cell)) = self.at(row, column)
+                    && cell.span.rows > 1
+                {
+                    return false;
+                }
+            }
+        }
+        let (cells, heights) = (self.cells.clone(), self.rows.clone());
+        for (i, &source) in order.iter().enumerate() {
+            let (to, source) = (from + i, from + source);
+            self.rows[to] = heights[source];
+            for column in 0..columns {
+                self.cells[to * columns + column] = cells[source * columns + column].clone();
+            }
+        }
+        true
+    }
+
     /// Put a row in at `at`, pushing the rest down.
     ///
     /// **A cell spanning across the new boundary grows to keep covering it.**

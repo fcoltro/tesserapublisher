@@ -3251,8 +3251,22 @@ and running headers (milestone 10).
   (`ResolveCache::last`), so a cursor never lays the page out. Rules,
   fills and sizes now keep the caret in its cell: only a change that can
   remove the cell being edited ends the editing.
-- [ ] 7. **Tables: convert text to a table and back, sort rows, import a CSV
-  as a table.** A day or two.
+- [x] 7. **Tables: convert text to a table and back, sort rows, import a CSV
+  as a table.** A day or two. *Done 2026-09-27* (`tessera_ui::table_ops`,
+  the Table menu). **Convert text to table** makes a text frame a table
+  in its place, turned as it was: a paragraph a row, a tab the next cell,
+  short rows padded — and each cell is cut from a copy of the story, so
+  **its formatting comes with it**, a bold price stays bold. A threaded
+  story is refused, since its other frames would be left empty.
+  **Convert table to text** is the reverse, each row in its first cell's
+  paragraph style; formatting inside cells does not survive plain text,
+  and the status line says so when there was some. **Sort rows** by the
+  column the caret is in, A to Z or Z to A, below the first row: numbers
+  as numbers ("9" before "10", "2,50" and "£4.50" read), words ignoring
+  case, ties kept in order, and a cell spanning rows refused rather than
+  split. **Place data as table…** reads a data file through item 4's
+  reader and says in the status line what it had to change. Each is one
+  undo step.
 - [ ] 8. **Data merge, the core**: a Data Merge panel that chooses a source,
   lists its fields, inserts a field at the caret, and previews record by
   record. Days.

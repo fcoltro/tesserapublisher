@@ -97,6 +97,31 @@ pub enum Command {
         columns: Vec<f64>,
         rows: Vec<f64>,
     },
+    /// Make a text frame's story a table in its place: each paragraph a
+    /// row, each tab the start of the next cell, every cell keeping its
+    /// formatting.
+    ConvertTextToTable {
+        id: FrameId,
+    },
+    /// Make a table a text frame in its place: each row a paragraph, its
+    /// cells separated by tabs.
+    ConvertTableToText {
+        id: FrameId,
+    },
+    /// Sort a table's rows by the words in one column, leaving the first
+    /// `skip` rows — a heading — where they are.
+    SortTableRows {
+        id: FrameId,
+        column: usize,
+        descending: bool,
+        skip: usize,
+    },
+    /// A table filling `bounds` holding `cells`, row by row: what a data
+    /// file becomes when it is placed as a table.
+    AddTableFromData {
+        bounds: DocRect,
+        cells: Vec<Vec<String>>,
+    },
     /// A grid of empty cells filling `bounds`.
     ///
     /// The rows are a starting height; the layout pass grows them to whatever
@@ -1314,6 +1339,153 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             };
             table.alternating = alternating.map(Box::new);
             replace_table(state, id, table);
+        }
+
+        Command::ConvertTextToTable { id } => {
+            let Some(frame) = state.active().document().frame(id).cloned() else {
+                return;
+            };
+            let FrameKind::Text { story, .. } = frame.kind else {
+                return;
+            };
+            // A threaded story runs through other frames too, and turning it
+            // into a table here would leave them showing nothing.
+            if state.active().document().thread_of(id).len() > 1 {
+                state.status = Some(crate::app::Status::error(
+                    "Cannot convert: the text runs on into other frames. Unthread it first.",
+                ));
+                return;
+            }
+            let Some(text) = state.active().document().story(story).cloned() else {
+                return;
+            };
+            let rows = crate::table_ops::cells_of(&text);
+            let columns = rows.iter().map(Vec::len).max().unwrap_or(1).max(1);
+            let mut cells = Vec::with_capacity(rows.len() * columns);
+            for row in rows {
+                let short = columns - row.len();
+                cells.extend(row);
+                cells.extend(std::iter::repeat_with(Story::default).take(short));
+            }
+            let mut ids = Vec::with_capacity(cells.len());
+            for cell in cells {
+                ids.push(state.active_mut().document_mut().add_story(cell));
+            }
+            let row_count = ids.len() / columns;
+            let mut next = ids.into_iter();
+            let mut table =
+                tessera_document::table::new(row_count, columns, frame.bounds.width, || {
+                    next.next().unwrap_or_default()
+                });
+            table.stroke = Some(tessera_document::nodes::Stroke::new(Color::BLACK_INK, 0.5));
+            state.active_mut().document_mut().remove_frame(id);
+            state.active_mut().document_mut().remove_story(story);
+            add(state, frame.bounds, FrameKind::Table(table), Look::Bare);
+            // Where the text stood, turned as it was.
+            if let Some(new) = state.active().selection.single()
+                && let Some(made) = state.active_mut().document_mut().frame_mut(new)
+            {
+                made.transform = frame.transform;
+            }
+        }
+
+        Command::ConvertTableToText { id } => {
+            let Some(frame) = state.active().document().frame(id).cloned() else {
+                return;
+            };
+            let FrameKind::Table(table) = &frame.kind else {
+                return;
+            };
+            let (text, styles, formatted) =
+                crate::table_ops::text_of(state.active().document(), table);
+            let mut story = Story::new(text);
+            for (range, style) in story.paragraph_ranges().into_iter().zip(styles) {
+                if style.is_some() {
+                    story.set_paragraph_style(range, style);
+                }
+            }
+            let cell_stories: Vec<_> = table.stories().collect();
+            let story = state.active_mut().document_mut().add_story(story);
+            state.active_mut().document_mut().remove_frame(id);
+            for cell in cell_stories {
+                state.active_mut().document_mut().remove_story(cell);
+            }
+            add(state, frame.bounds, FrameKind::text(story), Look::Bare);
+            if let Some(new) = state.active().selection.single()
+                && let Some(made) = state.active_mut().document_mut().frame_mut(new)
+            {
+                made.transform = frame.transform;
+            }
+            if formatted {
+                state.status = Some(crate::app::Status::info(
+                    "Converted. Bold, italic and other formatting inside the cells did not \
+                     come across; each row keeps its first cell's paragraph style.",
+                ));
+            }
+        }
+
+        Command::SortTableRows {
+            id,
+            column,
+            descending,
+            skip,
+        } => {
+            let Some(FrameKind::Table(mut table)) =
+                state.active().document().frame(id).map(|f| f.kind.clone())
+            else {
+                return;
+            };
+            let owners = table.owners();
+            let columns = table.columns();
+            if column >= columns {
+                return;
+            }
+            let skip = skip.min(table.rows());
+            let keys: Vec<String> = (skip..table.rows())
+                .map(|row| {
+                    owners[row * columns + column]
+                        .and_then(|(r, c)| table.at(r, c))
+                        .and_then(|slot| slot.cell())
+                        .and_then(|cell| state.active().document().story(cell.story))
+                        .map(|story| story.text.clone())
+                        .unwrap_or_default()
+                })
+                .collect();
+            let order = crate::table_ops::sort_order(&keys, descending);
+            if !table.reorder_rows(skip, &order) {
+                state.status = Some(crate::app::Status::error(
+                    "Cannot sort: a cell spans more than one of the rows. Split it first.",
+                ));
+                return;
+            }
+            replace_table(state, id, table);
+        }
+
+        Command::AddTableFromData { bounds, cells } => {
+            let columns = cells.iter().map(Vec::len).max().unwrap_or(1).max(1);
+            let rows = cells.len().max(1);
+            let mut ids = Vec::with_capacity(rows * columns);
+            for row in 0..rows {
+                for column in 0..columns {
+                    let words = cells
+                        .get(row)
+                        .and_then(|r| r.get(column))
+                        .cloned()
+                        .unwrap_or_default();
+                    ids.push(
+                        state
+                            .active_mut()
+                            .document_mut()
+                            .add_story(Story::new(words)),
+                    );
+                }
+            }
+            let mut next = ids.into_iter();
+            let mut table = tessera_document::table::new(rows, columns, bounds.width, || {
+                next.next().unwrap_or_default()
+            });
+            table.stroke = Some(tessera_document::nodes::Stroke::new(Color::BLACK_INK, 0.5));
+            add(state, bounds, FrameKind::Table(table), Look::Bare);
         }
 
         Command::SetTableSizes { id, columns, rows } => {

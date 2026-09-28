@@ -432,6 +432,76 @@ pub fn choose_output_intent(state: &mut crate::app::TesseraApp) {
     state.soft_proof.showing = true;
 }
 
+/// Table ▸ Place data as table…: a comma-, semicolon- or tab-separated file,
+/// its header row first, as a table across the current page's margins.
+pub fn place_data_as_table(state: &mut crate::app::TesseraApp) {
+    let Some(path) = rfd::FileDialog::new()
+        .add_filter("Data", &["csv", "tsv", "tab", "txt"])
+        .pick_file()
+    else {
+        return;
+    };
+    place_data_file_as_table(state, &path);
+}
+
+/// The same, for a file already chosen. What the reader had to change to
+/// make the file a grid is said in the status line, as an import says what
+/// it could not bring.
+pub fn place_data_file_as_table(state: &mut crate::app::TesseraApp, path: &Path) {
+    let data = match tessera_import::delimited::read_path(path) {
+        Ok(data) => data,
+        Err(error) => {
+            state.status = Some(Status::error(error.to_string()));
+            return;
+        }
+    };
+    let mut cells = vec![
+        data.fields
+            .iter()
+            .map(|f| {
+                if f.image {
+                    format!("@{}", f.name)
+                } else {
+                    f.name.clone()
+                }
+            })
+            .collect::<Vec<_>>(),
+    ];
+    cells.extend(data.records.iter().cloned());
+    let page = state.current_page().map_or_else(
+        || state.first_page_bounds(),
+        |p| state.active().document().pages[p].bounds,
+    );
+    // Inside the page by a margin's width, a row's height for each record:
+    // the rows then grow to what their words need.
+    let bounds = tessera_geometry::DocRect {
+        x: page.x + 36.0,
+        y: page.y + 36.0,
+        width: (page.width - 72.0).max(72.0),
+        height: 14.0 * cells.len() as f64,
+    };
+    let rows = cells.len();
+    crate::command::apply(
+        state,
+        crate::command::Command::AddTableFromData { bounds, cells },
+    );
+    let mut said = format!(
+        "Placed {} as a table: {} row{} of {}.",
+        path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into_owned()
+        ),
+        rows - 1,
+        if rows == 2 { "" } else { "s" },
+        data.fields.len()
+    );
+    for note in &data.notes {
+        said.push(' ');
+        said.push_str(note);
+    }
+    state.status = Some(Status::info(said));
+}
+
 pub(crate) fn pick_artwork() -> Option<PathBuf> {
     rfd::FileDialog::new()
         .add_filter("Images", crate::PLACEABLE)
