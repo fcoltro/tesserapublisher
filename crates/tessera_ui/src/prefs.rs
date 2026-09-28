@@ -175,6 +175,12 @@ pub struct Preferences {
     #[serde(default)]
     pub objects_follow_page_edges: bool,
 
+    /// Whether the canvas outlines the words that are hyperlinks — and
+    /// cross-references, which are links too — as InDesign's View ›
+    /// Extras › Show Hyperlinks does. Never printed or exported.
+    #[serde(default)]
+    pub show_hyperlinks: bool,
+
     /// The model the console talks to, and how to reach it.
     #[serde(default)]
     pub assistant: Assistant,
@@ -321,6 +327,7 @@ impl Default for Preferences {
             reflow_adds_pages: true,
             reflow_removes_pages: false,
             objects_follow_page_edges: false,
+            show_hyperlinks: false,
             swatch_tiles: false,
         }
     }
@@ -544,6 +551,7 @@ mod tests {
             reflow_adds_pages: false,
             reflow_removes_pages: true,
             objects_follow_page_edges: true,
+            show_hyperlinks: true,
         };
         written.save_to(&path).expect("save failed");
 

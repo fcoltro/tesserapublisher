@@ -426,7 +426,7 @@ fn resolve_pages<'a>(
     // page; the next relayout says the right thing, as InDesign's stale
     // references do until updated, and a third pass here would not end
     // that in every case either.
-    if doc.stories.values().any(|s| !s.cross_references.is_empty()) {
+    if refers_to_anchors(doc) {
         let mut again = Vec::new();
         for id in doc.paint_order() {
             let Some(on) = doc.page_of_frame(id) else {
@@ -1045,6 +1045,22 @@ fn footnote_labels(
         .collect()
 }
 
+/// Whether anything in the text points at a text anchor, whose page is
+/// known only once the pages are laid out: a cross-reference, or a
+/// hyperlink to a name no page destination has.
+pub(crate) fn refers_to_anchors(doc: &Document) -> bool {
+    use tessera_text::story::Hyperlink;
+    doc.stories.values().any(|s| {
+        !s.cross_references.is_empty()
+            || s.runs.iter().any(|run| {
+                matches!(
+                    s.resolve_run(run, doc).link,
+                    Some(Hyperlink::Destination(name)) if doc.destination_page(&name).is_none()
+                )
+            })
+    })
+}
+
 /// The hyperlinks in `story` as laid out in `shaped`: each linked run's
 /// rectangles, from the same geometry a selection is drawn with, so a link
 /// covers exactly what looks linked.
@@ -1089,7 +1105,11 @@ fn links_in(
         let target = match story.resolve_run(run, doc).link {
             Some(Hyperlink::Url(url)) if !url.trim().is_empty() => LinkTarget::Url(url),
             Some(Hyperlink::Destination(name)) => {
-                let Some(page) = doc.destination_page(&name) else {
+                // A page destination, or a text anchor wherever it landed.
+                let page = doc
+                    .destination_page(&name)
+                    .or_else(|| running.anchor(&name).map(|(page, _)| *page));
+                let Some(page) = page else {
                     continue; // a link to nowhere is no link
                 };
                 let Some(index) = page_index(page) else {
@@ -2598,6 +2618,51 @@ Some body copy.",
             glyphs,
             glyphs_for(&mut shaper, "p. 2"),
             "the page its anchor is on, not \"p. ?\""
+        );
+    }
+
+    #[test]
+    fn a_hyperlink_to_a_text_anchor_goes_to_the_page_it_landed_on() {
+        use tessera_text::story::{CharacterFormat, Hyperlink, TextAnchor};
+        use tessera_text::variables::Marker;
+        let mut doc = Document::default();
+        let second = doc.add_page();
+        let first = doc.page_ids().next().unwrap();
+        let layer = doc.default_layer().expect("a layer");
+
+        // Page one: "Read on" linked to the anchor "ch2" on page two. No
+        // cross-reference anywhere, so only the link asks for the anchors.
+        let mut linking = Story::new("Read on.");
+        linking.apply_character_format(
+            0..7,
+            &CharacterFormat {
+                link: Some(Hyperlink::Destination("ch2".into())),
+                ..Default::default()
+            },
+        );
+        let linking = doc.add_story(linking);
+        let mut target = Story::new(format!("{}Chapter Two", Marker::TextAnchor.character()));
+        target.anchors[0] = TextAnchor { name: "ch2".into() };
+        let target = doc.add_story(target);
+        let a = doc.add_frame(layer, {
+            let b = doc.pages[first].bounds;
+            let mut f = rect(b.x + 20.0, b.y + 20.0, 300.0, 60.0);
+            f.kind = FrameKind::text(linking);
+            f
+        });
+        doc.add_frame(layer, {
+            let b = doc.pages[second].bounds;
+            let mut f = rect(b.x + 20.0, b.y + 20.0, 300.0, 60.0);
+            f.kind = FrameKind::text(target);
+            f
+        });
+
+        let resolved = resolve(&doc, &mut Shaper::new());
+        let item = item_for(&resolved, a).expect("resolved");
+        assert!(
+            item.links.iter().any(|l| l.target == LinkTarget::Page(1)),
+            "a link to the second page: {:?}",
+            item.links
         );
     }
 

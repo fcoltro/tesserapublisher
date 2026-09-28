@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use roxmltree::Node;
 use tessera_text::story::{
-    CharacterFormat, CrossReference, CrossReferenceFormat, IndexEntry, ParagraphFormat,
+    CharacterFormat, CrossReference, CrossReferenceFormat, Hyperlink, IndexEntry, ParagraphFormat,
     ParagraphRun, Run, Story, TextAnchor,
 };
 use tessera_text::variables::Marker;
@@ -44,6 +44,10 @@ pub(crate) struct Links {
     pub sources: HashMap<String, String>,
     /// Destination Self → its Name: what the anchor is called here.
     pub destinations: HashMap<String, String>,
+    /// URL destination Self → the address.
+    pub urls: HashMap<String, String>,
+    /// Page destination Self → its name here, and the page's Self.
+    pub pages: HashMap<String, (String, String)>,
 }
 
 impl Links {
@@ -52,6 +56,21 @@ impl Links {
     fn target_of(&self, source: &str) -> Option<String> {
         let destination = self.sources.get(source)?;
         self.destinations.get(destination).cloned()
+    }
+
+    /// Where a hyperlink's source goes: an address, a page destination by
+    /// the name it is given here, or a text anchor by its name.
+    fn link_of(&self, source: &str) -> Option<Hyperlink> {
+        let destination = self.sources.get(source)?;
+        if let Some(url) = self.urls.get(destination) {
+            return Some(Hyperlink::Url(url.clone()));
+        }
+        if let Some((name, _)) = self.pages.get(destination) {
+            return Some(Hyperlink::Destination(name.clone()));
+        }
+        self.destinations
+            .get(destination)
+            .map(|name| Hyperlink::Destination(name.clone()))
     }
 }
 
@@ -102,6 +121,9 @@ struct Builder<'a, 'i> {
     /// Text anchors and cross-references, one per marker, in text order.
     anchors: Vec<TextAnchor>,
     cross_references: Vec<CrossReference>,
+    /// The stretches that are hyperlinks, and where each goes: put on the
+    /// runs at the end, since a link can start and stop inside a range.
+    links: Vec<(std::ops::Range<usize>, Hyperlink)>,
 }
 
 impl<'a, 'i> Builder<'a, 'i> {
@@ -117,6 +139,7 @@ impl<'a, 'i> Builder<'a, 'i> {
     }
 
     fn finish(self) -> Story {
+        let links = self.links;
         let text = self.text;
         if text.is_empty() {
             return Story::default();
@@ -191,6 +214,16 @@ impl<'a, 'i> Builder<'a, 'i> {
             cross_references: self.cross_references,
         };
         if story.runs_are_sound() && story.notes_are_sound() {
+            let mut story = story;
+            for (range, link) in links {
+                story.apply_character_format(
+                    range,
+                    &CharacterFormat {
+                        link: Some(link),
+                        ..Default::default()
+                    },
+                );
+            }
             story
         } else {
             // The arithmetic went wrong somewhere; the words are worth more
@@ -265,7 +298,17 @@ fn read_ranges<'a, 'i>(
             "Table" | "Rectangle" | "Oval" | "Polygon" | "TextFrame" | "Group" | "GraphicLine" => {
                 b.push_inline(child);
             }
-            "HyperlinkTextSource" | "XMLElement" | "Change" => {
+            // A hyperlink: its words, which go where the spine says.
+            "HyperlinkTextSource" => {
+                let start = b.text.len();
+                read_ranges(child, styles, colours, links, b);
+                if let Some(link) = attr(child, "Self").and_then(|s| links.link_of(s))
+                    && b.text.len() > start
+                {
+                    b.links.push((start..b.text.len(), link));
+                }
+            }
+            "XMLElement" | "Change" => {
                 // Wrappers around ordinary ranges: read through them.
                 read_ranges(child, styles, colours, links, b);
             }

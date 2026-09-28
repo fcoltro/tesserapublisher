@@ -3254,6 +3254,38 @@ fn layer_edge(state: &TesseraApp, frames: impl IntoIterator<Item = FrameId>) -> 
     }
 }
 
+/// A box round every stretch of words that is a link, where the layout
+/// says it landed: the rectangles the PDF's annotations are made from, so
+/// what is outlined is exactly what a reader can click.
+fn hyperlink_outlines(
+    state: &TesseraApp,
+    painter: &egui::Painter,
+    to_screen: &dyn Fn(DocPoint) -> egui::Pos2,
+) {
+    let stroke = Stroke::new(1.0, Theme::accent());
+    for item in &state.active().last_resolved().items {
+        for link in &item.links {
+            for r in &link.rects {
+                // Relative to the item's box, through its transform, as the
+                // ink is: a turned frame's link turns with its words.
+                let corners = [
+                    (r.x, r.y),
+                    (r.x + r.width, r.y),
+                    (r.x + r.width, r.y + r.height),
+                    (r.x, r.y + r.height),
+                ]
+                .map(|(x, y)| {
+                    to_screen(item.transform.apply(DocPoint {
+                        x: item.bounds.x + x,
+                        y: item.bounds.y + y,
+                    }))
+                });
+                painter.add(egui::Shape::closed_line(corners.to_vec(), stroke));
+            }
+        }
+    }
+}
+
 fn draw_overlays(
     ui: &Ui,
     rect: Rect,
@@ -3311,6 +3343,10 @@ fn draw_overlays(
             quad(state, rect, frame.bounds, frame.transform),
             Stroke::new(1.0, layer_edge(state, [id])),
         ));
+    }
+
+    if state.prefs.show_hyperlinks {
+        hyperlink_outlines(state, &painter, &to_screen);
     }
 
     if state.active_tool == Tool::DirectSelect {

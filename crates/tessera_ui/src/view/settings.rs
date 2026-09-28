@@ -230,6 +230,7 @@ fn restore(state: &mut TesseraApp) {
             state.prefs.reflow_adds_pages = fresh.reflow_adds_pages;
             state.prefs.reflow_removes_pages = fresh.reflow_removes_pages;
             state.prefs.objects_follow_page_edges = fresh.objects_follow_page_edges;
+            state.prefs.show_hyperlinks = fresh.show_hyperlinks;
             state.prefs.assistant = fresh.assistant.clone();
             state.prefs.updates.enabled = fresh.updates.enabled;
         }
@@ -353,6 +354,12 @@ fn general(ui: &mut Ui, state: &mut TesseraApp) {
         "Pages at the end of body text that it no longer reaches are taken away, when \
          nothing else is on them. Off unless asked for: a page taken away is a \
          surprise, and a page left is not.",
+    );
+    ui.checkbox(&mut state.prefs.show_hyperlinks, "Show hyperlinks");
+    note(
+        ui,
+        "Outlines the words that are links, cross-references among them, on the \
+         canvas. Never printed or exported. Also View \u{203a} Show hyperlinks.",
     );
     ui.checkbox(
         &mut state.prefs.objects_follow_page_edges,
@@ -942,6 +949,7 @@ mod tests {
             reflow_adds_pages: false,
             reflow_removes_pages: true,
             objects_follow_page_edges: true,
+            show_hyperlinks: true,
         };
 
         for page in Page::ALL {

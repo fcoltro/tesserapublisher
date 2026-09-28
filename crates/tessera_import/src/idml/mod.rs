@@ -139,8 +139,9 @@ fn import_package(mut package: Package) -> Result<Imported, ImportError> {
         let Some(source) = attr(hyperlink, "Source") else {
             continue;
         };
+        // Inside `Properties` as InDesign writes it, or directly under.
         let destination = hyperlink
-            .children()
+            .descendants()
             .find(|n| is_plain(*n, "Destination"))
             .and_then(|n| n.text())
             .map(str::trim)
@@ -149,6 +150,22 @@ fn import_package(mut package: Package) -> Result<Imported, ImportError> {
             links
                 .sources
                 .insert(source.to_owned(), destination.to_owned());
+        }
+    }
+    // An address, and a page: kept in the spine rather than in a story.
+    for node in root.descendants() {
+        let Some(id) = attr(node, "Self") else {
+            continue;
+        };
+        if is_plain(node, "HyperlinkURLDestination")
+            && let Some(url) = attr(node, "DestinationURL").filter(|u| !u.is_empty())
+        {
+            links.urls.insert(id.to_owned(), url.to_owned());
+        } else if is_plain(node, "HyperlinkPageDestination")
+            && let Some(page) = attr(node, "DestinationPage")
+        {
+            let name = story::destination_name(node).unwrap_or_else(|| id.to_owned());
+            links.pages.insert(id.to_owned(), (name, page.to_owned()));
         }
     }
     for xml in &story_xml {
@@ -295,6 +312,22 @@ fn import_package(mut package: Package) -> Result<Imported, ImportError> {
             }
         }
         items.place_all(*spread, &placed, &mut doc, &mut dropped);
+    }
+
+    // A hyperlink to a page goes to a destination by that name, now that
+    // the pages exist.
+    let mut page_links: Vec<_> = links.pages.values().collect();
+    page_links.sort();
+    for (name, page) in page_links {
+        if let Some(page) = page_ids.get(page)
+            && doc.destination_page(name).is_none()
+        {
+            doc.destinations
+                .push(tessera_document::contents::Destination {
+                    name: name.clone(),
+                    page: *page,
+                });
+        }
     }
 
     // The objects set into the stories' text, anchored to their markers.

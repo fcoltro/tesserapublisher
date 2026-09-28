@@ -1,13 +1,15 @@
 //! The hyperlink box: where the selected words go when clicked.
 //!
-//! A URL, or a page of this document. A page link is a named destination —
+//! A URL, a page of this document, or a text anchor — the page it lands
+//! on, wherever the text has moved it. A page link is a named destination —
 //! "Page 12" — pointing at the page's id, so it follows the page if the
 //! pages are reordered even though its name no longer says where it went.
 //! The link rides on the character format of the selection, which is what
 //! makes it travel with the words and cascade from a style.
 //!
-//! Nothing draws a link on the canvas: the words look as they are set. The
-//! PDF carries the annotation, and that is where a link is clicked.
+//! The words look as they are set; View › Show hyperlinks outlines each
+//! link on the canvas, from the rectangles the PDF's annotations are made
+//! of, and the PDF is where a link is clicked.
 
 use tessera_document::ids::{PageId, StoryId};
 use tessera_text::story::{CharacterFormat, Hyperlink};
@@ -21,6 +23,8 @@ pub enum Kind {
     #[default]
     Url,
     Page,
+    /// A text anchor, by name: the page it lands on.
+    Anchor,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -31,6 +35,8 @@ pub struct HyperlinkWindow {
     pub kind: Kind,
     pub url: String,
     pub page: Option<PageId>,
+    /// The text anchor, for an anchor link.
+    pub anchor: String,
     /// Whether the selection already carried a link, so Remove is offered.
     pub had_link: bool,
 }
@@ -65,8 +71,18 @@ impl HyperlinkWindow {
                 self.had_link = true;
             }
             Some(Hyperlink::Destination(name)) => {
-                self.kind = Kind::Page;
-                self.page = doc.destination_page(&name);
+                // A page destination by that name first, as the layout
+                // reads it; otherwise the name is an anchor's.
+                match doc.destination_page(&name) {
+                    Some(page) => {
+                        self.kind = Kind::Page;
+                        self.page = Some(page);
+                    }
+                    None => {
+                        self.kind = Kind::Anchor;
+                        self.anchor = name;
+                    }
+                }
                 self.had_link = true;
             }
             _ => {}
@@ -76,6 +92,21 @@ impl HyperlinkWindow {
         }
         self.open = true;
     }
+}
+
+/// Every text anchor's name in the document, sorted, each once.
+pub(crate) fn anchor_names(state: &TesseraApp) -> Vec<String> {
+    let mut names: Vec<String> = state
+        .active()
+        .document()
+        .stories
+        .values()
+        .flat_map(|s| s.anchors.iter().map(|a| a.name.clone()))
+        .filter(|n| !n.trim().is_empty())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
 }
 
 pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
@@ -92,6 +123,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
         .into_iter()
         .map(|(id, n)| (id, n.label))
         .collect();
+    let anchors = anchor_names(state);
 
     let response = egui::Modal::new(egui::Id::new("hyperlink"))
         .frame(super::dialog_frame(ctx))
@@ -102,6 +134,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut window.kind, Kind::Url, "Web address");
                 ui.selectable_value(&mut window.kind, Kind::Page, "Page in this document");
+                ui.selectable_value(&mut window.kind, Kind::Anchor, "Text anchor");
             });
             ui.add_space(Theme::space_1());
             match window.kind {
@@ -135,12 +168,45 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                         );
                     });
                 }
+                Kind::Anchor => {
+                    crate::view::panels::field(ui, "Anchor", |ui| {
+                        if anchors.is_empty() {
+                            ui.colored_label(
+                                Theme::text_muted(),
+                                "No anchors yet. Type \u{203a} Insert marker \u{203a} Text anchor puts one in the text.",
+                            );
+                        } else {
+                            crate::icons::reads_as(
+                                egui::ComboBox::from_id_salt("hyperlink-anchor")
+                                    .selected_text(if window.anchor.is_empty() {
+                                        "(choose)"
+                                    } else {
+                                        window.anchor.as_str()
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        for name in &anchors {
+                                            ui.selectable_value(
+                                                &mut window.anchor,
+                                                name.clone(),
+                                                name,
+                                            );
+                                        }
+                                    })
+                                    .response,
+                                "Anchor",
+                                egui::WidgetType::ComboBox,
+                                None,
+                            );
+                        }
+                    });
+                }
             }
             ui.add_space(Theme::space_2());
             ui.horizontal(|ui| {
                 let ready = match window.kind {
                     Kind::Url => !window.url.trim().is_empty(),
                     Kind::Page => window.page.is_some(),
+                    Kind::Anchor => !window.anchor.is_empty(),
                 };
                 go = ui.add_enabled(ready, super::primary_button("OK")).clicked();
                 if window.had_link && ui.button("Remove link").clicked() {
@@ -180,6 +246,8 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                         );
                         Hyperlink::Destination(name)
                     }
+                    // The anchor's own name: the layout finds its page.
+                    Kind::Anchor => Hyperlink::Destination(window.anchor.clone()),
                 }
             };
             apply(

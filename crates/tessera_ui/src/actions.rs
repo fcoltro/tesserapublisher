@@ -286,6 +286,8 @@ pub enum Run {
     TogglePages,
     ToggleLayers,
     ToggleSnapping,
+    /// Outline the hyperlinks on the canvas.
+    ToggleHyperlinks,
     ToggleDynamicSpelling,
     NewDocument,
     Open,
@@ -420,6 +422,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::TogglePages
         | Run::ToggleLayers
         | Run::ToggleSnapping
+        | Run::ToggleHyperlinks
         | Run::ToggleDynamicSpelling
         | Run::ScreenMode(_)
         | Run::ZoomToFit
@@ -1400,6 +1403,7 @@ pub fn all() -> &'static [Action] {
         ),
         a("Soft proof", Some("Ctrl+Y"), Group::View, ToggleSoftProof),
         a("Snap to guides", None, Group::View, ToggleSnapping),
+        a("Show hyperlinks", None, Group::View, ToggleHyperlinks),
         //
         a(
             "Selection tool",
@@ -1608,6 +1612,12 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             // somebody who turns snapping off is not turning it off for a
             // minute and would not expect to find it back tomorrow.
             state.prefs.snapping = !state.prefs.snapping;
+            crate::prefs::remember(state);
+        }
+        Run::ToggleHyperlinks => {
+            // A preference, as snapping is: somebody checking links turns
+            // this on for the job, not for a minute.
+            state.prefs.show_hyperlinks = !state.prefs.show_hyperlinks;
             crate::prefs::remember(state);
         }
         Run::ToggleDynamicSpelling => {

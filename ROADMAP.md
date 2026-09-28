@@ -2936,8 +2936,16 @@ which cost one afternoon's confusion and a namespace check.
   off the layout, become `ResolvedDocument.bookmarks`, and the PDF writes
   them as its outline, nested by level, each going to its page — the pane a
   reader opens first. **The index joins runs of pages** the same day: "3–5",
-  never across a section. Not built: cross-references, anchored-text
-  destinations, hyperlink appearance on screen, and IDML hyperlinks.
+  never across a section. **2026-09-28:** a link can go to a text anchor —
+  the page it lands on, found by the layout's second pass, which a link to
+  an anchor now asks for as a cross-reference does; View › Show hyperlinks
+  outlines every link on the canvas from the rectangles the PDF's
+  annotations are made of; and IDML's hyperlinks import — a
+  `HyperlinkTextSource` to a URL, a page (a destination of that name) or a
+  text destination. Building it found that the importer looked for a
+  hyperlink's `Destination` directly under it, where InDesign writes it
+  inside `Properties`, so no cross-reference from a real InDesign file had
+  ever found its target; it looks anywhere under it now.
 - [x] **Anchored objects and tables import** (added 2026-09-14). An object
   set into a story's text is a `U+FFFC` marker and a frame anchored to it;
   an IDML table is a table frame anchored the same way, with its column
@@ -3472,8 +3480,8 @@ below are its items 1 to 3.
 - [x] 12. **Cross-references edited in place**, and imported inside a table
   cell as references rather than words (milestone 11). *Done 2026-09-28:*
   and a reference in a cell reads its page, which it never did.
-- [ ] 13. **Hyperlinks**: anchored-text destinations, a link's appearance on
-  screen, IDML hyperlinks (milestone 12).
+- [x] 13. **Hyperlinks**: anchored-text destinations, a link's appearance on
+  screen, IDML hyperlinks (milestone 12). *Done 2026-09-28.*
 - [ ] 14. **Footnote text edited on the canvas** (milestone 11).
 - [ ] 15. **Type on a path**: the caret on the curve, drag handles for
   start, end and flip, and path text as a wrap obstacle (milestone 9).

@@ -61,7 +61,11 @@ fn a_book() -> Vec<u8> {
   <idPkg:Story src="Stories/Story_u12.xml"/>
   <idPkg:Story src="Stories/Story_u20.xml"/>
   <idPkg:Story src="Stories/Story_u30.xml"/>
-  <Hyperlink Self="uh1" Name="to the notes" Source="uxs1"><Destination type="object">ud1</Destination></Hyperlink>
+  <Hyperlink Self="uh1" Name="to the notes" Source="uxs1"><Properties><BorderColor type="enumeration">Black</BorderColor><Destination type="object">ud1</Destination></Properties></Hyperlink>
+  <HyperlinkURLDestination Self="uud1" Name="site" DestinationURL="https://example.com/"/>
+  <HyperlinkPageDestination Self="upd1" Name="Front" DestinationPage="ub8"/>
+  <Hyperlink Self="uh2" Name="web" Source="uhs1"><Properties><Destination type="object">uud1</Destination></Properties></Hyperlink>
+  <Hyperlink Self="uh3" Name="front" Source="uhs2"><Properties><Destination type="object">upd1</Destination></Properties></Hyperlink>
 </Document>"#,
     );
     let graphic = format!(
@@ -178,7 +182,7 @@ fn a_book() -> Vec<u8> {
         r#"<idPkg:Story {IDPKG}>
 <Story Self="u30">
   <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Body">
-    <CharacterStyleRange><ParagraphDestination Self="ud1" Name="notes"/><Content>Notes</Content></CharacterStyleRange>
+    <CharacterStyleRange><ParagraphDestination Self="ud1" Name="notes"/><Content>Notes: see </Content><HyperlinkTextSource Self="uhs1" Name="web"><Content>our site</Content></HyperlinkTextSource><Content> and </Content><HyperlinkTextSource Self="uhs2" Name="front"><Content>the front</Content></HyperlinkTextSource><Content>.</Content></CharacterStyleRange>
   </ParagraphStyleRange>
 </Story></idPkg:Story>"#
     );
@@ -344,6 +348,30 @@ fn a_book_comes_back_as_pages_parents_frames_threads_styles_and_sections() {
     );
     assert_eq!(b.cross_references.len(), 1);
     assert_eq!(b.cross_references[0].target, "notes");
+
+    // Hyperlinks: an address, and a page by a destination of its own name.
+    use tessera_text::story::Hyperlink;
+    let notes = doc
+        .stories
+        .values()
+        .find(|s| s.text.contains("our site"))
+        .expect("the notes");
+    let link_at = |words: &str| {
+        let at = notes.text.find(words).unwrap();
+        let run = notes.run_at(at).unwrap();
+        notes.resolve_run(run, doc).link
+    };
+    assert_eq!(
+        link_at("our site"),
+        Some(Hyperlink::Url("https://example.com/".into()))
+    );
+    assert_eq!(
+        link_at("the front"),
+        Some(Hyperlink::Destination("Front".into()))
+    );
+    assert_eq!(link_at("Notes"), None, "only the linked words");
+    let first_page = doc.page_ids().next().unwrap();
+    assert_eq!(doc.destination_page("Front"), Some(first_page));
     assert!(text.notes_are_sound());
     assert!(text.footnotes[0].text.ends_with("Orwell."));
     assert_eq!(text.paragraphs[0].style, Some(heading.0));

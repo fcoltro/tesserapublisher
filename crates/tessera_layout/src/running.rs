@@ -169,11 +169,11 @@ impl Running {
     /// What the running header in `style` says on `page`, if anything there is
     /// in that style.
     /// Where every anchor's marker was laid out, and the paragraph around
-    /// it. Only when some story references something, so a document with no
-    /// cross-references pays nothing here.
+    /// it. Only when something points at an anchor — a cross-reference, or
+    /// a hyperlink to one — so a document with neither pays nothing here.
     fn read_anchors(doc: &Document, items: &[ResolvedItem]) -> HashMap<String, (PageId, String)> {
         let mut anchors = HashMap::new();
-        if !doc.stories.values().any(|s| !s.cross_references.is_empty()) {
+        if !crate::resolve::refers_to_anchors(doc) {
             return anchors;
         }
         for item in items {
