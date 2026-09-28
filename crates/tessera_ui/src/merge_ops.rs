@@ -243,7 +243,9 @@ pub fn overset_records(
         .iter()
         .filter(|item| match &item.kind {
             ResolvedKind::Text { overset_lines, .. } => *overset_lines > 0,
-            ResolvedKind::Table { laid, .. } => laid.cells.iter().any(|c| c.overset_lines > 0),
+            ResolvedKind::Table { laid, .. } => {
+                laid.overset_rows > 0 || laid.cells.iter().any(|c| c.overset_lines > 0)
+            }
             _ => false,
         })
         .filter_map(|item| item.on.and_then(|p| order.get(&p)))

@@ -1289,6 +1289,33 @@ fn cross_references_for(
         .collect()
 }
 
+/// Whether `part` is a frame the table in `head` runs on into.
+fn is_part_of(doc: &Document, part: FrameId, head: FrameId) -> bool {
+    matches!(
+        doc.frame(part).map(|f| &f.kind),
+        Some(FrameKind::TablePart { head: h }) if *h == head
+    )
+}
+
+/// The heights a running table has to fill: its own frame's, then each part
+/// it lists that is still one of its parts.
+fn table_capacities(
+    doc: &Document,
+    head: FrameId,
+    table: &tessera_document::table::Table,
+) -> Vec<f64> {
+    std::iter::once(head)
+        .chain(
+            table
+                .parts
+                .iter()
+                .copied()
+                .filter(|p| is_part_of(doc, *p, head)),
+        )
+        .filter_map(|f| doc.frame(f).map(|f| f.bounds.height))
+        .collect()
+}
+
 /// One frame, resolved.
 ///
 /// Pulled out of the walk so that a master's item can be resolved the same way
@@ -1403,11 +1430,46 @@ fn resolve_one<'a>(
             // method reaches them the same way, and read their markers off
             // the page the table stands on, as a text frame there does.
             let styles = OnPage::new(doc, variables_for(doc, id, on, running));
-            let laid = crate::table::lay_out(table, doc, &styles, shaper, |id| {
-                story_of(doc, composed, id).cloned()
-            });
+            let story = |id| story_of(doc, composed, id).cloned();
+            let laid = if table.parts.is_empty() {
+                crate::table::lay_out(table, doc, &styles, shaper, story)
+            } else {
+                // Running on: this frame shows the first share.
+                let capacities = table_capacities(doc, id, table);
+                crate::table::lay_out_part(table, doc, &styles, shaper, story, &capacities, 0)
+            };
             ResolvedKind::Table {
                 laid,
+                stroke: resolved_stroke(doc, table.stroke.as_ref()),
+            }
+        }
+
+        // A frame a table runs on into: the head's share for this frame, set
+        // with this page's variables. A part its head no longer lists, or
+        // whose head has gone, shows nothing.
+        FrameKind::TablePart { head } => {
+            let Some(FrameKind::Table(table)) = doc.frame(*head).map(|f| &f.kind) else {
+                return None;
+            };
+            let capacities = table_capacities(doc, *head, table);
+            let index = table
+                .parts
+                .iter()
+                .filter(|p| is_part_of(doc, **p, *head))
+                .position(|p| *p == id)?
+                + 1;
+            let styles = OnPage::new(doc, variables_for(doc, id, on, running));
+            let story = |id| story_of(doc, composed, id).cloned();
+            ResolvedKind::Table {
+                laid: crate::table::lay_out_part(
+                    table,
+                    doc,
+                    &styles,
+                    shaper,
+                    story,
+                    &capacities,
+                    index,
+                ),
                 stroke: resolved_stroke(doc, table.stroke.as_ref()),
             }
         }

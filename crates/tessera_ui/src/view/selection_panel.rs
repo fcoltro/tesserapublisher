@@ -32,6 +32,7 @@ pub(crate) fn kind_words(kind: &FrameKind) -> (&'static str, &'static str) {
         FrameKind::Graphic { .. } => ("Picture frame", "picture frames"),
         FrameKind::Path(_) => ("Path", "paths"),
         FrameKind::Table(_) => ("Table", "tables"),
+        FrameKind::TablePart { .. } => ("Table, continued", "tables, continued"),
         FrameKind::Group(_) => ("Group", "groups"),
     }
 }

@@ -389,6 +389,92 @@ mod tests {
     }
 
     #[test]
+    fn a_long_table_flows_onto_new_pages_with_its_heading_on_each_and_undoes_as_one() {
+        use tessera_layout::resolve::ResolvedKind;
+        let mut state = TesseraApp::headless();
+        let pages_before = state.active().document().page_ids().count();
+        let b = state.first_page_bounds();
+        let mut cells = vec![vec!["Item".to_owned(), "Price".to_owned()]];
+        cells.extend((1..=60).map(|n| vec![format!("Thing {n}"), format!("{n}.00")]));
+        apply(
+            &mut state,
+            Command::AddTableFromData {
+                bounds: DocRect {
+                    x: b.x + 36.0,
+                    y: b.y + 36.0,
+                    width: 300.0,
+                    height: 200.0,
+                },
+                cells,
+            },
+        );
+        let id = state.active().selection.single().expect("the table");
+        apply(
+            &mut state,
+            Command::SetTableRegions {
+                id,
+                header: 1,
+                footer: 0,
+            },
+        );
+        apply(&mut state, Command::FlowTable { id });
+
+        let table = table_of(&state, id);
+        assert!(table.parts.len() >= 2, "{} parts", table.parts.len());
+        assert_eq!(
+            state.active().document().page_ids().count(),
+            pages_before + table.parts.len(),
+            "a page for each part"
+        );
+
+        // Every row is somewhere, the heading at the top of each frame.
+        let first_row = |kind: &ResolvedKind| -> Vec<u32> {
+            let ResolvedKind::Table { laid, .. } = kind else {
+                panic!("a table");
+            };
+            let cell = laid
+                .cells
+                .iter()
+                .find(|c| c.row == 0 && c.column == 0)
+                .expect("a first row");
+            cell.shaped
+                .lines
+                .iter()
+                .flat_map(|l| l.glyphs().map(|g| g.glyph_id))
+                .collect()
+        };
+        let resolved = state.resolve_active().clone();
+        let head = resolved.items.iter().find(|i| i.frame == id).expect("head");
+        let heading = first_row(&head.kind);
+        let mut shown = 0;
+        for part in &table.parts {
+            let item = resolved
+                .items
+                .iter()
+                .find(|i| i.frame == *part)
+                .expect("each part is laid out");
+            assert_eq!(first_row(&item.kind), heading, "the heading repeats");
+            let ResolvedKind::Table { laid, .. } = &item.kind else {
+                unreachable!();
+            };
+            shown += laid.row_edges.len() - 2; // less the heading
+            if Some(part) == table.parts.last() {
+                assert_eq!(laid.overset_rows, 0, "nothing left over");
+            }
+        }
+        let ResolvedKind::Table { laid, .. } = &head.kind else {
+            unreachable!();
+        };
+        shown += laid.row_edges.len() - 2;
+        assert_eq!(shown, 60, "each of the sixty rows exactly once");
+
+        // One undo takes the whole flow back.
+        apply(&mut state, Command::Undo);
+        assert!(table_of(&state, id).parts.is_empty());
+        assert_eq!(state.active().document().page_ids().count(), pages_before);
+    }
+
+    #[test]
     fn numbers_sort_as_numbers_and_words_ignore_case() {
         let keys: Vec<String> = ["10", "9", "£4.50", "", "2,50", "1,250"]
             .map(String::from)

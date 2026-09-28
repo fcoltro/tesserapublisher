@@ -286,6 +286,11 @@ pub struct Table {
     pub header_rows: u16,
     #[serde(default)]
     pub footer_rows: u16,
+    /// The frames the table runs on into when its own has no more room, in
+    /// order: each a [`crate::nodes::FrameKind::TablePart`]. Empty, the whole
+    /// table is set in its own frame, as every table was before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<crate::ids::FrameId>,
 }
 
 impl Table {
@@ -416,6 +421,7 @@ pub fn new(
         local: TableLocal::default(),
         header_rows: 0,
         footer_rows: 0,
+        parts: Vec::new(),
     }
 }
 

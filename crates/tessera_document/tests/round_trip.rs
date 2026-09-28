@@ -867,8 +867,9 @@ fn the_format_version_is_twenty_six() {
     // edges and a table's alternating fills, the table's rule and no fill
     // before; 38 a data merge source, none before; 39 the frames taking a
     // merge's pictures, none before; 40 table and cell styles and a table's
-    // heading and footing rows, none before.
-    assert_eq!(format::FORMAT_VERSION, 40);
+    // heading and footing rows, none before; 41 a table running on into
+    // frames of its own, never before.
+    assert_eq!(format::FORMAT_VERSION, 41);
 }
 
 #[test]

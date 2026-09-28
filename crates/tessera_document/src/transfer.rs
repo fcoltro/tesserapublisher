@@ -166,6 +166,19 @@ impl Document {
                     if let Some(s) = &mut table.stroke {
                         transfer.color(&mut s.color);
                     }
+                    // Only the frames it runs on into that came with it: a
+                    // copy claiming the original's would share its rows out
+                    // into frames that show the original's.
+                    table.parts = table
+                        .parts
+                        .iter()
+                        .filter_map(|p| frame_map.get(p).copied())
+                        .collect();
+                }
+                FrameKind::TablePart { head } => {
+                    if let Some(copied) = frame_map.get(head) {
+                        *head = *copied;
+                    }
                 }
                 FrameKind::Graphic { placed: Some(p) } => p.link = transfer.link(p.link),
                 _ => {}

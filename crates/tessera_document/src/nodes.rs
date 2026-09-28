@@ -149,6 +149,14 @@ pub enum FrameKind {
     /// is a thing that can be anchored like any other, so nothing here has to
     /// be unpicked to get there.
     Table(crate::table::Table),
+    /// Where a table runs on: a frame showing the rows of the table in
+    /// `head` that its own frame had no room for, with the heading and
+    /// footing rows repeated. The rows are the head's; this frame only says
+    /// where they go — the head lists its parts in
+    /// [`crate::table::Table::parts`], in order.
+    TablePart {
+        head: FrameId,
+    },
     /// A group of frames, treated as one object.
     ///
     /// Children are held here and **removed from the layer's own list**, so

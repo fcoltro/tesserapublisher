@@ -476,6 +476,7 @@ fn describe_document(state: &mut TesseraApp, _: &Value) -> Result<Value, String>
                 FrameKind::Graphic { .. } => ("graphic", None),
                 FrameKind::Path(_) => ("path", doc.path_text(id).map(|t| t.story)),
                 FrameKind::Table(_) => ("table", None),
+                FrameKind::TablePart { .. } => ("table part", None),
                 FrameKind::Group(_) => ("group", None),
             };
             // Where it is seen, transform included: a frame moved by a

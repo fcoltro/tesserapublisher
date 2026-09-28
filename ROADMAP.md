@@ -3322,9 +3322,27 @@ and running headers (milestone 10).
   quick InDesign way — New from this table or cell, Redefine from it,
   Apply, Rename, Delete. **Left:** a cell style carrying a paragraph
   style for its text; a style editor with every property. Format 40.
-- [ ] 11. **A table runs across frames and pages**, with header and footer
+- [x] 11. **A table runs across frames and pages**, with header and footer
   rows repeated. About a week — the hardest table item, and what long
-  tables and catalogues need.
+  tables and catalogues need. *Done 2026-09-27.* Table ▸ Flow table onto
+  new pages adds a frame a page, where the table's own sits on its page,
+  until every row has room — one undo step; Continue table on the next
+  page adds one, Stop continuing takes the last away. A table lists the
+  frames it runs on into (`Table::parts`), each a new frame kind,
+  `TablePart { head }`, that only says where rows go. The whole table is
+  laid out once for its rows' heights and its body **shared out by
+  height** (`split_rows`): the **heading rows at the top of every frame
+  and the footing rows at the foot**, rows under a cell that spans them
+  kept together, never fewer than one row a frame so a tall row still
+  moves on, and what the last frame cannot hold counted as overset rows —
+  which preflight and the merge report now count. Each share is laid out
+  as a small table of its own, so rules, fills, styles and the page's own
+  variables work unchanged; the **alternating fills are written into the
+  cells first**, or the pattern would restart on every page. A copied
+  table keeps only the parts copied with it. A table with no parts is set
+  as before. **Left:** editing a cell's text from a continued frame (it is
+  edited in the table's own); running on into a frame drawn by hand.
+  Format 41.
 - [ ] 12. **Data merge, several records to a page**: labels, badges and
   catalogue grids. Days.
 - [ ] 13. **Excel (`.xlsx`) as a table and as a merge source.** Days; it

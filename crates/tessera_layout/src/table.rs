@@ -64,6 +64,9 @@ pub struct LaidTable {
     /// Worked out here, once, so the screen and the PDF draw the same rules
     /// rather than each deciding which edges a merged cell hides.
     pub rules: Vec<LaidRule>,
+    /// Rows no frame had room for: counted on the last frame a table runs
+    /// on into, as text overset is counted on the last frame of a thread.
+    pub overset_rows: usize,
 }
 
 /// One straight rule, from one point to another in the frame's own space.
@@ -257,7 +260,147 @@ pub fn lay_out(
         column_edges,
         row_edges,
         rules,
+        overset_rows: 0,
     }
+}
+
+/// One frame's share of a table that runs on across frames: the heading
+/// rows, the body rows that fit, and the footing rows — `index` 0 being the
+/// table's own frame and each after it one of [`Table::parts`], whose
+/// heights are `capacities`, in order.
+///
+/// The whole table is laid out once to learn its rows' heights, and the
+/// body is shared out a frame at a time: as many rows as the frame holds
+/// under its heading and over its footing, and never fewer than one, so a
+/// row taller than a frame still moves on. Rows that share a cell spanning
+/// them go together. What the last frame cannot hold is counted in
+/// [`LaidTable::overset_rows`].
+///
+/// Each share is then laid out as a table of its own, so rules, fills,
+/// styles and the page's variables all work as they do for a whole table.
+/// The alternating fills are written into the cells first: shared out, a
+/// row's turn in the pattern would otherwise restart on every page.
+pub fn lay_out_part(
+    table: &Table,
+    doc: &Document,
+    styles: &dyn tessera_text::story::Styles,
+    shaper: &mut Shaper,
+    mut story_of: impl FnMut(tessera_document::ids::StoryId) -> Option<Story>,
+    capacities: &[f64],
+    index: usize,
+) -> LaidTable {
+    let mut whole = doc.styled_table(table).into_owned();
+    bake_alternating(&mut whole);
+    // Styled already: laying it out again must not style it a second time.
+    whole.style = None;
+    let full = lay_out(&whole, doc, styles, shaper, &mut story_of);
+    let (shares, overset) = split_rows(&whole, &full, capacities);
+    let Some(body) = shares.get(index) else {
+        return LaidTable::default();
+    };
+    let part = part_table(&whole, body.clone());
+    let mut laid = lay_out(&part, doc, styles, shaper, story_of);
+    if index + 1 == capacities.len() {
+        laid.overset_rows = overset;
+    }
+    laid
+}
+
+/// Write each row's turn in the alternating fills into its cells that have
+/// no fill of their own, and stop the pattern.
+fn bake_alternating(table: &mut Table) {
+    let Some(pattern) = table.alternating.take() else {
+        return;
+    };
+    let rows = table.rows();
+    for row in 0..rows {
+        let Some(fill) = pattern.fill_for_row(row, rows).cloned() else {
+            continue;
+        };
+        for column in 0..table.columns() {
+            if let Some(Slot::Cell(cell)) = table.at_mut(row, column)
+                && cell.fill.is_none()
+            {
+                cell.fill = Some(fill.clone());
+            }
+        }
+    }
+}
+
+/// The body rows each frame shows, and how many rows none had room for.
+pub fn split_rows(
+    table: &Table,
+    laid: &LaidTable,
+    capacities: &[f64],
+) -> (Vec<std::ops::Range<usize>>, usize) {
+    let rows = table.rows();
+    let header = usize::from(table.header_rows).min(rows);
+    let footer = usize::from(table.footer_rows).min(rows - header);
+    let heights: Vec<f64> = laid.row_edges.windows(2).map(|w| w[1] - w[0]).collect();
+    let sum = |range: std::ops::Range<usize>| -> f64 {
+        heights.get(range).map_or(0.0, |h| h.iter().sum())
+    };
+    let (head, foot) = (sum(0..header), sum(rows - footer..rows));
+
+    // The body in pieces that cannot be split: a boundary a cell spans
+    // across keeps the rows either side of it together.
+    let owners = table.owners();
+    let columns = table.columns();
+    let breakable = |row: usize| {
+        (0..columns).all(|c| {
+            let (above, below) = (owners[row * columns + c], owners[(row + 1) * columns + c]);
+            above.is_none() || above != below
+        })
+    };
+    let body = header..rows - footer;
+    let mut units = Vec::new();
+    let mut start = body.start;
+    for row in body.clone() {
+        if row + 1 == body.end || breakable(row) {
+            units.push(start..row + 1);
+            start = row + 1;
+        }
+    }
+
+    let mut shares = Vec::with_capacity(capacities.len());
+    let mut next = 0;
+    for capacity in capacities {
+        let room = capacity - head - foot;
+        let begin = units.get(next).map_or(body.end, |u| u.start);
+        let mut end = begin;
+        let mut used = 0.0;
+        while let Some(unit) = units.get(next) {
+            let height = sum(unit.clone());
+            if end > begin && used + height > room + 1e-6 {
+                break;
+            }
+            used += height;
+            end = unit.end;
+            next += 1;
+        }
+        shares.push(begin..end);
+    }
+    let left = units.get(next).map_or(0, |u| body.end - u.start);
+    (shares, left)
+}
+
+/// The heading rows, the body rows `body`, and the footing rows, as a table
+/// of their own.
+fn part_table(table: &Table, body: std::ops::Range<usize>) -> Table {
+    let rows = table.rows();
+    let header = usize::from(table.header_rows).min(rows);
+    let footer = usize::from(table.footer_rows).min(rows - header);
+    let chosen: Vec<usize> = (0..header).chain(body).chain(rows - footer..rows).collect();
+    let columns = table.columns();
+    let mut part = table.clone();
+    part.rows = chosen.iter().map(|&r| table.rows[r]).collect();
+    part.cells = chosen
+        .iter()
+        .flat_map(|&r| (0..columns).map(move |c| r * columns + c))
+        .map(|i| table.cells[i].clone())
+        .collect();
+    part.parts = Vec::new();
+    part
 }
 
 /// Every rule the table draws, as straight runs.
@@ -553,6 +696,39 @@ mod tests {
     }
 
     #[test]
+    fn a_running_table_shares_its_body_by_height_keeps_spans_together_and_counts_the_rest() {
+        let (doc, mut table) = a_table(10, 2, "x");
+        // Every row twenty points, whatever the text needs.
+        table.rows = vec![20.0; 10];
+        table.header_rows = 1;
+        let laid = lay(&doc, &table);
+        assert!(
+            laid.row_edges
+                .windows(2)
+                .all(|w| (w[1] - w[0] - 20.0).abs() < 1e-9)
+        );
+
+        // Seventy points a frame: the heading takes twenty, two body rows fit.
+        let (shares, left) = split_rows(&table, &laid, &[70.0, 70.0, 70.0]);
+        assert_eq!(shares, [1..3, 3..5, 5..7]);
+        assert_eq!(left, 3, "rows 7, 8 and 9 have nowhere to go");
+
+        // A cell over rows 3 and 4 keeps them together, even where the pair
+        // is taller than the room: a frame always takes something.
+        table.merge(
+            3,
+            0,
+            Span {
+                columns: 1,
+                rows: 2,
+            },
+        );
+        let laid = lay(&doc, &table);
+        let (shares, _) = split_rows(&table, &laid, &[50.0, 50.0, 50.0, 50.0]);
+        assert_eq!(shares, [1..2, 2..3, 3..5, 5..6]);
+    }
+
+    #[test]
     fn a_cell_spanning_rows_is_given_room_by_the_last_row_it_covers() {
         // Growing the first row instead would move every boundary below it,
         // undoing measurements already taken.
@@ -600,6 +776,7 @@ mod tests {
             local: tessera_document::table::TableLocal::default(),
             header_rows: 0,
             footer_rows: 0,
+            parts: Vec::new(),
         };
         let laid = lay(&doc, &table);
         assert_eq!(laid.size(), (0.0, 0.0));

@@ -77,8 +77,10 @@ pub fn overset_text(doc: &Document, shaper: &mut Shaper) -> Vec<Problem> {
                 }
                 *overset_lines
             }
+            // Lines a cell could not hold, and rows no frame of a table
+            // running on had room for — each a line the reader never sees.
             tessera_layout::ResolvedKind::Table { laid, .. } => {
-                laid.cells.iter().map(|c| c.overset_lines).sum()
+                laid.cells.iter().map(|c| c.overset_lines).sum::<usize>() + laid.overset_rows
             }
             tessera_layout::ResolvedKind::Path {
                 text: Some((text, _)),

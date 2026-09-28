@@ -2886,8 +2886,10 @@ impl Document {
             | FrameKind::Text { .. }
             | FrameKind::Graphic { .. }
             // A table is a box too. Its cells are drawn inside it; the frame
-            // is what has an outline, a wrap and a shadow.
-            | FrameKind::Table(_) => rect.to_path(ACCURACY),
+            // is what has an outline, a wrap and a shadow; so is a frame the
+            // table runs on into.
+            | FrameKind::Table(_)
+            | FrameKind::TablePart { .. } => rect.to_path(ACCURACY),
             FrameKind::Ellipse => kurbo::Ellipse::from_rect(rect).to_path(ACCURACY),
             FrameKind::Path(p) => {
                 let mut placed = crate::path::fit_to_bounds(p, b);
@@ -3158,7 +3160,8 @@ fn hits(frame: &Frame, point: DocPoint, tolerance: f64) -> bool {
         | FrameKind::Graphic { .. }
         // Clickable anywhere inside, including a cell that is still empty —
         // which is every cell of a table somebody has just drawn.
-        | FrameKind::Table(_) => grown(bounds, tolerance).contains(local),
+        | FrameKind::Table(_)
+        | FrameKind::TablePart { .. } => grown(bounds, tolerance).contains(local),
 
         FrameKind::Ellipse => {
             let (rx, ry) = (

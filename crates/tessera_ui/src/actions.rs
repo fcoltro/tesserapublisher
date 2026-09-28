@@ -360,6 +360,11 @@ pub enum Run {
     PlaceDataAsTable,
     /// Table and cell styles.
     TableStyles,
+    /// Run the table in hand on into a frame on the next page, over as many
+    /// pages as it needs, or stop the last one.
+    ContinueTable,
+    FlowTable,
+    StopContinuingTable,
 }
 
 /// When an action may be reached from the keyboard.
@@ -458,7 +463,10 @@ pub fn guard(run: Run) -> Guard {
         | Run::ConvertTableToText
         | Run::SortRows { .. }
         | Run::PlaceDataAsTable
-        | Run::TableStyles => Guard::Always,
+        | Run::TableStyles
+        | Run::ContinueTable
+        | Run::FlowTable
+        | Run::StopContinuingTable => Guard::Always,
         // Only useful while typing, like the table commands.
         Run::Insert(_) => Guard::Always,
         Run::Command(
@@ -932,6 +940,24 @@ pub fn all() -> &'static [Action] {
             None,
             Group::Table,
             Run::TableStyles,
+        ),
+        a(
+            "Flow table onto new pages",
+            None,
+            Group::Table,
+            Run::FlowTable,
+        ),
+        a(
+            "Continue table on the next page",
+            None,
+            Group::Table,
+            Run::ContinueTable,
+        ),
+        a(
+            "Stop continuing table",
+            None,
+            Group::Table,
+            Run::StopContinuingTable,
         ),
         a("Delete", Some("Del"), Group::Edit, Command(Delete)),
         a(
@@ -1468,6 +1494,20 @@ fn editing_cell(
     Some((*id, row, column))
 }
 
+/// The table the caret is in or that is selected — the head, when what is
+/// selected is a frame the table runs on into.
+fn table_in_hand(state: &crate::app::TesseraApp) -> Option<tessera_document::ids::FrameId> {
+    use tessera_document::nodes::FrameKind;
+    let id = editing_cell(state)
+        .map(|(id, _, _)| id)
+        .or_else(|| state.active().selection.single())?;
+    match state.active().document().frame(id).map(|f| &f.kind) {
+        Some(FrameKind::Table(_)) => Some(id),
+        Some(FrameKind::TablePart { head }) => Some(*head),
+        _ => None,
+    }
+}
+
 pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
     use crate::command::{Command, apply};
 
@@ -1775,6 +1815,18 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
 
         Run::PlaceDataAsTable => crate::file_ops::place_data_as_table(state),
         Run::TableStyles => state.table_styles.open = true,
+        Run::ContinueTable | Run::FlowTable | Run::StopContinuingTable => {
+            if let Some(id) = table_in_hand(state) {
+                crate::apply(
+                    state,
+                    match run {
+                        Run::ContinueTable => crate::Command::ContinueTable { id },
+                        Run::FlowTable => crate::Command::FlowTable { id },
+                        _ => crate::Command::StopContinuingTable { id },
+                    },
+                );
+            }
+        }
 
         Run::TableOptions => {
             let mut window = std::mem::take(&mut state.table_options);

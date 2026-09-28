@@ -168,6 +168,7 @@ pub fn describe(document: &Document, id: FrameId) -> &'static str {
         Some(FrameKind::Graphic { placed: None }) => "Empty graphic frame",
         Some(FrameKind::Path(_)) => "Path",
         Some(FrameKind::Table(_)) => "Table",
+        Some(FrameKind::TablePart { .. }) => "Table, continued",
         Some(FrameKind::Group(_)) => "Group",
         None => "Object",
     }

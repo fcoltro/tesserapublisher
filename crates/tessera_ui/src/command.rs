@@ -121,6 +121,19 @@ pub enum Command {
         header: u16,
         footer: u16,
     },
+    /// Run a table on into a new frame on the next page, its heading and
+    /// footing rows repeated there — making the page if there is none.
+    ContinueTable {
+        id: FrameId,
+    },
+    /// Run a table on over as many new pages as its rows need.
+    FlowTable {
+        id: FrameId,
+    },
+    /// Take away the last frame a table runs on into; its rows go back.
+    StopContinuingTable {
+        id: FrameId,
+    },
     /// Give a table's columns their widths and its rows their minimum
     /// heights, as dragging their edges does. The frame is kept as wide as
     /// its grid.
@@ -1091,6 +1104,76 @@ fn finish_table_edit(
     state.active_mut().editing_cell = None;
 }
 
+/// Add a frame on the page after the last one `id`'s table runs into, where
+/// the table's own frame sits on its page, and run the table on into it.
+/// The page is made when there is none. The new frame's id.
+fn continue_table(state: &mut TesseraApp, id: FrameId) -> Option<FrameId> {
+    let doc = state.active().document();
+    let head = doc.frame(id)?.clone();
+    let FrameKind::Table(table) = &head.kind else {
+        return None;
+    };
+    let last = table
+        .parts
+        .iter()
+        .rev()
+        .find(|p| doc.frame(**p).is_some())
+        .copied()
+        .unwrap_or(id);
+    let pages: Vec<tessera_document::ids::PageId> = doc.page_ids().collect();
+    let head_page = doc.page_of_frame(id)?;
+    let at = pages
+        .iter()
+        .position(|p| Some(*p) == doc.page_of_frame(last))?;
+    let origin = doc.pages.get(head_page)?.bounds;
+    let next = match pages.get(at + 1) {
+        Some(page) => *page,
+        None => state.active_mut().document_mut().add_page(),
+    };
+    let page = state.active().document().pages.get(next)?.bounds;
+    let bounds = DocRect {
+        x: page.x + (head.bounds.x - origin.x),
+        y: page.y + (head.bounds.y - origin.y),
+        width: head.bounds.width,
+        height: head.bounds.height,
+    };
+    add(state, bounds, FrameKind::TablePart { head: id }, Look::Bare);
+    let part = state.active().selection.single()?;
+    if let Some(frame) = state.active_mut().document_mut().frame_mut(id)
+        && let FrameKind::Table(table) = &mut frame.kind
+    {
+        table.parts.push(part);
+    }
+    // The table stays the thing in hand.
+    state.active_mut().selection.set(id);
+    Some(part)
+}
+
+/// Whether `id`'s table has rows no frame has room for: taller than its own
+/// frame when it runs on into nothing, or rows left over after its last.
+fn table_needs_room(state: &mut TesseraApp, id: FrameId) -> bool {
+    use tessera_layout::resolve::ResolvedKind;
+    let Some(head) = state.active().document().frame(id).cloned() else {
+        return false;
+    };
+    let FrameKind::Table(table) = &head.kind else {
+        return false;
+    };
+    let last = table.parts.last().copied();
+    let resolved = state.resolve_active();
+    match last {
+        None => resolved.items.iter().any(|item| {
+            item.frame == id
+                && matches!(&item.kind, ResolvedKind::Table { laid, .. }
+                    if laid.size().1 > head.bounds.height + 0.5)
+        }),
+        Some(last) => resolved.items.iter().any(|item| {
+            item.frame == last
+                && matches!(&item.kind, ResolvedKind::Table { laid, .. } if laid.overset_rows > 0)
+        }),
+    }
+}
+
 /// Put a table back whose cells are all where they were — a rule, a fill, a
 /// size changed. Unlike [`finish_table_edit`] the cell being edited is still
 /// there, so the caret stays in it.
@@ -1428,6 +1511,41 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                     cell.local = tessera_document::table::CellLocal::default();
                 }
             }
+            replace_table(state, id, table);
+        }
+
+        Command::ContinueTable { id } => {
+            continue_table(state, id);
+        }
+
+        Command::FlowTable { id } => {
+            // A page a time until nothing is left over, and never more than
+            // a long book's worth: a row taller than any page would
+            // otherwise ask for pages for ever.
+            let mut added = 0;
+            while added < 500 && table_needs_room(state, id) {
+                if continue_table(state, id).is_none() {
+                    break;
+                }
+                added += 1;
+            }
+            state.status = Some(crate::app::Status::info(match added {
+                0 => "The table fits: nothing to flow.".to_owned(),
+                1 => "The table runs on over one more page.".to_owned(),
+                n => format!("The table runs on over {n} more pages."),
+            }));
+        }
+
+        Command::StopContinuingTable { id } => {
+            let Some(FrameKind::Table(mut table)) =
+                state.active().document().frame(id).map(|f| f.kind.clone())
+            else {
+                return;
+            };
+            let Some(last) = table.parts.pop() else {
+                return;
+            };
+            state.active_mut().document_mut().remove_frame(last);
             replace_table(state, id, table);
         }
 

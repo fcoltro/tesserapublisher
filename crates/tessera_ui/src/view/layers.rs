@@ -121,6 +121,7 @@ pub(crate) fn describe(
         FrameKind::Ellipse => (Icon::Ellipse, "Ellipse".to_string()),
         FrameKind::Path(_) => (Icon::Pen, "Path".to_string()),
         FrameKind::Table(_) => (Icon::Table, "Table".to_string()),
+        FrameKind::TablePart { .. } => (Icon::Table, "Table, continued".to_string()),
         FrameKind::Group(children) => (Icon::Group, format!("Group of {}", children.len())),
     }
 }
