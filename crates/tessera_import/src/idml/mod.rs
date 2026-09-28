@@ -819,7 +819,7 @@ impl Items<'_> {
             )),
         };
 
-        let wrap = text_wrap(node, dropped);
+        let wrap = text_wrap(node);
         let layer = attr(node, "ItemLayer")
             .and_then(|l| self.layers.get(l))
             .copied()
@@ -973,12 +973,9 @@ fn bez_path(points: &[PathPoint], local: DocRect, open: bool) -> kurbo::BezPath 
 }
 
 /// `<TextWrapPreference TextWrapMode="…" TextWrapSide="…">` with its
-/// offsets.
-///
-/// A side named against the spine is dropped out loud and read as the
-/// largest area: which side the spine is on is a fact about the page the
-/// object lands on, and the wrap is a fact about the object.
-fn text_wrap(node: Node, dropped: &mut Dropped) -> tessera_document::nodes::TextWrap {
+/// offsets. A side named against the spine comes across as one: which side
+/// that is, the layout decides from the page the object lands on.
+fn text_wrap(node: Node) -> tessera_document::nodes::TextWrap {
     use tessera_document::nodes::{TextWrap, WrapTo};
     let Some(pref) = child(node, "TextWrapPreference") else {
         return TextWrap::None;
@@ -987,10 +984,8 @@ fn text_wrap(node: Node, dropped: &mut Dropped) -> tessera_document::nodes::Text
         Some("BothSides") => WrapTo::Both,
         Some("LeftSide") => WrapTo::Left,
         Some("RightSide") => WrapTo::Right,
-        Some("SideTowardsSpine") | Some("SideAwayFromSpine") => {
-            dropped.note("a text wrap side named against the spine (read as the largest area)");
-            WrapTo::Largest
-        }
+        Some("SideTowardsSpine") => WrapTo::TowardsSpine,
+        Some("SideAwayFromSpine") => WrapTo::AwayFromSpine,
         _ => WrapTo::Largest,
     };
     let offset = child(pref, "Properties")

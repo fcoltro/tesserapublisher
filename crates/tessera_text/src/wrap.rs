@@ -41,6 +41,35 @@ pub enum WrapTo {
     Left,
     /// Only the gaps to the object's right.
     Right,
+    /// The side facing the spine: the left on a right-hand page, the right
+    /// on a left-hand one. Named by the page, so an object moved to the
+    /// facing page keeps its text on the inside.
+    TowardsSpine,
+    /// The side facing the page's outer edge.
+    AwayFromSpine,
+}
+
+#[cfg(test)]
+#[test]
+fn a_spine_side_is_left_on_a_right_hand_page_and_right_on_a_left_hand_one() {
+    assert_eq!(WrapTo::TowardsSpine.on_page(true), WrapTo::Left);
+    assert_eq!(WrapTo::TowardsSpine.on_page(false), WrapTo::Right);
+    assert_eq!(WrapTo::AwayFromSpine.on_page(true), WrapTo::Right);
+    assert_eq!(WrapTo::AwayFromSpine.on_page(false), WrapTo::Left);
+    assert_eq!(WrapTo::Both.on_page(false), WrapTo::Both);
+}
+
+impl WrapTo {
+    /// The side meant on a right-hand page (`recto`) or a left-hand one.
+    /// The layout asks this, since only it knows which the page is; the
+    /// breaker sees only left, right, both or the largest.
+    pub fn on_page(self, recto: bool) -> WrapTo {
+        match (self, recto) {
+            (WrapTo::TowardsSpine, true) | (WrapTo::AwayFromSpine, false) => WrapTo::Left,
+            (WrapTo::TowardsSpine, false) | (WrapTo::AwayFromSpine, true) => WrapTo::Right,
+            (other, _) => other,
+        }
+    }
 }
 
 /// What of an obstacle a line has to keep clear of.
@@ -174,11 +203,16 @@ pub fn available_runs(
     }
     gaps.into_iter()
         .filter(|&(from, width)| {
-            crossing.iter().all(|o| match o.sides {
+            // A spine side the layout did not resolve is read as on a
+            // right-hand page, where every page of a book without facing
+            // pages stands.
+            crossing.iter().all(|o| match o.sides.on_page(true) {
                 WrapTo::Both => true,
                 WrapTo::Left => from + width <= o.x + 1e-6,
                 WrapTo::Right => from >= o.x + o.width - 1e-6,
-                WrapTo::Largest => unreachable!("handled above"),
+                WrapTo::Largest | WrapTo::TowardsSpine | WrapTo::AwayFromSpine => {
+                    unreachable!("the largest is handled above; spine sides are resolved")
+                }
             })
         })
         .collect()

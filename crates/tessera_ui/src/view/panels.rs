@@ -2836,6 +2836,8 @@ fn wrap_controls(
             WrapTo::Both => "Both sides",
             WrapTo::Left => "Left side",
             WrapTo::Right => "Right side",
+            WrapTo::TowardsSpine => "Side towards spine",
+            WrapTo::AwayFromSpine => "Side away from spine",
         };
         property_field(ui, "Wrap to", |ui| {
             crate::icons::reads_as(
@@ -2843,7 +2845,14 @@ fn wrap_controls(
                     .width(ui.available_width())
                     .selected_text(name(sides))
                     .show_ui(ui, |ui| {
-                        for choice in [WrapTo::Largest, WrapTo::Both, WrapTo::Left, WrapTo::Right] {
+                        for choice in [
+                            WrapTo::Largest,
+                            WrapTo::Both,
+                            WrapTo::Left,
+                            WrapTo::Right,
+                            WrapTo::TowardsSpine,
+                            WrapTo::AwayFromSpine,
+                        ] {
                             if ui
                                 .selectable_value(&mut sides, choice, name(choice))
                                 .changed()

@@ -680,7 +680,9 @@ fn obstacles_for(
                 width,
                 height,
                 shape,
-                sides: wrap.sides(),
+                // Towards or away from the spine means left or right by the
+                // page the object stands on.
+                sides: wrap.sides().on_page(doc.is_recto(page)),
             });
         }
     }

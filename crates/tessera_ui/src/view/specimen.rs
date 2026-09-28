@@ -499,11 +499,11 @@ pub(crate) fn object(
                         Rect::from_min_max(line.min, egui::pos2(clear.left(), line.bottom()));
                     let right = Rect::from_min_max(egui::pos2(clear.right(), line.top()), line.max);
                     let keep = |r: Rect| (r.width() >= 12.0).then_some(r);
-                    match wrap.sides() {
+                    match wrap.sides().on_page(true) {
                         WrapTo::Both => [keep(left), keep(right)].into_iter().flatten().collect(),
                         WrapTo::Left => keep(left).into_iter().collect(),
                         WrapTo::Right => keep(right).into_iter().collect(),
-                        WrapTo::Largest => {
+                        WrapTo::Largest | WrapTo::TowardsSpine | WrapTo::AwayFromSpine => {
                             let wider = if left.width() > right.width() {
                                 left
                             } else {

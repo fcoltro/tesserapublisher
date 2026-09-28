@@ -1017,6 +1017,25 @@ impl Document {
         self.revision += 1;
     }
 
+    /// Whether `page` is a right-hand page, with the spine on its left.
+    ///
+    /// Without facing pages every page is one, as InDesign counts them. With
+    /// them, a page in the reading order is a recto when it is odd-numbered,
+    /// and a parent's page when it is the right of its spread's two.
+    pub fn is_recto(&self, page: PageId) -> bool {
+        if !self.setup.facing_pages {
+            return true;
+        }
+        if let Some(i) = self.page_ids().position(|p| p == page) {
+            return i.is_multiple_of(2);
+        }
+        let Some(spread) = self.spread_of(page) else {
+            return true;
+        };
+        let pages = self.pages_of(spread);
+        pages.len() < 2 || pages.last() == Some(&page)
+    }
+
     /// Whether this spread's first page is odd-numbered in the reading order.
     ///
     /// Odd is a recto: the right-hand page of an opened book. Counted rather

@@ -1695,6 +1695,8 @@ fn object_wrap(ui: &mut Ui, format: &mut ObjectFormat, lineage: &Lineage<ObjectF
                     (style_ui::Segment::Text("Both"), WrapTo::Both),
                     (style_ui::Segment::Text("Left"), WrapTo::Left),
                     (style_ui::Segment::Text("Right"), WrapTo::Right),
+                    (style_ui::Segment::Text("Spine"), WrapTo::TowardsSpine),
+                    (style_ui::Segment::Text("Outside"), WrapTo::AwayFromSpine),
                 ],
                 false,
             );

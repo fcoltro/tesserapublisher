@@ -3412,8 +3412,11 @@ below are its items 1 to 3.
   of the `deepen` that reads a number back into a key.
 - [x] 3. **Text variables: file name, date, last page number**
   (milestone 10). *Done 2026-09-27, as milestone 15's item 1.*
-- [ ] 4. **Facing-page sides named inside and outside** against the spine
-  (milestone 4).
+- [x] 4. **Facing-page sides named inside and outside** against the spine
+  (milestone 4). *Done 2026-09-27:* wrap to "Side towards spine" and "Side
+  away from spine", resolved to left or right by the page the object stands
+  on (`WrapTo::on_page`, `Document::is_recto`); IDML's spine sides now
+  import instead of being dropped.
 
 ### Tier 2 — about a day each
 
