@@ -488,10 +488,48 @@ pub struct Justification {
     pub glyph_desired: f32,
     #[serde(default = "full_width")]
     pub glyph_max: f32,
+    /// What a justified line holding a single word does with its room.
+    #[serde(default)]
+    pub single_word: SingleWord,
 }
 
 fn full_width() -> f32 {
     100.0
+}
+
+/// Where a justified line with one word and no spaces puts it: InDesign's
+/// Single Word Justification.
+///
+/// **Full justify by default**, as InDesign has it: the word's letters,
+/// then its glyphs, take the slack. The others set the word as the
+/// paragraph's other alignments would and leave the room beside it — a
+/// long word spread letter by letter across a narrow column is often the
+/// worse sight.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SingleWord {
+    #[default]
+    Full,
+    Left,
+    Centre,
+    Right,
+}
+
+impl SingleWord {
+    pub const ALL: [SingleWord; 4] = [
+        SingleWord::Full,
+        SingleWord::Left,
+        SingleWord::Centre,
+        SingleWord::Right,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SingleWord::Full => "Full justify",
+            SingleWord::Left => "Align left",
+            SingleWord::Centre => "Align centre",
+            SingleWord::Right => "Align right",
+        }
+    }
 }
 
 impl Default for Justification {
@@ -508,6 +546,7 @@ impl Default for Justification {
             glyph_min: 100.0,
             glyph_desired: 100.0,
             glyph_max: 100.0,
+            single_word: SingleWord::Full,
         }
     }
 }

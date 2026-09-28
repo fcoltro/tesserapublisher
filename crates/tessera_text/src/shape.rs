@@ -489,8 +489,8 @@ pub(crate) fn cluster_shifts(
 
     let mut glyphs = Vec::new();
     let mut clusters = Vec::new();
-    let mut shift = 0.0f64;
-    let mut any = false;
+    let mut shift = spacing.lead;
+    let mut any = spacing.lead != 0.0;
     for (index, (range, n, space, kern, advance)) in all.iter().enumerate() {
         clusters.push((range.start, shift));
         glyphs.extend(std::iter::repeat_n(shift, *n));
@@ -1013,6 +1013,9 @@ pub(crate) struct LineSpacing {
     /// width: 0.02 draws each glyph two percent wider and moves what
     /// follows by as much. Negative narrows. Zero is nearly every line.
     pub stretch: f64,
+    /// How far the whole line moves along before its first glyph: a
+    /// single word a justified paragraph centres or sets right.
+    pub lead: f64,
 }
 
 /// One thing the breaker counts: a cluster, or an in-flow inline box.
@@ -1504,16 +1507,39 @@ fn break_lines_with_room(
 
         // What the line does with its slack.
         let slack = room - ink;
-        let gaps = take.saturating_sub(1) as f64;
+        // The gaps letter spacing goes into: between the line's clusters up
+        // to its last ink, which is where `cluster_shifts` puts it. A
+        // trailing space takes none, and counting it would leave every
+        // letter-spaced line short by one gap's share.
+        let end = (i + take).min(units.len());
+        let gaps = units[i..end]
+            .iter()
+            .rposition(|u| u.kind != UnitKind::Space)
+            .unwrap_or(0) as f64;
         let base_word = space_width * (desired - 1.0);
         let mut spacing = LineSpacing {
             word: base_word,
             letter: 0.0,
             stretch: f64::from(rules.glyph_desired) / 100.0 - 1.0,
+            lead: 0.0,
         };
+        // A line of one word with room to spare, when the rules say it is
+        // not to be spread: set as the chosen alignment would set it.
+        let single = composition.justify
+            && !is_last
+            && spaces_on_line == 0
+            && slack > 1e-6
+            && rules.single_word != crate::story::SingleWord::Full;
+        if single {
+            spacing.lead = match rules.single_word {
+                crate::story::SingleWord::Centre => slack / 2.0,
+                crate::story::SingleWord::Right => slack,
+                _ => 0.0,
+            };
+        }
         // The last line is set as it falls — unless it was pulled up by
         // squeezing its spaces, in which case the squeeze is owed.
-        if composition.justify && (!is_last || slack < 0.0) && slack.abs() > 1e-6 {
+        if !single && composition.justify && (!is_last || slack < 0.0) && slack.abs() > 1e-6 {
             let n = spaces_on_line as f64;
             let per = |percent: f32| space_width * f64::from(percent) / 100.0;
             let (word_lo, word_hi) = (
@@ -4687,6 +4713,86 @@ mod tests {
     }
 
     #[test]
+    fn a_justified_line_of_one_word_goes_where_the_rules_say() {
+        // Two long words, a measure twenty points wider than one: the first
+        // line holds one word and has twenty points to do something with.
+        use crate::story::{Justification, SingleWord};
+        const TEXT: &str = "Unquestionably unquestionably";
+        let plain = Shaper::new().shape(
+            &Story::new("Unquestionably"),
+            &NoStyles::default(),
+            10_000.0,
+        );
+        let word = ink_end(&plain.lines[0]);
+        let measure = word + 20.0;
+        let set = |single_word| {
+            let rules = Justification {
+                letter_max: 500.0,
+                single_word,
+                ..Justification::default()
+            };
+            justified(TEXT, measure, Some(rules))
+        };
+        let start = |shaped: &ShapedText| shaped.lines[0].glyphs().next().expect("a glyph").x;
+        // Where the word ends: the space after it hangs, and is not ink.
+        let word_end = |line: &ShapedLine| {
+            let g: Vec<_> = line.glyphs().collect();
+            g[..g.len() - 1]
+                .iter()
+                .map(|g| g.x + g.advance)
+                .fold(0.0, f64::max)
+        };
+
+        let full = set(SingleWord::Full);
+        assert_eq!(full.lines.len(), 2, "one word to a line");
+        assert!(start(&full).abs() < 1e-6);
+        assert!(
+            (word_end(&full.lines[0]) - measure).abs() < 0.5,
+            "spread flush: {} of {measure}; {} glyphs, {:?}",
+            word_end(&full.lines[0]),
+            full.lines[0].glyphs().count(),
+            full.lines[0].range
+        );
+
+        let left = set(SingleWord::Left);
+        assert!(start(&left).abs() < 1e-6);
+        assert!(
+            (word_end(&left.lines[0]) - word).abs() < 1e-6,
+            "left at its own width"
+        );
+
+        let centre = set(SingleWord::Centre);
+        assert!((start(&centre) - 10.0).abs() < 1e-6, "{}", start(&centre));
+        assert!((word_end(&centre.lines[0]) - word - 10.0).abs() < 1e-6);
+
+        let right = set(SingleWord::Right);
+        assert!((start(&right) - 20.0).abs() < 1e-6, "{}", start(&right));
+        assert!(
+            (word_end(&right.lines[0]) - measure).abs() < 1e-6,
+            "flush right"
+        );
+        // The caret agrees with the glyphs it stands before.
+        let caret = right
+            .caret_geometry(
+                crate::edit::TextCursor {
+                    position: 0,
+                    anchor: 0,
+                },
+                1.0,
+            )
+            .caret
+            .expect("a caret");
+        assert!(
+            (caret.x0 - 20.0).abs() < 0.5,
+            "the caret moved too: {}",
+            caret.x0
+        );
+
+        // The last line, as ever, is set as it falls.
+        assert!(right.lines[1].glyphs().next().expect("a glyph").x.abs() < 1e-6);
+    }
+
+    #[test]
     fn glyph_scaling_fills_a_line_the_spaces_may_not() {
         // Words and letters pinned; glyphs may grow to 120%. The line is
         // still flush at the measure — by every glyph growing the same
@@ -5335,6 +5441,7 @@ mod tests {
             glyph_min: 100.0,
             glyph_desired: 100.0,
             glyph_max: 100.0,
+            single_word: crate::story::SingleWord::Full,
         }
     }
 

@@ -1970,6 +1970,17 @@ pub(crate) fn justification_editor(
             }
         });
     }
+    ui.label("Single word");
+    let before = j.single_word;
+    egui::ComboBox::from_id_salt(("single-word", ui.id()))
+        .width(ui.available_width())
+        .selected_text(j.single_word.label())
+        .show_ui(ui, |ui| {
+            for choice in tessera_text::story::SingleWord::ALL {
+                ui.selectable_value(&mut j.single_word, choice, choice.label());
+            }
+        });
+    changed |= j.single_word != before;
     // Kept in order: a minimum above its maximum is not a setting anyone
     // means, and the breaker would only refuse to squeeze.
     if changed {

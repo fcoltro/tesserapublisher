@@ -2424,7 +2424,13 @@ and not a list of controls.
     vello's glyph transform, in the PDF the text matrix, so `/W` keeps the
     natural widths. Two tests: a line the spaces may not fill comes out
     flush by growth, and a line two points short takes its word by
-    narrowing. **Not built:** single-word justification.
+    narrowing. **Single-word justification is built (2026-09-28):**
+    `Justification.single_word` (format 43) — full justify, the default,
+    or the word set left, centred or right on its line, by a lead
+    (`LineSpacing::lead`) the glyphs and the caret both take. Building it
+    found that letter spacing was shared over one gap too many, the
+    trailing space's, so every letter-spaced line stopped short of the
+    measure by a gap's share.
   - **A kern is on the brush, not in the letter spacing, and that is the
     finding.** Milestone 2 recorded that tracking one letter of a kerned pair
     made it *wider* and did not know why. The cause: parley starts a new
@@ -3438,7 +3444,9 @@ below are its items 1 to 3.
   page or all, live during an edge drag and one undo step.
 - [x] 7. **Chapter number as a variable, and a variable in a table cell**
   (milestone 10). *Done 2026-09-27, as milestone 15's items 2 and 3.*
-- [ ] 8. **Single-word justification** (milestone 9).
+- [x] 8. **Single-word justification** (milestone 9). *Done 2026-09-28:*
+  full, left, centre or right, in the Justification rules; and a
+  letter-spacing shortfall it uncovered is fixed.
 - [ ] 9. **The story editor shows styles** (milestone 12).
 
 ### Tier 3 — days each

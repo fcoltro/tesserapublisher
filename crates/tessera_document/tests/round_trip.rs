@@ -441,6 +441,7 @@ fn body_copy_formatting_survives_a_save_and_load() {
         glyph_min: 98.0,
         glyph_desired: 100.0,
         glyph_max: 103.0,
+        single_word: tessera_text::story::SingleWord::Centre,
     };
     let hyphenation = tessera_text::story::Hyphenation {
         min_word: 6,
@@ -869,8 +870,9 @@ fn the_format_version_is_twenty_six() {
     // merge's pictures, none before; 40 table and cell styles and a table's
     // heading and footing rows, none before; 41 a table running on into
     // frames of its own, never before; 42 a placed PDF's page and the box it
-    // is cut to, the first page's crop box before.
-    assert_eq!(format::FORMAT_VERSION, 42);
+    // is cut to, the first page's crop box before; 43 single-word
+    // justification, full justify before.
+    assert_eq!(format::FORMAT_VERSION, 43);
 }
 
 #[test]
