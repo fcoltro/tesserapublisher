@@ -2873,8 +2873,11 @@ which cost one afternoon's confusion and a namespace check.
   smallest edit the two texts disagree on — common prefix, common suffix —
   through the story's own operations, so formatting either side survives
   and a marker taken out takes its frame. Find and Change's replacements
-  now go through the same anchor-aware path. Not built: styles shown in
-  the editor, and a live link between the box and the page.
+  now go through the same anchor-aware path. **2026-09-28:** each
+  paragraph's style is named in a margin beside it, `+` for an override,
+  carried through the draft by the diff that applies it (`draft_styles`),
+  so a paragraph typed inside another is named as it will be set. Not
+  built: a live link between the box and the page.
 - [x] **Check spelling** (added 2026-09-14, after milestone 12).
   `tessera_text::spell` reads Hunspell dictionaries — the `.dic` word list
   and the `.aff` prefix and suffix rules, in all three flag encodings, with
@@ -3447,7 +3450,8 @@ below are its items 1 to 3.
 - [x] 8. **Single-word justification** (milestone 9). *Done 2026-09-28:*
   full, left, centre or right, in the Justification rules; and a
   letter-spacing shortfall it uncovered is fixed.
-- [ ] 9. **The story editor shows styles** (milestone 12).
+- [x] 9. **The story editor shows styles** (milestone 12). *Done
+  2026-09-28:* paragraph style names in a margin, with overrides marked.
 
 ### Tier 3 — days each
 
