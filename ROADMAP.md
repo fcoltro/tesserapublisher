@@ -3284,9 +3284,26 @@ and running headers (milestone 10).
   is not an edit and never makes the document unsaved. A file that cannot
   be read is said and names nothing. Picture fields (`@Photo`) are listed,
   and placed by item 9. Format 38.
-- [ ] 9. **Data merge, the output**: one copy of the pages per record, into a
+- [x] 9. **Data merge, the output**: one copy of the pages per record, into a
   new document or straight to PDF; image fields; lines left empty by an
-  empty field removed; a report of what came out overset. Days.
+  empty field removed; a report of what came out overset. Days. *Done
+  2026-09-27* (`tessera_ui::merge_ops`). **One document, pages duplicated
+  in it**, rather than a document per record joined afterwards: a
+  duplicated page owns deep copies of its text and shares the template's
+  styles, swatches and parents by the same ids, and
+  `Document::duplicate_page_mapped` says which copy came from which frame,
+  so a record's picture frame is found from the template's without
+  matching ids across documents that collide. The same merged document
+  opens as a new, unsaved document or is laid out and written as one PDF
+  with the export options last chosen. Each field becomes the record's
+  words **in the marker's own formatting**; a line holding only empty
+  fields goes, unless "keep" is ticked; a **picture field** is put on a
+  graphic frame (select it, Insert) and each record's picture placed
+  there, read from beside the data file. The report names every record
+  that came out overset and every picture that was not there. **Left,
+  and said in the report when it happens:** fields on a parent page, and
+  in text threaded in from another page, are not merged and print their
+  names. Format 39.
 - [ ] 10. **Table and cell styles.** Days.
 - [ ] 11. **A table runs across frames and pages**, with header and footer
   rows repeated. About a week — the hardest table item, and what long

@@ -33,6 +33,8 @@ pub struct DataMergeWindow {
     pub preview: bool,
     /// Which record, from zero.
     pub record: usize,
+    /// Keep a line whose fields are all empty, rather than taking it out.
+    pub keep_blank_lines: bool,
 }
 
 impl DataMergeWindow {
@@ -77,6 +79,100 @@ impl DataMergeWindow {
     }
 }
 
+/// The document merged with every record of its data file, or why not —
+/// said in the status line.
+fn merged(state: &mut TesseraApp) -> Option<crate::merge_ops::Merged> {
+    let Some(source) = state.active().document().data_merge.clone() else {
+        state.status = Some(Status::error("Choose a data file first."));
+        return None;
+    };
+    let mut window = std::mem::take(&mut state.data_merge);
+    // Read again, so the merge is of the file as it is now.
+    window.read(&source.path);
+    let result = match &window.data {
+        Some((_, data)) => crate::merge_ops::merge(
+            state.active().document(),
+            data,
+            source.path.parent(),
+            !window.keep_blank_lines,
+        ),
+        None => Err(window
+            .problem
+            .clone()
+            .unwrap_or_else(|| "The data file could not be read.".into())),
+    };
+    state.data_merge = window;
+    match result {
+        Ok(merged) => Some(merged),
+        Err(error) => {
+            state.status = Some(Status::error(error));
+            None
+        }
+    }
+}
+
+/// What a merge made and what to look at, in one sentence and its notes.
+fn said(merged: &crate::merge_ops::Merged, overset: &[usize], what: &str) -> Status {
+    let pages = merged.records * merged.pages_per_record;
+    let mut words = format!(
+        "{what}: {} record{}, {pages} page{}.",
+        merged.records,
+        if merged.records == 1 { "" } else { "s" },
+        if pages == 1 { "" } else { "s" }
+    );
+    if !overset.is_empty() {
+        let list: Vec<String> = overset.iter().take(12).map(ToString::to_string).collect();
+        words.push_str(&format!(
+            " Text is overset in record{} {}{}.",
+            if overset.len() == 1 { "" } else { "s" },
+            list.join(", "),
+            if overset.len() > 12 { ", and more" } else { "" }
+        ));
+    }
+    for note in &merged.notes {
+        words.push(' ');
+        words.push_str(note);
+    }
+    if overset.is_empty() && merged.notes.is_empty() {
+        Status::info(words)
+    } else {
+        Status::error(words)
+    }
+}
+
+/// Create merged document: the merged pages as a new, unsaved document.
+pub fn merge_into_new_document(state: &mut TesseraApp) {
+    let Some(merged) = merged(state) else {
+        return;
+    };
+    let resolved = tessera_layout::resolve::resolve(&merged.document, &mut state.shaper);
+    let overset = crate::merge_ops::overset_records(&merged, &resolved);
+    let status = said(&merged, &overset, "Merged");
+    state.add_document(merged.document, None);
+    state.active_mut().dirty = true;
+    state.status = Some(status);
+}
+
+/// Export merged PDF: the merged pages straight to one PDF at `path`, with
+/// the export options last chosen, never opened as a document.
+pub fn merge_to_pdf(state: &mut TesseraApp, path: &Path) {
+    let Some(merged) = merged(state) else {
+        return;
+    };
+    let resolved = tessera_layout::resolve::resolve(&merged.document, &mut state.shaper);
+    let overset = crate::merge_ops::overset_records(&merged, &resolved);
+    let options = state.export.options(state);
+    let written = tessera_pdf::export_with(&resolved, &options)
+        .map_err(|e| e.to_string())
+        .and_then(|bytes| {
+            tessera_io::atomic::write_atomic(path, &bytes).map_err(|e| e.to_string())
+        });
+    state.status = Some(match written {
+        Ok(()) => said(&merged, &overset, &format!("Exported {}", path.display())),
+        Err(error) => Status::error(format!("Could not write the merged PDF: {error}")),
+    });
+}
+
 /// Use `path` as the document's data file: read it, and name it and its
 /// fields in the document as one undo step. The fields the document had keep
 /// their places, so markers already in the text still read their columns.
@@ -101,6 +197,7 @@ pub fn choose_source(state: &mut TesseraApp, path: &Path) {
         None => DataSource {
             path: path.to_path_buf(),
             fields,
+            pictures: Vec::new(),
         },
     };
     if source.fields.len() > MOST_FIELDS {
@@ -138,6 +235,15 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
 
     let source = state.active().document().data_merge.clone();
     let typing = state.active().editing.is_some();
+    // A picture field goes into a graphic frame, chosen on the page.
+    let graphic = state.active().selection.single().filter(|id| {
+        matches!(
+            state.active().document().frame(*id).map(|f| &f.kind),
+            Some(tessera_document::nodes::FrameKind::Graphic { .. })
+        )
+    });
+    let mut create = false;
+    let mut export = false;
     let mut choose = false;
     let mut remove = false;
     let mut insert: Option<usize> = None;
@@ -199,10 +305,15 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                         };
                         ui.label(label);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let can = if field.image {
+                                graphic.is_some()
+                            } else {
+                                typing
+                            };
                             let button = ui
-                                .add_enabled(typing && !field.image, egui::Button::new("Insert"))
+                                .add_enabled(can, egui::Button::new("Insert"))
                                 .on_disabled_hover_text(if field.image {
-                                    "A picture field is placed in a graphic frame"
+                                    "Select a graphic frame for the picture first"
                                 } else {
                                     "Put the caret in some text first"
                                 });
@@ -253,6 +364,18 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                         });
                     });
                 });
+
+                ui.add_space(Theme::space_2());
+                ui.checkbox(
+                    &mut window.keep_blank_lines,
+                    "Keep lines left empty by empty fields",
+                );
+                ui.add_enabled_ui(records > 0, |ui| {
+                    ui.horizontal(|ui| {
+                        create = ui.button("Create merged document").clicked();
+                        export = ui.button("Export merged PDF\u{2026}").clicked();
+                    });
+                });
             }
         });
 
@@ -271,9 +394,42 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
         state.data_merge.preview = false;
     }
     if let Some(index) = insert
-        && let Ok(index) = u8::try_from(index)
+        && let Ok(field) = u8::try_from(index)
     {
-        crate::view::viewport::type_text(state, &Marker::Field(index).character().to_string());
+        let picture = source
+            .as_ref()
+            .and_then(|s| s.fields.get(index))
+            .is_some_and(|f| f.image);
+        match (picture, graphic) {
+            (true, Some(frame)) => apply(
+                state,
+                Command::SetMergePicture {
+                    frame,
+                    field: Some(field),
+                },
+            ),
+            (true, None) => {}
+            (false, _) => {
+                crate::view::viewport::type_text(
+                    state,
+                    &Marker::Field(field).character().to_string(),
+                );
+            }
+        }
+    }
+    if create {
+        merge_into_new_document(state);
+    }
+    if export
+        && let Some(mut path) = rfd::FileDialog::new()
+            .add_filter("PDF", &["pdf"])
+            .set_file_name("merged.pdf")
+            .save_file()
+    {
+        if path.extension().is_none() {
+            path.set_extension("pdf");
+        }
+        merge_to_pdf(state, &path);
     }
 }
 
@@ -362,6 +518,92 @@ mod tests {
         assert_eq!(shown(&mut state, id), "\u{ab}Name\u{bb}".chars().count());
         assert_eq!(state.active().dirty, dirty);
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_merge_places_each_picture_says_what_is_missing_and_makes_one_pdf() {
+        let mut state = TesseraApp::headless();
+        let dir = std::env::temp_dir().join(format!(
+            "tessera-merge-pictures-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        std::fs::create_dir_all(&dir).expect("a folder");
+        image::RgbaImage::new(40, 20)
+            .save(dir.join("ana.png"))
+            .expect("a picture");
+        image::RgbaImage::new(20, 40)
+            .save(dir.join("bo.png"))
+            .expect("a picture");
+        let csv = dir.join("people.csv");
+        std::fs::write(&csv, "Name,@Photo\nAna,ana.png\nBo,bo.png\nCy,cy.png\n").expect("data");
+        choose_source(&mut state, &csv);
+
+        let b = state.first_page_bounds();
+        apply(
+            &mut state,
+            Command::AddTextFrame(DocRect {
+                x: b.x + 40.0,
+                y: b.y + 40.0,
+                width: 300.0,
+                height: 40.0,
+            }),
+        );
+        let text = state.active().selection.single().expect("the text frame");
+        apply(
+            &mut state,
+            Command::SetText {
+                id: text,
+                text: Marker::Field(0).character().to_string(),
+            },
+        );
+        apply(
+            &mut state,
+            Command::AddGraphicFrame(DocRect {
+                x: b.x + 40.0,
+                y: b.y + 120.0,
+                width: 100.0,
+                height: 100.0,
+            }),
+        );
+        let photo = state
+            .active()
+            .selection
+            .single()
+            .expect("the picture frame");
+        apply(
+            &mut state,
+            Command::SetMergePicture {
+                frame: photo,
+                field: Some(1),
+            },
+        );
+
+        let pdf = dir.join("badges.pdf");
+        merge_to_pdf(&mut state, &pdf);
+        let bytes = std::fs::read(&pdf).expect("the PDF was written");
+        assert!(bytes.starts_with(b"%PDF"));
+        let said = state
+            .status
+            .as_ref()
+            .map(|s| s.message.clone())
+            .unwrap_or_default();
+        assert!(said.contains("3 records, 3 pages"), "{said}");
+        assert!(
+            said.contains("cy.png"),
+            "the missing picture is named: {said}"
+        );
+
+        let template = state.active;
+        merge_into_new_document(&mut state);
+        assert_ne!(state.active, template, "a new document");
+        let doc = state.active().document();
+        assert_eq!(doc.page_ids().count(), 3, "a page a record");
+        assert_eq!(doc.links.len(), 2, "Ana's and Bo's pictures, each placed");
+        assert!(state.active().dirty, "unsaved until somebody saves it");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

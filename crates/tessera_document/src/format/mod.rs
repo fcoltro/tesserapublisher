@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 38;
+pub const FORMAT_VERSION: u32 = 39;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -113,6 +113,8 @@ pub fn load(path: &Path) -> Result<Document, FormatError> {
 /// ago follows exactly the path a document written two versions ago does, and
 /// each step only has to know about its own change.
 fn migrate(value: &mut serde_json::Value, from: u32) {
+    // 38 -> 39: a data source says which graphic frames take a picture
+    // field (`pictures`). **No step**: absent reads as none.
     // 37 -> 38: a document may name a data file to merge (`data_merge`),
     // and its text may hold field markers. **No step**: absent reads as no
     // data source, which is what every earlier document had.

@@ -28,6 +28,14 @@ pub struct MergeField {
     pub image: bool,
 }
 
+/// A graphic frame that takes each record's picture from a field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergePicture {
+    pub frame: crate::ids::FrameId,
+    /// Which of the source's fields, by index.
+    pub field: u8,
+}
+
 /// Where a document's records come from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DataSource {
@@ -37,6 +45,28 @@ pub struct DataSource {
     /// later loses stays here, reading as nothing, so the markers after it
     /// keep their meaning.
     pub fields: Vec<MergeField>,
+    /// The graphic frames that take a picture field: a picture is placed in
+    /// a frame rather than set in text, as InDesign places it.
+    #[serde(default)]
+    pub pictures: Vec<MergePicture>,
+}
+
+impl DataSource {
+    /// The picture field a frame takes, if any.
+    pub fn picture_of(&self, frame: crate::ids::FrameId) -> Option<u8> {
+        self.pictures
+            .iter()
+            .find(|p| p.frame == frame)
+            .map(|p| p.field)
+    }
+
+    /// Make `frame` take `field`'s picture, or none.
+    pub fn set_picture(&mut self, frame: crate::ids::FrameId, field: Option<u8>) {
+        self.pictures.retain(|p| p.frame != frame);
+        if let Some(field) = field {
+            self.pictures.push(MergePicture { frame, field });
+        }
+    }
 }
 
 impl DataSource {
@@ -56,7 +86,11 @@ impl DataSource {
                 None => kept.push(field.clone()),
             }
         }
-        Self { path, fields: kept }
+        Self {
+            path,
+            fields: kept,
+            pictures: self.pictures.clone(),
+        }
     }
 }
 
@@ -99,6 +133,7 @@ mod tests {
         let source = DataSource {
             path: "people.csv".into(),
             fields: vec![field("Name"), field("City"), field("Gone")],
+            pictures: Vec::new(),
         };
         let data_fields = ["City".to_string(), "Name".to_string()];
         let record = ["Lisbon".to_string(), "Ana".to_string()];
@@ -113,6 +148,7 @@ mod tests {
         let source = DataSource {
             path: "old.csv".into(),
             fields: vec![field("Name"), field("City")],
+            pictures: Vec::new(),
         };
         let next = source.with_fields_of(
             "new.csv".into(),

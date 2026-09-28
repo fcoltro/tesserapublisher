@@ -735,6 +735,12 @@ pub enum Command {
     SetChapter(tessera_document::sections::Chapter),
     /// Name the data file the document merges and its fields, or none.
     SetDataSource(Option<tessera_document::merge::DataSource>),
+    /// Make a graphic frame take a picture field's picture in a merge, or
+    /// stop.
+    SetMergePicture {
+        frame: FrameId,
+        field: Option<u8>,
+    },
     /// Replace the document's text variables. The whole list, for the same
     /// reason — and because a story names a variable by its position.
     SetVariables(Vec<tessera_document::variables::TextVariable>),
@@ -2466,6 +2472,17 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             state.active_mut().document_mut().set_data_source(source);
         }
 
+        Command::SetMergePicture { frame, field } => {
+            let Some(mut source) = state.active().document().data_merge.clone() else {
+                return;
+            };
+            source.set_picture(frame, field);
+            state
+                .active_mut()
+                .document_mut()
+                .set_data_source(Some(source));
+        }
+
         Command::SetVariables(variables) => {
             state.active_mut().document_mut().set_variables(variables);
         }
@@ -3079,15 +3096,21 @@ fn measure_link(
     state: &mut TesseraApp,
     path: &std::path::Path,
 ) -> Option<tessera_document::links::Link> {
-    let path = match std::path::absolute(path) {
-        Ok(path) => path,
+    match measured(path) {
+        Ok(link) => Some(link),
         Err(error) => {
-            state.status = Some(crate::app::Status::error(format!(
-                "Could not resolve artwork path: {error}"
-            )));
-            return None;
+            state.status = Some(crate::app::Status::error(error));
+            None
         }
-    };
+    }
+}
+
+/// A link to the artwork at `path`, measured at its own size: a drawing and
+/// a PDF page in points, a picture in its pixels. For a data merge, which
+/// places a picture per record in documents that are not open.
+pub(crate) fn measured(path: &std::path::Path) -> Result<tessera_document::links::Link, String> {
+    let path =
+        std::path::absolute(path).map_err(|e| format!("Could not resolve artwork path: {e}"))?;
     let natural = if tessera_render::images::is_svg(&path) {
         tessera_render::images::svg_size(&path).unwrap_or((0.0, 0.0))
     } else if tessera_render::images::is_pdf(&path) {
@@ -3109,7 +3132,7 @@ fn measure_link(
     tessera_io::seen::look_now(&path);
     let mut link = tessera_document::links::Link::new(path, natural);
     link.modified = modified;
-    Some(link)
+    Ok(link)
 }
 
 /// "No fill": black at no alpha, so that turning the fill on gets black

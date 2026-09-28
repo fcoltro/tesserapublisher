@@ -23,6 +23,7 @@ pub mod icons;
 pub mod ime;
 pub mod keychain;
 pub mod keys;
+pub mod merge_ops;
 pub mod object_order;
 pub mod open_document;
 pub mod package;

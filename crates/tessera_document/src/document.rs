@@ -1119,6 +1119,17 @@ impl Document {
     ///
     /// The copy is inserted directly after the original's spread.
     pub fn duplicate_page(&mut self, id: PageId) -> Option<PageId> {
+        self.duplicate_page_mapped(id).map(|(page, _)| page)
+    }
+
+    /// [`Document::duplicate_page`], saying which copy came from which
+    /// frame: every frame on the page and every frame inside a group there,
+    /// original first. For a data merge, which finds a record's picture
+    /// frame by the template frame it was copied from.
+    pub fn duplicate_page_mapped(
+        &mut self,
+        id: PageId,
+    ) -> Option<(PageId, Vec<(FrameId, FrameId)>)> {
         let source = self.pages.get(id)?.clone();
         // Asked before the copy exists, and before the reflow moves anything.
         let standing_on_it = self.frames_on_page(id);
@@ -1155,10 +1166,21 @@ impl Document {
         let (from, to) = (self.pages.get(id)?.bounds, self.pages.get(page)?.bounds);
         let (dx, dy) = (to.x - from.x, to.y - from.y);
 
-        self.copy_page_frames(&standing_on_it, dx, dy);
+        // The copies come back in the order their originals were given, and
+        // a group's copy lists its children in its original's order, so
+        // walking each pair's descendants side by side pairs every frame.
+        let copies = self.copy_page_frames(&standing_on_it, dx, dy);
+        let mut pairs = Vec::new();
+        for (original, copy) in standing_on_it.iter().zip(&copies) {
+            pairs.extend(
+                self.descendants(*original)
+                    .into_iter()
+                    .zip(self.descendants(*copy)),
+            );
+        }
 
         self.revision += 1;
-        Some(page)
+        Some((page, pairs))
     }
 
     /// Move a frame and its children by an offset.
