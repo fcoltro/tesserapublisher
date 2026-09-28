@@ -3,7 +3,9 @@
 //!
 //! InDesign draws them as short strokes across the path, and dragging one
 //! slides it along the curve. The inspector's From/To fields say the same
-//! thing in percent; these say it on the page, where the eye is. The
+//! thing in percent; these say it on the page, where the eye is. A third,
+//! midway, is InDesign's centre bracket: dragged across the path it flips
+//! the text to the side it is let go on. The
 //! arithmetic — where a fraction of the path is, and which fraction is nearest
 //! a point — is in [`tessera_layout::path_text`], and has no screen in it.
 
@@ -23,12 +25,18 @@ const LENGTH: f32 = 14.0;
 /// How far from a bracket a press still takes hold of it.
 const REACH: f32 = 8.0;
 
-/// Which end of the text a bracket marks.
+/// Which end of the text a bracket marks — or the centre bracket, which
+/// says which side of the path the text stands on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum End {
     Start,
     Finish,
+    Flip,
 }
+
+/// How far from the path the centre bracket must be let go to change the
+/// side, in points: a nudge along the path is not a flip.
+const FLIP_CLEAR: f64 = 2.0;
 
 /// One bracket, placed on screen: where it sits and which way the path runs
 /// there, so it can be drawn across the path rather than at a fixed angle.
@@ -75,18 +83,22 @@ pub fn brackets(state: &TesseraApp, canvas: Rect) -> Vec<Bracket> {
         let s = view.doc_to_screen(DocPoint { x: p.x, y: p.y });
         egui::pos2(canvas.min.x + s.x, canvas.min.y + s.y)
     };
-    [(End::Start, text.start), (End::Finish, text.end)]
-        .into_iter()
-        .filter_map(|(end, fraction)| {
-            let (point, tangent) = tessera_layout::path_text::point_at_fraction(&path, fraction)?;
-            Some(Bracket {
-                frame,
-                end,
-                at: to_screen(point),
-                along: egui::vec2(tangent.x as f32, tangent.y as f32),
-            })
+    [
+        (End::Start, text.start),
+        (End::Finish, text.end),
+        (End::Flip, (text.start + text.end) / 2.0),
+    ]
+    .into_iter()
+    .filter_map(|(end, fraction)| {
+        let (point, tangent) = tessera_layout::path_text::point_at_fraction(&path, fraction)?;
+        Some(Bracket {
+            frame,
+            end,
+            at: to_screen(point),
+            along: egui::vec2(tangent.x as f32, tangent.y as f32),
         })
-        .collect()
+    })
+    .collect()
 }
 
 /// The bracket under the pointer, if one is close enough.
@@ -120,10 +132,21 @@ pub fn draw(state: &TesseraApp, canvas: Rect, painter: &egui::Painter) {
             Stroke::new(2.0, Theme::accent()),
         );
         // A foot along the path, pointing into the text, so start and end
-        // read as a pair of brackets rather than two ticks.
+        // read as a pair of brackets rather than two ticks. The centre
+        // bracket has a knob instead, on the side the text stands on.
         let foot = match bracket.end {
             End::Start => bracket.along,
             End::Finish => -bracket.along,
+            End::Flip => {
+                let flipped = state
+                    .active()
+                    .document()
+                    .path_text(bracket.frame)
+                    .is_some_and(|t| t.flip);
+                let side = if flipped { across } else { -across };
+                painter.circle_filled(bracket.at + side, 2.5, Theme::accent());
+                continue;
+            }
         } * (LENGTH / 3.0);
         painter.line_segment(
             [bracket.at + across, bracket.at + across + foot],
@@ -138,12 +161,26 @@ fn placed(state: &TesseraApp, id: FrameId, end: End, held: PathText, at: DocPoin
     let Some(path) = document_path(state, id) else {
         return held;
     };
-    let fraction =
-        tessera_layout::path_text::fraction_nearest(&path, kurbo::Point::new(at.x, at.y));
+    let pointer = kurbo::Point::new(at.x, at.y);
+    let fraction = tessera_layout::path_text::fraction_nearest(&path, pointer);
     let mut text = held;
     match end {
         End::Start => text.start = fraction,
         End::Finish => text.end = fraction,
+        End::Flip => {
+            // Which side of the path the pointer is on, by the path's own
+            // direction: unflipped text stands on its left, as a line of
+            // type stands above a path drawn left to right.
+            if let Some((point, tangent)) =
+                tessera_layout::path_text::point_at_fraction(&path, fraction)
+            {
+                let off = pointer - point;
+                let across = tangent.x * off.y - tangent.y * off.x;
+                if across.abs() > FLIP_CLEAR {
+                    text.flip = across > 0.0;
+                }
+            }
+        }
     }
     text.normalised()
 }
@@ -296,7 +333,7 @@ mod tests {
         let mut state = TesseraApp::headless();
         let id = a_path_with_text(&mut state);
         let found = brackets(&state, canvas());
-        assert_eq!(found.len(), 2);
+        assert_eq!(found.len(), 3, "start, end, and the centre bracket");
         assert_eq!(found[0].end, End::Start);
         assert_eq!(found[0].at, to_screen(&state, 20.0, 30.0));
         assert_eq!(found[1].end, End::Finish);
@@ -322,8 +359,9 @@ mod tests {
             Some((id, End::Finish))
         );
         assert_eq!(
-            bracket_at(&state, canvas(), to_screen(&state, 120.0, 30.0)),
-            None
+            bracket_at(&state, canvas(), to_screen(&state, 70.0, 30.0)),
+            None,
+            "between the brackets, nothing"
         );
     }
 
@@ -364,6 +402,47 @@ mod tests {
 
         apply(&mut state, Command::Undo);
         assert_eq!(state.active().document().path_text(id), Some(&held));
+    }
+
+    #[test]
+    fn the_centre_bracket_dragged_across_the_path_flips_the_text() {
+        let mut state = TesseraApp::headless();
+        let id = a_path_with_text(&mut state);
+        let held = *state.active().document().path_text(id).expect("text");
+        assert!(!held.flip);
+        let found = brackets(&state, canvas());
+        assert_eq!(found[2].end, End::Flip);
+        assert_eq!(found[2].at, to_screen(&state, 120.0, 30.0), "midway");
+
+        // Let go below a path drawn left to right: the text goes under it.
+        commit(
+            &mut state,
+            id,
+            End::Flip,
+            held,
+            DocPoint { x: 120.0, y: 50.0 },
+        );
+        assert!(state.active().document().path_text(id).unwrap().flip);
+        // Back above: back on top.
+        let now = *state.active().document().path_text(id).unwrap();
+        commit(
+            &mut state,
+            id,
+            End::Flip,
+            now,
+            DocPoint { x: 90.0, y: 10.0 },
+        );
+        assert!(!state.active().document().path_text(id).unwrap().flip);
+        // On the path itself: no change, whichever way it was.
+        let now = *state.active().document().path_text(id).unwrap();
+        commit(
+            &mut state,
+            id,
+            End::Flip,
+            now,
+            DocPoint { x: 90.0, y: 30.5 },
+        );
+        assert_eq!(*state.active().document().path_text(id).unwrap(), now);
     }
 
     #[test]

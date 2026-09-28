@@ -2567,9 +2567,13 @@ IDML import to milestone 12.
   no story id, so a model could read the words and not address them; and
   an id *inside* an object argument (`SetPathText`'s `story`) was refused
   as a number — `command_json` now translates the id-bearing fields of
-  nested objects by name. **Not built:** the caret on the curve;
-  the drag handles for start, end and flip; a path's text as a wrap
-  obstacle.
+  nested objects by name. The start and end brackets drag along the
+  curve (`path_text_handles`, one undo step). **2026-09-28:** the centre
+  bracket, midway, flips the text to the side of the path it is let go
+  on; and a path carrying type wraps text round its letters — the
+  obstacle grows by the story's tallest size and its leading either side,
+  as a box or, for a contour wrap, as a sleeve along the curve
+  (`path_text_band`). **Not built:** the caret on the curve.
 
 ---
 

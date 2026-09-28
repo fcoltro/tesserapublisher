@@ -611,6 +611,24 @@ fn resolved_stroke(doc: &Document, stroke: Option<&Stroke>) -> Option<Stroke> {
 /// horizontal run per line, so an angled outline has to be reduced to a
 /// rectangle somewhere; doing it here keeps the shaper honest about what it
 /// was given.
+/// How far a path's type reaches from the path, either side, in points:
+/// the tallest size its story is set in, with a fifth again for its
+/// leading. Zero for a frame carrying no text. Measured from the story
+/// rather than the laid glyphs, since what wraps round the path is known
+/// before anything is laid out.
+fn path_text_band(doc: &Document, frame: FrameId) -> f64 {
+    let Some(story) = doc.path_text(frame).and_then(|t| doc.story(t.story)) else {
+        return 0.0;
+    };
+    story
+        .runs
+        .iter()
+        .filter(|r| !r.range.is_empty())
+        .map(|r| f64::from(story.resolve_run(r, doc).size.unwrap_or(12.0)))
+        .fold(0.0, f64::max)
+        * 1.2
+}
+
 fn obstacles_for(
     doc: &Document,
     id: FrameId,
@@ -640,9 +658,18 @@ fn obstacles_for(
                 continue;
             };
             let standoff = wrap.standoff().unwrap_or_default();
-            let Some(bounds) = doc.visual_bounds(other) else {
+            let Some(mut bounds) = doc.visual_bounds(other) else {
                 continue;
             };
+            // A path carrying type stands as wide as its type: text wraps
+            // round the letters, not only round the line they sit on.
+            let band = path_text_band(doc, other);
+            if band > 0.0 {
+                bounds.x -= band;
+                bounds.y -= band;
+                bounds.width += band * 2.0;
+                bounds.height += band * 2.0;
+            }
 
             // Grown by the standoff, then expressed relative to this frame's
             // own origin — the space the text is laid out in.
@@ -670,7 +697,12 @@ fn obstacles_for(
                             }
                             _ => {}
                         });
-                        tessera_text::wrap::Blocking::Contour { outline, standoff }
+                        // Round a path's type, the sleeve its letters
+                        // fill along the curve.
+                        tessera_text::wrap::Blocking::Contour {
+                            outline,
+                            standoff: standoff + band,
+                        }
                     })
                     .unwrap_or_default(),
                 tessera_document::nodes::TextWrap::Jump => tessera_text::wrap::Blocking::Jump,
@@ -3097,6 +3129,62 @@ The body of the chapter.",
         assert!(
             both.len() > largest.len(),
             "both sides takes more, shorter lines"
+        );
+    }
+
+    #[test]
+    fn a_path_carrying_type_wraps_text_round_its_letters() {
+        // A level line across a text frame, wrapping. Bare, it blocks a
+        // hairline; carrying 20 pt type, it blocks the sleeve its letters
+        // fill: 24 either side, the size and its leading.
+        use tessera_text::story::CharacterFormat;
+        let mut doc = Document::default();
+        let page = doc.page_ids().next().unwrap();
+        let layer = doc.default_layer().expect("a layer");
+        let b = doc.pages[page].bounds;
+        let copy = doc.add_story(Story::new("word ".repeat(100)));
+        let host = doc.add_frame(layer, {
+            let mut f = rect(b.x + 20.0, b.y + 20.0, 300.0, 300.0);
+            f.kind = FrameKind::text(copy);
+            f
+        });
+        let mut line = kurbo::BezPath::new();
+        line.move_to((0.0, 0.0));
+        line.line_to((300.0, 0.0));
+        let mut path = rect(b.x + 20.0, b.y + 150.0, 300.0, 0.0);
+        path.kind = FrameKind::Path(line);
+        path.wrap = tessera_document::nodes::TextWrap::Bounds {
+            standoff: Default::default(),
+            sides: Default::default(),
+        };
+        let path = doc.add_frame(layer, path);
+
+        let blocked = |doc: &Document| {
+            let frame = doc.frame(host).unwrap().clone();
+            obstacles_for(doc, host, &frame, 300.0)
+                .iter()
+                .map(|o| o.height)
+                .fold(0.0, f64::max)
+        };
+        let bare = blocked(&doc);
+
+        let mut words = Story::new("Along the line");
+        words.apply_character_format(
+            0..14,
+            &CharacterFormat {
+                size: Some(20.0),
+                ..Default::default()
+            },
+        );
+        let words = doc.add_story(words);
+        doc.set_path_text(
+            path,
+            Some(tessera_document::path_text::PathText::new(words)),
+        );
+        let carrying = blocked(&doc);
+        assert!(
+            (carrying - bare - 48.0).abs() < 1e-6,
+            "the sleeve of its type: {bare} then {carrying}"
         );
     }
 
