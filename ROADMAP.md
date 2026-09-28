@@ -3060,8 +3060,8 @@ the way ExtendScript sits outside InDesign.
   Every one has a regression test. The first was the bridge author's, and
   it is the kind a review finds and an author does not: the tool did what
   it said, and what it said was wrong.
-- [ ] Not yet: ids inside `describe_shapes` objects are in the document's
-  own `{idx, version}` form rather than numbers.
+- [x] Ids inside `describe_shapes` objects are plain numbers, as every
+  other tool gives and takes them (2026-09-27, `catalogue::numbered`).
 - [x] **A tool call cannot move the assistant's endpoint (2026-09-22).** The
   key was refused to `set_preferences`, but `base_url` and `provider` —
   which decide where the key is *sent* — were not, so text in a document a
@@ -3406,8 +3406,10 @@ below are its items 1 to 3.
   *Done 2026-09-27:* every tool call is refused while the dialog is open,
   saying why and what to ask for; refused rather than held, since the
   dialog opens by itself at launch and a held call would hang a client.
-- [ ] 2. **`describe_shapes` ids as plain numbers** instead of the
-  document's `{idx, version}` form (milestone 13).
+- [x] 2. **`describe_shapes` ids as plain numbers** instead of the
+  document's `{idx, version}` form (milestone 13). *Done 2026-09-27:*
+  `catalogue::numbered` shows every nested key as its number, the reverse
+  of the `deepen` that reads a number back into a key.
 - [x] 3. **Text variables: file name, date, last page number**
   (milestone 10). *Done 2026-09-27, as milestone 15's item 1.*
 - [ ] 4. **Facing-page sides named inside and outside** against the spine

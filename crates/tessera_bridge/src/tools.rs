@@ -808,7 +808,8 @@ pub(crate) fn validate_text_range(
 }
 
 fn describe_shapes(_: &mut TesseraApp, arguments: &Value) -> Result<Value, String> {
-    let all = crate::shapes::all();
+    // Ids in plain numbers, as every other tool gives and takes them.
+    let all = crate::catalogue::numbered(crate::shapes::all());
     match arguments.get("type").and_then(Value::as_str) {
         None => Ok(all),
         Some(name) => all

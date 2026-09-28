@@ -6,8 +6,10 @@
 //! copy it and change what it means to. Enums are shown as every variant.
 //!
 //! Ids inside these objects (a style's `based_on`, a contents level's
-//! `style`) appear as the document keeps them, `{"idx", "version"}`, which
-//! `describe_document` reports alongside each number as `key`.
+//! `style`) are built here as the document keeps them, `{"idx",
+//! "version"}`, and shown by `describe_shapes` as the plain numbers every
+//! other tool gives and takes (`catalogue::numbered`); a command reads the
+//! number back into the key (`catalogue::deepen`).
 
 use serde_json::{Value, json};
 use tessera_color::Color;

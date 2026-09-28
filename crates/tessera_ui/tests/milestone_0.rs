@@ -235,9 +235,33 @@ fn a_document_saved_then_exported_twice_produces_the_same_pdf() {
     open_from_path(&mut reopened, &path).expect("open");
     export_pdf_to_path(&mut reopened, &second).expect("export");
 
-    assert_eq!(
-        std::fs::read(&first).expect("a"),
-        std::fs::read(&second).expect("b"),
-        "the same document must export to the same bytes"
+    // The one thing allowed to differ is the moment each was made: the PDF
+    // says when it was exported, and two exports a second apart are two
+    // moments. Compared with that written out of both, so the test does
+    // not fail on a clock that ticked between them.
+    let (a, b) = (
+        without_creation_date(std::fs::read(&first).expect("a")),
+        without_creation_date(std::fs::read(&second).expect("b")),
     );
+    assert_eq!(a, b, "the same document must export to the same bytes");
+}
+
+/// `pdf` with the date in its `/CreationDate (D:…)` blanked, and the
+/// assurance that it had one.
+fn without_creation_date(mut pdf: Vec<u8>) -> Vec<u8> {
+    let key = b"/CreationDate (D:";
+    let at = pdf
+        .windows(key.len())
+        .position(|w| w == key)
+        .expect("every export says when it was made");
+    let start = at + key.len();
+    let end = start
+        + pdf[start..]
+            .iter()
+            .position(|b| *b == b')')
+            .expect("the date is closed");
+    for byte in &mut pdf[start..end] {
+        *byte = b'0';
+    }
+    pdf
 }

@@ -259,6 +259,22 @@ mod tests {
     }
 
     #[test]
+    fn describe_shapes_shows_ids_as_plain_numbers_that_read_back() {
+        let mut bridge = Bridge::new();
+        let shapes = tool(&mut bridge, "describe_shapes", json!({}));
+        let text = shapes.to_string();
+        assert!(
+            !text.contains("\"idx\""),
+            "an id in the document's own form: {text}"
+        );
+        // A key and its number are one id both ways round.
+        let key = serde_json::to_value(slotmap::KeyData::from_ffi((3 << 32) | 7)).unwrap();
+        let shown = catalogue::numbered(json!({ "based_on": key, "name": "Heading" }));
+        assert_eq!(shown["based_on"], json!((3u64 << 32) | 7));
+        assert_eq!(shown["name"], "Heading", "other fields untouched");
+    }
+
+    #[test]
     fn nothing_runs_while_the_new_document_dialog_is_open() {
         let mut bridge = Bridge::new();
         // What the window does at launch.

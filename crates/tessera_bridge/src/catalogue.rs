@@ -337,6 +337,36 @@ fn deepen(value: Value) -> Value {
     }
 }
 
+/// The other way: every nested key — `{"idx", "version"}` in a field named
+/// for an id — shown as the number every tool reports and takes, so what
+/// `describe_shapes` shows can be copied back as it is, and a model never
+/// meets an id in two forms.
+pub fn numbered(value: Value) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(k, v)| {
+                    let v = match v {
+                        Value::Object(ref key) if NESTED_ID_FIELDS.contains(&k.as_str()) => {
+                            key_number(key).map_or(v, Value::from)
+                        }
+                        other => numbered(other),
+                    };
+                    (k, v)
+                })
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.into_iter().map(numbered).collect()),
+        other => other,
+    }
+}
+
+/// A key's number, as `slotmap` writes a key for the outside world.
+fn key_number(key: &serde_json::Map<String, Value>) -> Option<u64> {
+    let key: slotmap::KeyData = serde_json::from_value(Value::Object(key.clone())).ok()?;
+    Some(key.as_ffi())
+}
+
 /// An id number becomes a key; anything else passes through — with the
 /// ids inside an object argument turned into keys too.
 fn translate(ty: &str, value: Value) -> Result<Value, String> {
