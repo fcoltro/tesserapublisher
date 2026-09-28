@@ -3463,7 +3463,8 @@ below are its items 1 to 3.
   nothing written (`tessera_pdf::Progress`, `PdfError::Cancelled`). A
   book's PDF, a data merge and the bridge's export still run where they
   are asked.
-- [ ] 11. **SVG export.**
+- [x] 11. ~~**SVG export.**~~ *Dropped 2026-09-28:* InDesign has no SVG
+  export, and InDesign is the scope; PDF, PNG, JPEG, TIFF and WebP stay.
 - [ ] 12. **Cross-references edited in place**, and imported inside a table
   cell as references rather than words (milestone 11).
 - [ ] 13. **Hyperlinks**: anchored-text destinations, a link's appearance on
