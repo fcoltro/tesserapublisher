@@ -3304,7 +3304,24 @@ and running headers (milestone 10).
   and said in the report when it happens:** fields on a parent page, and
   in text threaded in from another page, are not merged and print their
   names. Format 39.
-- [ ] 10. **Table and cell styles.** Days.
+- [x] 10. **Table and cell styles.** Days. *Done 2026-09-27*
+  (`tessera_document::table_style`, Table ▸ Table and cell styles…). A
+  cell style states a fill, insets, vertical justification and the rules
+  on its sides; a table style states the table's rule, its alternating
+  fills, and the cell style its **heading, body and footing rows** take —
+  so a table now has heading and footing row counts. Each property is
+  stated or inherited (`Stated`, not `Option<Option<_>>`, which cannot
+  say "states no fill" once it is JSON), styles are based on others, and
+  a style based on itself is based on nothing. **Resolved when the table
+  is laid out** (`Document::styled_table`), so redefining a style moves
+  every table and cell that takes it, and nothing below the layout knows
+  styles exist. **What was set by hand wins**: a cell and a table mark
+  the properties set on them directly (`CellLocal`, `TableLocal`), and
+  applying a style clears the marks. Deleting a style writes its look
+  into what took it, so nothing changes on the page. Styles are made the
+  quick InDesign way — New from this table or cell, Redefine from it,
+  Apply, Rename, Delete. **Left:** a cell style carrying a paragraph
+  style for its text; a style editor with every property. Format 40.
 - [ ] 11. **A table runs across frames and pages**, with header and footer
   rows repeated. About a week — the hardest table item, and what long
   tables and catalogues need.

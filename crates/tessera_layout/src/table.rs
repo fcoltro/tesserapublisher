@@ -109,6 +109,9 @@ pub fn lay_out(
     shaper: &mut Shaper,
     mut story_of: impl FnMut(tessera_document::ids::StoryId) -> Option<Story>,
 ) -> LaidTable {
+    // Its styles resolved into plain values first, so nothing below needs
+    // to know a table can have them.
+    let table = &*doc.styled_table(table);
     let columns = table.columns();
     let rows = table.rows();
     if columns == 0 || rows == 0 {
@@ -593,6 +596,10 @@ mod tests {
             cells: Vec::new(),
             stroke: None,
             alternating: None,
+            style: None,
+            local: tessera_document::table::TableLocal::default(),
+            header_rows: 0,
+            footer_rows: 0,
         };
         let laid = lay(&doc, &table);
         assert_eq!(laid.size(), (0.0, 0.0));

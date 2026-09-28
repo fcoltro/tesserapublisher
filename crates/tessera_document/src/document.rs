@@ -147,6 +147,12 @@ pub struct Document {
     #[serde(default)]
     pub object_style_order: Vec<crate::ids::ObjectStyleId>,
 
+    /// Table and cell styles (`crate::table_style`).
+    #[serde(default)]
+    pub table_styles: slotmap::SlotMap<crate::ids::TableStyleId, crate::table_style::TableStyle>,
+    #[serde(default)]
+    pub cell_styles: slotmap::SlotMap<crate::ids::CellStyleId, crate::table_style::CellStyle>,
+
     /// The document's named colours, in the order the panel lists them.
     ///
     /// A `Vec` rather than a map: a swatches panel is an ordered list a person
@@ -255,6 +261,8 @@ impl Document {
             output_intent: None,
             object_styles: slotmap::SlotMap::with_key(),
             object_style_order: Vec::new(),
+            table_styles: slotmap::SlotMap::with_key(),
+            cell_styles: slotmap::SlotMap::with_key(),
             swatches: Vec::new(),
             character_styles: SlotMap::with_key(),
             paragraph_styles: SlotMap::with_key(),

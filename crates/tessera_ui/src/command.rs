@@ -89,6 +89,38 @@ pub enum Command {
         id: FrameId,
         alternating: Option<tessera_document::table::AlternatingFills>,
     },
+    /// Add a table style (`id` none) or replace one.
+    DefineTableStyle {
+        id: Option<tessera_document::ids::TableStyleId>,
+        style: tessera_document::table_style::TableStyle,
+    },
+    /// Add a cell style (`id` none) or replace one.
+    DefineCellStyle {
+        id: Option<tessera_document::ids::CellStyleId>,
+        style: tessera_document::table_style::CellStyle,
+    },
+    /// Remove a style; whatever took it keeps how it looked.
+    RemoveTableStyle(tessera_document::ids::TableStyleId),
+    RemoveCellStyle(tessera_document::ids::CellStyleId),
+    /// Give a table a table style, or none, clearing what was set on the
+    /// table by hand — which is what applying a style means.
+    ApplyTableStyle {
+        id: FrameId,
+        style: Option<tessera_document::ids::TableStyleId>,
+    },
+    /// Give cells a cell style, or none, clearing what was set on them by
+    /// hand.
+    ApplyCellStyle {
+        id: FrameId,
+        cells: Vec<(usize, usize)>,
+        style: Option<tessera_document::ids::CellStyleId>,
+    },
+    /// How many rows at the top are the heading and at the foot the footing.
+    SetTableRegions {
+        id: FrameId,
+        header: u16,
+        footer: u16,
+    },
     /// Give a table's columns their widths and its rows their minimum
     /// heights, as dragging their edges does. The frame is kept as wide as
     /// its grid.
@@ -1336,6 +1368,7 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 return;
             };
             table.stroke = stroke;
+            table.local.stroke = true;
             replace_table(state, id, table);
         }
 
@@ -1346,6 +1379,68 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                 return;
             };
             table.alternating = alternating.map(Box::new);
+            table.local.alternating = true;
+            replace_table(state, id, table);
+        }
+
+        Command::DefineTableStyle { id, style } => {
+            state
+                .active_mut()
+                .document_mut()
+                .define_table_style(id, style);
+        }
+
+        Command::DefineCellStyle { id, style } => {
+            state
+                .active_mut()
+                .document_mut()
+                .define_cell_style(id, style);
+        }
+
+        Command::RemoveTableStyle(id) => {
+            state.active_mut().document_mut().remove_table_style(id);
+        }
+
+        Command::RemoveCellStyle(id) => {
+            state.active_mut().document_mut().remove_cell_style(id);
+        }
+
+        Command::ApplyTableStyle { id, style } => {
+            let Some(FrameKind::Table(mut table)) =
+                state.active().document().frame(id).map(|f| f.kind.clone())
+            else {
+                return;
+            };
+            table.style = style;
+            table.local = tessera_document::table::TableLocal::default();
+            replace_table(state, id, table);
+        }
+
+        Command::ApplyCellStyle { id, cells, style } => {
+            let Some(FrameKind::Table(mut table)) =
+                state.active().document().frame(id).map(|f| f.kind.clone())
+            else {
+                return;
+            };
+            for (row, column) in cells {
+                if let Some(cell) = table.at_mut(row, column).and_then(|s| s.cell_mut()) {
+                    cell.style = style;
+                    cell.local = tessera_document::table::CellLocal::default();
+                }
+            }
+            replace_table(state, id, table);
+        }
+
+        Command::SetTableRegions { id, header, footer } => {
+            let Some(FrameKind::Table(mut table)) =
+                state.active().document().frame(id).map(|f| f.kind.clone())
+            else {
+                return;
+            };
+            // Never more heading and footing than there are rows.
+            let rows = u16::try_from(table.rows()).unwrap_or(u16::MAX);
+            table.header_rows = header.min(rows);
+            table.footer_rows = footer.min(rows - table.header_rows);
             replace_table(state, id, table);
         }
 

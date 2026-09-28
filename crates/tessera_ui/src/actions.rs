@@ -358,6 +358,8 @@ pub enum Run {
     },
     /// Place a comma- or tab-separated file as a table.
     PlaceDataAsTable,
+    /// Table and cell styles.
+    TableStyles,
 }
 
 /// When an action may be reached from the keyboard.
@@ -455,7 +457,8 @@ pub fn guard(run: Run) -> Guard {
         | Run::ConvertTextToTable
         | Run::ConvertTableToText
         | Run::SortRows { .. }
-        | Run::PlaceDataAsTable => Guard::Always,
+        | Run::PlaceDataAsTable
+        | Run::TableStyles => Guard::Always,
         // Only useful while typing, like the table commands.
         Run::Insert(_) => Guard::Always,
         Run::Command(
@@ -923,6 +926,12 @@ pub fn all() -> &'static [Action] {
             None,
             Group::Table,
             Run::PlaceDataAsTable,
+        ),
+        a(
+            "Table and cell styles\u{2026}",
+            None,
+            Group::Table,
+            Run::TableStyles,
         ),
         a("Delete", Some("Del"), Group::Edit, Command(Delete)),
         a(
@@ -1765,6 +1774,7 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         }
 
         Run::PlaceDataAsTable => crate::file_ops::place_data_as_table(state),
+        Run::TableStyles => state.table_styles.open = true,
 
         Run::TableOptions => {
             let mut window = std::mem::take(&mut state.table_options);

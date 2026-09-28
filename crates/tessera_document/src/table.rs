@@ -81,6 +81,47 @@ pub struct Cell {
     /// size of the rare cell that has them.
     #[serde(default, skip_serializing_if = "plain_edges")]
     pub edges: Box<CellEdges>,
+    /// The cell style it takes, over the one its row's region takes.
+    #[serde(default)]
+    pub style: Option<crate::ids::CellStyleId>,
+    /// The properties somebody set on this cell by hand, which keep their
+    /// own values whatever a style says.
+    #[serde(default, skip_serializing_if = "CellLocal::is_none")]
+    pub local: CellLocal,
+}
+
+/// Which of a cell's properties were set on it by hand.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CellLocal {
+    #[serde(default)]
+    pub fill: bool,
+    #[serde(default)]
+    pub inset: bool,
+    #[serde(default)]
+    pub vertical: bool,
+    #[serde(default)]
+    pub edges: bool,
+}
+
+impl CellLocal {
+    pub fn is_none(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Which of a table's own properties were set on it by hand.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TableLocal {
+    #[serde(default)]
+    pub stroke: bool,
+    #[serde(default)]
+    pub alternating: bool,
+}
+
+impl TableLocal {
+    pub fn is_none(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 impl Cell {
@@ -95,6 +136,8 @@ impl Cell {
             inset: Insets::uniform(2.0),
             vertical: VerticalJustify::Top,
             edges: Box::default(),
+            style: None,
+            local: CellLocal::default(),
         }
     }
 }
@@ -230,6 +273,19 @@ pub struct Table {
     /// every frame kind, as a cell's edges are.
     #[serde(default)]
     pub alternating: Option<Box<AlternatingFills>>,
+    /// The table style it takes.
+    #[serde(default)]
+    pub style: Option<crate::ids::TableStyleId>,
+    /// The table's own properties set by hand, which a style does not move.
+    #[serde(default, skip_serializing_if = "TableLocal::is_none")]
+    pub local: TableLocal,
+    /// How many rows at the top are the heading, and at the foot the
+    /// footing: the rows a table style gives their own cell style, and that
+    /// repeat when a table runs on across frames.
+    #[serde(default)]
+    pub header_rows: u16,
+    #[serde(default)]
+    pub footer_rows: u16,
 }
 
 impl Table {
@@ -356,6 +412,10 @@ pub fn new(
             .collect(),
         stroke: None,
         alternating: None,
+        style: None,
+        local: TableLocal::default(),
+        header_rows: 0,
+        footer_rows: 0,
     }
 }
 
@@ -542,13 +602,16 @@ impl Table {
             .filter_map(|(r, c)| owners[r * columns + c])
             .collect();
         owning.dedup();
+        // Set by hand, on both sides: a style no longer moves these edges.
         for (r, c) in owning {
             if let Some(cell) = self.at_mut(r, c).and_then(Slot::cell_mut) {
                 *cell.edges.side_mut(facing) = stroke.clone();
+                cell.local.edges = true;
             }
         }
         if let Some(cell) = self.at_mut(row, column).and_then(Slot::cell_mut) {
             *cell.edges.side_mut(side) = stroke;
+            cell.local.edges = true;
         }
     }
 

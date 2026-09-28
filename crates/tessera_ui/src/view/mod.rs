@@ -50,6 +50,7 @@ pub mod styles;
 pub mod swatch_editor;
 pub mod swatches;
 pub mod table_options;
+pub mod table_styles;
 pub mod text_edit;
 pub mod variables;
 pub mod vello_host;
@@ -150,6 +151,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     variables::show(ui.ctx(), state);
     table_options::show(ui.ctx(), state);
     data_merge::show(ui.ctx(), state);
+    table_styles::show(ui.ctx(), state);
     long_document::show(ui.ctx(), state);
     cross_reference::show(ui.ctx(), state);
     glyph::show(ui.ctx(), state);
