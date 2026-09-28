@@ -481,6 +481,7 @@ fn build_inner(
         if let ResolvedKind::Graphic {
             inner,
             source,
+            pdf,
             natural,
             missing: _,
             stroke,
@@ -504,7 +505,7 @@ fn build_inner(
             let drawn = source.as_ref().and_then(|path| {
                 images
                     .as_mut()
-                    .and_then(|cache| cache.at_size(path, wanted))
+                    .and_then(|cache| cache.page_at_size(path, *pdf, wanted))
                     .map(|decoded| (decoded.image.clone(), decoded.pixels))
             });
 

@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 41;
+pub const FORMAT_VERSION: u32 = 42;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -113,6 +113,9 @@ pub fn load(path: &Path) -> Result<Document, FormatError> {
 /// ago follows exactly the path a document written two versions ago does, and
 /// each step only has to know about its own change.
 fn migrate(value: &mut serde_json::Value, from: u32) {
+    // 41 -> 42: a link to a PDF names its page and the box it is cut to
+    // (`pdf`). **No step**: absent reads as the first page cut to its crop
+    // box, which is what every earlier PDF was placed as.
     // 40 -> 41: a table runs on into frames of their own (`parts`, and the
     // `TablePart` frame kind). **No step**: absent reads as a table set in
     // its own frame, which is what every earlier table was.

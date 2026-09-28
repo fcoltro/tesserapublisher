@@ -21,6 +21,8 @@
 
 use std::path::{Path, PathBuf};
 
+use tessera_document::links::PdfPage;
+
 /// The magic and version at the head of a proxy file.
 ///
 /// Version, not just magic: the layout may change, and a stale file from an
@@ -85,6 +87,18 @@ pub fn directory() -> Option<PathBuf> {
 /// colons and characters no filesystem agrees about, and because a deep path is
 /// longer than a file name may be.
 pub fn name_for(path: &Path, modified: Option<u64>, longest_edge: u32) -> String {
+    name_for_page(path, PdfPage::default(), modified, longest_edge)
+}
+
+/// [`name_for`] a placed PDF's chosen page and box. The first page cut to
+/// its crop box is named as the file alone is, so the proxies written before
+/// a page could be chosen are still found.
+pub fn name_for_page(
+    path: &Path,
+    pdf: PdfPage,
+    modified: Option<u64>,
+    longest_edge: u32,
+) -> String {
     // FNV-1a, 64-bit. Not a cryptographic hash and does not need to be: a
     // collision costs one wrong proxy on screen, and the alternative is a
     // dependency for something nothing depends on.
@@ -98,6 +112,10 @@ pub fn name_for(path: &Path, modified: Option<u64>, longest_edge: u32) -> String
     eat(path.to_string_lossy().as_bytes());
     eat(&modified.unwrap_or(0).to_le_bytes());
     eat(&longest_edge.to_le_bytes());
+    if !pdf.is_first_cropped() {
+        eat(&pdf.page.to_le_bytes());
+        eat(&[pdf.crop as u8]);
+    }
 
     format!("{hash:016x}.tpx")
 }

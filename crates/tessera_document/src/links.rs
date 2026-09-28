@@ -26,6 +26,67 @@ pub struct Link {
     /// somebody could send a printer last week's photograph.
     #[serde(default)]
     pub modified: Option<u64>,
+    /// Which page of a PDF is shown, and which of its boxes it is cut to.
+    ///
+    /// Part of what the link *is*: the same file at page three is other
+    /// artwork than at page one, with its own size, so it is its own link.
+    /// Ignored for anything that is not a PDF.
+    #[serde(default, skip_serializing_if = "PdfPage::is_first_cropped")]
+    pub pdf: PdfPage,
+}
+
+/// Which page of a placed PDF, and the box it is cut to — InDesign's Place
+/// PDF options.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PdfPage {
+    /// Counted from zero.
+    #[serde(default)]
+    pub page: u32,
+    #[serde(default)]
+    pub crop: PdfBox,
+}
+
+impl PdfPage {
+    /// The first page cut to its crop box: what a PDF placed without being
+    /// asked shows, and what a link written before this choice existed means.
+    pub fn is_first_cropped(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// The boxes a PDF page describes itself with, as PDF names them.
+///
+/// **The crop box by default**, because it is the page as a viewer shows it.
+/// Trim is the finished page and bleed the trim with its overhang; art is
+/// the part the maker said matters; media the whole sheet, marks and all.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PdfBox {
+    #[default]
+    Crop,
+    Art,
+    Trim,
+    Bleed,
+    Media,
+}
+
+impl PdfBox {
+    pub const ALL: [PdfBox; 5] = [
+        PdfBox::Crop,
+        PdfBox::Art,
+        PdfBox::Trim,
+        PdfBox::Bleed,
+        PdfBox::Media,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PdfBox::Crop => "Crop",
+            PdfBox::Art => "Art",
+            PdfBox::Trim => "Trim",
+            PdfBox::Bleed => "Bleed",
+            PdfBox::Media => "Media",
+        }
+    }
 }
 
 /// What a link is doing right now.
@@ -48,7 +109,14 @@ impl Link {
             path: path.into(),
             natural,
             modified: None,
+            pdf: PdfPage::default(),
         }
+    }
+
+    /// Whether two links name the same artwork: the same file, and for a
+    /// PDF the same page cut the same way. What makes two placements one link.
+    pub fn same_artwork(&self, other: &Link) -> bool {
+        self.path == other.path && self.pdf == other.pdf
     }
 
     /// What the disk says about this link — as it said it at most a couple

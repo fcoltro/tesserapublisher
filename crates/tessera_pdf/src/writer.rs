@@ -8,6 +8,7 @@ use pdf_writer::writers::ExtGraphicsState;
 use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref, Str, TextStr};
 use tessera_color::Color;
 use tessera_document::blending::Blending;
+use tessera_document::links::PdfPage;
 use tessera_document::nodes::{LineCap, LineJoin, Stroke};
 use tessera_document::paint::Paint;
 use tessera_geometry::{DocPoint, DocRect, Transform};
@@ -1088,6 +1089,9 @@ fn write_shadows(pdf: &mut Pdf, shadows: &[Option<CastShadow>]) {
 struct Picture {
     /// The file it came from, which is what makes it reusable.
     source: std::path::PathBuf,
+    /// For a PDF, the page and box: the same file at another page is other
+    /// artwork, and reusing one for the other would print the wrong page.
+    pdf: PdfPage,
     id: Ref,
     resource: String,
     art: Art,
@@ -1106,9 +1110,10 @@ enum Art {
     /// reaches, numbered by this file's own allocator.
     Page {
         chunk: pdf_writer::Chunk,
-        /// The page's own size in points, which the form occupies from its
-        /// lower left.
-        size: (f64, f64),
+        /// The box shown, in the form's own space: left, bottom, width and
+        /// height, in points y-up. The form occupies the page's own size from
+        /// its lower left, and for the crop box this is the whole of it.
+        shown: (f64, f64, f64, f64),
     },
 }
 
@@ -1139,16 +1144,25 @@ fn copies_pages(ink: &Ink, standard: Standard) -> bool {
     matches!(ink, Ink::Rgb) && standard == Standard::Plain
 }
 
-/// A placed PDF's first page as a form, and the id the page draws it by.
+/// A placed PDF's chosen page as a form, and the id the page draws it by.
 ///
-/// `None` when the file will not open as a PDF, or has no pages: skipped,
-/// like any other picture that cannot be read.
-fn copy_page(source: &std::path::Path, alloc: &mut impl FnMut() -> Ref) -> Option<(Ref, Art)> {
+/// **The whole page is copied** and the chosen box cut from it where it is
+/// drawn, since a form is a page and nothing smaller.
+///
+/// `None` when the file will not open as a PDF, or has no such page:
+/// skipped, like any other picture that cannot be read.
+fn copy_page(
+    source: &std::path::Path,
+    pdf: PdfPage,
+    alloc: &mut impl FnMut() -> Ref,
+) -> Option<(Ref, Art)> {
     use hayro_write::{ChunkSettings, ExtractionQuery, hayro_syntax::Pdf as Source};
 
+    // Measured by the same reckoning the screen cuts its picture by.
+    let region = tessera_render::images::pdf_region(source, pdf)?;
     let bytes = std::fs::read(source).ok()?;
     let placed = Source::new(std::sync::Arc::new(bytes)).ok()?;
-    let (width, height) = placed.pages().first()?.render_dimensions();
+    let (width, height) = placed.pages().get(pdf.page as usize)?.render_dimensions();
     if !(width > 0.0 && height > 0.0) {
         return None;
     }
@@ -1160,7 +1174,7 @@ fn copy_page(source: &std::path::Path, alloc: &mut impl FnMut() -> Ref) -> Optio
         |group| {
             group.color_space().device_rgb();
         },
-        &[ExtractionQuery::new_xobject(0)],
+        &[ExtractionQuery::new_xobject(pdf.page as usize)],
     )
     .ok()?;
     let id = *copied.root_refs.first()?.as_ref().ok()?;
@@ -1169,7 +1183,13 @@ fn copy_page(source: &std::path::Path, alloc: &mut impl FnMut() -> Ref) -> Optio
         id,
         Art::Page {
             chunk: copied.chunk,
-            size,
+            // The region counts down from the top; the form, up from the foot.
+            shown: (
+                region.x,
+                size.1 - region.y - region.height,
+                region.width,
+                region.height,
+            ),
         },
     ))
 }
@@ -1194,10 +1214,11 @@ fn collect_pictures(
 
     // The largest each file is drawn anywhere, in points: its coarsest use,
     // which is the one downsampling must leave sharp.
-    let mut drawn: Vec<(&std::path::Path, (f64, f64))> = Vec::new();
+    let mut drawn: Vec<(&std::path::Path, PdfPage, (f64, f64))> = Vec::new();
     for item in &resolved.items {
         let ResolvedKind::Graphic {
             source: Some(source),
+            pdf,
             inner,
             natural,
             ..
@@ -1207,26 +1228,31 @@ fn collect_pictures(
         };
         let c = (item.transform.to_affine() * inner.to_affine()).as_coeffs();
         let size = (natural.0 * c[0].hypot(c[1]), natural.1 * c[2].hypot(c[3]));
-        match drawn.iter_mut().find(|(path, _)| path == source) {
-            Some((_, most)) => *most = (most.0.max(size.0), most.1.max(size.1)),
-            None => drawn.push((source, size)),
+        match drawn
+            .iter_mut()
+            .find(|(path, page, _)| path == source && page == pdf)
+        {
+            Some((_, _, most)) => *most = (most.0.max(size.0), most.1.max(size.1)),
+            None => drawn.push((source, *pdf, size)),
         }
     }
 
     for item in &resolved.items {
-        let ResolvedKind::Graphic { source, .. } = &item.kind else {
+        let ResolvedKind::Graphic { source, pdf, .. } = &item.kind else {
             continue;
         };
         let Some(source) = source else { continue };
-        if out.iter().any(|p| &p.source == source) {
+        let pdf = *pdf;
+        if out.iter().any(|p| &p.source == source && p.pdf == pdf) {
             continue;
         }
         if tessera_render::images::is_pdf(source) && copies_pages(ink, standard) {
-            let Some((id, art)) = copy_page(source, alloc) else {
+            let Some((id, art)) = copy_page(source, pdf, alloc) else {
                 continue;
             };
             out.push(Picture {
                 source: source.clone(),
+                pdf,
                 id,
                 resource: format!("Fm{}", out.len()),
                 art,
@@ -1239,13 +1265,13 @@ fn collect_pictures(
         // that is a real cost rather than a shortcut worth looking for.
         let largest = drawn
             .iter()
-            .find(|(path, _)| path == source)
-            .map_or((1.0, 1.0), |(_, size)| *size);
+            .find(|(path, page, _)| path == source && *page == pdf)
+            .map_or((1.0, 1.0), |(_, _, size)| *size);
         let conversion = match ink {
             Ink::Cmyk(conversion) => Some(conversion.as_ref()),
             Ink::Rgb => None,
         };
-        let ready = crate::images::prepare_for(source, conversion, handling, largest);
+        let ready = crate::images::prepare_page_for(source, pdf, conversion, handling, largest);
         let Ok(ready) = ready else {
             continue;
         };
@@ -1254,6 +1280,7 @@ fn collect_pictures(
         let mask = ready.is_transparent().then(&mut *alloc);
         out.push(Picture {
             source: source.clone(),
+            pdf,
             id,
             resource: format!("Im{}", out.len()),
             art: Art::Pixels { ready, mask },
@@ -1785,13 +1812,16 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
             // a printed job is far worse than a blank space.
             ResolvedKind::Graphic {
                 source,
+                pdf,
                 inner,
                 natural,
                 stroke,
                 ..
             } => {
                 if let Some(source) = source
-                    && let Some(picture) = pictures.iter().find(|p| &p.source == source)
+                    && let Some(picture) = pictures
+                        .iter()
+                        .find(|p| &p.source == source && p.pdf == *pdf)
                 {
                     content.save_state();
                     // A PDF image occupies the **unit square**, so the matrix is
@@ -1812,24 +1842,40 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                     content.clip_nonzero();
                     content.end_path();
                     let flip = kurbo::Affine::new([1.0, 0.0, 0.0, -1.0, 0.0, page.height]);
+                    // The box shown, in the form's space, for a copied page.
+                    let mut shown = None;
                     let art = match picture.art {
                         Art::Pixels { .. } => {
                             kurbo::Affine::new([natural.0, 0.0, 0.0, -natural.1, 0.0, natural.1])
                         }
-                        Art::Page { size, .. } => kurbo::Affine::new([
-                            natural.0 / size.0,
-                            0.0,
-                            0.0,
-                            -natural.1 / size.1,
-                            0.0,
-                            natural.1,
-                        ]),
+                        // The chosen box, from its lower left, onto the
+                        // natural size, which is the box's size.
+                        Art::Page {
+                            shown: (x, y, w, h),
+                            ..
+                        } => {
+                            shown = Some((x, y, w, h));
+                            kurbo::Affine::new([
+                                natural.0 / w,
+                                0.0,
+                                0.0,
+                                -natural.1 / h,
+                                -x * natural.0 / w,
+                                natural.1 + y * natural.1 / h,
+                            ])
+                        }
                     };
                     // The picture's own space -> natural points -> fitted
                     // frame space -> document space -> PDF's y-up coordinates.
                     let matrix =
                         flip * kurbo::Affine::translate((b.x, b.y)) * inner.to_affine() * art;
                     content.transform(matrix.as_coeffs().map(|v| v as f32));
+                    // Cut to the box, since the whole page came across.
+                    if let Some((x, y, w, h)) = shown {
+                        content.rect(x as f32, y as f32, w as f32, h as f32);
+                        content.clip_nonzero();
+                        content.end_path();
+                    }
                     content.x_object(Name(picture.resource.as_bytes()));
                     content.restore_state();
                 }
@@ -2498,11 +2544,12 @@ mod tests {
         // change, the export refuses rather than write a file X-1a forbids.
         let copied = Picture {
             source: "advert.pdf".into(),
+            pdf: PdfPage::default(),
             id: Ref::new(1),
             resource: "Fm0".into(),
             art: Art::Page {
                 chunk: pdf_writer::Chunk::new(),
-                size: (200.0, 100.0),
+                shown: (0.0, 0.0, 200.0, 100.0),
             },
         };
         assert!(copied.is_transparent());

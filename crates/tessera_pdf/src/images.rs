@@ -23,6 +23,7 @@ use std::path::Path;
 
 use crate::PdfError as Error;
 use tessera_color::managed::Conversion;
+use tessera_document::links::PdfPage;
 
 /// How the bytes are compressed, which is the same thing as which PDF filter
 /// reads them.
@@ -71,9 +72,15 @@ impl Prepared {
 /// turned out to be something this cannot read is a preflight problem, already
 /// reported; refusing to write the whole PDF because of one picture would mean a
 /// job with a broken link cannot be proofed at all.
+#[cfg(test)]
 pub fn prepare(path: &Path) -> Result<Prepared, Error> {
+    prepare_page(path, PdfPage::default())
+}
+
+/// [`prepare`] for a placed PDF's chosen page and box.
+fn prepare_page(path: &Path, pdf: PdfPage) -> Result<Prepared, Error> {
     if tessera_render::images::is_vector(path) {
-        return prepare_vector(path);
+        return prepare_vector(path, pdf);
     }
     let bytes = std::fs::read(path)?;
     if tessera_render::psd::is_psd(path) {
@@ -167,14 +174,14 @@ const VECTOR_PPI: f64 = 600.0;
 ///
 /// One function because both the RGB path and the CMYK one need the same
 /// pixels; rendering twice would be slow and could disagree.
-fn vector_rgba(path: &Path) -> Result<(Vec<u8>, u32, u32), Error> {
+fn vector_rgba(path: &Path, page: PdfPage) -> Result<(Vec<u8>, u32, u32), Error> {
     let pdf = tessera_render::images::is_pdf(path);
     let kind = if pdf { "PDF" } else { "SVG" };
     let unreadable =
         |why: &str| Error::Unreadable(path.to_path_buf(), format!("not readable as {kind}: {why}"));
 
     let size = if pdf {
-        tessera_render::images::pdf_size(path)
+        tessera_render::images::pdf_page_size(path, page)
     } else {
         tessera_render::images::svg_size(path)
     };
@@ -191,7 +198,7 @@ fn vector_rgba(path: &Path) -> Result<(Vec<u8>, u32, u32), Error> {
         .clamp(1.0, f64::from(u32::MAX)) as u32;
 
     let rendered = if pdf {
-        tessera_render::images::render_pdf(path, edge)
+        tessera_render::images::render_pdf_page(path, page, edge)
     } else {
         tessera_render::images::render_svg(path, edge)
     };
@@ -200,8 +207,8 @@ fn vector_rgba(path: &Path) -> Result<(Vec<u8>, u32, u32), Error> {
 }
 
 /// Render placed vector artwork into pixels for embedding.
-fn prepare_vector(path: &Path) -> Result<Prepared, Error> {
-    let (rgba, width, height) = vector_rgba(path)?;
+fn prepare_vector(path: &Path, pdf: PdfPage) -> Result<Prepared, Error> {
+    let (rgba, width, height) = vector_rgba(path, pdf)?;
     Ok(from_rgba(&rgba, width, height))
 }
 
@@ -223,13 +230,19 @@ const CHUNK: usize = 1 << 16;
 ///
 /// Alpha survives. It is coverage, not colour, and has nothing to do with which
 /// inks the picture is made of.
+#[cfg(test)]
 pub fn to_cmyk(path: &Path, conversion: &Conversion) -> Result<Prepared, Error> {
+    to_cmyk_page(path, PdfPage::default(), conversion)
+}
+
+/// [`to_cmyk`] for a placed PDF's chosen page and box.
+fn to_cmyk_page(path: &Path, pdf: PdfPage, conversion: &Conversion) -> Result<Prepared, Error> {
     // A drawing is rendered rather than decoded, and then converted like any
     // other picture: the inks a drawing prints in are the press's business, not
     // the drawing's.
     let malformed = || Error::Unreadable(path.to_path_buf(), "malformed rendering".into());
     let rgba = if tessera_render::images::is_vector(path) {
-        let (raw, w, h) = vector_rgba(path)?;
+        let (raw, w, h) = vector_rgba(path, pdf)?;
         image::RgbaImage::from_raw(w, h, raw).ok_or_else(malformed)?
     } else if tessera_render::psd::is_psd(path) {
         let composite = photoshop(path, &std::fs::read(path)?)?;
@@ -311,13 +324,13 @@ pub(crate) fn lowest_ppi(pixels: (u32, u32), drawn: (f64, f64)) -> f64 {
 
 /// How many pixels a placed file is, without decoding it: a drawing at the
 /// resolution it is rendered at, a photograph from its header.
-fn pixel_size(path: &Path) -> Option<(u32, u32)> {
+fn pixel_size(path: &Path, pdf: PdfPage) -> Option<(u32, u32)> {
     let rendered = |(w, h): (f64, f64)| {
         let side = |points: f64| (points / 72.0 * VECTOR_PPI).round() as u32;
         (side(w), side(h))
     };
     if tessera_render::images::is_pdf(path) {
-        tessera_render::images::pdf_size(path).map(rendered)
+        tessera_render::images::pdf_page_size(path, pdf).map(rendered)
     } else if tessera_render::images::is_svg(path) {
         tessera_render::images::svg_size(path).map(rendered)
     } else if tessera_render::psd::is_psd(path) {
@@ -339,8 +352,12 @@ fn pixel_size(path: &Path) -> Option<(u32, u32)> {
 ///
 /// What is left alone is left exactly as [`prepare`] and [`to_cmyk`] leave
 /// it: a JPEG passed through byte for byte.
-pub fn prepare_for(
+///
+/// For a PDF, `pdf` is the page and the box it is cut to: the same file at
+/// another page is other artwork.
+pub fn prepare_page_for(
     path: &Path,
+    pdf: PdfPage,
     conversion: Option<&Conversion>,
     pictures: &crate::Pictures,
     drawn: (f64, f64),
@@ -348,13 +365,13 @@ pub fn prepare_for(
     use crate::Compression;
 
     let plain = || match conversion {
-        Some(conversion) => to_cmyk(path, conversion),
-        None => prepare(path),
+        Some(conversion) => to_cmyk_page(path, pdf, conversion),
+        None => prepare_page(path, pdf),
     };
     if pictures.downsample.is_none() && pictures.compression == Compression::Automatic {
         return plain();
     }
-    let scale = match (pictures.downsample, pixel_size(path)) {
+    let scale = match (pictures.downsample, pixel_size(path, pdf)) {
         (Some(down), Some(pixels)) if pixels.0 > 0 && pixels.1 > 0 => {
             let ppi = lowest_ppi(pixels, drawn);
             (ppi > down.above && down.to > 0.0).then(|| (down.to / ppi).min(1.0))
@@ -390,7 +407,7 @@ pub fn prepare_for(
     let unreadable = |e: String| Error::Unreadable(path.to_path_buf(), e);
     // The pixels, and a CMYK Photoshop file's own inks beside them.
     let (mut rgba, mut inks) = if tessera_render::images::is_vector(path) {
-        let (raw, w, h) = vector_rgba(path)?;
+        let (raw, w, h) = vector_rgba(path, pdf)?;
         let rgba = image::RgbaImage::from_raw(w, h, raw)
             .ok_or_else(|| unreadable("malformed rendering".into()))?;
         (rgba, None)

@@ -546,6 +546,7 @@ fn a_placed_picture_is_painted_where_its_frame_is() {
                 kind: ResolvedKind::Graphic {
                     inner,
                     source: Some(art.clone()),
+                    pdf: Default::default(),
                     natural,
                     missing: false,
                     stroke: None,

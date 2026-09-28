@@ -2370,6 +2370,10 @@ fn graphic_section(
         state.links.recheck();
     }
 
+    if tessera_render::images::is_pdf(&link.path) {
+        pdf_page_choice(ui, state, id, &link);
+    }
+
     // The effective resolution, which is the number a printer cares about: a
     // 300ppi photograph at twice its size is a 150ppi photograph.
     let drawn = {
@@ -2444,6 +2448,78 @@ fn graphic_section(
         .clicked()
     {
         apply(state, Command::FitFrameToArtwork { id });
+    }
+}
+
+/// Which page of a placed PDF the frame shows, and the box it is cut to:
+/// InDesign's Place PDF options, kept where the artwork is.
+///
+/// A step at a time rather than a number to drag, since each page is read
+/// and measured afresh and one step is one thing to undo.
+fn pdf_page_choice(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::FrameId,
+    link: &tessera_document::links::Link,
+) {
+    use tessera_document::links::PdfBox;
+    // Counted once for each version of the file rather than on every
+    // redraw: counting opens the whole PDF.
+    let key = egui::Id::new(("pdf-pages", &link.path, link.modified));
+    let pages = ui.ctx().data(|d| d.get_temp::<usize>(key)).or_else(|| {
+        let pages = tessera_render::images::pdf_page_count(&link.path)?;
+        ui.ctx().data_mut(|d| d.insert_temp(key, pages));
+        Some(pages)
+    });
+    let mut pdf = link.pdf;
+    let mut changed = false;
+    if let Some(pages) = pages.filter(|p| *p > 1) {
+        property_field(ui, "Page", |ui| {
+            ui.horizontal(|ui| {
+                let at = pdf.page as usize;
+                if ui
+                    .add_enabled(at > 0, egui::Button::new("<"))
+                    .on_hover_text("The page before")
+                    .clicked()
+                {
+                    pdf.page -= 1;
+                    changed = true;
+                }
+                ui.label(format!("{} of {pages}", at + 1));
+                if ui
+                    .add_enabled(at + 1 < pages, egui::Button::new(">"))
+                    .on_hover_text("The page after")
+                    .clicked()
+                {
+                    pdf.page += 1;
+                    changed = true;
+                }
+            });
+        });
+    }
+    property_field(ui, "Crop to", |ui| {
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt(("pdf-crop", id))
+                .width(ui.available_width())
+                .selected_text(pdf.crop.label())
+                .show_ui(ui, |ui| {
+                    for choice in PdfBox::ALL {
+                        if ui
+                            .selectable_value(&mut pdf.crop, choice, choice.label())
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    }
+                })
+                .response,
+            "Crop to",
+            egui::WidgetType::ComboBox,
+            None,
+        );
+    });
+    if changed {
+        apply(state, Command::ShowPdfPage { id, pdf });
     }
 }
 

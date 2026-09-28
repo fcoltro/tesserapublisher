@@ -84,6 +84,8 @@ pub enum ResolvedKind {
         inner: Transform,
         /// The file, when there is one and it is on disk.
         source: Option<std::path::PathBuf>,
+        /// For a PDF, the page shown and the box it is cut to.
+        pdf: tessera_document::links::PdfPage,
         /// What the artwork wants to be, in points.
         natural: (f64, f64),
         /// Whether the frame is empty, or its file has gone.
@@ -1421,6 +1423,7 @@ fn resolve_one<'a>(
             ResolvedKind::Graphic {
                 inner: placed.map(|p| p.inner).unwrap_or(Transform::IDENTITY),
                 source: link.as_ref().filter(|_| !missing).map(|l| l.path.clone()),
+                pdf: link.as_ref().map(|l| l.pdf).unwrap_or_default(),
                 natural: link.map(|l| l.natural).unwrap_or((0.0, 0.0)),
                 missing,
                 stroke: resolved_stroke(doc, frame.stroke.as_ref()),

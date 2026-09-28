@@ -283,6 +283,7 @@ mod tests {
             path: PathBuf::from("nothing-of-this-name.jpg"),
             natural: (100.0, 100.0),
             modified: None,
+            pdf: Default::default(),
         });
 
         let packaged = collect(&doc, "Job", &folder, &Default::default()).expect("packaged");
@@ -307,6 +308,7 @@ mod tests {
                 path: source.clone(),
                 natural: (10.0, 10.0),
                 modified: None,
+                pdf: Default::default(),
             });
         }
 

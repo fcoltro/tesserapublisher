@@ -231,6 +231,12 @@ pub enum Command {
     FitFrameToArtwork {
         id: FrameId,
     },
+    /// Show another page of the PDF placed in a frame, or cut it to another
+    /// of its boxes. This frame alone: others showing the file keep theirs.
+    ShowPdfPage {
+        id: FrameId,
+        pdf: tessera_document::links::PdfPage,
+    },
 
     SetBounds {
         id: FrameId,
@@ -1218,7 +1224,10 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         }
 
         Command::Relink { link, path } => {
-            let Some(measured) = measure_link(state, &path) else {
+            // The page chosen stays chosen: a relink is usually the same
+            // document, revised.
+            let pdf = link_pdf(state, link);
+            let Some(measured) = measure_link_as(state, &path, pdf) else {
                 return;
             };
             let now = state.active_mut().document_mut().relink(link, measured);
@@ -1237,7 +1246,8 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             else {
                 return;
             };
-            if let Some(measured) = measure_link(state, &path) {
+            let pdf = link_pdf(state, link);
+            if let Some(measured) = measure_link_as(state, &path, pdf) {
                 state.active_mut().document_mut().relink(link, measured);
             }
         }
@@ -1250,8 +1260,9 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                     .links
                     .get(link)
                     .map(|l| l.path.clone());
+                let pdf = link_pdf(state, link);
                 if let Some(path) = path
-                    && let Some(measured) = measure_link(state, &path)
+                    && let Some(measured) = measure_link_as(state, &path, pdf)
                 {
                     state.active_mut().document_mut().relink(link, measured);
                 }
@@ -1260,7 +1271,8 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::RelinkMany { changes } => {
             for (link, path) in changes {
-                let Some(measured) = measure_link(state, &path) else {
+                let pdf = link_pdf(state, link);
+                let Some(measured) = measure_link_as(state, &path, pdf) else {
                     continue;
                 };
                 let now = state.active_mut().document_mut().relink(link, measured);
@@ -1324,6 +1336,23 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::FitFrameToArtwork { id } => {
             state.active_mut().document_mut().fit_frame_to_content(id);
+        }
+
+        Command::ShowPdfPage { id, pdf } => {
+            let doc = state.active().document();
+            let Some(path) = doc.frame(id).and_then(|f| match &f.kind {
+                FrameKind::Graphic { placed: Some(p) } => {
+                    doc.links.get(p.link).map(|l| l.path.clone())
+                }
+                _ => None,
+            }) else {
+                return;
+            };
+            let Some(link) = measure_link_as(state, &path, pdf) else {
+                return;
+            };
+            let link = state.active_mut().document_mut().add_link(link);
+            state.active_mut().document_mut().show_link(id, link);
         }
 
         Command::AddTable {
@@ -3309,7 +3338,16 @@ fn measure_link(
     state: &mut TesseraApp,
     path: &std::path::Path,
 ) -> Option<tessera_document::links::Link> {
-    match measured(path) {
+    measure_link_as(state, path, Default::default())
+}
+
+/// [`measure_link`] showing a PDF's chosen page, cut to the chosen box.
+fn measure_link_as(
+    state: &mut TesseraApp,
+    path: &std::path::Path,
+    pdf: tessera_document::links::PdfPage,
+) -> Option<tessera_document::links::Link> {
+    match measured_page(path, pdf) {
         Ok(link) => Some(link),
         Err(error) => {
             state.status = Some(crate::app::Status::error(error));
@@ -3322,12 +3360,29 @@ fn measure_link(
 /// a PDF page in points, a picture in its pixels. For a data merge, which
 /// places a picture per record in documents that are not open.
 pub(crate) fn measured(path: &std::path::Path) -> Result<tessera_document::links::Link, String> {
+    measured_page(path, Default::default())
+}
+
+/// [`measured`], showing a PDF's chosen page cut to the chosen box.
+///
+/// A page past the document's last is its last page: a relink onto a shorter
+/// revision shows what there is rather than nothing. Anything but a PDF has
+/// no pages, and the choice is dropped.
+pub(crate) fn measured_page(
+    path: &std::path::Path,
+    pdf: tessera_document::links::PdfPage,
+) -> Result<tessera_document::links::Link, String> {
     let path =
         std::path::absolute(path).map_err(|e| format!("Could not resolve artwork path: {e}"))?;
+    let mut pdf = pdf;
     let natural = if tessera_render::images::is_svg(&path) {
+        pdf = Default::default();
         tessera_render::images::svg_size(&path).unwrap_or((0.0, 0.0))
     } else if tessera_render::images::is_pdf(&path) {
-        tessera_render::images::pdf_size(&path).unwrap_or((0.0, 0.0))
+        if let Some(pages) = tessera_render::images::pdf_page_count(&path) {
+            pdf.page = pdf.page.min((pages.max(1) - 1) as u32);
+        }
+        tessera_render::images::pdf_page_size(&path, pdf).unwrap_or((0.0, 0.0))
     } else if tessera_render::psd::is_psd(&path) {
         tessera_render::psd::size(&path)
             .map(|(w, h)| (f64::from(w), f64::from(h)))
@@ -3343,9 +3398,28 @@ pub(crate) fn measured(path: &std::path::Path) -> Result<tessera_document::links
     // Just placed from this path: whatever was remembered about it — missing,
     // an older version — is out of date now.
     tessera_io::seen::look_now(&path);
+    if !tessera_render::images::is_pdf(&path) {
+        pdf = Default::default();
+    }
     let mut link = tessera_document::links::Link::new(path, natural);
     link.modified = modified;
+    link.pdf = pdf;
     Ok(link)
+}
+
+/// The page and box a link shows, or the first page's crop box for a link
+/// that is not there.
+fn link_pdf(
+    state: &TesseraApp,
+    link: tessera_document::ids::LinkId,
+) -> tessera_document::links::PdfPage {
+    state
+        .active()
+        .document()
+        .links
+        .get(link)
+        .map(|l| l.pdf)
+        .unwrap_or_default()
 }
 
 /// "No fill": black at no alpha, so that turning the fill on gets black
@@ -3535,6 +3609,64 @@ mod tests {
                 path.display()
             );
         }
+    }
+
+    #[test]
+    fn a_frame_shows_another_page_of_its_pdf_as_one_step() {
+        // Two pages, the second 100 wide with a trim half its width. Past the
+        // last page is the last page, and undo gives the first back.
+        let dir = std::env::temp_dir().join("tessera-pdf-pages");
+        std::fs::create_dir_all(&dir).unwrap();
+        let pdf = dir.join("booklet.pdf");
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 150] /Resources << >> >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 150] \
+             /TrimBox [0 0 50 150] /Resources << >> >>",
+        ];
+        let mut bytes = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (n, object) in objects.iter().enumerate() {
+            offsets.push(bytes.len());
+            bytes.extend(format!("{} 0 obj\n{object}\nendobj\n", n + 1).bytes());
+        }
+        let xref = bytes.len();
+        bytes.extend(b"xref\n0 5\n0000000000 65535 f \n");
+        for offset in offsets {
+            bytes.extend(format!("{offset:010} 00000 n \n").bytes());
+        }
+        bytes.extend(
+            format!("trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").bytes(),
+        );
+        std::fs::write(&pdf, bytes).unwrap();
+
+        let mut state = TesseraApp::headless();
+        let (id, first) = placed_picture(&mut state, &pdf);
+        let shown = |state: &TesseraApp| {
+            let doc = state.active().document();
+            match &doc.frame(id).expect("frame").kind {
+                FrameKind::Graphic { placed: Some(p) } => doc.links[p.link].clone(),
+                _ => panic!("nothing placed"),
+            }
+        };
+        let trim = tessera_document::links::PdfPage {
+            page: 7,
+            crop: tessera_document::links::PdfBox::Trim,
+        };
+        apply(&mut state, Command::ShowPdfPage { id, pdf: trim });
+        let link = shown(&state);
+        assert_eq!(link.pdf.page, 1, "past the last page is the last page");
+        assert_eq!(link.natural, (50.0, 150.0), "measured to its trim");
+        assert!(
+            !state.active().document().links.contains_key(first),
+            "the first page, shown nowhere now, is still a link"
+        );
+
+        apply(&mut state, Command::Undo);
+        let link = shown(&state);
+        assert_eq!(link.pdf, Default::default());
+        assert_eq!(link.natural, (300.0, 150.0));
     }
 
     #[test]

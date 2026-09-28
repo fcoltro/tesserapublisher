@@ -1258,14 +1258,15 @@ impl Document {
 
     /// Record a file the document points at, and say which link it is.
     ///
-    /// The same path placed twice is **one** link. Two would be two entries in
+    /// The same artwork placed twice — the same path, and for a PDF the same
+    /// page cut the same way — is **one** link. Two would be two entries in
     /// the links panel for one file, two things to relink, and two chances for
     /// them to disagree about whether it is missing.
     pub fn add_link(&mut self, link: Link) -> LinkId {
         if let Some(id) = self
             .links
             .iter()
-            .find(|(_, existing)| existing.path == link.path)
+            .find(|(_, existing)| existing.same_artwork(&link))
             .map(|(id, _)| id)
         {
             return id;
@@ -1309,6 +1310,30 @@ impl Document {
             f.kind = FrameKind::Graphic {
                 placed: Some(crate::graphic::Placement { link, inner }),
             };
+        }
+        self.revision += 1;
+        true
+    }
+
+    /// Show another link in a frame, where the old artwork sat: its
+    /// placement kept, as a relink keeps it. For another page of the same PDF,
+    /// which is another link, in this frame alone.
+    ///
+    /// The old link goes when nothing else shows it, since it was only ever
+    /// this frame's page.
+    pub fn show_link(&mut self, frame: FrameId, link: LinkId) -> bool {
+        if !self.links.contains_key(link) {
+            return false;
+        }
+        let Some(FrameKind::Graphic {
+            placed: Some(placement),
+        }) = self.frames.get_mut(frame).map(|f| &mut f.kind)
+        else {
+            return false;
+        };
+        let old = std::mem::replace(&mut placement.link, link);
+        if old != link && self.frames_using(old).is_empty() {
+            self.links.remove(old);
         }
         self.revision += 1;
         true
@@ -1373,15 +1398,15 @@ impl Document {
     /// frame's placement is kept — the new artwork sits where the old did —
     /// because a relink is usually the same picture, retouched.
     ///
-    /// The same path is one link, and relinking is not a way round that: onto
-    /// a file the document already links, the frames join that link and the
-    /// old one goes.
+    /// The same artwork is one link, and relinking is not a way round that:
+    /// onto artwork the document already links, the frames join that link and
+    /// the old one goes.
     pub fn relink(&mut self, link: LinkId, to: Link) -> LinkId {
         self.revision += 1;
         let existing = self
             .links
             .iter()
-            .find(|(id, l)| *id != link && l.path == to.path)
+            .find(|(id, l)| *id != link && l.same_artwork(&to))
             .map(|(id, _)| id);
         let Some(joined) = existing else {
             if let Some(slot) = self.links.get_mut(link) {
@@ -7048,6 +7073,39 @@ mod tests {
 
     use crate::graphic::Fit;
     use crate::links::Link;
+
+    #[test]
+    fn another_page_of_a_placed_pdf_is_its_own_link() {
+        let mut doc = Document::new();
+        let first = doc.add_link(Link::new("booklet.pdf", (200.0, 100.0)));
+        let mut page_two = Link::new("booklet.pdf", (100.0, 100.0));
+        page_two.pdf = crate::links::PdfPage {
+            page: 1,
+            crop: crate::links::PdfBox::Trim,
+        };
+        let second = doc.add_link(page_two.clone());
+        assert_ne!(first, second, "two pages of one file are two pictures");
+        assert_eq!(doc.add_link(page_two), second, "the same page is one link");
+    }
+
+    #[test]
+    fn a_frame_shown_another_page_lets_go_of_the_old_one() {
+        let mut doc = Document::new();
+        let (frame, old) = a_picture_box(&mut doc);
+        doc.place(frame, old, Fit::Proportionally);
+        let mut page_two = doc.links[old].clone();
+        page_two.pdf.page = 1;
+        let new = doc.add_link(page_two);
+        assert!(doc.show_link(frame, new));
+        let Some(FrameKind::Graphic { placed: Some(p) }) = doc.frame(frame).map(|f| &f.kind) else {
+            panic!("the frame lost its picture");
+        };
+        assert_eq!(p.link, new);
+        assert!(
+            !doc.links.contains_key(old),
+            "nothing shows the first page any more, and it stayed a link"
+        );
+    }
 
     /// A graphic frame 200 by 100, and a link to artwork 50 square.
     fn a_picture_box(doc: &mut Document) -> (FrameId, LinkId) {

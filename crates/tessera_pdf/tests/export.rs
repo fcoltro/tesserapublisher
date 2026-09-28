@@ -1036,6 +1036,7 @@ fn placed(source: Option<std::path::PathBuf>) -> ResolvedKind {
         missing: source.is_none(),
         stroke: None,
         source,
+        pdf: Default::default(),
     }
 }
 
@@ -1195,6 +1196,7 @@ fn placed_at(source: std::path::PathBuf, bounds: DocRect, natural: (f64, f64)) -
             missing: false,
             stroke: None,
             source: Some(source),
+            pdf: Default::default(),
         },
         bounds,
     )
@@ -1267,6 +1269,92 @@ fn a_placed_pdf_prints_as_the_screen_shows_it() {
             }
         }
         assert!(red > 0, "the test page drew nothing to compare");
+    }
+}
+
+#[test]
+fn a_placed_pdf_prints_the_page_chosen_cut_to_its_box() {
+    // Red all over; then green on the left and blue on the right, the right
+    // named as the trim. The second page's trim, placed, prints blue and
+    // nothing else: not the first page, and not the green the cut leaves out.
+    let first = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] \
+                 /Contents 4 0 R /Resources << >> >>";
+    let second = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] \
+                  /TrimBox [100 0 200 100] /Contents 6 0 R /Resources << >> >>";
+    let red = "1 0 0 rg 0 0 200 100 re f";
+    let halves = "0 1 0 rg 0 0 100 100 re f 0 0 1 rg 100 0 100 100 re f";
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>".to_string(),
+        first.to_string(),
+        format!("<< /Length {} >>\nstream\n{red}\nendstream", red.len()),
+        second.to_string(),
+        format!(
+            "<< /Length {} >>\nstream\n{halves}\nendstream",
+            halves.len()
+        ),
+    ];
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (n, object) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", n + 1).as_bytes());
+    }
+    let xref = out.len();
+    out.extend_from_slice(
+        format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+    );
+    for offset in offsets {
+        out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    let dir = std::env::temp_dir().join("tessera-pdf-export");
+    std::fs::create_dir_all(&dir).expect("dir");
+    let path = dir.join("booklet.pdf");
+    std::fs::write(&path, out).expect("write");
+
+    let pdf = tessera_document::links::PdfPage {
+        page: 1,
+        crop: tessera_document::links::PdfBox::Trim,
+    };
+    // Twice the trim's size, in a frame larger still: whatever is not the
+    // trim would show in the room around it.
+    let mut doc = placed_at(path, rect(100.0, 100.0, 300.0, 300.0), (200.0, 200.0));
+    if let ResolvedKind::Graphic { pdf: shown, .. } = &mut doc.items[0].kind {
+        *shown = pdf;
+    }
+
+    for (standard, name) in [
+        (Standard::Plain, "booklet-copied"),
+        (Standard::X4, "booklet-rendered"),
+    ] {
+        let options = ExportOptions {
+            standard,
+            intent: (standard == Standard::X4).then(an_intent),
+            ..Default::default()
+        };
+        let bytes = tessera_pdf::export_with(&doc, &options).expect("export");
+        let page = printed(&bytes, name);
+        for (x, y) in [(110, 110), (200, 200), (290, 290)] {
+            let got = pixel(&page, x, y);
+            assert!(
+                got[2] > 200 && got[0] < 60 && got[1] < 60,
+                "{name}: at {x},{y} the trim should print blue, not {got:?}"
+            );
+        }
+        for (x, y) in [(310, 150), (350, 350)] {
+            assert_eq!(
+                pixel(&page, x, y)[3],
+                0,
+                "{name}: at {x},{y} the cut let more through"
+            );
+        }
     }
 }
 

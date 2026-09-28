@@ -1145,8 +1145,10 @@ of each carries the full account; this is the index.
   rather than `zune-psd`, which reads a CMYK file's black as alpha:
   PSD and PSB, 8 and 16 bits, grey, duotone, indexed, RGB and CMYK, raw or
   run-length, with Photoshop's transparency and its white matte taken out.
-  A CMYK file's own inks go into a CMYK export untouched. **Left:** choosing
-  a PDF's page and which box it is cropped to; ZIP-compressed, Lab, 1-bit and
+  A CMYK file's own inks go into a CMYK export untouched. A placed PDF shows
+  the page chosen, cut to its crop, art, trim, bleed or media box (Properties
+  ▸ Page and Crop to; 2026-09-28) — no wider than its crop box, since the
+  renderer draws nothing past it. **Left:** ZIP-compressed, Lab, 1-bit and
   32-bit Photoshop files; EPS, which needs a PostScript interpreter.
 - [x] **Default black is [Black] (2026-09-27).** A new shape's hairline, a
   table's rules, Default fill and stroke, a stroke switched on in Properties
@@ -3420,8 +3422,13 @@ below are its items 1 to 3.
 
 ### Tier 2 — about a day each
 
-- [ ] 5. **A placed PDF's page, and which box it is cropped to** (the
-  interface, placing).
+- [x] 5. **A placed PDF's page, and which box it is cropped to** (the
+  interface, placing). *Done 2026-09-28:* a link names its page and box
+  (`Link::pdf`, format 42), so two pages of one file are two links; the
+  screen, its proxies and both export paths — the copied form and the
+  rendered picture — cut the same region (`pdf_region`); Properties steps
+  through the pages and chooses the box for the frame alone; IDML's
+  `PDFAttribute` imports.
 - [ ] 6. **"Objects move with page edge"** when a page is resized
   (milestone 12).
 - [x] 7. **Chapter number as a variable, and a variable in a table cell**

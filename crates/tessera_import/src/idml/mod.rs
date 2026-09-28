@@ -777,13 +777,15 @@ impl Items<'_> {
             }
             "Rectangle" => {
                 match placed_image(node) {
-                    Some((path, natural)) => {
+                    Some((path, natural, pdf)) => {
                         if !self.image_fit_noted {
                             dropped.note("placed images were fitted proportionally; their crops were not kept");
                             self.image_fit_noted = true;
                         }
                         let natural = natural.unwrap_or((bounds.width, bounds.height));
-                        let link = doc.add_link(tessera_document::links::Link::new(path, natural));
+                        let mut link = tessera_document::links::Link::new(path, natural);
+                        link.pdf = pdf;
+                        let link = doc.add_link(link);
                         let inner = tessera_document::graphic::fit(
                             DocRect {
                                 x: 0.0,
@@ -1060,8 +1062,16 @@ fn text_layout(node: Node) -> TextLayout {
     layout
 }
 
-/// The image a rectangle holds, and its natural size when the package says.
-fn placed_image(node: Node) -> Option<(PathBuf, Option<(f64, f64)>)> {
+/// A placed file: its path, its natural size when the package says, and for
+/// a PDF the page placed and the box it is cut to.
+type Placed = (
+    PathBuf,
+    Option<(f64, f64)>,
+    tessera_document::links::PdfPage,
+);
+
+/// The image a rectangle holds.
+fn placed_image(node: Node) -> Option<Placed> {
     let image = ["Image", "PDF", "EPS", "ImportedPage"]
         .iter()
         .find_map(|name| child(node, name))?;
@@ -1076,7 +1086,29 @@ fn placed_image(node: Node) -> Option<(PathBuf, Option<(f64, f64)>)> {
                 attr_f64(g, "Bottom")? - attr_f64(g, "Top")?,
             ))
         });
-    Some((path, natural))
+    Some((path, natural, pdf_attribute(image)))
+}
+
+/// A placed PDF's `PDFAttribute`: its page, counted from one, and its crop.
+///
+/// InDesign's bounding box — the content's own extent — is a box PDF does not
+/// name, so it reads as the crop box, the nearest one that is.
+fn pdf_attribute(image: Node) -> tessera_document::links::PdfPage {
+    use tessera_document::links::{PdfBox, PdfPage};
+    let Some(pdf) = child(image, "PDFAttribute") else {
+        return PdfPage::default();
+    };
+    let page = attr_f64(pdf, "PageNumber")
+        .map(|n| (n.max(1.0) - 1.0) as u32)
+        .unwrap_or(0);
+    let crop = match attr(pdf, "PDFCrop") {
+        Some("CropArt") => PdfBox::Art,
+        Some("CropTrim") => PdfBox::Trim,
+        Some("CropBleed") => PdfBox::Bleed,
+        Some("CropMedia") => PdfBox::Media,
+        _ => PdfBox::Crop,
+    };
+    PdfPage { page, crop }
 }
 
 /// `file:/C:/Users/x/a.jpg` and `file:///Users/x/a.jpg` to a path.
@@ -1116,6 +1148,23 @@ fn percent_decode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_placed_pdf_keeps_its_page_and_crop() {
+        let xml = r#"<Rectangle><PDF><PDFAttribute PageNumber="3" PDFCrop="CropTrim"/>
+            <Link LinkResourceURI="file:/C:/art/booklet.pdf"/></PDF></Rectangle>"#;
+        let parsed = roxmltree::Document::parse(xml).expect("parses");
+        let (path, _, pdf) = placed_image(parsed.root_element()).expect("placed");
+        assert_eq!(path, PathBuf::from("C:/art/booklet.pdf"));
+        assert_eq!(pdf.page, 2, "counted from one in the file");
+        assert_eq!(pdf.crop, tessera_document::links::PdfBox::Trim);
+
+        let bare =
+            r#"<Rectangle><Image><Link LinkResourceURI="file:/C:/a.jpg"/></Image></Rectangle>"#;
+        let parsed = roxmltree::Document::parse(bare).expect("parses");
+        let (_, _, pdf) = placed_image(parsed.root_element()).expect("placed");
+        assert!(pdf.is_first_cropped());
+    }
 
     #[test]
     fn file_uris_become_paths() {

@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use tessera_document::links::{PdfBox, PdfPage};
 use vello::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat};
 
 /// What identifies a decoded image.
@@ -30,6 +31,8 @@ struct Key {
     /// large are two different bitmaps, and holding one under the other’s name
     /// would either draw a blurred original or decode a big one to show a thumb.
     bucket: Option<u32>,
+    /// A PDF's page and box; the first page's crop box for anything else.
+    pdf: PdfPage,
 }
 
 /// Artwork decoded and ready to draw.
@@ -97,6 +100,17 @@ impl Images {
     /// again. `None` for the size asks for the original, which is what anything
     /// needing real pixels — a resolution report, an export — must have.
     pub fn at_size(&mut self, path: &Path, longest_edge: Option<u32>) -> Option<&Decoded> {
+        self.page_at_size(path, PdfPage::default(), longest_edge)
+    }
+
+    /// [`Images::at_size`] for a placed PDF's chosen page and box, which is
+    /// other artwork than the same file's first page and is kept apart.
+    pub fn page_at_size(
+        &mut self,
+        path: &Path,
+        pdf: PdfPage,
+        longest_edge: Option<u32>,
+    ) -> Option<&Decoded> {
         // What the disk last said, not what it says this instant: this runs
         // for every picture on every redraw, and a stale key costs at most a
         // couple of seconds before an edited file is decoded again.
@@ -109,6 +123,7 @@ impl Images {
             path: path.to_path_buf(),
             modified,
             bucket,
+            pdf,
         };
 
         if self.held.contains_key(&key) {
@@ -119,9 +134,9 @@ impl Images {
         // The disk cache, before the decoder. This is the whole point of having
         // one: on a cold start the pixels are already there, small, and need no
         // JPEG pulled apart to reach them.
-        let decoded = self.read_proxy(path, modified, bucket).or_else(|| {
-            let decoded = decode(path, bucket)?;
-            self.write_proxy(path, modified, bucket, &decoded);
+        let decoded = self.read_proxy(path, pdf, modified, bucket).or_else(|| {
+            let decoded = decode(path, pdf, bucket)?;
+            self.write_proxy(path, pdf, modified, bucket, &decoded);
             Some(decoded)
         })?;
 
@@ -144,6 +159,7 @@ impl Images {
     fn read_proxy(
         &mut self,
         path: &Path,
+        pdf: PdfPage,
         modified: Option<u64>,
         bucket: Option<u32>,
     ) -> Option<Decoded> {
@@ -151,7 +167,7 @@ impl Images {
         let file = self
             .directory
             .as_ref()?
-            .join(crate::proxies::name_for(path, modified, bucket));
+            .join(crate::proxies::name_for_page(path, pdf, modified, bucket));
         let proxy = crate::proxies::read(&file)?;
         self.from_proxy += 1;
         Some(Decoded {
@@ -167,6 +183,7 @@ impl Images {
     fn write_proxy(
         &self,
         path: &Path,
+        pdf: PdfPage,
         modified: Option<u64>,
         bucket: Option<u32>,
         decoded: &Decoded,
@@ -180,7 +197,7 @@ impl Images {
             height: decoded.pixels.1,
             pixels: decoded.image.data.as_ref().to_vec(),
         };
-        let file = directory.join(crate::proxies::name_for(path, modified, bucket));
+        let file = directory.join(crate::proxies::name_for_page(path, pdf, modified, bucket));
         if crate::proxies::write(&file, &proxy) {
             // Only when something was added, because that is the only time the
             // directory can have grown past its budget.
@@ -233,12 +250,12 @@ impl Images {
 /// for as long as it takes to shrink it and no longer: decoding at full size and
 /// handing it on would put a 40-megapixel image in the cache to draw a thumbnail
 /// from.
-fn decode(path: &Path, longest_edge: Option<u32>) -> Option<Decoded> {
+fn decode(path: &Path, pdf: PdfPage, longest_edge: Option<u32>) -> Option<Decoded> {
     if is_svg(path) {
         return decode_svg(path, longest_edge);
     }
     if is_pdf(path) {
-        let (rgba, (width, height)) = render_pdf(path, longest_edge.unwrap_or(0))?;
+        let (rgba, (width, height)) = render_pdf_page(path, pdf, longest_edge.unwrap_or(0))?;
         return Some(Decoded {
             image: to_image(rgba, width, height),
             pixels: (width, height),
@@ -313,27 +330,130 @@ fn open_pdf(path: &Path) -> Option<hayro::hayro_syntax::Pdf> {
 ///
 /// `None` for a file that does not open as a PDF, or has no pages.
 pub fn pdf_size(path: &Path) -> Option<(f64, f64)> {
-    let pdf = open_pdf(path)?;
-    let page = pdf.pages().first()?;
+    pdf_page_size(path, PdfPage::default())
+}
+
+/// The size the chosen page of a PDF is, cut to the chosen box, in points.
+///
+/// `None` for a file that does not open as a PDF, or has no such page.
+pub fn pdf_page_size(path: &Path, pdf: PdfPage) -> Option<(f64, f64)> {
+    let region = pdf_region(path, pdf)?;
+    Some((region.width, region.height))
+}
+
+/// How many pages a PDF has, or `None` for a file that is not one.
+pub fn pdf_page_count(path: &Path) -> Option<usize> {
+    Some(open_pdf(path)?.pages().len())
+}
+
+/// Where a page's chosen box lies in the page as it is drawn.
+///
+/// In points from the top left of the page's crop box, turned as the page
+/// is turned — the picture [`render_pdf_page`] cuts from, and the form the
+/// PDF export copies across.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PdfRegion {
+    /// The whole page as drawn: its crop box, turned.
+    pub page: (f64, f64),
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// Where the chosen box of the chosen page lies, or `None` for a file that is
+/// not a PDF or has no such page.
+///
+/// **No more than the crop box.** A page is drawn within its crop box, and a
+/// box reaching past it — a media box wider than the crop, say — is cut to
+/// it. A box the page does not name is the crop box, as PDF says it is.
+pub fn pdf_region(path: &Path, pdf: PdfPage) -> Option<PdfRegion> {
+    let file = open_pdf(path)?;
+    let page = file.pages().get(pdf.page as usize)?;
+    region_of(page, pdf.crop)
+}
+
+fn region_of(page: &hayro::hayro_syntax::page::Page<'_>, crop: PdfBox) -> Option<PdfRegion> {
+    use hayro::hayro_syntax::object::Rect;
     let (width, height) = page.render_dimensions();
-    (width > 0.0 && height > 0.0).then_some((f64::from(width), f64::from(height)))
+    if !(width > 0.0 && height > 0.0) {
+        return None;
+    }
+    let shown = page.intersected_crop_box();
+    let named = |key: &[u8]| page.raw().get::<Rect>(key);
+    let chosen = match crop {
+        PdfBox::Crop => shown,
+        PdfBox::Media => page.media_box(),
+        PdfBox::Bleed => named(b"BleedBox").unwrap_or(shown),
+        PdfBox::Trim => named(b"TrimBox").unwrap_or(shown),
+        PdfBox::Art => named(b"ArtBox").unwrap_or(shown),
+    };
+    // Written with its corners either way round by some makers.
+    let (x0, x1) = (chosen.x0.min(chosen.x1), chosen.x0.max(chosen.x1));
+    let (y0, y1) = (chosen.y0.min(chosen.y1), chosen.y0.max(chosen.y1));
+    let (x0, x1) = (x0.max(shown.x0), x1.min(shown.x1));
+    let (y0, y1) = (y0.max(shown.y0), y1.min(shown.y1));
+    let page_size = (f64::from(width), f64::from(height));
+    if x1 - x0 < 1.0 || y1 - y0 < 1.0 {
+        // Nothing of it inside what is drawn: the page as a viewer shows it.
+        return Some(PdfRegion {
+            page: page_size,
+            x: 0.0,
+            y: 0.0,
+            width: page_size.0,
+            height: page_size.1,
+        });
+    }
+    // The page's own space to the drawn page's, turned and flipped: the
+    // same transform the renderer draws with, so the cut and the picture
+    // cannot disagree.
+    let [a, b, c, d, e, f] = page.initial_transform(true).as_coeffs();
+    let corners = [(x0, y0), (x1, y0), (x0, y1), (x1, y1)]
+        .map(|(x, y)| (a * x + c * y + e, b * x + d * y + f));
+    let left = corners.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+    let right = corners
+        .iter()
+        .map(|p| p.0)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let top = corners.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
+    let bottom = corners
+        .iter()
+        .map(|p| p.1)
+        .fold(f64::NEG_INFINITY, f64::max);
+    Some(PdfRegion {
+        page: page_size,
+        x: left.max(0.0),
+        y: top.max(0.0),
+        width: (right.min(page_size.0) - left.max(0.0)).max(1.0),
+        height: (bottom.min(page_size.1) - top.max(0.0)).max(1.0),
+    })
 }
 
 /// Render a PDF's first page so its longest side is `longest_edge` pixels,
 /// or one pixel to the point at zero.
+pub fn render_pdf(path: &Path, longest_edge: u32) -> Option<(Vec<u8>, (u32, u32))> {
+    render_pdf_page(path, PdfPage::default(), longest_edge)
+}
+
+/// Render the chosen page of a PDF, cut to the chosen box, so its longest
+/// side is `longest_edge` pixels, or one pixel to the point at zero.
 ///
 /// **Rendered, not scaled**, as an SVG is: a page of type placed small and
 /// then enlarged is drawn again at the new size. On a transparent ground, so
 /// what the page leaves unpainted shows what is behind the frame, as it does
 /// in print. Straight RGBA, like [`render_svg`], and capped as it is.
-pub fn render_pdf(path: &Path, longest_edge: u32) -> Option<(Vec<u8>, (u32, u32))> {
-    let pdf = open_pdf(path)?;
-    let page = pdf.pages().first()?;
-    let (natural_w, natural_h) = page.render_dimensions();
-    if !(natural_w > 0.0 && natural_h > 0.0) {
-        return None;
-    }
-    let longest = natural_w.max(natural_h);
+///
+/// The whole page is drawn and the box cut from it, since the renderer
+/// draws a page and nothing smaller.
+pub fn render_pdf_page(
+    path: &Path,
+    pdf: PdfPage,
+    longest_edge: u32,
+) -> Option<(Vec<u8>, (u32, u32))> {
+    let file = open_pdf(path)?;
+    let page = file.pages().get(pdf.page as usize)?;
+    let region = region_of(page, pdf.crop)?;
+    let longest = region.width.max(region.height) as f32;
     let scale = if longest_edge > 0 {
         longest_edge as f32 / longest
     } else {
@@ -342,7 +462,8 @@ pub fn render_pdf(path: &Path, longest_edge: u32) -> Option<(Vec<u8>, (u32, u32)
     // The pixmap's sides are sixteen-bit, and a rendering past this costs more
     // than any screen shows.
     const MAX_EDGE: f32 = 8192.0;
-    let scale = scale.min(MAX_EDGE / longest).max(f32::MIN_POSITIVE);
+    let whole = region.page.0.max(region.page.1) as f32;
+    let scale = scale.min(MAX_EDGE / whole).max(f32::MIN_POSITIVE);
     let settings = hayro::RenderSettings {
         x_scale: scale,
         y_scale: scale,
@@ -354,13 +475,25 @@ pub fn render_pdf(path: &Path, longest_edge: u32) -> Option<(Vec<u8>, (u32, u32)
         &hayro::hayro_interpret::InterpreterSettings::default(),
         &settings,
     );
-    let (width, height) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
-    if width == 0 || height == 0 {
+    let (full_w, full_h) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
+    if full_w == 0 || full_h == 0 {
         return None;
     }
+    let s = f64::from(scale);
+    // Rounded rather than floored and ceiled: the scale is a float, and a
+    // box edge at 127.9999 pixels is the edge at 128, not a column wider.
+    let left = ((region.x * s).round() as u32).min(full_w - 1);
+    let top = ((region.y * s).round() as u32).min(full_h - 1);
+    let right = (((region.x + region.width) * s).round() as u32).clamp(left + 1, full_w);
+    let bottom = (((region.y + region.height) * s).round() as u32).clamp(top + 1, full_h);
+    let (width, height) = (right - left, bottom - top);
+    let pixels = pixmap.take_unpremultiplied();
     let mut rgba = Vec::with_capacity((width * height * 4) as usize);
-    for pixel in pixmap.take_unpremultiplied() {
-        rgba.extend_from_slice(&[pixel.r, pixel.g, pixel.b, pixel.a]);
+    for row in top..bottom {
+        let from = (row * full_w + left) as usize;
+        for pixel in &pixels[from..from + width as usize] {
+            rgba.extend_from_slice(&[pixel.r, pixel.g, pixel.b, pixel.a]);
+        }
     }
     Some((rgba, (width, height)))
 }
@@ -535,7 +668,7 @@ mod tests {
         // So the cache, the budget and the sizing all treat it like any other
         // placed picture; only the reading differs.
         let path = an_svg("decode");
-        let decoded = decode(&path, Some(200)).expect("decodes");
+        let decoded = decode(&path, PdfPage::default(), Some(200)).expect("decodes");
         assert_eq!(decoded.pixels, (200, 100));
     }
 
@@ -552,11 +685,21 @@ mod tests {
         };
         let path = std::env::temp_dir().join("tessera-decode.psd");
         std::fs::write(&path, file.bytes()).expect("write");
-        assert_eq!(decode(&path, None).expect("decodes").pixels, (40, 20));
-        assert_eq!(decode(&path, Some(10)).expect("decodes").pixels, (10, 5));
+        assert_eq!(
+            decode(&path, PdfPage::default(), None)
+                .expect("decodes")
+                .pixels,
+            (40, 20)
+        );
+        assert_eq!(
+            decode(&path, PdfPage::default(), Some(10))
+                .expect("decodes")
+                .pixels,
+            (10, 5)
+        );
 
         std::fs::write(&path, b"8BPS but nothing after").expect("write");
-        assert!(decode(&path, None).is_none());
+        assert!(decode(&path, PdfPage::default(), None).is_none());
     }
 
     /// A PDF written by hand: one page `width` by `height` points, turned
@@ -600,6 +743,173 @@ mod tests {
         path
     }
 
+    /// A PDF of several pages, each 200 by 100, written by hand: for each,
+    /// what else its page dictionary says and what it draws.
+    pub(crate) fn a_pdf_of(name: &str, pages: &[(&str, &str)]) -> PathBuf {
+        let kids: Vec<String> = (0..pages.len())
+            .map(|n| format!("{} 0 R", 3 + 2 * n))
+            .collect();
+        let mut objects = vec![
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            format!(
+                "<< /Type /Pages /Kids [{}] /Count {} >>",
+                kids.join(" "),
+                pages.len()
+            ),
+        ];
+        for (n, (extra, content)) in pages.iter().enumerate() {
+            objects.push(format!(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] {extra} \
+                 /Contents {} 0 R /Resources << >> >>",
+                4 + 2 * n
+            ));
+            objects.push(format!(
+                "<< /Length {} >>\nstream\n{content}\nendstream",
+                content.len()
+            ));
+        }
+        let mut out = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (n, object) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", n + 1).as_bytes());
+        }
+        let xref = out.len();
+        out.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+        );
+        for offset in offsets {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+        let path = std::env::temp_dir().join(format!("tessera-pdf-{name}.pdf"));
+        std::fs::write(&path, out).expect("write");
+        path
+    }
+
+    /// Red all over; then green on the left half and blue on the right, with
+    /// the right half named as the trim.
+    const BOOKLET: [(&str, &str); 2] = [
+        ("", "1 0 0 rg 0 0 200 100 re f"),
+        (
+            "/TrimBox [100 0 200 100]",
+            "0 1 0 rg 0 0 100 100 re f 0 0 1 rg 100 0 100 100 re f",
+        ),
+    ];
+
+    fn colour_at(rendered: &(Vec<u8>, (u32, u32)), x: u32, y: u32) -> [u8; 4] {
+        let i = ((y * rendered.1.0 + x) * 4) as usize;
+        [
+            rendered.0[i],
+            rendered.0[i + 1],
+            rendered.0[i + 2],
+            rendered.0[i + 3],
+        ]
+    }
+
+    #[test]
+    fn a_pdf_shows_the_page_chosen() {
+        let path = a_pdf_of("booklet", &BOOKLET);
+        assert_eq!(pdf_page_count(&path), Some(2));
+        let second = PdfPage {
+            page: 1,
+            crop: PdfBox::Crop,
+        };
+        let first = render_pdf_page(&path, PdfPage::default(), 200).expect("renders");
+        let other = render_pdf_page(&path, second, 200).expect("renders");
+        assert_eq!(colour_at(&first, 20, 50), [255, 0, 0, 255]);
+        assert_eq!(colour_at(&other, 20, 50), [0, 255, 0, 255]);
+        let past = PdfPage {
+            page: 2,
+            crop: PdfBox::Crop,
+        };
+        assert_eq!(pdf_page_size(&path, past), None, "there is no third page");
+    }
+
+    #[test]
+    fn a_pdf_page_is_cut_to_the_box_chosen() {
+        let path = a_pdf_of("booklet-trim", &BOOKLET);
+        let cut = |crop| PdfPage { page: 1, crop };
+        assert_eq!(
+            pdf_page_size(&path, cut(PdfBox::Crop)),
+            Some((200.0, 100.0))
+        );
+        assert_eq!(
+            pdf_page_size(&path, cut(PdfBox::Trim)),
+            Some((100.0, 100.0))
+        );
+        assert_eq!(
+            pdf_page_size(&path, cut(PdfBox::Bleed)),
+            Some((200.0, 100.0)),
+            "a box the page does not name is its crop box"
+        );
+        let trimmed = render_pdf_page(&path, cut(PdfBox::Trim), 100).expect("renders");
+        assert_eq!(trimmed.1, (100, 100));
+        for (x, y) in [(2, 2), (50, 50), (97, 97)] {
+            assert_eq!(colour_at(&trimmed, x, y), [0, 0, 255, 255], "at {x},{y}");
+        }
+    }
+
+    #[test]
+    fn a_turned_page_is_cut_where_it_is_drawn() {
+        // The top half of the right half, turned a quarter: taller than wide,
+        // and blue wherever it is looked at.
+        let pages = [(
+            "/Rotate 90 /TrimBox [100 50 200 100]",
+            "0 1 0 rg 0 0 100 100 re f 0 0 1 rg 100 0 100 100 re f",
+        )];
+        let path = a_pdf_of("turned-trim", &pages);
+        let trim = PdfPage {
+            page: 0,
+            crop: PdfBox::Trim,
+        };
+        assert_eq!(pdf_page_size(&path, trim), Some((50.0, 100.0)));
+        let cut = render_pdf_page(&path, trim, 100).expect("renders");
+        assert_eq!(cut.1, (50, 100));
+        for (x, y) in [(3, 3), (25, 50), (46, 96)] {
+            assert_eq!(colour_at(&cut, x, y), [0, 0, 255, 255], "at {x},{y}");
+        }
+    }
+
+    #[test]
+    fn another_page_of_a_pdf_is_other_artwork_in_the_cache() {
+        let path = a_pdf_of("booklet-cache", &BOOKLET);
+        let mut images = Images::keeping_proxies_in(None);
+        let first = images
+            .at_size(&path, Some(100))
+            .expect("decoded")
+            .image
+            .clone();
+        let second = images
+            .page_at_size(
+                &path,
+                PdfPage {
+                    page: 1,
+                    crop: PdfBox::Trim,
+                },
+                Some(100),
+            )
+            .expect("decoded")
+            .pixels;
+        assert_eq!(
+            images.decodes(),
+            2,
+            "the second page was served as the first"
+        );
+        assert_eq!(
+            second,
+            (128, 128),
+            "the trim, square, at the size band asked for"
+        );
+        assert_eq!(first.width, 128);
+    }
+
     #[test]
     fn a_pdf_and_an_illustrator_file_are_vector_artwork() {
         for name in ["advert.pdf", "LOGO.AI", "logo.svg"] {
@@ -638,7 +948,8 @@ mod tests {
             0,
             "what the page leaves unpainted is clear"
         );
-        let decoded = decode(&path, Some(100)).expect("decodes like any picture");
+        let decoded =
+            decode(&path, PdfPage::default(), Some(100)).expect("decodes like any picture");
         assert_eq!(decoded.pixels, (100, 50));
     }
 

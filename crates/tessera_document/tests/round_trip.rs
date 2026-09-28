@@ -868,8 +868,9 @@ fn the_format_version_is_twenty_six() {
     // before; 38 a data merge source, none before; 39 the frames taking a
     // merge's pictures, none before; 40 table and cell styles and a table's
     // heading and footing rows, none before; 41 a table running on into
-    // frames of its own, never before.
-    assert_eq!(format::FORMAT_VERSION, 41);
+    // frames of its own, never before; 42 a placed PDF's page and the box it
+    // is cut to, the first page's crop box before.
+    assert_eq!(format::FORMAT_VERSION, 42);
 }
 
 #[test]
