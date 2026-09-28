@@ -2744,9 +2744,13 @@ line of copy. The renderer and the PDF writer draw them without knowing.
   `Hyperlink`s map source to destination, `ParagraphDestination` and
   `HyperlinkTextDestination` become named anchors, and the applied
   format's name says what it shows; a source the spine cannot place
-  keeps its words. Not built: editing a reference in place (the caret
-  after one is known — `reference_at_caret` — and nothing offers it
-  yet); a reference inside a table cell imports as its words.
+  keeps its words. **2026-09-28:** a reference is edited in place —
+  Cross-reference… with the caret right after one opens on it, filled in,
+  and Update re-points or re-formats it as one `SetCrossReference`, the
+  marker and the words round it untouched; and a reference in a table
+  cell is live everywhere: IDML's cells are read with the spine's links,
+  and the table layout reads each cell's references from its own story
+  (`lay_out_with`, `cell_references`) rather than the page's one list.
 - [x] **Notes split across columns (2026-09-17).** A note too long for the
   room under its citation keeps what fits there — at least one line, or the
   citing line moves as before — and the rest is carried to the foot of the
@@ -3465,8 +3469,9 @@ below are its items 1 to 3.
   are asked.
 - [x] 11. ~~**SVG export.**~~ *Dropped 2026-09-28:* InDesign has no SVG
   export, and InDesign is the scope; PDF, PNG, JPEG, TIFF and WebP stay.
-- [ ] 12. **Cross-references edited in place**, and imported inside a table
-  cell as references rather than words (milestone 11).
+- [x] 12. **Cross-references edited in place**, and imported inside a table
+  cell as references rather than words (milestone 11). *Done 2026-09-28:*
+  and a reference in a cell reads its page, which it never did.
 - [ ] 13. **Hyperlinks**: anchored-text destinations, a link's appearance on
   screen, IDML hyperlinks (milestone 12).
 - [ ] 14. **Footnote text edited on the canvas** (milestone 11).

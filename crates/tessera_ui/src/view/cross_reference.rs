@@ -22,12 +22,45 @@ pub struct TextAnchorWindow {
     pub name: String,
 }
 
-/// The box for a new cross-reference: what it points at, and how it reads.
+/// The box for a cross-reference: what it points at, and how it reads.
 #[derive(Debug, Clone, Default)]
 pub struct CrossReferenceWindow {
     pub open: bool,
     pub target: String,
     pub format: CrossReferenceFormat,
+    /// The reference being edited — its story and its place in that
+    /// story's list — or `None` for a new one.
+    pub editing: Option<(tessera_document::ids::StoryId, usize)>,
+}
+
+impl CrossReferenceWindow {
+    /// Open on the reference the caret stands right after, filled in with
+    /// what it is, to be changed in place; or empty, for a new one.
+    ///
+    /// **In place** is InDesign's edit: the marker stays where it is and
+    /// only what it points at and how it reads change, so the text around
+    /// it is untouched and the change is one step to undo.
+    pub fn open_at_caret(&mut self, state: &TesseraApp) {
+        let existing = reference_at_caret(state).and_then(|(story, index)| {
+            let reference = state
+                .active()
+                .document()
+                .story(story)?
+                .cross_references
+                .get(index)?
+                .clone();
+            Some((story, index, reference))
+        });
+        match existing {
+            Some((story, index, reference)) => {
+                self.target = reference.target;
+                self.format = reference.format;
+                self.editing = Some((story, index));
+            }
+            None => self.editing = None,
+        }
+        self.open = true;
+    }
 }
 
 /// Every name a cross-reference may point at: the text anchors in every
@@ -105,7 +138,11 @@ fn reference_box(ctx: &egui::Context, state: &mut TesseraApp) {
         .frame(super::dialog_frame(ctx))
         .show(ctx, |ui| {
             ui.set_width((ctx.content_rect().width() - 64.0).clamp(320.0, 440.0));
-            ui.heading("Cross-reference");
+            ui.heading(if window.editing.is_some() {
+                "Edit cross-reference"
+            } else {
+                "Cross-reference"
+            });
             ui.add_space(Theme::space_2());
             crate::view::panels::field(ui, "To", |ui| {
                 if targets.is_empty() {
@@ -157,8 +194,13 @@ fn reference_box(ctx: &egui::Context, state: &mut TesseraApp) {
             );
             ui.add_space(Theme::space_2());
             ui.horizontal(|ui| {
+                let verb = if window.editing.is_some() {
+                    "Update"
+                } else {
+                    "Insert"
+                };
                 go = ui
-                    .add_enabled(!window.target.is_empty(), super::primary_button("Insert"))
+                    .add_enabled(!window.target.is_empty(), super::primary_button(verb))
                     .clicked();
                 if ui.button("Cancel").clicked() {
                     window.open = false;
@@ -174,7 +216,19 @@ fn reference_box(ctx: &egui::Context, state: &mut TesseraApp) {
             target: state.cross_reference.target.clone(),
             format: state.cross_reference.format,
         };
-        insert_reference(state, reference);
+        match state.cross_reference.editing {
+            Some((story, index)) => crate::command::apply(
+                state,
+                crate::command::Command::SetCrossReference {
+                    story,
+                    index,
+                    reference,
+                },
+            ),
+            None => {
+                insert_reference(state, reference);
+            }
+        }
         state.cross_reference.open = false;
     }
 }
@@ -337,6 +391,62 @@ mod tests {
         assert_eq!(targets(&state), vec!["ch2".to_string()]);
         // The caret sits after the reference, which is what to offer to edit.
         assert_eq!(reference_at_caret(&state), Some((story, 0)));
+    }
+
+    #[test]
+    fn a_reference_at_the_caret_is_edited_in_place() {
+        let (mut state, story) = editing("Chapter Two\nSee  for more.");
+        if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+            buffer.set_cursor(0);
+        }
+        insert_anchor(&mut state, "ch2");
+        insert_anchor(&mut state, "ch3");
+        let text = state.active().document().story(story).unwrap().text.clone();
+        let at = text.find("See ").unwrap() + 4;
+        if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+            buffer.set_cursor(at);
+        }
+        insert_reference(
+            &mut state,
+            CrossReference {
+                target: "ch2".into(),
+                format: CrossReferenceFormat::PageNumber,
+            },
+        );
+        let before = state.active().document().story(story).unwrap().text.clone();
+
+        // The caret is after it: the box opens on it, filled in.
+        let mut window = CrossReferenceWindow::default();
+        window.open_at_caret(&state);
+        assert_eq!(window.editing, Some((story, 0)));
+        assert_eq!(window.target, "ch2");
+        assert_eq!(window.format, CrossReferenceFormat::PageNumber);
+
+        crate::command::apply(
+            &mut state,
+            crate::command::Command::SetCrossReference {
+                story,
+                index: 0,
+                reference: CrossReference {
+                    target: "ch3".into(),
+                    format: CrossReferenceFormat::ParagraphText,
+                },
+            },
+        );
+        let s = state.active().document().story(story).unwrap();
+        assert_eq!(s.text, before, "the marker stays; the words around it too");
+        assert_eq!(s.cross_references.len(), 1, "changed, not added");
+        assert_eq!(s.cross_references[0].target, "ch3");
+        // And the editing buffer, which is written back later, agrees.
+        let buffered = state.active().editing.as_ref().unwrap().1.story();
+        assert_eq!(buffered.cross_references[0].target, "ch3");
+
+        // Anywhere else, the box is for a new one.
+        if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+            buffer.set_cursor(0);
+        }
+        window.open_at_caret(&state);
+        assert_eq!(window.editing, None);
     }
 
     #[test]

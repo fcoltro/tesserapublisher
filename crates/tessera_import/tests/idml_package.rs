@@ -60,6 +60,8 @@ fn a_book() -> Vec<u8> {
   <idPkg:Spread src="Spreads/Spread_ub9.xml"/>
   <idPkg:Story src="Stories/Story_u12.xml"/>
   <idPkg:Story src="Stories/Story_u20.xml"/>
+  <idPkg:Story src="Stories/Story_u30.xml"/>
+  <Hyperlink Self="uh1" Name="to the notes" Source="uxs1"><Destination type="object">ud1</Destination></Hyperlink>
 </Document>"#,
     );
     let graphic = format!(
@@ -155,7 +157,7 @@ fn a_book() -> Vec<u8> {
         <Column Self="ut1c1" Name="1" SingleColumnWidth="90"/>
         <Cell Self="ut1i0" Name="0:0" RowSpan="1" ColumnSpan="2"><ParagraphStyleRange><CharacterStyleRange><Content>Wide head</Content></CharacterStyleRange></ParagraphStyleRange></Cell>
         <Cell Self="ut1i1" Name="0:1" RowSpan="1" ColumnSpan="1"><ParagraphStyleRange><CharacterStyleRange><Content>a</Content></CharacterStyleRange></ParagraphStyleRange></Cell>
-        <Cell Self="ut1i2" Name="1:1" RowSpan="1" ColumnSpan="1"><ParagraphStyleRange><CharacterStyleRange><Content>b</Content></CharacterStyleRange></ParagraphStyleRange></Cell>
+        <Cell Self="ut1i2" Name="1:1" RowSpan="1" ColumnSpan="1"><ParagraphStyleRange><CharacterStyleRange><Content>b </Content><CrossReferenceSource Self="uxs1" AppliedFormat="CrossReferenceFormat/Page Number"><Content>9</Content></CrossReferenceSource></CharacterStyleRange></ParagraphStyleRange></Cell>
       </Table>
       <Content> follow.</Content>
     </CharacterStyleRange>
@@ -171,6 +173,15 @@ fn a_book() -> Vec<u8> {
   </ParagraphStyleRange>
 </Story></idPkg:Story>"#
     );
+    // A story of notes, holding the destination the cell's reference names.
+    let notes = format!(
+        r#"<idPkg:Story {IDPKG}>
+<Story Self="u30">
+  <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Body">
+    <CharacterStyleRange><ParagraphDestination Self="ud1" Name="notes"/><Content>Notes</Content></CharacterStyleRange>
+  </ParagraphStyleRange>
+</Story></idPkg:Story>"#
+    );
     package(&[
         ("designmap.xml", designmap),
         ("Resources/Graphic.xml", graphic),
@@ -181,6 +192,7 @@ fn a_book() -> Vec<u8> {
         ("Spreads/Spread_ub9.xml", spread2),
         ("Stories/Story_u12.xml", body),
         ("Stories/Story_u20.xml", folio),
+        ("Stories/Story_u30.xml", notes),
     ])
 }
 
@@ -319,8 +331,19 @@ fn a_book_comes_back_as_pages_parents_frames_threads_styles_and_sections() {
         table.at(0, 1).unwrap().cell().is_none(),
         "covered by the span"
     );
+    // A cross-reference in a cell is a live reference, not the words
+    // InDesign last wrote for it.
     let b = table.at(1, 1).unwrap().cell().expect("a cell");
-    assert_eq!(doc.story(b.story).unwrap().text, "b");
+    let b = doc.story(b.story).unwrap();
+    assert_eq!(
+        b.text,
+        format!(
+            "b {}",
+            tessera_text::variables::Marker::CrossReference.character()
+        )
+    );
+    assert_eq!(b.cross_references.len(), 1);
+    assert_eq!(b.cross_references[0].target, "notes");
     assert!(text.notes_are_sound());
     assert!(text.footnotes[0].text.ends_with("Orwell."));
     assert_eq!(text.paragraphs[0].style, Some(heading.0));

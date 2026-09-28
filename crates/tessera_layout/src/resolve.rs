@@ -1258,13 +1258,40 @@ fn cross_references_for(
     running: &Running,
     label_of: &dyn Fn(PageId) -> String,
 ) -> Vec<String> {
-    use tessera_text::story::CrossReferenceFormat;
     let Some(FrameKind::Text { story, .. }) = doc.frame(frame).map(|f| &f.kind) else {
         return Vec::new();
     };
     let Some(story) = doc.story(*story) else {
         return Vec::new();
     };
+    readings(doc, story, running, label_of)
+}
+
+/// What the cross-references in a table cell's story read as. Page numbers
+/// are labelled as the page's own number is, by its section.
+fn cell_references(doc: &Document, cell: StoryId, running: &Running) -> Vec<String> {
+    let Some(story) = doc.story(cell) else {
+        return Vec::new();
+    };
+    let numbers = doc.page_numbers();
+    let label_of = |page: PageId| {
+        numbers
+            .iter()
+            .find(|(p, _)| *p == page)
+            .map(|(_, n)| n.label.clone())
+            .unwrap_or_default()
+    };
+    readings(doc, story, running, &label_of)
+}
+
+/// What each cross-reference in `story` reads as.
+fn readings(
+    doc: &Document,
+    story: &tessera_text::story::Story,
+    running: &Running,
+    label_of: &dyn Fn(PageId) -> String,
+) -> Vec<String> {
+    use tessera_text::story::CrossReferenceFormat;
     story
         .cross_references
         .iter()
@@ -1436,12 +1463,22 @@ fn resolve_one<'a>(
             // the page the table stands on, as a text frame there does.
             let styles = OnPage::new(doc, variables_for(doc, id, on, running));
             let story = |id| story_of(doc, composed, id).cloned();
+            let references = |cell| cell_references(doc, cell, running);
             let laid = if table.parts.is_empty() {
-                crate::table::lay_out(table, doc, &styles, shaper, story)
+                crate::table::lay_out_with(table, doc, &styles, shaper, story, &references)
             } else {
                 // Running on: this frame shows the first share.
                 let capacities = table_capacities(doc, id, table);
-                crate::table::lay_out_part(table, doc, &styles, shaper, story, &capacities, 0)
+                crate::table::lay_out_part(
+                    table,
+                    doc,
+                    &styles,
+                    shaper,
+                    story,
+                    &references,
+                    &capacities,
+                    0,
+                )
             };
             ResolvedKind::Table {
                 laid,
@@ -1465,6 +1502,7 @@ fn resolve_one<'a>(
                 + 1;
             let styles = OnPage::new(doc, variables_for(doc, id, on, running));
             let story = |id| story_of(doc, composed, id).cloned();
+            let references = |cell| cell_references(doc, cell, running);
             ResolvedKind::Table {
                 laid: crate::table::lay_out_part(
                     table,
@@ -1472,6 +1510,7 @@ fn resolve_one<'a>(
                     &styles,
                     shaper,
                     story,
+                    &references,
                     &capacities,
                     index,
                 ),
@@ -2494,6 +2533,71 @@ Some body copy.",
             glyphs,
             glyphs_for(&mut shaper, "p. 2 Autumn"),
             "a page number and a variable in a cell, not \"p. # \""
+        );
+    }
+
+    #[test]
+    fn a_cross_reference_in_a_table_cell_reads_where_its_anchor_is() {
+        // A table on page one whose cell says "p. ⟨ref⟩", pointing at an
+        // anchor in a text frame on page two.
+        use tessera_text::story::{CrossReference, CrossReferenceFormat, TextAnchor};
+        use tessera_text::variables::Marker;
+        let mut doc = Document::default();
+        let second = doc.add_page();
+        let first = doc.page_ids().next().unwrap();
+        let layer = doc.default_layer().expect("a layer");
+
+        let mut target = Story::new(format!("{}Chapter Two", Marker::TextAnchor.character()));
+        target.anchors[0] = TextAnchor { name: "ch2".into() };
+        let target = doc.add_story(target);
+        doc.add_frame(layer, {
+            let b = doc.pages[second].bounds;
+            let mut f = rect(b.x + 20.0, b.y + 20.0, 300.0, 60.0);
+            f.kind = FrameKind::text(target);
+            f
+        });
+
+        let mut cell = Story::new(format!("p. {}", Marker::CrossReference.character()));
+        cell.cross_references[0] = CrossReference {
+            target: "ch2".into(),
+            format: CrossReferenceFormat::PageNumber,
+        };
+        let mut cells = vec![cell, Story::default()].into_iter();
+        let table = tessera_document::table::new(1, 2, 300.0, || {
+            doc.add_story(cells.next().unwrap_or_default())
+        });
+        let id = doc.add_frame(layer, {
+            let b = doc.pages[first].bounds;
+            let mut f = rect(b.x + 20.0, b.y + 20.0, 300.0, 40.0);
+            f.kind = FrameKind::Table(table);
+            f
+        });
+
+        let mut shaper = Shaper::new();
+        let resolved = resolve(&doc, &mut shaper);
+        let item = resolved
+            .items
+            .iter()
+            .find(|i| i.frame == id)
+            .expect("the table");
+        let ResolvedKind::Table { laid, .. } = &item.kind else {
+            panic!("not a table");
+        };
+        let cell = laid
+            .cells
+            .iter()
+            .find(|c| c.row == 0 && c.column == 0)
+            .expect("the first cell");
+        let glyphs: Vec<u32> = cell
+            .shaped
+            .lines
+            .iter()
+            .flat_map(|l| l.glyphs().map(|g| g.glyph_id))
+            .collect();
+        assert_eq!(
+            glyphs,
+            glyphs_for(&mut shaper, "p. 2"),
+            "the page its anchor is on, not \"p. ?\""
         );
     }
 

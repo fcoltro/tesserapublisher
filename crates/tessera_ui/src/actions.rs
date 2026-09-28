@@ -1672,8 +1672,11 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             }
         }
         Run::InsertCrossReference => {
+            // Right after a reference, the box edits that one.
             if state.active().editing.is_some() {
-                state.cross_reference.open = true;
+                let mut window = std::mem::take(&mut state.cross_reference);
+                window.open_at_caret(state);
+                state.cross_reference = window;
             }
         }
         Run::TableOfContents => state.contents.open = true,

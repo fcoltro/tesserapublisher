@@ -110,7 +110,26 @@ pub fn lay_out(
     doc: &Document,
     styles: &dyn tessera_text::story::Styles,
     shaper: &mut Shaper,
+    story_of: impl FnMut(tessera_document::ids::StoryId) -> Option<Story>,
+) -> LaidTable {
+    lay_out_with(table, doc, styles, shaper, story_of, &|_| Vec::new())
+}
+
+/// What a cell's cross-references read as, by the cell's story: worked out
+/// by whoever knows where the anchors landed, which is not this module.
+pub type References<'a> = dyn Fn(tessera_document::ids::StoryId) -> Vec<String> + 'a;
+
+/// [`lay_out`], with what each cell's cross-references read as. A cell is
+/// a story of its own and counts its references from its own first, so the
+/// page's one list — which is for a text frame's story — cannot answer
+/// for it.
+pub fn lay_out_with(
+    table: &Table,
+    doc: &Document,
+    styles: &dyn tessera_text::story::Styles,
+    shaper: &mut Shaper,
     mut story_of: impl FnMut(tessera_document::ids::StoryId) -> Option<Story>,
+    references: &References<'_>,
 ) -> LaidTable {
     // Its styles resolved into plain values first, so nothing below needs
     // to know a table can have them.
@@ -161,7 +180,19 @@ pub fn lay_out(
                 .and_then(|f| f.colour)
                 .unwrap_or(tessera_color::Color::BLACK);
             let color = doc.resolve_colour(&color);
-            let mut shaped = shaper.shape(&story, styles, inner);
+            let readings = if story.cross_references.is_empty() {
+                Vec::new()
+            } else {
+                references(cell.story)
+            };
+            let referring;
+            let cell_styles: &dyn tessera_text::story::Styles = if readings.is_empty() {
+                styles
+            } else {
+                referring = Referring::new(styles, readings);
+                &referring
+            };
+            let mut shaped = shaper.shape(&story, cell_styles, inner);
             shaped.resolve_colours(|c| doc.resolve_colour(c));
             let needs = shaped.height + cell.inset.top + cell.inset.bottom;
             measured.push(Measured {
@@ -280,12 +311,14 @@ pub fn lay_out(
 /// styles and the page's variables all work as they do for a whole table.
 /// The alternating fills are written into the cells first: shared out, a
 /// row's turn in the pattern would otherwise restart on every page.
+#[allow(clippy::too_many_arguments)]
 pub fn lay_out_part(
     table: &Table,
     doc: &Document,
     styles: &dyn tessera_text::story::Styles,
     shaper: &mut Shaper,
     mut story_of: impl FnMut(tessera_document::ids::StoryId) -> Option<Story>,
+    references: &References<'_>,
     capacities: &[f64],
     index: usize,
 ) -> LaidTable {
@@ -293,17 +326,70 @@ pub fn lay_out_part(
     bake_alternating(&mut whole);
     // Styled already: laying it out again must not style it a second time.
     whole.style = None;
-    let full = lay_out(&whole, doc, styles, shaper, &mut story_of);
+    let full = lay_out_with(&whole, doc, styles, shaper, &mut story_of, references);
     let (shares, overset) = split_rows(&whole, &full, capacities);
     let Some(body) = shares.get(index) else {
         return LaidTable::default();
     };
     let part = part_table(&whole, body.clone());
-    let mut laid = lay_out(&part, doc, styles, shaper, story_of);
+    let mut laid = lay_out_with(&part, doc, styles, shaper, story_of, references);
     if index + 1 == capacities.len() {
         laid.overset_rows = overset;
     }
     laid
+}
+
+/// The page's styles and variables, with one cell's cross-reference
+/// readings in place of the page's.
+struct Referring<'a> {
+    inner: &'a dyn tessera_text::story::Styles,
+    variables: tessera_text::variables::Variables,
+}
+
+impl<'a> Referring<'a> {
+    fn new(inner: &'a dyn tessera_text::story::Styles, readings: Vec<String>) -> Self {
+        let mut variables = inner.variables().cloned().unwrap_or_default();
+        variables.cross_references = readings;
+        Self { inner, variables }
+    }
+}
+
+impl tessera_text::story::Styles for Referring<'_> {
+    fn character(
+        &self,
+        id: tessera_text::story::CharacterStyleId,
+    ) -> Option<&tessera_text::story::CharacterFormat> {
+        self.inner.character(id)
+    }
+
+    fn paragraph(
+        &self,
+        id: tessera_text::story::ParagraphStyleId,
+    ) -> Option<&tessera_text::story::ParagraphFormat> {
+        self.inner.paragraph(id)
+    }
+
+    fn document_default(&self) -> tessera_text::story::CharacterFormat {
+        self.inner.document_default()
+    }
+
+    fn character_parent(
+        &self,
+        id: tessera_text::story::CharacterStyleId,
+    ) -> Option<tessera_text::story::CharacterStyleId> {
+        self.inner.character_parent(id)
+    }
+
+    fn paragraph_parent(
+        &self,
+        id: tessera_text::story::ParagraphStyleId,
+    ) -> Option<tessera_text::story::ParagraphStyleId> {
+        self.inner.paragraph_parent(id)
+    }
+
+    fn variables(&self) -> Option<&tessera_text::variables::Variables> {
+        Some(&self.variables)
+    }
 }
 
 /// Write each row's turn in the alternating fills into its cells that have

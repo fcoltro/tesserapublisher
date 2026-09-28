@@ -210,6 +210,7 @@ fn import_package(mut package: Package) -> Result<Imported, ImportError> {
         fallback_layer,
         colours: &colours,
         styles: &styles,
+        links: &links,
         frames: HashMap::new(),
         threads: Vec::new(),
         image_fit_noted: false,
@@ -475,6 +476,8 @@ struct Items<'a> {
     fallback_layer: LayerId,
     colours: &'a Colours,
     styles: &'a Styles,
+    /// Where cross-references point, for those inside table cells.
+    links: &'a story::Links,
     /// Every frame made, by its IDML Self — for threads.
     frames: HashMap<String, FrameId>,
     /// `(from, to)` by IDML Self, resolved once every frame exists.
@@ -573,10 +576,9 @@ impl Items<'_> {
                 columns: attr_f64(cell, "ColumnSpan").map_or(1, |n| n as u16).max(1),
                 rows: attr_f64(cell, "RowSpan").map_or(1, |n| n as u16).max(1),
             };
-            // A cross-reference inside a table cell keeps the words InDesign
-            // wrote for it rather than becoming a live reference: the cells
-            // are read after the stories, without the spine's links to hand.
-            let read = story::read(cell, styles, colours, &story::Links::default());
+            // With the spine's links, so a cross-reference in a cell is a
+            // live reference as it is anywhere else in the text.
+            let read = story::read(cell, styles, colours, self.links);
             if !read.inline.is_empty() {
                 dropped.note("an object anchored inside a table cell");
             }
