@@ -2857,8 +2857,11 @@ which cost one afternoon's confusion and a namespace check.
   them to the first, so it refuses. **2026-09-17:** a page's right or
   bottom edge, or its corner, drags with the select tool when nothing
   else is under the pointer — `page_edge_at`, `DragKind::PageEdge`,
-  previewed live and committed as one `SetPageSizeOf`. Not built:
-  "objects move with page edge" options.
+  previewed live and committed as one `SetPageSizeOf`. **2026-09-28:**
+  objects move with page edges, a preference (Settings ▸ General, off by
+  default): what stands right of a page's middle keeps its distance from the
+  right edge, what stands below it its distance from the foot
+  (`Document::resize_page`, `resize_every_page`), live while dragging.
 - [x] **Story editor** (added 2026-09-14). Type ▸ Edit in story editor…: the
   whole story's words in a plain box, overset included. Applied as the
   smallest edit the two texts disagree on — common prefix, common suffix —
@@ -3429,8 +3432,10 @@ below are its items 1 to 3.
   rendered picture — cut the same region (`pdf_region`); Properties steps
   through the pages and chooses the box for the frame alone; IDML's
   `PDFAttribute` imports.
-- [ ] 6. **"Objects move with page edge"** when a page is resized
-  (milestone 12).
+- [x] 6. **"Objects move with page edge"** when a page is resized
+  (milestone 12). *Done 2026-09-28:* a preference; an object follows the
+  edge its centre is nearer, by the page's right edge and its foot, for one
+  page or all, live during an edge drag and one undo step.
 - [x] 7. **Chapter number as a variable, and a variable in a table cell**
   (milestone 10). *Done 2026-09-27, as milestone 15's items 2 and 3.*
 - [ ] 8. **Single-word justification** (milestone 9).

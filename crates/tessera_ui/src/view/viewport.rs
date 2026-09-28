@@ -2513,11 +2513,13 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
             let (dx, dy) = state.drag.as_ref().expect("just matched").delta();
             let (w, h) = edge.resized(width, height, dx, dy);
             // undo-bracketed: preview only; `drag_stopped` restores the size
-            // and reapplies it through a Command.
+            // and reapplies it through a Command. What follows the edges
+            // follows them live, a step at a time.
+            let follow = state.prefs.objects_follow_page_edges;
             state
                 .active_mut()
                 .document_mut()
-                .set_page_size_of(page, w, h);
+                .resize_page(page, w, h, follow);
         }
         // A table's boundary, the same way: the grid follows the pointer
         // now, and one command settles it when the mouse comes up.
@@ -2603,11 +2605,13 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
                 let (dx, dy) = drag.delta();
                 let (w, h) = edge.resized(width, height, dx, dy);
                 // undo-bracketed: the size the drag began with goes back,
-                // and the new one arrives as one command.
+                // with what followed the edges, and the new one arrives as
+                // one command.
+                let follow = state.prefs.objects_follow_page_edges;
                 state
                     .active_mut()
                     .document_mut()
-                    .set_page_size_of(page, width, height);
+                    .resize_page(page, width, height, follow);
                 if (w - width).abs() > 1e-9 || (h - height).abs() > 1e-9 {
                     apply(
                         state,

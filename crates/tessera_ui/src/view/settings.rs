@@ -229,6 +229,7 @@ fn restore(state: &mut TesseraApp) {
             state.prefs.flow_placed_text = fresh.flow_placed_text;
             state.prefs.reflow_adds_pages = fresh.reflow_adds_pages;
             state.prefs.reflow_removes_pages = fresh.reflow_removes_pages;
+            state.prefs.objects_follow_page_edges = fresh.objects_follow_page_edges;
             state.prefs.assistant = fresh.assistant.clone();
             state.prefs.updates.enabled = fresh.updates.enabled;
         }
@@ -352,6 +353,16 @@ fn general(ui: &mut Ui, state: &mut TesseraApp) {
         "Pages at the end of body text that it no longer reaches are taken away, when \
          nothing else is on them. Off unless asked for: a page taken away is a \
          surprise, and a page left is not.",
+    );
+    ui.checkbox(
+        &mut state.prefs.objects_follow_page_edges,
+        "Objects move with page edges",
+    );
+    note(
+        ui,
+        "Resizing a page carries what stands nearer its right edge or its foot \
+         along with that edge, so a folio in the corner stays in the corner. Off, \
+         everything keeps its place from the page\u{2019}s top left.",
     );
 
     heading(ui, "Assistant");
@@ -930,6 +941,7 @@ mod tests {
             flow_placed_text: false,
             reflow_adds_pages: false,
             reflow_removes_pages: true,
+            objects_follow_page_edges: true,
         };
 
         for page in Page::ALL {

@@ -922,6 +922,72 @@ impl Document {
         true
     }
 
+    /// Resize every page, and when `follow` is set carry each page's objects
+    /// with the edges that move: see [`Document::resize_page`].
+    pub fn resize_every_page(&mut self, width: f64, height: f64, follow: bool) {
+        let moves: Vec<(FrameId, f64, f64)> = if follow {
+            self.page_ids()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .flat_map(|page| self.edge_followers(page, width, height))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        self.set_page_size(width, height);
+        for (frame, dx, dy) in moves {
+            self.translate_deeply(frame, dx, dy);
+        }
+    }
+
+    /// Resize one page; when `follow` is set, what stands nearer an edge that
+    /// moves goes with it — InDesign's "objects move with page".
+    ///
+    /// **Nearer by its centre**: an object whose centre is right of the
+    /// page's middle keeps its distance from the right edge, one below the
+    /// middle its distance from the foot, and one on the middle stays where
+    /// it is. The top and left edges never move, so what is nearer them
+    /// stays put either way. A folio in the bottom corner follows the corner
+    /// out; the heading at the top stays at the top.
+    pub fn resize_page(&mut self, page: PageId, width: f64, height: f64, follow: bool) -> bool {
+        let moves = if follow {
+            self.edge_followers(page, width, height)
+        } else {
+            Vec::new()
+        };
+        if !self.set_page_size_of(page, width, height) {
+            return false;
+        }
+        for (frame, dx, dy) in moves {
+            self.translate_deeply(frame, dx, dy);
+        }
+        true
+    }
+
+    /// The objects on a page that follow its edges to `width` by `height`,
+    /// and how far each goes. Read before the page changes, while an
+    /// object's side of the middle is still the side it was put on.
+    fn edge_followers(&self, page: PageId, width: f64, height: f64) -> Vec<(FrameId, f64, f64)> {
+        let Some(was) = self.pages.get(page).map(|p| p.bounds) else {
+            return Vec::new();
+        };
+        if width <= 0.0 || height <= 0.0 {
+            return Vec::new();
+        }
+        let (dx, dy) = (width - was.width, height - was.height);
+        let middle = was.center();
+        self.frames_on_page(page)
+            .into_iter()
+            .filter_map(|id| {
+                let frame = self.frames.get(id)?;
+                let centre = frame.transform.apply(frame.bounds.center());
+                let x = if centre.x > middle.x { dx } else { 0.0 };
+                let y = if centre.y > middle.y { dy } else { 0.0 };
+                (x != 0.0 || y != 0.0).then_some((id, x, y))
+            })
+            .collect()
+    }
+
     /// The document's page size: the first page's, which is what the setup
     /// shows and what a new page takes.
     pub fn page_size(&self) -> (f64, f64) {
@@ -3540,6 +3606,49 @@ mod tests {
         let page_now = doc.pages[page].bounds;
         let after = doc.frame(id).unwrap().bounds;
         assert_eq!((after.x - page_now.x, after.y - page_now.y), (10.0, 10.0));
+    }
+
+    #[test]
+    fn objects_nearer_a_moving_edge_go_with_it() {
+        // Three boxes on a page: a heading top left, a note top right, a
+        // folio bottom right. The page grows 100 across and 50 down. The
+        // heading stays, the note follows the right edge only, the folio
+        // follows the corner.
+        let mut doc = super::Document::new();
+        let layer = doc.default_layer().expect("a layer");
+        let page = doc.page_ids().next().expect("a page");
+        let p = doc.pages[page].bounds;
+        let at = |doc: &mut Document, x: f64, y: f64| {
+            let mut frame = rect_frame();
+            frame.bounds = DocRect {
+                x: p.x + x,
+                y: p.y + y,
+                width: 20.0,
+                height: 20.0,
+            };
+            doc.add_frame(layer, frame)
+        };
+        let heading = at(&mut doc, 10.0, 10.0);
+        let note = at(&mut doc, p.width - 30.0, 10.0);
+        let folio = at(&mut doc, p.width - 30.0, p.height - 30.0);
+
+        let mut kept = doc.clone();
+        assert!(kept.resize_page(page, p.width + 100.0, p.height + 50.0, false));
+        let from_corner = |doc: &Document, id| {
+            let page = doc.pages[page].bounds;
+            let b = doc.frame(id).unwrap().bounds;
+            (b.x - page.x, b.y - page.y)
+        };
+        assert_eq!(
+            from_corner(&kept, folio),
+            (p.width - 30.0, p.height - 30.0),
+            "off, everything keeps its place from the top left"
+        );
+
+        assert!(doc.resize_page(page, p.width + 100.0, p.height + 50.0, true));
+        assert_eq!(from_corner(&doc, heading), (10.0, 10.0));
+        assert_eq!(from_corner(&doc, note), (p.width + 70.0, 10.0));
+        assert_eq!(from_corner(&doc, folio), (p.width + 70.0, p.height + 20.0));
     }
 
     #[test]

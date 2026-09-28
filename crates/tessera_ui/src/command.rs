@@ -2994,12 +2994,12 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
         }
 
         Command::SetPageSize { width, height } => {
-            // Every page, because per-page sizes are milestone 3. One command
-            // for all of them keeps it one undo entry.
+            // Every page, in one command so it is one undo entry.
+            let follow = state.prefs.objects_follow_page_edges;
             state
                 .active_mut()
                 .document_mut()
-                .set_page_size(width, height);
+                .resize_every_page(width, height, follow);
         }
 
         Command::SetPageSizeOf {
@@ -3007,10 +3007,11 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             width,
             height,
         } => {
+            let follow = state.prefs.objects_follow_page_edges;
             state
                 .active_mut()
                 .document_mut()
-                .set_page_size_of(page, width, height);
+                .resize_page(page, width, height, follow);
         }
 
         Command::SetStroke { id, stroke } => {
@@ -3667,6 +3668,43 @@ mod tests {
         let link = shown(&state);
         assert_eq!(link.pdf, Default::default());
         assert_eq!(link.natural, (300.0, 150.0));
+    }
+
+    #[test]
+    fn objects_follow_the_page_edges_when_asked_and_undo_with_it() {
+        let mut state = TesseraApp::headless();
+        state.prefs.objects_follow_page_edges = true;
+        let page = state.active().document().page_ids().next().expect("a page");
+        let p = state.active().document().pages[page].bounds;
+        apply(
+            &mut state,
+            Command::AddRectangle(DocRect {
+                x: p.x + p.width - 40.0,
+                y: p.y + p.height - 40.0,
+                width: 20.0,
+                height: 20.0,
+            }),
+        );
+        let id = state.active().selection.single().expect("selected");
+        let from_corner = |state: &TesseraApp| {
+            let doc = state.active().document();
+            let page = doc.pages[page].bounds;
+            let b = doc.frame(id).unwrap().bounds;
+            (b.x - page.x, b.y - page.y)
+        };
+        let before = from_corner(&state);
+
+        apply(
+            &mut state,
+            Command::SetPageSizeOf {
+                page,
+                width: p.width + 60.0,
+                height: p.height,
+            },
+        );
+        assert_eq!(from_corner(&state), (before.0 + 60.0, before.1));
+        apply(&mut state, Command::Undo);
+        assert_eq!(from_corner(&state), before, "one undo takes both back");
     }
 
     #[test]

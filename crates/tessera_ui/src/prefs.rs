@@ -169,6 +169,12 @@ pub struct Preferences {
     #[serde(default)]
     pub reflow_removes_pages: bool,
 
+    /// Whether resizing a page carries the objects nearer a moving edge
+    /// with it — InDesign's "objects move with page". Off, as a page resized
+    /// has always left its objects where they were from its top left.
+    #[serde(default)]
+    pub objects_follow_page_edges: bool,
+
     /// The model the console talks to, and how to reach it.
     #[serde(default)]
     pub assistant: Assistant,
@@ -314,6 +320,7 @@ impl Default for Preferences {
             flow_placed_text: true,
             reflow_adds_pages: true,
             reflow_removes_pages: false,
+            objects_follow_page_edges: false,
             swatch_tiles: false,
         }
     }
@@ -536,6 +543,7 @@ mod tests {
             flow_placed_text: false,
             reflow_adds_pages: false,
             reflow_removes_pages: true,
+            objects_follow_page_edges: true,
         };
         written.save_to(&path).expect("save failed");
 
