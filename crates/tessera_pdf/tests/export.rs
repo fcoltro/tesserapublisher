@@ -2052,3 +2052,22 @@ fn pictures_are_compressed_as_asked() {
         "a picture in the press's inks stays whole"
     );
 }
+
+#[test]
+fn an_export_reports_its_progress_and_stops_when_cancelled() {
+    // A page and a picture: two steps, both taken by the end. Cancelled
+    // before it starts, it stops without making a file.
+    let path = a_pdf("progress", 200, 100, 0, LOPSIDED);
+    let doc = placed_at(path, rect(100.0, 100.0, 200.0, 100.0), (200.0, 100.0));
+
+    let progress = tessera_pdf::Progress::new();
+    tessera_pdf::export_with_progress(&doc, &ExportOptions::default(), &progress).expect("export");
+    assert_eq!(progress.fraction(), 1.0);
+
+    let stopped = tessera_pdf::Progress::new();
+    stopped.cancel();
+    assert!(matches!(
+        tessera_pdf::export_with_progress(&doc, &ExportOptions::default(), &stopped),
+        Err(tessera_pdf::PdfError::Cancelled)
+    ));
+}

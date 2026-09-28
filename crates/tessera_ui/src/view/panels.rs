@@ -5437,6 +5437,28 @@ pub fn status_bar(ui: &mut Ui, state: &mut TesseraApp) {
             egui::vec2(left_width, 24.0),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
+                // An export under way: its bar, and a way to stop it.
+                if let Some(job) = &state.job {
+                    ui.add(
+                        egui::ProgressBar::new(job.progress.fraction())
+                            .desired_width(140.0)
+                            .text(egui::RichText::new(&job.what).size(Theme::TYPE_SM)),
+                    );
+                    if job.progress.is_cancelled() {
+                        ui.label(
+                            egui::RichText::new("Stopping...")
+                                .size(Theme::TYPE_SM)
+                                .color(Theme::text_muted()),
+                        );
+                    } else if ui
+                        .small_button("Cancel")
+                        .on_hover_text("Stop the export at the next page; nothing is written")
+                        .clicked()
+                    {
+                        job.progress.cancel();
+                    }
+                    ui.separator();
+                }
                 let (message, tint) = match &state.status {
                     Some(s) => (
                         s.message.as_str(),

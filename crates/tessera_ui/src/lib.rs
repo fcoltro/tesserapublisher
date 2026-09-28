@@ -7,6 +7,7 @@
 pub mod actions;
 pub mod align;
 pub mod app;
+pub mod background;
 pub mod book_ops;
 pub mod camera;
 pub mod catalogue;
@@ -82,6 +83,12 @@ impl eframe::App for TesseraApp {
         // Likewise: the answer to a version check arrives on whatever frame
         // it arrives on, and taking it costs a `try_recv` on the rest.
         self.settle_update_check();
+        // An export running on its own thread: its word taken when it has
+        // finished, and the bar kept moving while it has not.
+        self.settle_job();
+        if self.job.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {

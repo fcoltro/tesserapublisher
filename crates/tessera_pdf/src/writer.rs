@@ -45,6 +45,9 @@ pub enum PdfError {
     TooLarge { width: u64, height: u64, most: u32 },
     #[error("could not write the picture: {0}")]
     Encode(String),
+    /// Stopped when asked to, before anything was written.
+    #[error("the export was cancelled")]
+    Cancelled,
 }
 
 impl From<std::io::Error> for PdfError {
@@ -337,11 +340,21 @@ pub fn export_with(
     resolved: &ResolvedDocument,
     options: &ExportOptions,
 ) -> Result<Vec<u8>, PdfError> {
+    export_with_progress(resolved, options, &crate::Progress::new())
+}
+
+/// [`export_with`], saying how far it has got as it goes, and stopping
+/// between pages when `progress` is cancelled.
+pub fn export_with_progress(
+    resolved: &ResolvedDocument,
+    options: &ExportOptions,
+    progress: &crate::Progress,
+) -> Result<Vec<u8>, PdfError> {
     let refused = options.refusals(uses_transparency(resolved), has_artwork(resolved));
     if !refused.is_empty() {
         return Err(PdfError::CannotConform(refused));
     }
-    write(resolved, options)
+    write(resolved, options, progress)
 }
 
 /// Whether anything in the document needs a transparency model to reproduce.
@@ -461,7 +474,11 @@ fn text_colours(shaped: &ShapedText, fallback: &Color, out: &mut Vec<Color>) {
     );
 }
 
-fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>, PdfError> {
+fn write(
+    resolved: &ResolvedDocument,
+    options: &ExportOptions,
+    progress: &crate::Progress,
+) -> Result<Vec<u8>, PdfError> {
     // Into the press's inks when asked, and always for a PDF/X file, which
     // promises it; a plain PDF may keep its colours as they are.
     let ink = if options.convert || options.standard != Standard::Plain {
@@ -496,6 +513,7 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
         r
     };
 
+    progress.plan(pages.len());
     let catalog_id = alloc();
     let page_tree_id = alloc();
     let page_ids: Vec<_> = pages.iter().map(|_| alloc()).collect();
@@ -507,7 +525,8 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
         &ink,
         options.standard,
         &options.pictures,
-    );
+        progress,
+    )?;
     let shadows = collect_shadows(resolved, &mut alloc);
     let plates = collect_plates(resolved, &ink, &mut alloc);
     if options.standard == Standard::X1a && pictures.iter().any(Picture::is_transparent) {
@@ -594,6 +613,8 @@ fn write(resolved: &ResolvedDocument, options: &ExportOptions) -> Result<Vec<u8>
     for (page_index, (resolved_page, page_id)) in
         pages.iter().zip(page_ids.iter().copied()).enumerate()
     {
+        progress.go_on()?;
+        progress.step();
         let page = resolved_page.bounds;
         let content_id = alloc();
         let shadings = collect_shadings(resolved, page, &mut alloc, &ink);
@@ -1209,7 +1230,8 @@ fn collect_pictures(
     ink: &Ink,
     standard: Standard,
     handling: &crate::Pictures,
-) -> Vec<Picture> {
+    progress: &crate::Progress,
+) -> Result<Vec<Picture>, PdfError> {
     let mut out: Vec<Picture> = Vec::new();
 
     // The largest each file is drawn anywhere, in points: its coarsest use,
@@ -1237,6 +1259,9 @@ fn collect_pictures(
         }
     }
 
+    // One step for each picture, the slow part of an export at a fine
+    // resolution.
+    progress.plan(drawn.len());
     for item in &resolved.items {
         let ResolvedKind::Graphic { source, pdf, .. } = &item.kind else {
             continue;
@@ -1246,6 +1271,8 @@ fn collect_pictures(
         if out.iter().any(|p| &p.source == source && p.pdf == pdf) {
             continue;
         }
+        progress.go_on()?;
+        progress.step();
         if tessera_render::images::is_pdf(source) && copies_pages(ink, standard) {
             let Some((id, art)) = copy_page(source, pdf, alloc) else {
                 continue;
@@ -1287,7 +1314,7 @@ fn collect_pictures(
         });
     }
 
-    out
+    Ok(out)
 }
 
 /// Write the image objects themselves, and the copied pages.

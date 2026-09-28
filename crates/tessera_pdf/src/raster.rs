@@ -249,7 +249,21 @@ pub fn page_images(
     options: &ImageOptions,
     press: Option<&OutputIntent>,
 ) -> Result<Vec<PageImage>, PdfError> {
+    page_images_with_progress(resolved, options, press, &crate::Progress::new())
+}
+
+/// [`page_images`], saying how far it has got as it goes, and stopping
+/// between pages when `progress` is cancelled.
+pub fn page_images_with_progress(
+    resolved: &ResolvedDocument,
+    options: &ImageOptions,
+    press: Option<&OutputIntent>,
+    progress: &crate::Progress,
+) -> Result<Vec<PageImage>, PdfError> {
     let options = options.settled();
+    // The rendering of each page, planned before the PDF it is rendered
+    // from plans its own steps.
+    progress.plan(resolved.pages.len());
     let ppi = options.ppi;
     let press = match options.colour {
         Colour::Cmyk => Some(Press::of(press)?),
@@ -275,7 +289,7 @@ pub fn page_images(
 
     // Plain, unmarked, and for no press: a picture of the page, in the
     // colours the screen shows.
-    let written = crate::export_with(
+    let written = crate::export_with_progress(
         &document,
         &ExportOptions {
             standard: Standard::Plain,
@@ -292,6 +306,7 @@ pub fn page_images(
             hyperlinks: false,
             ..ExportOptions::default()
         },
+        progress,
     )?;
     let pdf = hayro::hayro_syntax::Pdf::new(Arc::new(written))
         .map_err(|e| PdfError::Encode(format!("the written pages would not read back: {e:?}")))?;
@@ -303,6 +318,8 @@ pub fn page_images(
 
     let mut out = Vec::with_capacity(document.pages.len());
     for (page, rendered) in document.pages.iter().zip(pdf.pages().iter()) {
+        progress.go_on()?;
+        progress.step();
         let shown = area(page, &options);
         let (width, height) = pixels(shown, ppi);
         let (width, height) = (width as u16, height as u16);

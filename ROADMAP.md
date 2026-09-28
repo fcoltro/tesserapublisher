@@ -3455,8 +3455,14 @@ below are its items 1 to 3.
 
 ### Tier 3 — days each
 
-- [ ] 10. **Export in the background**, with progress, since a long document
-  at 300 ppi takes a while.
+- [x] 10. **Export in the background**, with progress, since a long document
+  at 300 ppi takes a while. *Done 2026-09-28:* File ▸ Export PDF and the
+  picture export resolve on the interface's thread and render, convert and
+  write on one of their own (`crate::background`), one at a time; the
+  status line shows a bar and Cancel, which stops at the next page with
+  nothing written (`tessera_pdf::Progress`, `PdfError::Cancelled`). A
+  book's PDF, a data merge and the bridge's export still run where they
+  are asked.
 - [ ] 11. **SVG export.**
 - [ ] 12. **Cross-references edited in place**, and imported inside a table
   cell as references rather than words (milestone 11).

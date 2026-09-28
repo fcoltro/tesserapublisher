@@ -672,6 +672,8 @@ pub struct TesseraApp {
     pub guide_drag: Option<(tessera_document::nodes::Axis, f64)>,
     pub drag: Option<Drag>,
     pub status: Option<Status>,
+    /// An export running on a thread of its own: see [`crate::background`].
+    pub job: Option<crate::background::Job>,
 
     /// Every copied frame, so cutting four objects pastes four. Shared, so
     /// that a copy in one document pastes into another.
@@ -785,6 +787,7 @@ impl TesseraApp {
             guide_drag: None,
             drag: None,
             status: None,
+            job: None,
             clipboard: Vec::new(),
             palette: crate::view::palette::Palette::default(),
             prefs: crate::prefs::Preferences::default(),

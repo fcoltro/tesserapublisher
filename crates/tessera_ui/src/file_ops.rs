@@ -197,16 +197,36 @@ pub(crate) fn starting_document() -> Document {
 /// screen. Note it needs no GPU: a document is exportable even if the surface
 /// failed to start.
 pub fn export_pdf_to_path(state: &mut TesseraApp, path: &Path) -> Result<(), ExportError> {
+    let write = pdf_export(state, path)?;
+    write(&tessera_pdf::Progress::new())?;
+    state.status = Some(Status::info(format!("Exported {}", path.display())));
+    Ok(())
+}
+
+/// A PDF export of the active document to `path`, made ready here and
+/// written by what this returns — on this thread or another.
+///
+/// The document is resolved now, where the shaper is; the writing, which
+/// is the slow part, needs nothing of the application's.
+fn pdf_export(
+    state: &mut TesseraApp,
+    path: &Path,
+) -> Result<
+    impl FnOnce(&tessera_pdf::Progress) -> Result<(), ExportError> + Send + 'static,
+    ExportError,
+> {
     // The choices from the export dialog, and the press from the document. An
     // export that ignored either would be one somebody had to check the file to
     // find out about.
     let options = state.export.options(state);
     let groups = state.export.groups(state).map_err(ExportError::Pages)?;
     let resolved = tessera_pdf::pages::assemble(&state.resolve_uncached(), &groups);
-    let bytes = tessera_pdf::export_with(&resolved, &options)?;
-    tessera_io::atomic::write_atomic(path, &bytes)?;
-    state.status = Some(Status::info(format!("Exported {}", path.display())));
-    Ok(())
+    let path = path.to_path_buf();
+    Ok(move |progress: &tessera_pdf::Progress| {
+        let bytes = tessera_pdf::export_with_progress(&resolved, &options, progress)?;
+        tessera_io::atomic::write_atomic(&path, &bytes)?;
+        Ok(())
+    })
 }
 
 /// Collect the job into a folder somebody can hand to a printer.
@@ -567,11 +587,20 @@ pub fn export_pdf(state: &mut TesseraApp) {
     if path.extension().is_none() {
         path.set_extension("pdf");
     }
-    let result = export_pdf_to_path(state, &path);
-    if result.is_ok() && state.export.open_after {
-        crate::view::links::open_with_its_application(&path);
-    }
-    set_error(state, result);
+    // Written on a thread of its own, with a bar in the status line: a long
+    // document at a fine resolution takes a while.
+    let write = match pdf_export(state, &path) {
+        Ok(write) => write,
+        Err(error) => return set_error(state, Err::<(), _>(error)),
+    };
+    let open_after = state.export.open_after;
+    state.start_job("Exporting PDF", move |progress| {
+        write(progress).map_err(crate::background::failed)?;
+        Ok(crate::background::Finished {
+            said: format!("Exported {}", path.display()),
+            open: if open_after { vec![path] } else { Vec::new() },
+        })
+    });
 }
 
 /// Ask where the pictures go, and make them.
@@ -593,18 +622,20 @@ pub fn export_images(state: &mut TesseraApp) {
     else {
         return; // cancelled
     };
-    state.status = Some(match export_images_to(state, &path) {
-        Ok((said, written)) => {
-            if state.prefs.image_export.open_after {
-                match written.as_slice() {
-                    [one] => crate::view::links::open_with_its_application(one),
-                    [first, ..] => crate::view::links::reveal_in_file_manager(first),
-                    [] => {}
-                }
-            }
-            Status::info(said)
+    let write = match image_export(state, &path) {
+        Ok(write) => write,
+        Err(why) => {
+            state.status = Some(Status::error(why));
+            return;
         }
-        Err(why) => Status::error(why),
+    };
+    let open_after = state.prefs.image_export.open_after;
+    state.start_job("Exporting pictures", move |progress| {
+        let (said, written) = write(progress)?;
+        Ok(crate::background::Finished {
+            said,
+            open: if open_after { written } else { Vec::new() },
+        })
     });
 }
 
@@ -615,6 +646,18 @@ pub fn export_images_to(
     state: &mut TesseraApp,
     chosen: &Path,
 ) -> Result<(String, Vec<PathBuf>), String> {
+    image_export(state, chosen)?(&tessera_pdf::Progress::new())
+}
+
+/// What an image export says it wrote, and where, or why it could not.
+type Written = Result<(String, Vec<PathBuf>), String>;
+
+/// The pictures [`export_images_to`] makes, made ready here and rendered
+/// and written by what this returns — on this thread or another.
+fn image_export(
+    state: &mut TesseraApp,
+    chosen: &Path,
+) -> Result<impl FnOnce(&tessera_pdf::Progress) -> Written + Send + 'static, String> {
     use crate::view::image_export;
 
     let choices = state.prefs.image_export;
@@ -634,9 +677,28 @@ pub fn export_images_to(
         })?),
         _ => None,
     };
-    let pictures = tessera_pdf::raster::page_images(&pictured, &options, press.as_ref())
-        .map_err(|e| format!("Could not export: {e}"))?;
     let names = image_export::file_names(chosen, &numbers, options.format);
+    Ok(move |progress: &tessera_pdf::Progress| {
+        write_images(&pictured, &options, press.as_ref(), &names, progress)
+    })
+}
+
+/// Render `pictured` and write each picture to its name, saying what was
+/// written and where.
+fn write_images(
+    pictured: &tessera_layout::resolve::ResolvedDocument,
+    options: &tessera_pdf::raster::ImageOptions,
+    press: Option<&tessera_document::intent::OutputIntent>,
+    names: &[PathBuf],
+    progress: &tessera_pdf::Progress,
+) -> Written {
+    let pictures =
+        tessera_pdf::raster::page_images_with_progress(pictured, options, press, progress)
+            .map_err(|e| match e {
+                tessera_pdf::PdfError::Cancelled => crate::background::CANCELLED.to_string(),
+                e => format!("Could not export: {e}"),
+            })?;
+    let names = names.to_vec();
     for (picture, path) in pictures.iter().zip(&names) {
         tessera_io::atomic::write_atomic(path, &picture.bytes)
             .map_err(|e| format!("Could not write {}: {e}", path.display()))?;

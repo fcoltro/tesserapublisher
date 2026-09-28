@@ -20,6 +20,7 @@ mod ink;
 mod marks;
 mod options;
 pub mod pages;
+mod progress;
 pub mod raster;
 mod separation;
 mod shadow;
@@ -27,4 +28,5 @@ mod writer;
 
 pub use ink::Ink;
 pub use options::{Compression, Downsample, ExportOptions, MARK_LENGTH, Marks, Pictures, Standard};
-pub use writer::{PdfError, export, export_with};
+pub use progress::Progress;
+pub use writer::{PdfError, export, export_with, export_with_progress};
