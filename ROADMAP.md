@@ -3175,6 +3175,13 @@ and running headers (milestone 10).
 > badges, each with their photograph, several to a page, and export the
 > result as one PDF.
 
+> **Status 2026-09-27: all thirteen items are built,** each with its
+> tests, in one day's run. The acceptance sentence is exercised end to
+> end by tests — a sixty-row table flowed over new pages with its heading
+> on each, badges merged several to a page with their pictures into one
+> PDF — but **no person has performed it**, so its box waits with the
+> other hand checks at the end of the plan (tier 5).
+
 ### The work, easiest first
 
 - [x] 1. **Variables: file name, date, last page number.** Hours.
@@ -3355,8 +3362,18 @@ and running headers (milestone 10).
   record every frame shows (`Merged::frame_records`), so the report names
   the right record when a page holds twelve. A template of several pages
   merges its first, and says so.
-- [ ] 13. **Excel (`.xlsx`) as a table and as a merge source.** Days; it
-  brings a new dependency.
+- [x] 13. **Excel (`.xlsx`) as a table and as a merge source.** Days; it
+  brings a new dependency. *Done 2026-09-27* (`tessera_import::spreadsheet`,
+  on `calamine` without its date features). `.xlsx`, `.xlsm`, `.xlsb`,
+  `.xls` and OpenDocument's `.ods` are read wherever a data file is — the
+  Data merge panel and Place data as table — by one `read_any` that goes
+  by the extension. The **first worksheet** is read and made a grid by
+  the same code as a delimited file (`delimited::from_rows`), so blank,
+  repeated and ragged are dealt with and said once; a workbook of several
+  sheets says which was read. A cell reads as its **value**, not as the
+  sheet formats it: a whole number without a point, a date as the date
+  (Excel's day count, converted by hand), an error cell as nothing and
+  counted. Tested on a workbook written by the test itself.
 
 ---
 

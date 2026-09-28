@@ -18,6 +18,7 @@ zip.workspace = true
 kurbo.workspace = true
 roxmltree.workspace = true
 thiserror.workspace = true
+calamine.workspace = true
 
 [dev-dependencies]
 zip.workspace = true

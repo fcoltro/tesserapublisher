@@ -52,7 +52,7 @@ pub struct Data {
     pub records: Vec<Vec<String>>,
     /// What the reader changed to make the file a grid, in words.
     pub notes: Vec<String>,
-    /// The separator the file used.
+    /// The separator the file used; `'\0'` for a workbook, which has none.
     pub separator: char,
 }
 
@@ -81,6 +81,8 @@ pub enum DataError {
         "a quote opened in row {row} is never closed, so every field after it would be misread"
     )]
     UnclosedQuote { row: usize },
+    #[error("could not read the workbook: {0}")]
+    Workbook(String),
 }
 
 /// Read a data file from disk.
@@ -94,6 +96,24 @@ pub fn read(bytes: &[u8]) -> Result<Data, DataError> {
     let text = decode(bytes);
     let separator = separator_of(&text);
     let rows = split(&text, separator)?;
+    grid(rows, separator)
+}
+
+/// Rows of values, the first naming the fields, made a [`Data`] the way a
+/// delimited file's are: for a reader that gets its rows another way — a
+/// spreadsheet's cells — so blank and repeated names, ragged and blank rows
+/// are dealt with, and said, in one place.
+pub fn from_rows(rows: Vec<Vec<String>>) -> Result<Data, DataError> {
+    grid(
+        rows.into_iter()
+            .enumerate()
+            .map(|(i, r)| (i + 1, r))
+            .collect(),
+        '\0',
+    )
+}
+
+fn grid(rows: Vec<(usize, Vec<String>)>, separator: char) -> Result<Data, DataError> {
     let mut rows = rows.into_iter();
     let Some((_, header)) = rows.next() else {
         return Err(DataError::Empty);

@@ -436,7 +436,10 @@ pub fn choose_output_intent(state: &mut crate::app::TesseraApp) {
 /// its header row first, as a table across the current page's margins.
 pub fn place_data_as_table(state: &mut crate::app::TesseraApp) {
     let Some(path) = rfd::FileDialog::new()
-        .add_filter("Data", &["csv", "tsv", "tab", "txt"])
+        .add_filter(
+            "Data",
+            &["csv", "tsv", "tab", "txt", "xlsx", "xlsm", "xls", "ods"],
+        )
         .pick_file()
     else {
         return;
@@ -448,7 +451,7 @@ pub fn place_data_as_table(state: &mut crate::app::TesseraApp) {
 /// make the file a grid is said in the status line, as an import says what
 /// it could not bring.
 pub fn place_data_file_as_table(state: &mut crate::app::TesseraApp, path: &Path) {
-    let data = match tessera_import::delimited::read_path(path) {
+    let data = match tessera_import::spreadsheet::read_any(path) {
         Ok(data) => data,
         Err(error) => {
             state.status = Some(Status::error(error.to_string()));

@@ -60,6 +60,8 @@ publish = false
 # The clock, in the person's own time zone, for the date variables. Only
 # tessera_ui reads it; the model and layout carry a plain calendar Stamp.
 jiff = "0.2"
+# Excel and OpenDocument workbooks, read for a data merge and a table.
+calamine = { version = "0.36", default-features = false }
 tessera_geometry = { path = "crates/tessera_geometry" }
 tessera_color    = { path = "crates/tessera_color" }
 tessera_io       = { path = "crates/tessera_io" }

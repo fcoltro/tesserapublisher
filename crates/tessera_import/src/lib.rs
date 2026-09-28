@@ -18,6 +18,7 @@
 pub mod delimited;
 pub mod docx;
 pub mod idml;
+pub mod spreadsheet;
 mod xml;
 
 use std::path::PathBuf;

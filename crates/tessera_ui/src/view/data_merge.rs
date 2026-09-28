@@ -56,7 +56,7 @@ impl DataMergeWindow {
     }
 
     fn read(&mut self, path: &Path) {
-        match tessera_import::delimited::read_path(path) {
+        match tessera_import::spreadsheet::read_any(path) {
             Ok(data) => {
                 self.record = self.record.min(data.records.len().saturating_sub(1));
                 self.data = Some((path.to_path_buf(), data));
@@ -413,7 +413,10 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
     state.data_merge = window;
     if choose
         && let Some(path) = rfd::FileDialog::new()
-            .add_filter("Data", &["csv", "tsv", "tab", "txt"])
+            .add_filter(
+                "Data",
+                &["csv", "tsv", "tab", "txt", "xlsx", "xlsm", "xls", "ods"],
+            )
             .pick_file()
     {
         choose_source(state, &path);
