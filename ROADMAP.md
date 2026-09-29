@@ -2573,7 +2573,14 @@ IDML import to milestone 12.
   on; and a path carrying type wraps text round its letters — the
   obstacle grows by the story's tallest size and its leading either side,
   as a box or, for a contour wrap, as a sleeve along the curve
-  (`path_text_band`). **Not built:** the caret on the curve.
+  (`path_text_band`). **The caret is on the curve (2026-09-28):** a
+  double-click on a path carrying type puts the caret where the click
+  was. The story is shaped as the layout shapes it for drawing, on one
+  straight line (`path_text::shape_on_path`); the caret and selection are
+  measured on that line and drawn along the curve (`baseline_at`, the
+  same walk `place` sets glyphs by, flip included), a selection in slices
+  turned with the path; a click goes back the other way (`x_nearest`).
+  The story editor is still there for long passages.
 
 ---
 
@@ -3499,8 +3506,9 @@ below are its items 1 to 3.
   screen, IDML hyperlinks (milestone 12). *Done 2026-09-28.*
 - [x] 14. **Footnote text edited on the canvas** (milestone 11). *Done
   2026-09-28.*
-- [ ] 15. **Type on a path**: the caret on the curve, drag handles for
+- [x] 15. **Type on a path**: the caret on the curve, drag handles for
   start, end and flip, and path text as a wrap obstacle (milestone 9).
+  *Done 2026-09-28* (start and end handles were already built).
 - [ ] 16. **Book**: chapters in the Pages panel, styles kept the same across
   chapters, an index across the book (milestone 11).
 - [ ] 17. **More Photoshop files**: ZIP-compressed, Lab, 1-bit and 32-bit.

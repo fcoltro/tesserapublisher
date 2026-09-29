@@ -1068,6 +1068,11 @@ fn editing_buffer_for(
     }
     let shows = match state.active().document().frame(editing).map(|f| &f.kind) {
         Some(FrameKind::Text { story: s, .. }) => *s == story,
+        Some(FrameKind::Path(_)) => state
+            .active()
+            .document()
+            .path_text(editing)
+            .is_some_and(|t| t.story == story),
         Some(FrameKind::Table(table)) => state
             .active()
             .editing_cell

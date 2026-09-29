@@ -616,7 +616,7 @@ fn resolved_stroke(doc: &Document, stroke: Option<&Stroke>) -> Option<Stroke> {
 /// leading. Zero for a frame carrying no text. Measured from the story
 /// rather than the laid glyphs, since what wraps round the path is known
 /// before anything is laid out.
-fn path_text_band(doc: &Document, frame: FrameId) -> f64 {
+pub fn path_text_band(doc: &Document, frame: FrameId) -> f64 {
     let Some(story) = doc.path_text(frame).and_then(|t| doc.story(t.story)) else {
         return 0.0;
     };
@@ -1432,25 +1432,7 @@ fn resolve_one<'a>(
             // frame's is.
             let text = doc.path_text(id).and_then(|carried| {
                 let story = story_of(doc, composed, carried.story)?;
-                let placement = crate::path_text::Placement {
-                    start: carried.start,
-                    end: carried.end,
-                    align: match carried.align {
-                        tessera_document::path_text::PathTextAlign::Baseline => {
-                            crate::path_text::Align::Baseline
-                        }
-                        tessera_document::path_text::PathTextAlign::Centre => {
-                            crate::path_text::Align::Centre
-                        }
-                        tessera_document::path_text::PathTextAlign::Ascender => {
-                            crate::path_text::Align::Ascender
-                        }
-                        tessera_document::path_text::PathTextAlign::Descender => {
-                            crate::path_text::Align::Descender
-                        }
-                    },
-                    flip: carried.flip,
-                };
+                let placement = crate::path_text::placement_of(carried);
                 let measure = crate::path_text::measure(&path, &placement);
                 let mut shaped = shaper.shape(story, doc, measure);
                 shaped.resolve_colours(|c| doc.resolve_colour(c));

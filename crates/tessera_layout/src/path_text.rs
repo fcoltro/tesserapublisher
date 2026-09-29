@@ -187,6 +187,97 @@ pub fn measure(path: &BezPath, placement: &Placement) -> f64 {
     (length_of(path) * (placement.end - placement.start).max(0.0)).max(1.0)
 }
 
+/// How the document says a path carries its text, as the layout sets it.
+pub fn placement_of(carried: &tessera_document::path_text::PathText) -> Placement {
+    use tessera_document::path_text::PathTextAlign;
+    Placement {
+        start: carried.start,
+        end: carried.end,
+        align: match carried.align {
+            PathTextAlign::Baseline => Align::Baseline,
+            PathTextAlign::Centre => Align::Centre,
+            PathTextAlign::Ascender => Align::Ascender,
+            PathTextAlign::Descender => Align::Descender,
+        },
+        flip: carried.flip,
+    }
+}
+
+/// A path frame's text as the caret sees it: the story shaped to its
+/// measure on one straight line, the path in the frame's own space that
+/// line is walked along, and how. `None` for a frame carrying no text.
+pub struct OnPath {
+    pub shaped: ShapedText,
+    pub path: BezPath,
+    pub placement: Placement,
+}
+
+/// Shape a path frame's story as [`crate::resolve`] does for drawing it —
+/// the same measure, the same path — so a caret measured against it
+/// stands where the letters were drawn.
+pub fn shape_on_path(
+    doc: &tessera_document::document::Document,
+    shaper: &mut tessera_text::shape::Shaper,
+    frame: tessera_document::ids::FrameId,
+) -> Option<OnPath> {
+    let carried = doc.path_text(frame)?;
+    let f = doc.frame(frame)?;
+    let tessera_document::nodes::FrameKind::Path(path) = &f.kind else {
+        return None;
+    };
+    let path = tessera_document::path::fit_to_bounds(path, f.bounds);
+    let placement = placement_of(carried);
+    let story = doc.story(carried.story)?;
+    let shaped = shaper.shape(story, doc, measure(&path, &placement));
+    Some(OnPath {
+        shaped,
+        path,
+        placement,
+    })
+}
+
+/// How far across the path a line's baseline sits, along the normal:
+/// the alignment's offset, as [`place`] sets each glyph.
+fn across(line: &tessera_text::shape::ShapedLine, align: Align) -> f64 {
+    match align {
+        Align::Baseline => 0.0,
+        Align::Centre => line.ascent * 0.25,
+        Align::Ascender => line.ascent,
+        Align::Descender => -line.descent,
+    }
+}
+
+/// Where `x` along the straight line of text lands on the path: the
+/// baseline's point there, and the direction the text runs — reversed on
+/// flipped text, as [`place`] turns its glyphs. What a caret at `x` is
+/// drawn through.
+pub fn baseline_at(on: &OnPath, x: f64) -> Option<(Point, Vec2)> {
+    let walk = Walk::new(&on.path);
+    let line = on.shaped.lines.first()?;
+    let from = walk.length * on.placement.start.clamp(0.0, 1.0);
+    let to = walk.length * on.placement.end.clamp(0.0, 1.0);
+    let distance = if on.placement.flip { to - x } else { from + x };
+    let (point, tangent) = walk.at(distance)?;
+    let tangent = if on.placement.flip { -tangent } else { tangent };
+    let normal = Vec2::new(-tangent.y, tangent.x);
+    Some((point + normal * across(line, on.placement.align), tangent))
+}
+
+/// The place along the straight line of text nearest a point beside the
+/// path: what a click on the curve puts the caret at.
+pub fn x_nearest(on: &OnPath, to: Point) -> f64 {
+    let length = length_of(&on.path);
+    let along = fraction_nearest(&on.path, to) * length;
+    let from = length * on.placement.start.clamp(0.0, 1.0);
+    let end = length * on.placement.end.clamp(0.0, 1.0);
+    let x = if on.placement.flip {
+        end - along
+    } else {
+        along - from
+    };
+    x.max(0.0)
+}
+
 /// Set the first line of `shaped` along `path`.
 ///
 /// `shaped` is expected to have been shaped to [`measure`]; what did not fit
@@ -210,14 +301,9 @@ pub fn place(shaped: &ShapedText, path: &BezPath, placement: &Placement) -> Plac
         // Across the path: how far the glyph's origin sits from the curve,
         // along the normal, positive being below the path in the page's
         // downward y (the side the descenders are on).
-        let across = match placement.align {
-            Align::Baseline => 0.0,
-            // Half the x-height, taken as half the ascent's lower half —
-            // near what fonts state, without a metrics lookup per run.
-            Align::Centre => line.ascent * 0.25,
-            Align::Ascender => line.ascent,
-            Align::Descender => -line.descent,
-        };
+        // Centre is half the x-height, taken as half the ascent's lower
+        // half — near what fonts state, without a metrics lookup per run.
+        let across = across(line, placement.align);
         let mut glyphs = Vec::new();
         for glyph in &run.glyphs {
             let advance = glyph.advance * run.scale_x;
@@ -274,6 +360,46 @@ mod tests {
 
     fn shaped(text: &str, width: f64) -> ShapedText {
         Shaper::new().shape(&Story::new(text), &NoStyles::default(), width)
+    }
+
+    #[test]
+    fn a_place_on_the_line_and_a_point_on_the_path_answer_each_other() {
+        // A level path 200 long. Plainly set, 50 along the line is 50 along
+        // the path, running right; flipped, it is 50 back from the end,
+        // running left. And a click beside the path finds the same 50.
+        let mut path = BezPath::new();
+        path.move_to((0.0, 0.0));
+        path.line_to((200.0, 0.0));
+        let placement = Placement {
+            start: 0.0,
+            end: 1.0,
+            align: Align::Baseline,
+            flip: false,
+        };
+        let on = OnPath {
+            shaped: shaped("Along", 200.0),
+            path: path.clone(),
+            placement,
+        };
+        let (point, tangent) = baseline_at(&on, 50.0).expect("on the path");
+        assert!(
+            (point.x - 50.0).abs() < 1e-6 && point.y.abs() < 1e-6,
+            "{point:?}"
+        );
+        assert!(tangent.x > 0.99);
+        assert!((x_nearest(&on, Point::new(50.0, -8.0)) - 50.0).abs() < 1e-6);
+
+        let flipped = OnPath {
+            placement: Placement {
+                flip: true,
+                ..placement
+            },
+            ..on
+        };
+        let (point, tangent) = baseline_at(&flipped, 50.0).expect("on the path");
+        assert!((point.x - 150.0).abs() < 1e-6, "{point:?}");
+        assert!(tangent.x < -0.99, "running back along it");
+        assert!((x_nearest(&flipped, Point::new(150.0, 8.0)) - 50.0).abs() < 1e-6);
     }
 
     #[test]

@@ -304,6 +304,11 @@ impl OpenDocument {
         };
         let (story, note) = match (self.document.frame(id).map(|f| &f.kind), self.editing_cell) {
             (Some(FrameKind::Text { story, .. }), _) => (*story, self.editing_note),
+            // Type on a path: the story the path carries.
+            (Some(FrameKind::Path(_)), _) => match self.document.path_text(id) {
+                Some(carried) => (carried.story, None),
+                None => return,
+            },
             (Some(FrameKind::Table(table)), Some((row, column))) => {
                 match table.at(row, column).and_then(|s| s.cell()) {
                     Some(cell) => (cell.story, None),

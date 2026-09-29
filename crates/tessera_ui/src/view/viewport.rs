@@ -411,6 +411,10 @@ pub(crate) fn page_edge_at(
 /// edited, in the frame's own local points.
 pub struct CaretOnPage {
     pub frame: FrameId,
+    /// For type on a path: the line the caret is measured on and the
+    /// curve it is drawn along. `None` for a frame or a cell, whose text is
+    /// measured and drawn in the frame's own space.
+    pub path: Option<std::sync::Arc<tessera_layout::path_text::OnPath>>,
     pub geometry: tessera_text::CaretGeometry,
     /// One rectangle per line the input method's composition covers, for the
     /// underline that marks it as not yet committed.
@@ -435,6 +439,7 @@ pub struct CaretOnPage {
 /// two disjoint fields of `TesseraApp` and the borrow checker can see it.
 fn caret_geometry(state: &mut TesseraApp) -> Option<CaretOnPage> {
     let shaped = editing_layout(state)?;
+    let on_path = editing_path(state).map(std::sync::Arc::new);
     let (id, buffer) = state.active().editing.as_ref()?;
     // **Measured against the text as shown, not as stored.** The canvas lays out
     // the composition, so a caret measured without it would sit where the caret
@@ -444,6 +449,7 @@ fn caret_geometry(state: &mut TesseraApp) -> Option<CaretOnPage> {
         let geometry = shaped.caret_geometry(buffer.cursor(), CARET_PX);
         return Some(CaretOnPage {
             frame: *id,
+            path: on_path,
             geometry,
             composing: Vec::new(),
             clause: Vec::new(),
@@ -492,6 +498,7 @@ fn caret_geometry(state: &mut TesseraApp) -> Option<CaretOnPage> {
         .unwrap_or_default();
     Some(CaretOnPage {
         frame: *id,
+        path: on_path,
         geometry,
         composing,
         clause,
@@ -503,6 +510,9 @@ fn caret_geometry(state: &mut TesseraApp) -> Option<CaretOnPage> {
 fn editing_layout(state: &mut TesseraApp) -> Option<tessera_text::shape::ShapedText> {
     let id = state.active().editing.as_ref()?.0;
     let cell = state.active().editing_cell;
+    if let Some(on) = editing_path(state) {
+        return Some(on.shaped);
+    }
     // The note's marker, when the caret is in a note: its lines are found
     // in the frame's layout by it.
     let note_at = match state.active().editing_note {
@@ -549,7 +559,7 @@ fn editing_point(state: &TesseraApp, rect: Rect, pos: egui::Pos2) -> Option<(f64
 }
 
 fn text_offset_at(state: &mut TesseraApp, rect: Rect, pos: egui::Pos2) -> Option<usize> {
-    let (x, y) = editing_point(state, rect, pos)?;
+    let (x, y) = text_point(state, rect, pos)?;
     Some(editing_layout(state)?.offset_at(x, y))
 }
 
@@ -558,8 +568,49 @@ fn text_word_at(
     rect: Rect,
     pos: egui::Pos2,
 ) -> Option<std::ops::Range<usize>> {
-    let (x, y) = editing_point(state, rect, pos)?;
+    let (x, y) = text_point(state, rect, pos)?;
     Some(editing_layout(state)?.word_at(x, y))
+}
+
+/// Where a point on screen is in the text being edited: the frame's own
+/// space, or — for type on a path — the place along the straight line its
+/// story is shaped on that the nearest point of the curve stands for, on
+/// that line.
+fn text_point(state: &mut TesseraApp, rect: Rect, pos: egui::Pos2) -> Option<(f64, f64)> {
+    let (x, y) = editing_point(state, rect, pos)?;
+    let Some(on) = editing_path(state) else {
+        return Some((x, y));
+    };
+    let along = tessera_layout::path_text::x_nearest(&on, kurbo::Point::new(x, y));
+    let line = on.shaped.lines.first()?;
+    Some((along, line.baseline - line.ascent / 2.0))
+}
+
+/// The path and its text as the caret sees them, when a path's text is
+/// being edited: shaped as the layout shapes it for drawing.
+fn editing_path(state: &mut TesseraApp) -> Option<tessera_layout::path_text::OnPath> {
+    let id = state.active().editing.as_ref()?.0;
+    if !matches!(
+        state.active().document().frame(id).map(|f| &f.kind),
+        Some(tessera_document::nodes::FrameKind::Path(_))
+    ) {
+        return None;
+    }
+    let key = state.active;
+    tessera_layout::path_text::shape_on_path(state.documents[key].document(), &mut state.shaper, id)
+}
+
+/// A place in a path's straight line of text — `x` along it, `y` down it —
+/// on the curve, in the frame's own space: the baseline's point there,
+/// moved up the letters by how far `y` is above the baseline.
+fn along_path(on: &tessera_layout::path_text::OnPath, x: f64, y: f64) -> Option<(f64, f64)> {
+    let (point, tangent) = tessera_layout::path_text::baseline_at(on, x)?;
+    let baseline = on.shaped.lines.first()?.baseline;
+    // Up the letters: the left of the way the text runs, in a page whose
+    // y runs down.
+    let up = kurbo::Vec2::new(tangent.y, -tangent.x);
+    let at = point + up * (baseline - y);
+    Some((at.x, at.y))
 }
 
 /// Whether `pos` is over the frame currently being edited.
@@ -568,11 +619,25 @@ fn over_editing_frame(state: &TesseraApp, rect: Rect, pos: egui::Pos2) -> bool {
         return false;
     };
     let at = doc_pos(state, rect, pos);
-    state
-        .active()
-        .document()
-        .frame(*id)
-        .is_some_and(|f| f.bounds.contains(f.to_local(at)))
+    let doc = state.active().document();
+    // A path's text stands beside the path: within its type's reach of the
+    // path's box counts as over it.
+    let reach = match doc.frame(*id).map(|f| &f.kind) {
+        Some(tessera_document::nodes::FrameKind::Path(_)) => {
+            tessera_layout::resolve::path_text_band(doc, *id)
+        }
+        _ => 0.0,
+    };
+    doc.frame(*id).is_some_and(|f| {
+        let b = f.bounds;
+        let grown = DocRect {
+            x: b.x - reach,
+            y: b.y - reach,
+            width: b.width + reach * 2.0,
+            height: b.height + reach * 2.0,
+        };
+        grown.contains(f.to_local(at))
+    })
 }
 
 fn is_text(state: &TesseraApp, id: FrameId) -> bool {
@@ -593,6 +658,12 @@ fn caret_on_screen(state: &TesseraApp, rect: Rect, at: &CaretOnPage) -> Option<e
     let frame = state.active().document().frame(at.frame)?;
     let bounds = frame.bounds;
     let corner = |x: f64, y: f64| {
+        // On the curve, for type on a path, as the caret is drawn.
+        let (x, y) = at
+            .path
+            .as_deref()
+            .and_then(|on| along_path(on, x, y))
+            .unwrap_or((x, y));
         to_screen_pos(
             state,
             rect,
@@ -1343,6 +1414,8 @@ pub(crate) fn editing_story(
     }
     match (state.active().document().frame(id).map(|f| &f.kind), cell) {
         (Some(FrameKind::Text { story, .. }), _) => Some(*story),
+        // Type on a path: the story it carries, edited on the curve.
+        (Some(FrameKind::Path(_)), _) => state.active().document().path_text(id).map(|t| t.story),
         (Some(FrameKind::Table(table)), Some((row, column))) => {
             table.at(row, column)?.cell().map(|c| c.story)
         }
@@ -3182,7 +3255,9 @@ fn begin_text_edit(response: &egui::Response, rect: Rect, state: &mut TesseraApp
     let Some(id) = frame_at(state, rect, pos) else {
         return;
     };
-    if is_text(state, id) {
+    if is_text(state, id) || state.active().document().path_text(id).is_some() {
+        // A text frame, or a path carrying type: the caret goes where the
+        // click was, on the curve for a path.
         enter_text_edit(state, rect, pos, id);
     } else if is_table(state, id)
         && let Some(cell) = cell_at(state, rect, id, pos)
@@ -3703,7 +3778,14 @@ fn draw_overlays(
         let bounds = frame.bounds;
         // The caret is measured inside the text, which is laid out in the
         // frame's own space -- so it is placed the same way the frame is.
+        // Type on a path is measured on a straight line and drawn along the
+        // curve: each place on the line goes to its place on the path.
         let local = |x: f64, y: f64| {
+            let (x, y) = caret
+                .path
+                .as_deref()
+                .and_then(|on| along_path(on, x, y))
+                .unwrap_or((x, y));
             to_screen(frame.transform.apply(DocPoint {
                 x: bounds.x + x,
                 y: bounds.y + y,
@@ -3716,16 +3798,27 @@ fn draw_overlays(
         ));
 
         for r in &geometry.selection {
-            painter.add(egui::Shape::convex_polygon(
-                vec![
-                    local(r.x0, r.y0),
-                    local(r.x1, r.y0),
-                    local(r.x1, r.y1),
-                    local(r.x0, r.y1),
-                ],
-                Theme::selection().gamma_multiply(0.3),
-                Stroke::NONE,
-            ));
+            // On a curve, in slices a few points long, each turned with the
+            // path under it: one quad corner to corner would cut the bend.
+            let slices = if caret.path.is_some() {
+                ((r.x1 - r.x0) / 3.0).ceil().max(1.0) as usize
+            } else {
+                1
+            };
+            let step = (r.x1 - r.x0) / slices as f64;
+            for n in 0..slices {
+                let (x0, x1) = (r.x0 + step * n as f64, r.x0 + step * (n + 1) as f64);
+                painter.add(egui::Shape::convex_polygon(
+                    vec![
+                        local(x0, r.y0),
+                        local(x1, r.y0),
+                        local(x1, r.y1),
+                        local(x0, r.y1),
+                    ],
+                    Theme::selection().gamma_multiply(0.3),
+                    Stroke::NONE,
+                ));
+            }
         }
 
         // The opposite of whatever is actually under it: the frame's own fill
@@ -4984,6 +5077,82 @@ mod tests {
         assert!(
             s.footnotes[0].text.ends_with("A note."),
             "one undo takes it back"
+        );
+    }
+
+    #[test]
+    fn type_on_a_path_is_edited_with_a_caret_on_the_curve() {
+        use tessera_document::path_text::PathText;
+        let mut state = TesseraApp::headless();
+        // A level path 200 long at (20, 30), carrying a story.
+        let mut line = kurbo::BezPath::new();
+        line.move_to((0.0, 0.0));
+        line.line_to((200.0, 0.0));
+        apply(
+            &mut state,
+            Command::AddPath(
+                DocRect {
+                    x: 20.0,
+                    y: 30.0,
+                    width: 200.0,
+                    height: 0.0,
+                },
+                line,
+            ),
+        );
+        let id = state.active().selection.single().expect("selected");
+        let story = state
+            .active_mut()
+            .document_mut()
+            .add_story(tessera_text::story::Story::new("Along"));
+        apply(
+            &mut state,
+            Command::SetPathText {
+                id,
+                text: Some(PathText::new(story)),
+            },
+        );
+
+        start_editing(&mut state, id);
+        assert_eq!(
+            editing_story(&state, id, None),
+            Some(story),
+            "the path's story"
+        );
+        if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+            buffer.set_cursor(0);
+        }
+        let caret = caret_geometry(&mut state).expect("a caret");
+        let on = caret.path.as_deref().expect("measured on the path");
+        let c = caret.geometry.caret.expect("a caret rectangle");
+        // Its foot on the path, at the text's start, and its head above it.
+        let line = &on.shaped.lines[0];
+        let (fx, fy) = along_path(on, c.x0, line.baseline).expect("on the curve");
+        assert!(fx.abs() < 1.0 && fy.abs() < 1e-6, "{fx}, {fy}");
+        let (_, hy) = along_path(on, c.x0, line.baseline - line.ascent).unwrap();
+        assert!(hy < -1.0, "the caret stands up off the path: {hy}");
+
+        // Typed, it goes into the story the path carries.
+        assert!(type_text(&mut state, "All "));
+        assert_eq!(
+            state.active().document().story(story).unwrap().text,
+            "All Along"
+        );
+
+        // A click just above the path, near its end, puts the caret after
+        // the last letter; near its start, before the first.
+        let canvas = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(900.0, 700.0));
+        let screen = |state: &TesseraApp, x: f64, y: f64| {
+            let s = state.active().view.doc_to_screen(DocPoint { x, y });
+            egui::pos2(canvas.min.x + s.x, canvas.min.y + s.y)
+        };
+        let near_end = screen(&state, 210.0, 25.0);
+        assert_eq!(text_offset_at(&mut state, canvas, near_end), Some(9));
+        let near_start = screen(&state, 20.5, 25.0);
+        assert_eq!(text_offset_at(&mut state, canvas, near_start), Some(0));
+        assert!(
+            over_editing_frame(&state, canvas, near_end),
+            "the letters are over it"
         );
     }
 
