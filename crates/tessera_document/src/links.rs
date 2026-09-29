@@ -150,7 +150,7 @@ impl Link {
             .extension()
             .and_then(|e| e.to_str())
             .is_some_and(|e| {
-                ["svg", "pdf", "ai"]
+                ["svg", "pdf", "ai", "eps", "epsf", "epsi"]
                     .iter()
                     .any(|v| e.eq_ignore_ascii_case(v))
             })

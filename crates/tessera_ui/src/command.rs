@@ -1634,6 +1634,12 @@ pub(crate) fn measured_page(
             pdf.page = pdf.page.min((pages.max(1) - 1) as u32);
         }
         tessera_render::images::pdf_page_size(&path, pdf).unwrap_or((0.0, 0.0))
+    } else if tessera_render::eps::is_eps(&path) {
+        // Its bounding box, in points. Ghostscript, where there is one,
+        // makes its PDF now, so the first draw does not wait for it.
+        pdf = Default::default();
+        let _ = tessera_render::eps::as_pdf(&path);
+        tessera_render::eps::size(&path).unwrap_or((0.0, 0.0))
     } else if tessera_render::psd::is_psd(&path) {
         tessera_render::psd::size(&path)
             .map(|(w, h)| (f64::from(w), f64::from(h)))
@@ -1955,6 +1961,18 @@ mod tests {
         assert_eq!(from_corner(&state), (before.0 + 60.0, before.1));
         apply(&mut state, Command::Undo);
         assert_eq!(from_corner(&state), before, "one undo takes both back");
+    }
+
+    #[test]
+    fn an_eps_is_placed_at_its_bounding_box() {
+        let path = std::env::temp_dir().join(format!("tessera-place-{}.eps", std::process::id()));
+        std::fs::write(&path, "%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 120 40\n%%BeginPreview: 8 2 1 2\n% F0\n% F0\n%%EndPreview\n").unwrap();
+        let mut state = TesseraApp::headless();
+        let (_, link) = placed_picture(&mut state, &path);
+        let link = &state.active().document().links[link];
+        assert_eq!(link.natural, (120.0, 40.0), "its box, in points");
+        assert!(link.is_vector(), "no pixels of its own to be short of");
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

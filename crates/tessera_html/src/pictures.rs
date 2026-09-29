@@ -132,6 +132,8 @@ fn source_pixels(
     wanted: f64,
 ) -> Option<image::RgbaImage> {
     use tessera_render::images;
+    let converted = tessera_render::eps::effective(path);
+    let path = converted.as_path();
     let edge = wanted.clamp(1.0, LARGEST) as u32;
     let rendered = |(rgba, (w, h)): (Vec<u8>, (u32, u32))| image::RgbaImage::from_raw(w, h, rgba);
     if images::is_svg(path) {
@@ -140,7 +142,10 @@ fn source_pixels(
     if images::is_pdf(path) {
         return images::render_pdf_page(path, pdf, edge).and_then(rendered);
     }
-    let decoded = if tessera_render::psd::is_psd(path) {
+    let decoded = if tessera_render::eps::is_eps(path) {
+        let (rgba, (w, h)) = tessera_render::eps::preview(path)?;
+        image::RgbaImage::from_raw(w, h, rgba)?
+    } else if tessera_render::psd::is_psd(path) {
         let composite = tessera_render::psd::read(&std::fs::read(path).ok()?).ok()?;
         image::RgbaImage::from_raw(composite.width, composite.height, composite.rgba)?
     } else {

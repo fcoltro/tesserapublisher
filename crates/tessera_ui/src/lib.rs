@@ -58,6 +58,7 @@ pub use tools::Tool;
 /// export at once.
 pub const PLACEABLE: &[&str] = &[
     "png", "jpg", "jpeg", "tif", "tiff", "webp", "bmp", "gif", "svg", "pdf", "ai", "psd", "psb",
+    "eps", "epsf", "epsi",
 ];
 
 /// The `eframe::App` implementation.

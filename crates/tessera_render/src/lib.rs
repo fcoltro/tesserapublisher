@@ -4,6 +4,7 @@
 //! and a CPU pixel buffer for tests and page thumbnails. The pixel path is
 //! what makes rendering regression-testable without a window.
 
+pub mod eps;
 pub mod headless;
 pub mod images;
 pub mod proxies;

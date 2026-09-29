@@ -1217,6 +1217,26 @@ fn pixel(rendered: &(Vec<u8>, (u32, u32)), x: u32, y: u32) -> [u8; 4] {
 }
 
 #[test]
+fn a_placed_eps_prints_as_its_pdf_or_its_preview() {
+    // With Ghostscript the EPS is a PDF and copied as one; without, its
+    // preview is what prints — a picture, not nothing.
+    let path = std::env::temp_dir().join(format!("tessera-eps-export-{}.eps", std::process::id()));
+    std::fs::write(&path, "%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 120 40\n%%BeginPreview: 8 2 1 2\n% F0\n% F0\n%%EndPreview\n").unwrap();
+    let doc = placed_at(path.clone(), rect(100.0, 100.0, 120.0, 40.0), (120.0, 40.0));
+    let bytes = tessera_pdf::export(&doc).expect("export");
+    let text = String::from_utf8_lossy(&bytes);
+    if tessera_render::eps::ghostscript().is_some() {
+        assert!(
+            text.contains("/Fm0 Do"),
+            "copied as the PDF Ghostscript made"
+        );
+    } else {
+        assert!(text.contains("/Im0 Do"), "its preview is drawn");
+    }
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn a_placed_pdf_is_copied_across_as_vectors() {
     // Rendered, a placed advert would print its type as pixels and go soft
     // the moment the frame is enlarged. Copied as a form, it is the page its

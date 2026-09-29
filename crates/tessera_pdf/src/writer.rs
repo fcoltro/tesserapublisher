@@ -1273,8 +1273,10 @@ fn collect_pictures(
         }
         progress.go_on()?;
         progress.step();
-        if tessera_render::images::is_pdf(source) && copies_pages(ink, standard) {
-            let Some((id, art)) = copy_page(source, pdf, alloc) else {
+        // An EPS Ghostscript has made a PDF of is copied as that PDF.
+        let readable = tessera_render::eps::effective(source);
+        if tessera_render::images::is_pdf(&readable) && copies_pages(ink, standard) {
+            let Some((id, art)) = copy_page(&readable, pdf, alloc) else {
                 continue;
             };
             out.push(Picture {

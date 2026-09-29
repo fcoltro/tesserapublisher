@@ -82,6 +82,10 @@ fn prepare_page(path: &Path, pdf: PdfPage) -> Result<Prepared, Error> {
     if tessera_render::images::is_vector(path) {
         return prepare_vector(path, pdf);
     }
+    if tessera_render::eps::is_eps(path) {
+        let (rgba, (w, h)) = eps_preview(path)?;
+        return Ok(from_rgba(&rgba, w, h));
+    }
     let bytes = std::fs::read(path)?;
     if tessera_render::psd::is_psd(path) {
         let composite = photoshop(path, &bytes)?;
@@ -244,6 +248,9 @@ fn to_cmyk_page(path: &Path, pdf: PdfPage, conversion: &Conversion) -> Result<Pr
     let rgba = if tessera_render::images::is_vector(path) {
         let (raw, w, h) = vector_rgba(path, pdf)?;
         image::RgbaImage::from_raw(w, h, raw).ok_or_else(malformed)?
+    } else if tessera_render::eps::is_eps(path) {
+        let (raw, (w, h)) = eps_preview(path)?;
+        image::RgbaImage::from_raw(w, h, raw).ok_or_else(malformed)?
     } else if tessera_render::psd::is_psd(path) {
         let composite = photoshop(path, &std::fs::read(path)?)?;
         if let Some(inks) = composite.inks {
@@ -333,11 +340,23 @@ fn pixel_size(path: &Path, pdf: PdfPage) -> Option<(u32, u32)> {
         tessera_render::images::pdf_page_size(path, pdf).map(rendered)
     } else if tessera_render::images::is_svg(path) {
         tessera_render::images::svg_size(path).map(rendered)
+    } else if tessera_render::eps::is_eps(path) {
+        tessera_render::eps::preview(path).map(|(_, size)| size)
     } else if tessera_render::psd::is_psd(path) {
         tessera_render::psd::size(path)
     } else {
         image::image_dimensions(path).ok()
     }
+}
+
+/// An EPS's preview, for an EPS Ghostscript has not made a PDF of.
+fn eps_preview(path: &Path) -> Result<(Vec<u8>, (u32, u32)), Error> {
+    tessera_render::eps::preview(path).ok_or_else(|| {
+        Error::Unreadable(
+            path.to_path_buf(),
+            "an EPS with no preview, and no Ghostscript to draw it".into(),
+        )
+    })
 }
 
 /// A placed file as this export's pictures ask: brought down to the
@@ -364,6 +383,9 @@ pub fn prepare_page_for(
 ) -> Result<Prepared, Error> {
     use crate::Compression;
 
+    // An EPS is its PDF when Ghostscript has made one.
+    let converted = tessera_render::eps::effective(path);
+    let path = converted.as_path();
     let plain = || match conversion {
         Some(conversion) => to_cmyk_page(path, pdf, conversion),
         None => prepare_page(path, pdf),
@@ -420,6 +442,11 @@ pub fn prepare_page_for(
         let rgba = image::RgbaImage::from_raw(composite.width, composite.height, composite.rgba)
             .ok_or_else(|| unreadable("malformed composite".into()))?;
         (rgba, inks)
+    } else if tessera_render::eps::is_eps(path) {
+        let (raw, (w, h)) = eps_preview(path)?;
+        let rgba = image::RgbaImage::from_raw(w, h, raw)
+            .ok_or_else(|| unreadable("malformed preview".into()))?;
+        (rgba, None)
     } else {
         let bytes = std::fs::read(path)?;
         let rgba = image::load_from_memory(&bytes)

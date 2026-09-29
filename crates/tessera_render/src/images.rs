@@ -251,6 +251,9 @@ impl Images {
 /// handing it on would put a 40-megapixel image in the cache to draw a thumbnail
 /// from.
 fn decode(path: &Path, pdf: PdfPage, longest_edge: Option<u32>) -> Option<Decoded> {
+    // An EPS is its PDF when Ghostscript has made one, and its preview else.
+    let converted = crate::eps::effective(path);
+    let path = converted.as_path();
     if is_svg(path) {
         return decode_svg(path, longest_edge);
     }
@@ -261,7 +264,10 @@ fn decode(path: &Path, pdf: PdfPage, longest_edge: Option<u32>) -> Option<Decode
             pixels: (width, height),
         });
     }
-    let decoded = if crate::psd::is_psd(path) {
+    let decoded = if crate::eps::is_eps(path) {
+        let (rgba, (w, h)) = crate::eps::preview(path)?;
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_raw(w, h, rgba)?)
+    } else if crate::psd::is_psd(path) {
         // The flattened picture every Photoshop file carries beside its layers.
         let composite = crate::psd::read(&std::fs::read(path).ok()?).ok()?;
         image::DynamicImage::ImageRgba8(image::RgbaImage::from_raw(
@@ -811,6 +817,33 @@ mod tests {
             rendered.0[i + 2],
             rendered.0[i + 3],
         ]
+    }
+
+    #[test]
+    fn an_eps_without_ghostscript_shows_its_preview() {
+        // A binary EPS whose preview is a red picture: what the cache draws
+        // when there is no Ghostscript to run it (and, where there is, the
+        // PostScript draws nothing but a line, so the preview is what shows
+        // either way this test can see).
+        if crate::eps::ghostscript().is_some() {
+            return;
+        }
+        let red: Vec<u8> = [255, 0, 0, 255].repeat(6 * 3);
+        let bytes = crate::eps::tests::binary(
+            "%!PS-Adobe-3.0 EPSF-3.0
+%%BoundingBox: 0 0 60 30
+",
+            6,
+            3,
+            &red,
+        );
+        let path =
+            std::env::temp_dir().join(format!("tessera-eps-cache-{}.eps", std::process::id()));
+        std::fs::write(&path, bytes).unwrap();
+        let mut images = Images::keeping_proxies_in(None);
+        let decoded = images.get(&path).expect("the preview");
+        assert_eq!(decoded.pixels, (6, 3));
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

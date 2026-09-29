@@ -1150,8 +1150,10 @@ of each carries the full account; this is the index.
   ▸ Page and Crop to; 2026-09-28) — no wider than its crop box, since the
   renderer draws nothing past it. Photoshop files ZIP-compressed (with or
   without prediction), Lab, 1-bit and 32-bit read too (2026-09-28).
-  **Left:** multichannel Photoshop files; EPS, which needs a PostScript
-  interpreter.
+  EPS places too (2026-09-29): sized by its bounding box, drawn from its
+  own preview (a binary EPS's TIFF, an EPSI's hex), and converted once to
+  PDF by Ghostscript where the machine has it — then drawn sharp and
+  exported as vectors. **Left:** multichannel Photoshop files.
 - [x] **Default black is [Black] (2026-09-27).** A new shape's hairline, a
   table's rules, Default fill and stroke, a stroke switched on in Properties
   or in an object style, an underline given its own colour, and an imported
@@ -3458,11 +3460,12 @@ a person at the machine or hardware this project does not have yet.
 
 ### Where it stands (2026-09-28)
 
-**Tiers 1 to 3 are done: items 1 to 20, all built, tested and on `main`.**
+**Every feature on the plan is built: tiers 1 to 4, items 1 to 23, all
+tested and on `main`** (tier 4 finished 2026-09-29: HTML export, EPUB
+export and placing EPS, in `tessera_html` and `tessera_render::eps`).
 Item 11, SVG export, was struck rather than built: InDesign has none, and
-what InDesign does is the scope. Left: tier 4 (HTML export, EPUB export,
-placing EPS), then the platform checks of tier 5. The file format is at
-**43**.
+what InDesign does is the scope. Left: the platform checks of tier 5. The
+file format is at **43**.
 
 What 2026-09-28 added, a commit to each:
 
@@ -3613,7 +3616,12 @@ below are its items 1 to 3.
   Export EPUB… — title, author, identifier (a UUID when left empty),
   the first page as the cover, pictures' format and resolution —
   written on a thread of its own.
-- [ ] 23. **Placing EPS**, which needs a PostScript interpreter.
+- [x] 23. **Placing EPS**, which needs a PostScript interpreter. *Done
+  2026-09-29,* without writing one: `tessera_render::eps` reads the
+  bounding box and the preview an EPS carries, and hands the file to
+  Ghostscript when it is installed (never bundled: it is AGPL and a
+  program of its own), caching the PDF it makes; every reader of placed
+  files takes that PDF when there is one and the preview when not.
 
 ## Platforms — once every feature is built
 
