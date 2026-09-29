@@ -50,6 +50,9 @@ pub struct Writer<'a> {
     headings: HashMap<ParagraphStyleId, usize>,
     notes_written: usize,
     files: Vec<(String, Vec<u8>)>,
+    /// Every heading written: its level, its id and its words as HTML —
+    /// what an EPUB's table of contents lists.
+    pub written_headings: Vec<(usize, String, String)>,
     ppi: f64,
     images: crate::ImageFormat,
 }
@@ -69,6 +72,7 @@ impl<'a> Writer<'a> {
             headings,
             notes_written: 0,
             files: Vec::new(),
+            written_headings: Vec::new(),
             ppi: options.ppi,
             images: options.images,
         }
@@ -86,7 +90,7 @@ impl<'a> Writer<'a> {
             picture.extension
         );
         let tag = format!(
-            "<img src=\"{}\" alt=\"{}\" width=\"{}\" height=\"{}\">",
+            "<img src=\"{}\" alt=\"{}\" width=\"{}\" height=\"{}\" />",
             escape(&name),
             escape(&picture.stem),
             picture.width.round(),
@@ -151,7 +155,7 @@ impl<'a> Writer<'a> {
         out.push_str("<table class=\"table\">\n<colgroup>");
         for width in &table.columns {
             out.push_str(&format!(
-                "<col style=\"width: {}pt\">",
+                "<col style=\"width: {}pt\" />",
                 css::number(*width as f32)
             ));
         }
@@ -306,8 +310,15 @@ impl<'a> Writer<'a> {
             };
             let mut declarations = css::paragraph_declarations(self.doc, &local);
             declarations.extend(css::declarations(self.doc, &local.character));
+            let heading = (tag.starts_with('h') && note_number.is_none())
+                .then(|| tag[1..].parse::<usize>().ok())
+                .flatten();
             out.push('<');
             out.push_str(&tag);
+            let heading_id = heading.map(|_| format!("h-{}", self.written_headings.len() + 1));
+            if let Some(id) = &heading_id {
+                out.push_str(&format!(" id=\"{id}\""));
+            }
             if let Some(class) = style.and_then(|s| self.classes.paragraph.get(&s)) {
                 out.push_str(&format!(" class=\"{class}\""));
             }
@@ -321,6 +332,7 @@ impl<'a> Writer<'a> {
                 range.end
             };
             let mut tables = Vec::new();
+            let words_from = out.len();
             self.inline(
                 story,
                 id,
@@ -330,6 +342,10 @@ impl<'a> Writer<'a> {
                 &mut tables,
                 out,
             );
+            if let (Some(level), Some(id)) = (heading, heading_id) {
+                let words = strip_tags(&out[words_from..]);
+                self.written_headings.push((level, id, words));
+            }
             out.push_str(&format!("</{tag}>\n"));
             // A table anchored in the paragraph follows it: a table cannot
             // stand inside a paragraph.
@@ -475,7 +491,7 @@ impl<'a> Writer<'a> {
                         }
                     }
                     None if c == '\t' => out.push(' '),
-                    None if c == '\u{2028}' => out.push_str("<br>"),
+                    None if c == '\u{2028}' => out.push_str("<br />"),
                     None => out.push_str(&escape(&c.to_string())),
                 }
             }
@@ -487,6 +503,21 @@ impl<'a> Writer<'a> {
             }
         }
     }
+}
+
+/// HTML with its tags taken out, its entities left as they are.
+fn strip_tags(html: &str) -> String {
+    let mut out = String::new();
+    let mut inside = false;
+    for c in html.chars() {
+        match c {
+            '<' => inside = true,
+            '>' => inside = false,
+            c if !inside => out.push(c),
+            _ => {}
+        }
+    }
+    out.trim().to_owned()
 }
 
 fn close_list(list: Option<ListKind>, out: &mut String) {
@@ -512,10 +543,15 @@ fn anchor_paragraph(doc: &Document, name: &str) -> Option<String> {
             continue;
         };
         let at = *story.anchor_offsets().get(index)?;
-        let range = story
-            .paragraph_ranges()
-            .into_iter()
-            .find(|r| r.contains(&at) || r.end == at)?;
+        // The paragraph holding the marker; the last one only for a marker
+        // at the very end, which no range contains. Not "contains or ends
+        // at": a marker opening a paragraph is where the one before ends.
+        let ranges = story.paragraph_ranges();
+        let range = ranges
+            .iter()
+            .find(|r| r.contains(&at))
+            .or_else(|| ranges.last().filter(|r| r.end == at))
+            .cloned()?;
         let words: String = story.text[range]
             .chars()
             .filter(|c| Marker::of(*c).is_none() && *c != '\n')

@@ -108,7 +108,9 @@ fn stories_go_out_in_reading_order_with_their_styles_links_and_notes() {
     );
 
     assert!(
-        html.contains("<h1 class=\"p-chapter-head\"><a id=\"a-intro\"></a>Introduction</h1>"),
+        html.contains(
+            "<h1 id=\"h-1\" class=\"p-chapter-head\"><a id=\"a-intro\"></a>Introduction</h1>"
+        ),
         "a contents style is a heading, and its anchor an id:\n{html}"
     );
     assert!(
@@ -213,7 +215,7 @@ fn a_picture_goes_out_as_its_frame_shows_it() {
     );
     assert!(
         out.html.contains(&format!(
-            "<img src=\"{name}\" alt=\"halves\" width=\"13\" height=\"13\">"
+            "<img src=\"{name}\" alt=\"halves\" width=\"13\" height=\"13\" />"
         )),
         "{}",
         out.html
@@ -309,5 +311,107 @@ fn a_table_goes_out_with_its_heading_row_spans_and_fills() {
     );
     let last_row = html.rsplit("<tr>").next().unwrap();
     assert!(!last_row.contains("background"), "{html}");
-    assert!(html.contains("<col style=\"width: 100pt\">"), "{html}");
+    assert!(html.contains("<col style=\"width: 100pt\" />"), "{html}");
+}
+
+#[test]
+fn a_document_packs_as_an_epub_a_reader_can_open() {
+    use std::io::Read as _;
+    let mut doc = Document::new();
+    let heading = doc.add_paragraph_style(ParagraphStyle {
+        name: "Chapter".into(),
+        ..Default::default()
+    });
+    doc.contents.levels = vec![Level {
+        style: heading,
+        entry_style: None,
+    }];
+    // Two chapters in one story: the first holds an anchor, the second a
+    // cross-reference to it.
+    let mut story = Story::new(format!(
+        "One\n{}Where it began.\nTwo\nAs said in {}.",
+        Marker::TextAnchor.character(),
+        Marker::CrossReference.character()
+    ));
+    story.anchors[0] = TextAnchor {
+        name: "start".into(),
+    };
+    story.cross_references[0] = CrossReference {
+        target: "start".into(),
+        format: CrossReferenceFormat::ParagraphText,
+    };
+    let two = story.text.find("Two").unwrap();
+    story.set_paragraph_style(0..3, Some(heading));
+    story.set_paragraph_style(two..two + 3, Some(heading));
+    let story = doc.add_story(story);
+    frame_at(&mut doc, 20.0, 20.0, story);
+
+    let bytes = tessera_html::epub::export(
+        &doc,
+        &tessera_html::epub::EpubOptions {
+            title: "A Book".into(),
+            author: "A. Writer".into(),
+            identifier: "urn:uuid:12345678-1234-4123-8123-123456789abc".into(),
+            modified: "2026-09-29T00:00:00Z".into(),
+            ..Default::default()
+        },
+    )
+    .expect("packed");
+
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("a ZIP");
+    {
+        let first = zip.by_index(0).unwrap();
+        assert_eq!(first.name(), "mimetype", "mimetype first");
+        assert_eq!(
+            first.compression(),
+            zip::CompressionMethod::Stored,
+            "and stored"
+        );
+    }
+    let mut read = |name: &str| {
+        let mut text = String::new();
+        zip.by_name(name)
+            .unwrap_or_else(|_| panic!("{name} missing"))
+            .read_to_string(&mut text)
+            .unwrap();
+        text
+    };
+    assert_eq!(read("mimetype"), "application/epub+zip");
+    assert!(read("META-INF/container.xml").contains("OEBPS/content.opf"));
+    let package = read("OEBPS/content.opf");
+    assert!(package.contains("<dc:title>A Book</dc:title>"), "{package}");
+    assert!(package.contains("<dc:creator>A. Writer</dc:creator>"));
+    assert!(
+        package.contains("<itemref idref=\"c1\"/>") && package.contains("<itemref idref=\"c2\"/>")
+    );
+    let nav = read("OEBPS/nav.xhtml");
+    assert!(
+        nav.contains("href=\"chapter-1.xhtml#h-1\">One</a>"),
+        "{nav}"
+    );
+    assert!(
+        nav.contains("href=\"chapter-2.xhtml#h-2\">Two</a>"),
+        "{nav}"
+    );
+    let two = read("OEBPS/chapter-2.xhtml");
+    assert!(
+        two.contains("<a href=\"chapter-1.xhtml#a-start\">Where it began.</a>"),
+        "a cross-reference into the chapter before names it:\n{two}"
+    );
+    for name in [
+        "OEBPS/content.opf",
+        "OEBPS/nav.xhtml",
+        "OEBPS/chapter-1.xhtml",
+        "OEBPS/chapter-2.xhtml",
+        "META-INF/container.xml",
+    ] {
+        let text = read(name);
+        // EPUB's XHTML carries the HTML5 doctype, which is allowed.
+        let options = roxmltree::ParsingOptions {
+            allow_dtd: true,
+            ..Default::default()
+        };
+        roxmltree::Document::parse_with_options(&text, options)
+            .unwrap_or_else(|e| panic!("{name} is not XML: {e}\n{text}"));
+    }
 }

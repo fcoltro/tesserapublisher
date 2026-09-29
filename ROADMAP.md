@@ -3603,7 +3603,13 @@ below are its items 1 to 3.
   Export HTML… — styles inside the page or beside it, pictures' format
   and resolution — written on a thread of its own with the page, its
   `style.css` and an `images/` folder.
-- [ ] 22. **EPUB export.**
+- [ ] 22. **EPUB export.** *Under way:* `tessera_html::epub`, reflowable
+  EPUB 3 — the HTML export's content as XHTML, a chapter at every
+  first-level heading, links into another chapter pointed at it, a
+  table of contents from the headings, the package with its metadata,
+  manifest and spine, a cover when given one, `mimetype` first and
+  stored; no fonts, as Package ships none (2026-09-29). **Next:** the
+  dialog, a cover from the first page, and a book as one EPUB.
 - [ ] 23. **Placing EPS**, which needs a PostScript interpreter.
 
 ## Platforms — once every feature is built

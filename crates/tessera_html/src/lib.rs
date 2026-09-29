@@ -13,6 +13,7 @@
 //! anchored in text goes out where its marker is.
 
 mod css;
+pub mod epub;
 mod order;
 mod pictures;
 mod text;
@@ -63,15 +64,39 @@ pub struct Exported {
 /// The name the stylesheet is linked by.
 pub const STYLESHEET: &str = "style.css";
 
-/// Export `doc` as one web page.
-pub fn export(doc: &Document, options: &Options) -> Exported {
+/// A document's content written out, before it is made a page or a book.
+pub(crate) struct Rendered {
+    pub body: String,
+    pub stylesheet: String,
+    pub files: Vec<(String, Vec<u8>)>,
+    /// Every heading: level, id, and its words as HTML.
+    pub headings: Vec<(usize, String, String)>,
+}
+
+pub(crate) fn render(doc: &Document, options: &Options) -> Rendered {
     let classes = css::Classes::of(doc);
     let mut body = String::new();
     let mut writer = text::Writer::new(doc, &classes, options);
     for block in order::reading_order(doc) {
         writer.block(&block, &mut body);
     }
-    let stylesheet = classes.stylesheet(doc);
+    let headings = std::mem::take(&mut writer.written_headings);
+    Rendered {
+        body,
+        stylesheet: classes.stylesheet(doc),
+        files: writer.into_files(),
+        headings,
+    }
+}
+
+/// Export `doc` as one web page.
+pub fn export(doc: &Document, options: &Options) -> Exported {
+    let Rendered {
+        body,
+        stylesheet,
+        files,
+        ..
+    } = render(doc, options);
 
     let title = options
         .title
@@ -89,8 +114,8 @@ pub fn export(doc: &Document, options: &Options) -> Exported {
         "<html lang=\"{}\">\n<head>\n",
         text::escape(&language)
     ));
-    html.push_str("<meta charset=\"utf-8\">\n");
-    html.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n");
+    html.push_str("<meta charset=\"utf-8\" />\n");
+    html.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n");
     html.push_str(&format!("<title>{}</title>\n", text::escape(&title)));
     let css = if options.inline_css {
         html.push_str("<style>\n");
@@ -99,16 +124,12 @@ pub fn export(doc: &Document, options: &Options) -> Exported {
         String::new()
     } else {
         html.push_str(&format!(
-            "<link rel=\"stylesheet\" href=\"{STYLESHEET}\">\n"
+            "<link rel=\"stylesheet\" href=\"{STYLESHEET}\" />\n"
         ));
         stylesheet
     };
     html.push_str("</head>\n<body>\n");
     html.push_str(&body);
     html.push_str("</body>\n</html>\n");
-    Exported {
-        html,
-        css,
-        files: writer.into_files(),
-    }
+    Exported { html, css, files }
 }
