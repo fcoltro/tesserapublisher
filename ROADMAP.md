@@ -3456,6 +3456,46 @@ platform is looked at once, over the finished application, rather than again
 after every change. Tiers 1 to 4 are code; tier 5 is the checking, and needs
 a person at the machine or hardware this project does not have yet.
 
+### Where it stands (2026-09-28)
+
+**Tiers 1 to 3 are done: items 1 to 20, all built, tested and on `main`.**
+Item 11, SVG export, was struck rather than built: InDesign has none, and
+what InDesign does is the scope. Left: tier 4 (HTML export, EPUB export,
+placing EPS), then the platform checks of tier 5. The file format is at
+**43**.
+
+What 2026-09-28 added, a commit to each:
+
+| Item | What | Commit |
+| --- | --- | --- |
+| 5 | A placed PDF's page, and the box it is cut to (format 42) | `1a81c62` |
+| 6 | Objects move with a page's edges when it is resized | `931a04f` |
+| 8 | Single-word justification (format 43); letter-spaced lines reach the measure | `f76b5f6` |
+| 9 | The story editor names each paragraph's style | `1afdb22` |
+| 10 | PDF and picture exports run in the background, with a bar and Cancel | `96c7a0b` |
+| 11 | SVG export dropped, as InDesign has none | `892afa4` |
+| 12 | Cross-references edited in place, and live inside table cells | `e64d9ec` |
+| 13 | Hyperlinks to text anchors, shown on the canvas, imported from IDML | `6acce89` |
+| 14 | Footnotes edited on the canvas, where they are set | `7fc7c1f` |
+| 15 | Type on a path: flip bracket, wrap round its letters, caret on the curve | `8c2c987`, `026795d` |
+| 16 | Book: styles synchronised, one index, chapters in the Pages panel | `1fc6182`, `202eb5e`, `8057940` |
+| 17 | Photoshop files ZIP-compressed, Lab, 1-bit and 32-bit | `84cfab8` |
+| 18 | Spelling: compound words, two-slip and look-alike suggestions | `dba42fc` |
+| 19 | The story editor is live, both ways | `e6c1b5a` |
+| 20 | `command::apply` split into modules by what each command acts on | `22fcc30` |
+
+**Faults found on the way and fixed**, each by building something next to
+it: letter spacing was shared over one gap too many, so letter-spaced
+justified lines stopped short of the measure; the IDML importer looked for
+a hyperlink's destination where InDesign does not write it, so no
+cross-reference from a real InDesign file had ever found its target; a
+cross-reference in a table cell always read "?"; two index markers at the
+head of a line dropped the first entry from the index; and anchors were
+only gathered when a cross-reference asked for them.
+
+**Owed:** every one of these was checked by test and none yet by hand in
+the window; that is part of tier 5, item 24.
+
 When an item is done, tick it here *and* in its milestone, in the same
 commit.
 
