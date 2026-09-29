@@ -5,15 +5,16 @@ later. Third-party material included in the source is listed here.
 
 ## Ghostscript
 
-The Windows installer ships Ghostscript (`gswin64c.exe` and `gsdll64.dll`,
-unmodified, from Artifex Software's release) in a `ghostscript` folder beside
+Every package ships Ghostscript, unmodified, in a `ghostscript` folder beside
 the application, which runs it as a separate program to convert EPS artwork
-to PDF. It is not in this repository; `packaging/build.sh` copies it from an
-installed Ghostscript when it builds the installer.
+to PDF: on Windows `gswin64c.exe` and `gsdll64.dll` from Artifex Software's
+release, on Mac and Linux a `gs` built from Artifex's pinned, checksummed
+source by `packaging/ghostscript/build.sh`. Its code is not in this
+repository; `packaging/build.sh` stages it when it builds a package.
 
 Ghostscript is licensed under the GNU Affero General Public License v3.0 or
-later, whose text ships beside it with `packaging/ghostscript/README.txt`,
-which says where its source is:
+later: its notice (`packaging/ghostscript/LICENSE`) and the licence
+(`COPYING`) ship beside it with `README.txt`, which says where its source is:
 [ArtifexSoftware/ghostpdl](https://github.com/ArtifexSoftware/ghostpdl).
 
 ## Adobe Spectrum 2 workflow icons

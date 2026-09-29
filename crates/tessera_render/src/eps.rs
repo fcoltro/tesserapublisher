@@ -8,8 +8,9 @@
 //! - **Ghostscript.** The file is converted once to a PDF, cropped to its
 //!   bounding box, kept in a cache beside the image proxies, and from then on
 //!   it is a placed PDF: drawn sharp on screen and copied as vectors into an
-//!   export. The Windows installer ships a copy beside the application,
-//!   which is looked for first; elsewhere it is found where it is installed.
+//!   export. Every package ships a copy beside the application — built from
+//!   source for Mac and Linux — which is looked for first, then one the
+//!   machine has installed.
 //!   It stays a separate program, run and not linked: it is AGPL, which
 //!   Tessera's GPL-3.0 allows beside it, with its licence and the way to its
 //!   source shipped too.

@@ -164,6 +164,8 @@
                     KeyPath="yes"/>
               <File Id="GhostscriptLicence" Name="LICENSE"
                     Source="$(var.CargoTargetBinDir)\ghostscript\LICENSE"/>
+              <File Id="GhostscriptCopying" Name="COPYING"
+                    Source="$(var.CargoTargetBinDir)\ghostscript\COPYING"/>
             </Component>
             <Directory Id="GhostscriptBin" Name="bin">
               <Component Id="GhostscriptProgram" Guid="*">

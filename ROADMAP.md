@@ -3623,8 +3623,9 @@ below are its items 1 to 3.
 - [x] 23. **Placing EPS**, which needs a PostScript interpreter. *Done
   2026-09-29,* without writing one: `tessera_render::eps` reads the
   bounding box and the preview an EPS carries, and hands the file to
-  Ghostscript when it is installed (bundled with the Windows installer
-  since 2026-09-29: AGPL beside GPL-3.0, run as a program of its own), caching the PDF it makes; every reader of placed
+  Ghostscript (bundled in every package since 2026-09-29 — installed
+  Windows binaries, a pinned source build for Mac and Linux — AGPL beside
+  GPL-3.0, run as a program of its own, never linked), caching the PDF it makes; every reader of placed
   files takes that PDF when there is one and the preview when not.
 
 ## Platforms — once every feature is built

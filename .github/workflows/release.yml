@@ -67,10 +67,26 @@ jobs:
             exit 1
           fi
 
-      # Bundled into the installer by packaging/build.sh, for placing EPS.
+      # Bundled into every package by packaging/build.sh, for placing EPS:
+      # installed on Windows, built from pinned source on Mac and Linux.
       - name: Install Ghostscript
         if: matrix.os == 'windows-latest'
         run: choco install ghostscript -y --no-progress
+
+      # The source build takes minutes and changes only when its script does.
+      - name: Cache the Ghostscript build
+        if: matrix.os != 'windows-latest'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ghostscript
+          key: ghostscript-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/ghostscript/build.sh') }}
+
+      - name: Build Ghostscript
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          packaging/ghostscript/build.sh "$RUNNER_TEMP/ghostscript"
+          echo "TESSERA_GHOSTSCRIPT=$RUNNER_TEMP/ghostscript" >> "$GITHUB_ENV"
 
       - run: cargo build --release -p tessera_app
 
