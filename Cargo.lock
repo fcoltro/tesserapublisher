@@ -4358,6 +4358,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tessera_html"
+version = "0.1.0"
+dependencies = [
+ "tessera_color",
+ "tessera_document",
+ "tessera_geometry",
+ "tessera_text",
+]
+
+[[package]]
 name = "tessera_import"
 version = "0.1.0"
 dependencies = [

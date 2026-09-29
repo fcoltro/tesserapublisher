@@ -10,6 +10,7 @@ members = [
     "crates/tessera_render",
     "crates/tessera_preflight",
     "crates/tessera_pdf",
+    "crates/tessera_html",
     "crates/tessera_import",
     "crates/tessera_ui",
     "crates/tessera_bridge",
@@ -70,6 +71,7 @@ tessera_document = { path = "crates/tessera_document" }
 tessera_layout   = { path = "crates/tessera_layout" }
 tessera_render   = { path = "crates/tessera_render" }
 tessera_pdf      = { path = "crates/tessera_pdf" }
+tessera_html     = { path = "crates/tessera_html" }
 tessera_preflight = { path = "crates/tessera_preflight" }
 tessera_import   = { path = "crates/tessera_import" }
 tessera_ui       = { path = "crates/tessera_ui" }
