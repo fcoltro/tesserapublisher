@@ -603,6 +603,81 @@ pub fn export_pdf(state: &mut TesseraApp) {
     });
 }
 
+/// Ask where the web page goes, and write it on a thread of its own.
+pub fn export_html(state: &mut TesseraApp) {
+    let suggested = state
+        .active()
+        .current_path
+        .as_ref()
+        .and_then(|p| p.file_stem())
+        .map_or_else(
+            || "Untitled".to_string(),
+            |s| s.to_string_lossy().into_owned(),
+        );
+    let Some(mut path) = rfd::FileDialog::new()
+        .add_filter("Web page", &["html", "htm"])
+        .set_file_name(format!("{suggested}.html"))
+        .save_file()
+    else {
+        return; // cancelled
+    };
+    if path.extension().is_none() {
+        path.set_extension("html");
+    }
+    let write = html_export(state, &path);
+    let open_after = state.html_export.open_after;
+    state.start_job("Exporting HTML", move |_| {
+        write()?;
+        Ok(crate::background::Finished {
+            said: format!("Exported {}", path.display()),
+            open: if open_after { vec![path] } else { Vec::new() },
+        })
+    });
+}
+
+/// Write the active document as a web page at `path`: the page, its
+/// stylesheet beside it and its pictures in a folder beside it. Says why
+/// when it could not.
+pub fn export_html_to(state: &mut TesseraApp, path: &Path) -> Result<(), String> {
+    html_export(state, path)()
+}
+
+/// An HTML export of the active document to `path`, ready to run here or
+/// on another thread: the document is copied now, and the rest needs
+/// nothing of the application's.
+fn html_export(
+    state: &TesseraApp,
+    path: &Path,
+) -> impl FnOnce() -> Result<(), String> + Send + 'static {
+    let document = state.active().document().clone();
+    let mut options = state.html_export.options();
+    options.title = path.file_stem().map(|s| s.to_string_lossy().into_owned());
+    let path = path.to_path_buf();
+    move || {
+        let exported = tessera_html::export(&document, &options);
+        let folder = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        let write = |at: &Path, bytes: &[u8]| {
+            if let Some(parent) = at.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("Could not make {}: {e}", parent.display()))?;
+            }
+            tessera_io::atomic::write_atomic(at, bytes)
+                .map_err(|e| format!("Could not write {}: {e}", at.display()))
+        };
+        write(&path, exported.html.as_bytes())?;
+        if !exported.css.is_empty() {
+            write(
+                &folder.join(tessera_html::STYLESHEET),
+                exported.css.as_bytes(),
+            )?;
+        }
+        for (name, bytes) in &exported.files {
+            write(&folder.join(name), bytes)?;
+        }
+        Ok(())
+    }
+}
+
 /// Ask where the pictures go, and make them.
 pub fn export_images(state: &mut TesseraApp) {
     let format = state.prefs.image_export.picture.format;
@@ -1131,5 +1206,36 @@ mod tests {
                 .text,
             "Hello, Tessera."
         );
+    }
+
+    #[test]
+    fn a_document_exports_as_a_page_its_stylesheet_and_its_words() {
+        let dir = std::env::temp_dir().join(format!("tessera-html-ops-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut state = TesseraApp::headless();
+        let bounds = state.first_page_bounds();
+        crate::command::apply(&mut state, crate::command::Command::AddTextFrame(bounds));
+        let id = state.active().selection.single().unwrap();
+        crate::command::apply(
+            &mut state,
+            crate::command::Command::SetText {
+                id,
+                text: "Hello, web.".into(),
+            },
+        );
+        let page = dir.join("Leaflet.html");
+        export_html_to(&mut state, &page).expect("exported");
+        let html = std::fs::read_to_string(&page).unwrap();
+        assert!(html.contains("<p>Hello, web.</p>"), "{html}");
+        assert!(
+            html.contains("<title>Leaflet</title>"),
+            "named after its file"
+        );
+        assert!(
+            dir.join(tessera_html::STYLESHEET).is_file(),
+            "the stylesheet beside it"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -4494,6 +4494,7 @@ dependencies = [
  "tessera_color",
  "tessera_document",
  "tessera_geometry",
+ "tessera_html",
  "tessera_import",
  "tessera_io",
  "tessera_layout",

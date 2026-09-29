@@ -14,6 +14,7 @@ tessera_import.workspace = true
 tessera_document.workspace = true
 tessera_render.workspace = true
 tessera_pdf.workspace = true
+tessera_html.workspace = true
 tessera_preflight.workspace = true
 tessera_io.workspace = true
 tessera_text.workspace = true

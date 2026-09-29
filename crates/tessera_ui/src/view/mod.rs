@@ -19,6 +19,7 @@ pub mod find;
 pub mod footnote_options;
 pub mod glyph;
 pub mod glyphs;
+pub mod html_export;
 pub mod hyperlink;
 pub mod identity;
 pub mod image_export;
@@ -108,6 +109,7 @@ pub(crate) fn modal_open(state: &TesseraApp) -> bool {
         || state.hyperlink.open
         || state.footnote_options.open
         || state.spelling.open
+        || state.html_export.open
         || state.swatches_window.deleting.is_some()
 }
 
@@ -147,6 +149,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     settings::show(ui.ctx(), state);
     export_dialog::show(ui.ctx(), state);
     image_export::show(ui.ctx(), state);
+    html_export::show(ui.ctx(), state);
     print_dialog::show(ui.ctx(), state);
     new_document::show(ui.ctx(), state);
     step_repeat::show(ui.ctx(), state);

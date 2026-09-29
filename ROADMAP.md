@@ -3588,7 +3588,7 @@ below are its items 1 to 3.
 
 ### Tier 4 — a week or more each
 
-- [ ] 21. **HTML export.** *Under way:* `tessera_html` — the stories in
+- [x] 21. **HTML export.** *Done 2026-09-29:* `tessera_html` — the stories in
   reading order (page by page, top to bottom then left to right, a
   thread once where it starts), paragraph and character styles as CSS
   classes and what was set by hand as `style`, the contents' styles as
@@ -3599,8 +3599,10 @@ below are its items 1 to 3.
   JPEG when opaque and PNG when not, in an `images/` folder, anchored
   ones in the line; tables with their heading and footing rows, spans,
   column widths, fills (alternating ones too), edges, insets and
-  vertical placement, an anchored table after its paragraph.
-  **Next:** the dialog.
+  vertical placement, an anchored table after its paragraph; and File ›
+  Export HTML… — styles inside the page or beside it, pictures' format
+  and resolution — written on a thread of its own with the page, its
+  `style.css` and an `images/` folder.
 - [ ] 22. **EPUB export.**
 - [ ] 23. **Placing EPS**, which needs a PostScript interpreter.
 
