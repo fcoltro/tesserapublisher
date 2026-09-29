@@ -2947,8 +2947,14 @@ which cost one afternoon's confusion and a namespace check.
   dictionary passes it, at most eight, in the word's own case. The box
   offers them as a row of choices that fill the field; a right-click on a
   wave opens a menu of them with Add to dictionary, and a choice replaces
-  the word through the same `ReplaceMatches` the box uses. Not built: a
-  phonetic pass, two-edit forms, compounding and the other `.aff` tables.
+  the word through the same `ReplaceMatches` the box uses. **2026-09-28:**
+  compounding — `COMPOUNDFLAG`, the begin, middle and end flags,
+  `COMPOUNDMIN`, `ONLYINCOMPOUND`, a prefix on a compound's first part and
+  a suffix on its last — so German's words check; words two slips away,
+  looked up in the list directly (up to fourteen letters); and Hunspell's
+  n-gram pass, the listed words that look most like it by shared letters,
+  pairs and triples, for a word no slips reach. Not read: `PHONE` tables,
+  which few dictionaries carry, and the rarer `.aff` tables.
 - [x] **Hyperlinks** (added 2026-09-13, after milestone 12). A link rides on
   the character format — `CharacterFormat.link`, a URL or a named
   destination — so it cascades and travels with the words. Destinations are
@@ -3525,8 +3531,9 @@ below are its items 1 to 3.
   *Done 2026-09-28:* ZIP with and without prediction (32-bit rows as
   byte planes), 32-bit linear light encoded as sRGB with transparency
   kept linear, a bitmap's ones black, Lab through D50 XYZ to sRGB.
-- [ ] 18. **Spelling**: sound-alike suggestions, two-edit corrections,
-  compound words (milestone 12).
+- [x] 18. **Spelling**: sound-alike suggestions, two-edit corrections,
+  compound words (milestone 12). *Done 2026-09-28* (sound-alike as
+  Hunspell's n-gram pass; `PHONE` tables not read).
 - [ ] 19. **The story editor updates live** with the page (milestone 12).
 - [ ] 20. **Split `command::apply`** (126 cases) into smaller pieces. Nothing
   a person sees, but every later change gets safer.

@@ -10,16 +10,21 @@
 //! right: `PFX` and `SFX` rules with their strip, add and condition, the
 //! three flag encodings, cross-product, and the word list — and, for
 //! suggesting, `TRY` (the letters worth trying, commonest first) and `REP`
-//! (the language's own list of usual slips). It does not read compounding
-//! or phonetic tables. What it does read is enough for the dictionaries
-//! LibreOffice and Firefox ship, which are the ones a person has.
+//! (the language's own list of usual slips); and compounding — `COMPOUNDFLAG`
+//! and the begin, middle and end flags, `COMPOUNDMIN`, `ONLYINCOMPOUND` —
+//! which is how German and the Nordic languages spell words no list could
+//! hold. It does not read `PHONE` tables, which few dictionaries carry.
+//! What it does read is enough for the dictionaries LibreOffice and Firefox
+//! ship, which are the ones a person has.
 //!
-//! [`Dictionary::suggest`] is the classic edit-distance-one candidate walk:
+//! [`Dictionary::suggest`] begins with the classic edit-distance-one walk:
 //! every replacement from `REP`, then every swap of neighbours, dropped
 //! letter, wrong letter and extra letter, then the word split in two —
-//! each kept only if the dictionary passes it. Hunspell does more (a
-//! phonetic pass, two-edit forms for long words); this catches the slips a
-//! person actually makes at a keyboard, in the order they make them.
+//! each kept only if the dictionary passes it. Then, as Hunspell does,
+//! words two slips away, looked up in the word list directly so the walk
+//! stays quick; and last the words that *look* most like it by their
+//! letter pairs and triples — Hunspell's n-gram pass, which is what finds
+//! "phone" for "fone" when no single slip explains it.
 //!
 //! No dictionary is bundled: the word lists are large and licensed each
 //! their own way. Tessera looks in its dictionaries folder for the text's
@@ -77,13 +82,37 @@ pub struct Dictionary {
     try_chars: Vec<char>,
     /// `REP from to`: the slips this language's makers have seen most.
     replacements: Vec<(String, String)>,
+    /// The flag a stem carries to stand anywhere in a compound, and the
+    /// ones for only its start, middle or end.
+    compound_flag: Option<u32>,
+    compound_begin: Option<u32>,
+    compound_middle: Option<u32>,
+    compound_end: Option<u32>,
+    /// The shortest part a compound may be made of, in letters.
+    compound_min: usize,
+    /// A stem that is a word only inside a compound: the German linking
+    /// "s" and the like.
+    only_in_compound: Option<u32>,
 }
+
+/// Where a part stands in a compound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Place {
+    Begin,
+    Middle,
+    End,
+}
+
+/// How many parts a compound may have: enough for any real word, few enough
+/// that a long nonsense word cannot make the check crawl.
+const MOST_PARTS: usize = 4;
 
 impl Dictionary {
     /// Read the `.aff` and `.dic` texts.
     pub fn parse(aff: &str, dic: &str) -> Self {
         let mut d = Dictionary {
             try_chars: ('a'..='z').collect(),
+            compound_min: 3,
             ..Dictionary::default()
         };
         d.read_aff(aff);
@@ -113,14 +142,14 @@ impl Dictionary {
         if self.added.contains(&word.to_lowercase()) {
             return true;
         }
-        if self.check_exact(&word) {
+        if self.check_word(&word) {
             return true;
         }
         let lower = word.to_lowercase();
         if lower != word
             && (self.ignore_case || word.chars().next().is_some_and(char::is_uppercase))
         {
-            if self.check_exact(&lower) {
+            if self.check_word(&lower) {
                 return true;
             }
             // "MacArthur" typed as "Macarthur" is not allowed, but "THE"
@@ -132,7 +161,7 @@ impl Dictionary {
                     .map(|c| c.to_uppercase().collect::<String>())
                     .unwrap_or_default()
                     + chars.as_str();
-                if self.check_exact(&title) {
+                if self.check_word(&title) {
                     return true;
                 }
             }
@@ -228,26 +257,210 @@ impl Dictionary {
             offer(format!("{a} {b}"), &mut out);
         }
 
-        // Back into the word's own case.
-        out.into_iter()
-            .map(|s| {
-                if shouted {
-                    s.to_uppercase()
-                } else if capitalised {
-                    title(&s)
-                } else {
-                    s
+        // Two slips: every word one slip from a word one slip from this,
+        // looked up in the list itself rather than through the affixes —
+        // the square of the first walk, too many to check the long way.
+        // Up to fourteen letters: the walk grows with the square of the
+        // word, and a longer one is found by the look-alikes below.
+        if out.len() < 8 && (4..=14).contains(&n) {
+            let mut near: Vec<String> = self
+                .one_slip(&letters)
+                .into_iter()
+                .flat_map(|once| self.one_slip(&once.chars().collect::<Vec<_>>()))
+                .filter(|twice| self.stems.contains_key(twice) && !self.is_compound_only(twice))
+                .collect();
+            near.sort_by_key(|w| (w.chars().count().abs_diff(n), w.clone()));
+            near.dedup();
+            for candidate in near {
+                offer(candidate, &mut out);
+            }
+        }
+
+        // What looks most like it, letter pair by letter pair.
+        if out.len() < 8 {
+            for candidate in self.look_alikes(&base) {
+                offer(candidate, &mut out);
+            }
+        }
+
+        // Back into the word's own case — where two passes offered one
+        // word in two cases, "paris" and "Paris", it is offered once.
+        let mut cased: Vec<String> = Vec::with_capacity(out.len());
+        for s in out {
+            let s = if shouted {
+                s.to_uppercase()
+            } else if capitalised {
+                title(&s)
+            } else {
+                s
+            };
+            if !cased.contains(&s) {
+                cased.push(s);
+            }
+        }
+        cased
+    }
+
+    /// Every string one slip from `letters`: swapped, dropped, wrong or
+    /// missing a letter from the `TRY` set.
+    fn one_slip(&self, letters: &[char]) -> Vec<String> {
+        let with = |l: &[char]| l.iter().collect::<String>();
+        let n = letters.len();
+        let mut out = Vec::new();
+        for i in 0..n.saturating_sub(1) {
+            let mut l = letters.to_vec();
+            l.swap(i, i + 1);
+            out.push(with(&l));
+        }
+        for i in 0..n {
+            let mut l = letters.to_vec();
+            l.remove(i);
+            out.push(with(&l));
+            for &c in &self.try_chars {
+                if c != letters[i] {
+                    let mut l = letters.to_vec();
+                    l[i] = c;
+                    out.push(with(&l));
                 }
-            })
-            .collect()
+            }
+        }
+        for i in 0..=n {
+            for &c in &self.try_chars {
+                let mut l = letters.to_vec();
+                l.insert(i, c);
+                out.push(with(&l));
+            }
+        }
+        out
+    }
+
+    /// The listed words most like `word` by the letters they share, in
+    /// pairs and in threes, less what their lengths differ by: Hunspell's
+    /// n-gram suggestion, for a word too far from any for slips to reach.
+    /// At most four, and only those alike enough to be worth a look.
+    fn look_alikes(&self, word: &str) -> Vec<String> {
+        fn grams(word: &str, n: usize) -> Vec<String> {
+            let chars: Vec<char> = word.chars().collect();
+            chars.windows(n).map(|w| w.iter().collect()).collect()
+        }
+        let score = |candidate: &str| -> i64 {
+            let mut shared = 0i64;
+            for n in 1..=3 {
+                let theirs = grams(candidate, n);
+                shared +=
+                    grams(word, n).iter().filter(|g| theirs.contains(g)).count() as i64 * n as i64;
+            }
+            let difference = word.chars().count().abs_diff(candidate.chars().count()) as i64;
+            shared - 2 * difference
+        };
+        let length = word.chars().count();
+        // As alike as the word is to itself, less a little for every
+        // letter: a looser bar than that offers noise.
+        let own = score(word);
+        let bar = own * 2 / 5;
+        let mut scored: Vec<(i64, &String)> = self
+            .stems
+            .keys()
+            .filter(|s| s.chars().count().abs_diff(length) <= 3 && !self.is_compound_only(s))
+            .map(|s| (score(s), s))
+            .filter(|(s, _)| *s >= bar)
+            .collect();
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
+        scored.into_iter().take(4).map(|(_, s)| s.clone()).collect()
+    }
+
+    /// A word in the list, a stem with its affixes, or a compound of them.
+    fn check_word(&self, word: &str) -> bool {
+        self.check_exact(word) || self.compound(word, 0)
+    }
+
+    /// Whether a stem is a word only inside a compound.
+    fn is_compound_only(&self, stem: &str) -> bool {
+        self.only_in_compound
+            .is_some_and(|flag| self.stem_takes(stem, flag))
+    }
+
+    /// Whether `word` is parts that may stand together, the first of them
+    /// at `made` parts in: each at least `compound_min` letters, each a
+    /// stem carrying a compound flag for where it stands — a prefix allowed
+    /// on the first part, a suffix on the last.
+    fn compound(&self, word: &str, made: usize) -> bool {
+        if self.compound_flag.is_none() && self.compound_begin.is_none() {
+            return false;
+        }
+        let min = self.compound_min.max(1);
+        let bounds: Vec<usize> = word
+            .char_indices()
+            .map(|(i, _)| i)
+            .chain(std::iter::once(word.len()))
+            .collect();
+        let letters = bounds.len() - 1;
+        if letters < min * 2 || made + 2 > MOST_PARTS {
+            return false;
+        }
+        for &cut in &bounds[min..=letters - min] {
+            let (head, tail) = word.split_at(cut);
+            let here = if made == 0 {
+                Place::Begin
+            } else {
+                Place::Middle
+            };
+            if !self.part(head, here) {
+                continue;
+            }
+            if self.part(tail, Place::End) || self.compound(tail, made + 1) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Whether `part` may stand at `place` in a compound.
+    fn part(&self, part: &str, place: Place) -> bool {
+        let flags: Vec<u32> = [
+            self.compound_flag,
+            match place {
+                Place::Begin => self.compound_begin,
+                Place::Middle => self.compound_middle,
+                Place::End => self.compound_end,
+            },
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let takes = |stem: &str| flags.iter().any(|f| self.stem_takes(stem, *f));
+        if takes(part) {
+            return true;
+        }
+        // An affix only at the compound's own ends: a prefix on its first
+        // part, a suffix on its last.
+        for (flag, rules) in &self.affixes {
+            for rule in rules {
+                let allowed = if rule.prefix {
+                    place == Place::Begin
+                } else {
+                    place == Place::End
+                };
+                if !allowed {
+                    continue;
+                }
+                if let Some(stem) = self.strip_affix(part, rule)
+                    && self.stem_takes(&stem, *flag)
+                    && takes(&stem)
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     fn check_exact(&self, word: &str) -> bool {
-        if let Some(flags) = self.stems.get(word) {
+        if self.stems.contains_key(word) {
             // A stem may be marked as only ever appearing with an affix
-            // (NEEDAFFIX); not read here, so a bare stem is a word.
-            let _ = flags;
-            return true;
+            // (NEEDAFFIX); not read here, so a bare stem is a word — unless
+            // it is one only inside a compound.
+            return !self.is_compound_only(word);
         }
         // One suffix, one prefix, or both (cross product).
         for (flag, rules) in &self.affixes {
@@ -368,6 +581,24 @@ impl Dictionary {
                             });
                         }
                         _ => {}
+                    }
+                }
+                "COMPOUNDFLAG" | "COMPOUNDBEGIN" | "COMPOUNDMIDDLE" | "COMPOUNDEND"
+                | "ONLYINCOMPOUND" => {
+                    let flag = parts
+                        .next()
+                        .and_then(|f| self.parse_flags(f).into_iter().next());
+                    match key {
+                        "COMPOUNDFLAG" => self.compound_flag = flag,
+                        "COMPOUNDBEGIN" => self.compound_begin = flag,
+                        "COMPOUNDMIDDLE" => self.compound_middle = flag,
+                        "COMPOUNDEND" => self.compound_end = flag,
+                        _ => self.only_in_compound = flag,
+                    }
+                }
+                "COMPOUNDMIN" => {
+                    if let Some(n) = parts.next().and_then(|n| n.parse().ok()) {
+                        self.compound_min = n;
                     }
                 }
                 "IGNORECASE" | "CHECKSHARPS" => {}
@@ -546,6 +777,41 @@ Paris
 
     fn dictionary() -> Dictionary {
         Dictionary::parse(AFF, DIC)
+    }
+
+    #[test]
+    fn compounds_are_words_their_parts_allow() {
+        // German's way: parts flagged to stand in a compound, a linking
+        // "s" that is a word only inside one, and a suffix on the end.
+        let aff = "COMPOUNDFLAG X\nCOMPOUNDMIN 1\nONLYINCOMPOUND O\nSFX N Y 1\nSFX N 0 n .\n";
+        let dic = "4\narbeit/X\ns/XO\nzimmer/XN\nhaus/X\n";
+        let d = Dictionary::parse(aff, dic);
+        assert!(d.check("Arbeitszimmer"), "work + s + room");
+        assert!(
+            d.check("Arbeitszimmern"),
+            "with its ending on the last part"
+        );
+        assert!(d.check("Hausarbeit"));
+        assert!(!d.check("s"), "the linking s is no word alone");
+        assert!(!d.check("Arbeitskatze"), "a part the list lacks");
+        // Without a compound flag, nothing compounds.
+        let plain = Dictionary::parse("", "2\narbeit\nzimmer\n");
+        assert!(!plain.check("arbeitzimmer"));
+    }
+
+    #[test]
+    fn two_slips_and_a_look_alike_are_suggested() {
+        let d = Dictionary::parse(
+            "TRY abcdefghijklmnopqrstuvwxyz\n",
+            "4\nbeautiful\nphone\nnecessary\nthe\n",
+        );
+        // Two letters wrong at once: no single slip reaches it.
+        assert!(d.suggest("beutifull").contains(&"beautiful".to_string()));
+        assert!(d.suggest("neccesary").contains(&"necessary".to_string()));
+        // Spelled as it sounds: "ph" for "f" is two slips, found either way.
+        assert!(d.suggest("fone").contains(&"phone".to_string()));
+        // And something like nothing is offered nothing.
+        assert!(d.suggest("qqqqzzzz").is_empty());
     }
 
     #[test]
