@@ -4361,9 +4361,11 @@ dependencies = [
 name = "tessera_html"
 version = "0.1.0"
 dependencies = [
+ "image",
  "tessera_color",
  "tessera_document",
  "tessera_geometry",
+ "tessera_render",
  "tessera_text",
 ]
 

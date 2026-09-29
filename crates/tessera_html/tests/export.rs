@@ -144,3 +144,84 @@ fn stories_go_out_in_reading_order_with_their_styles_links_and_notes() {
     );
     assert!(inline.css.is_empty() && inline.html.contains("<style>"));
 }
+
+#[test]
+fn a_picture_goes_out_as_its_frame_shows_it() {
+    // A picture 20 by 10, red on its left half and blue on its right,
+    // placed at its own size in a frame 10 by 10: the frame shows the red
+    // half, and so does the page.
+    let dir = std::env::temp_dir().join(format!("tessera-html-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("halves.png");
+    image::RgbaImage::from_fn(20, 10, |x, _| {
+        if x < 10 {
+            image::Rgba([255, 0, 0, 255])
+        } else {
+            image::Rgba([0, 0, 255, 255])
+        }
+    })
+    .save(&path)
+    .unwrap();
+
+    let mut doc = Document::new();
+    let page = doc.page_ids().next().unwrap();
+    let b = doc.pages[page].bounds;
+    let layer = doc.default_layer().unwrap();
+    let frame = doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: b.x + 20.0,
+                y: b.y + 20.0,
+                width: 10.0,
+                height: 10.0,
+            },
+            kind: FrameKind::Graphic { placed: None },
+            transform: Transform::IDENTITY,
+            fill: tessera_document::paint::Paint::Solid(tessera_color::Color::BLACK),
+            stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
+            shadow: None,
+            anchor: None,
+            style: None,
+            hidden: false,
+            locked: false,
+        },
+    );
+    let link = doc.add_link(tessera_document::links::Link::new(&path, (20.0, 10.0)));
+    doc.place(frame, link, tessera_document::graphic::Fit::Centre);
+    // Centred, the picture's middle is the frame's; move it so its left
+    // edge is the frame's, which shows the red half.
+    if let FrameKind::Graphic { placed: Some(p) } = &mut doc.frames[frame].kind {
+        p.inner = Transform::IDENTITY;
+    }
+
+    let out = tessera_html::export(
+        &doc,
+        &tessera_html::Options {
+            ppi: 72.0,
+            ..Default::default()
+        },
+    );
+    assert_eq!(out.files.len(), 1, "one picture");
+    let (name, bytes) = &out.files[0];
+    assert!(
+        name.starts_with("images/halves-") && name.ends_with(".jpg"),
+        "{name}: opaque, so JPEG"
+    );
+    assert!(
+        out.html.contains(&format!(
+            "<img src=\"{name}\" alt=\"halves\" width=\"13\" height=\"13\">"
+        )),
+        "{}",
+        out.html
+    );
+    let shown = image::load_from_memory(bytes).unwrap().to_rgb8();
+    assert_eq!(shown.dimensions(), (10, 10), "the frame's size at 72 ppi");
+    for p in shown.pixels() {
+        assert!(p[0] > 200 && p[2] < 60, "the red half only: {p:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -13,3 +13,8 @@ tessera_document.workspace = true
 tessera_text.workspace = true
 tessera_color.workspace = true
 tessera_geometry.workspace = true
+tessera_render.workspace = true
+image.workspace = true
+
+[dev-dependencies]
+image.workspace = true

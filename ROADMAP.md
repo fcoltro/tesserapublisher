@@ -3594,8 +3594,10 @@ below are its items 1 to 3.
   classes and what was set by hand as `style`, the contents' styles as
   headings, lists, links, text anchors as ids, cross-references as links
   reading as their paragraph, variables and merge fields, footnotes
-  after their story (2026-09-28). **Next:** pictures, tables, the
-  dialog.
+  after their story (2026-09-28); pictures as their frames show them —
+  cropped and scaled by the placement, rendered at a chosen resolution,
+  JPEG when opaque and PNG when not, in an `images/` folder, anchored
+  ones in the line. **Next:** tables, the dialog.
 - [ ] 22. **EPUB export.**
 - [ ] 23. **Placing EPS**, which needs a PostScript interpreter.
 

@@ -14,21 +14,41 @@
 
 mod css;
 mod order;
+mod pictures;
 mod text;
 
 use tessera_document::document::Document;
 
 pub use order::Block;
+pub use pictures::ImageFormat;
 
 /// What an export is asked for.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Options {
     /// The page's title; the document's file name when `None`.
     pub title: Option<String>,
     /// Whether the styles go inside the page, in a `<style>` element, rather
     /// than in a stylesheet beside it that the page links to.
     pub inline_css: bool,
+    /// How finely pictures are rendered, in pixels an inch of the page.
+    pub ppi: f64,
+    pub images: ImageFormat,
 }
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            title: None,
+            inline_css: false,
+            // Sharp on a high-density screen at the size the page shows it.
+            ppi: 150.0,
+            images: ImageFormat::Automatic,
+        }
+    }
+}
+
+/// The folder the pictures go in, beside the page.
+pub const IMAGES: &str = "images";
 
 /// What an export made: the page, its stylesheet, and the files it links
 /// to, each with the path the page names it by.
@@ -47,7 +67,7 @@ pub const STYLESHEET: &str = "style.css";
 pub fn export(doc: &Document, options: &Options) -> Exported {
     let classes = css::Classes::of(doc);
     let mut body = String::new();
-    let mut writer = text::Writer::new(doc, &classes);
+    let mut writer = text::Writer::new(doc, &classes, options);
     for block in order::reading_order(doc) {
         writer.block(&block, &mut body);
     }

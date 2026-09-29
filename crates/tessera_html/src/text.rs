@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use tessera_document::document::Document;
-use tessera_document::ids::StoryId;
+use tessera_document::ids::{FrameId, StoryId};
 use tessera_text::story::{Hyperlink, ListKind, ParagraphStyleId, Story, Styles};
 use tessera_text::variables::Marker;
 
@@ -50,10 +50,12 @@ pub struct Writer<'a> {
     headings: HashMap<ParagraphStyleId, usize>,
     notes_written: usize,
     files: Vec<(String, Vec<u8>)>,
+    ppi: f64,
+    images: crate::ImageFormat,
 }
 
 impl<'a> Writer<'a> {
-    pub fn new(doc: &'a Document, classes: &'a Classes) -> Self {
+    pub fn new(doc: &'a Document, classes: &'a Classes, options: &crate::Options) -> Self {
         let headings = doc
             .contents
             .levels
@@ -67,7 +69,31 @@ impl<'a> Writer<'a> {
             headings,
             notes_written: 0,
             files: Vec::new(),
+            ppi: options.ppi,
+            images: options.images,
         }
+    }
+
+    /// A picture's `<img>`, its file written beside the page; nothing for a
+    /// frame showing nothing or a file that will not read.
+    fn picture(&mut self, frame: FrameId) -> Option<String> {
+        let picture = crate::pictures::picture(self.doc, frame, self.ppi, self.images)?;
+        let name = format!(
+            "{}/{}-{}.{}",
+            crate::IMAGES,
+            css::slug(&picture.stem),
+            self.files.len() + 1,
+            picture.extension
+        );
+        let tag = format!(
+            "<img src=\"{}\" alt=\"{}\" width=\"{}\" height=\"{}\">",
+            escape(&name),
+            escape(&picture.stem),
+            picture.width.round(),
+            picture.height.round()
+        );
+        self.files.push((name, picture.bytes));
+        Some(tag)
     }
 
     pub fn into_files(self) -> Vec<(String, Vec<u8>)> {
@@ -77,8 +103,13 @@ impl<'a> Writer<'a> {
     pub fn block(&mut self, block: &Block, out: &mut String) {
         match *block {
             Block::Story(id) => self.story(id, out),
-            // Pictures and tables go out from the steps that follow.
-            Block::Picture(_) | Block::Table(_) => {}
+            Block::Picture(frame) => {
+                if let Some(img) = self.picture(frame) {
+                    out.push_str(&format!("<figure class=\"picture\">{img}</figure>\n"));
+                }
+            }
+            // Tables go out from the step that follows.
+            Block::Table(_) => {}
         }
     }
 
@@ -88,7 +119,7 @@ impl<'a> Writer<'a> {
             return;
         };
         let mut notes: Vec<(usize, &Story)> = Vec::new();
-        self.paragraphs(story, &mut notes, None, out);
+        self.paragraphs(story, Some(id), &mut notes, None, out);
         if notes.is_empty() {
             return;
         }
@@ -96,7 +127,7 @@ impl<'a> Writer<'a> {
         for (number, note) in notes {
             out.push_str(&format!("<li id=\"fn-{number}\" value=\"{number}\">"));
             let mut inner = String::new();
-            self.paragraphs(note, &mut Vec::new(), Some(number), &mut inner);
+            self.paragraphs(note, None, &mut Vec::new(), Some(number), &mut inner);
             out.push_str(inner.trim_end());
             out.push_str(&format!(
                 " <a href=\"#fnref-{number}\" class=\"footnote-back\">\u{21a9}</a></li>\n"
@@ -110,6 +141,7 @@ impl<'a> Writer<'a> {
     fn paragraphs<'s>(
         &mut self,
         story: &'s Story,
+        id: Option<StoryId>,
         notes: &mut Vec<(usize, &'s Story)>,
         note_number: Option<usize>,
         out: &mut String,
@@ -158,7 +190,7 @@ impl<'a> Writer<'a> {
             } else {
                 range.end
             };
-            self.inline(story, range.start..end, notes, note_number, out);
+            self.inline(story, id, range.start..end, notes, note_number, out);
             out.push_str(&format!("</{tag}>\n"));
         }
         close_list(list, out);
@@ -169,12 +201,21 @@ impl<'a> Writer<'a> {
     fn inline<'s>(
         &mut self,
         story: &'s Story,
+        id: Option<StoryId>,
         range: Range<usize>,
         notes: &mut Vec<(usize, &'s Story)>,
         note_number: Option<usize>,
         out: &mut String,
     ) {
         let footnotes = story.footnote_offsets();
+        // The objects anchored in the text, by their markers' order.
+        let anchored = id.map(|id| self.doc.anchors_in(id));
+        let markers: Vec<usize> = story
+            .text
+            .char_indices()
+            .filter(|(_, c)| *c == tessera_document::anchored::MARKER)
+            .map(|(at, _)| at)
+            .collect();
         let anchors = story.anchor_offsets();
         let references = story.cross_reference_offsets();
         for run in &story.runs {
@@ -265,7 +306,19 @@ impl<'a> Writer<'a> {
                     // Page numbers and section markers have no page here;
                     // an index entry reads as nothing anywhere.
                     Some(_) => {}
-                    None if c == tessera_document::anchored::MARKER => {}
+                    // An object anchored here: a picture goes out where its
+                    // marker is, in the line.
+                    None if c == tessera_document::anchored::MARKER => {
+                        let frame = markers
+                            .iter()
+                            .position(|m| *m == at)
+                            .and_then(|i| anchored.as_ref()?.frame_at(i));
+                        if let Some(frame) = frame
+                            && let Some(img) = self.picture(frame)
+                        {
+                            out.push_str(&img);
+                        }
+                    }
                     None if c == '\t' => out.push(' '),
                     None if c == '\u{2028}' => out.push_str("<br>"),
                     None => out.push_str(&escape(&c.to_string())),
