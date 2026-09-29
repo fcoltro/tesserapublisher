@@ -47,6 +47,11 @@ fn every_direct_mutation_is_marked_as_a_bracketed_gesture() {
         if PERMITTED.contains(&name.as_str()) {
             return;
         }
+        // `command.rs`'s own arms, split by what they act on, are the
+        // command layer as much as it is.
+        if path.parent().and_then(|p| p.file_name()) == Some(std::ffi::OsStr::new("command")) {
+            return;
+        }
 
         let lines: Vec<&str> = contents.lines().collect();
         for (i, line) in lines.iter().enumerate() {

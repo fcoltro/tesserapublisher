@@ -3538,8 +3538,13 @@ below are its items 1 to 3.
   Hunspell's n-gram pass; `PHONE` tables not read).
 - [x] 19. **The story editor updates live** with the page (milestone 12).
   *Done 2026-09-28.*
-- [ ] 20. **Split `command::apply`** (126 cases) into smaller pieces. Nothing
-  a person sees, but every later change gets safer.
+- [x] 20. **Split `command::apply`** (126 cases) into smaller pieces. Nothing
+  a person sees, but every later change gets safer. *Done 2026-09-28:* its
+  173 arms moved, unchanged, into nine modules under `command/` by what
+  they act on — objects, artwork, tables, text, text styles, long
+  documents, colour, pages, layers; `apply` records the undo entry and
+  hands each on by `Command::area`, a match with no catch-all, so a new
+  command does not compile until it has a place.
 
 ### Tier 4 — a week or more each
 

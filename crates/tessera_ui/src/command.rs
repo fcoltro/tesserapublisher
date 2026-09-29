@@ -1211,6 +1211,16 @@ fn replace_table(
     }
 }
 
+mod artwork;
+mod colour;
+mod layers;
+mod long_document;
+mod objects;
+mod pages;
+mod tables;
+mod text;
+mod text_styles;
+
 pub fn apply(state: &mut TesseraApp, command: Command) {
     if command.mutates() {
         state.active_mut().record_history();
@@ -1218,88 +1228,6 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
     }
 
     match command {
-        Command::AddRectangle(bounds) => add(state, bounds, FrameKind::Rectangle, Look::Outline),
-
-        Command::AddEllipse(bounds) => add(state, bounds, FrameKind::Ellipse, Look::Outline),
-
-        Command::AddPath(bounds, path) => add(state, bounds, FrameKind::Path(path), Look::Outline),
-
-        Command::AddGraphicFrame(bounds) => {
-            add(
-                state,
-                bounds,
-                FrameKind::Graphic { placed: None },
-                Look::Bare,
-            );
-        }
-
-        Command::PlaceArtwork { id, path, fit } => {
-            let Some(link) = measure_link(state, &path) else {
-                return;
-            };
-            let link = state.active_mut().document_mut().add_link(link);
-            state.active_mut().document_mut().place(id, link, fit);
-        }
-
-        Command::Relink { link, path } => {
-            // The page chosen stays chosen: a relink is usually the same
-            // document, revised.
-            let pdf = link_pdf(state, link);
-            let Some(measured) = measure_link_as(state, &path, pdf) else {
-                return;
-            };
-            let now = state.active_mut().document_mut().relink(link, measured);
-            if state.links.selected == Some(link) {
-                state.links.selected = Some(now);
-            }
-        }
-
-        Command::UpdateLink { link } => {
-            let Some(path) = state
-                .active()
-                .document()
-                .links
-                .get(link)
-                .map(|l| l.path.clone())
-            else {
-                return;
-            };
-            let pdf = link_pdf(state, link);
-            if let Some(measured) = measure_link_as(state, &path, pdf) {
-                state.active_mut().document_mut().relink(link, measured);
-            }
-        }
-
-        Command::UpdateLinks { links } => {
-            for link in links {
-                let path = state
-                    .active()
-                    .document()
-                    .links
-                    .get(link)
-                    .map(|l| l.path.clone());
-                let pdf = link_pdf(state, link);
-                if let Some(path) = path
-                    && let Some(measured) = measure_link_as(state, &path, pdf)
-                {
-                    state.active_mut().document_mut().relink(link, measured);
-                }
-            }
-        }
-
-        Command::RelinkMany { changes } => {
-            for (link, path) in changes {
-                let pdf = link_pdf(state, link);
-                let Some(measured) = measure_link_as(state, &path, pdf) else {
-                    continue;
-                };
-                let now = state.active_mut().document_mut().relink(link, measured);
-                if state.links.selected == Some(link) {
-                    state.links.selected = Some(now);
-                }
-            }
-        }
-
         Command::Together(commands) => {
             // Held, not recorded: the entry recorded above holds them all.
             // A count rather than a flag, so one inside another does not let
@@ -1312,1924 +1240,6 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             open.holding = open.holding.saturating_sub(1);
         }
 
-        Command::FitFrameToText { id } => {
-            let key = state.active;
-            let fitted = tessera_layout::resolve::height_to_fit(
-                state.documents[key].document(),
-                &mut state.shaper,
-                id,
-            );
-            let Some(height) = fitted else {
-                state.status = Some(crate::app::Status::info(
-                    "this frame cannot be fitted to its text: it passes text on, \
-                     or would be taller than any page",
-                ));
-                return;
-            };
-            let Some(mut bounds) = state.active().document().frame(id).map(|f| f.bounds) else {
-                return;
-            };
-            if bounds.height != height {
-                bounds.height = height;
-                let placement = state
-                    .active()
-                    .document()
-                    .frame(id)
-                    .map_or(Transform::IDENTITY, |f| f.transform);
-                retarget(state, id, bounds, placement);
-            }
-        }
-
-        Command::ReplaceFamily { from, to } => {
-            state.active_mut().document_mut().replace_family(&from, &to);
-        }
-
-        Command::RepointSwatch { from, to } => {
-            state.active_mut().document_mut().repoint_swatch(&from, &to);
-        }
-
-        Command::RefitArtwork { id, fit } => {
-            state.active_mut().document_mut().refit(id, fit);
-        }
-
-        Command::FitFrameToArtwork { id } => {
-            state.active_mut().document_mut().fit_frame_to_content(id);
-        }
-
-        Command::ShowPdfPage { id, pdf } => {
-            let doc = state.active().document();
-            let Some(path) = doc.frame(id).and_then(|f| match &f.kind {
-                FrameKind::Graphic { placed: Some(p) } => {
-                    doc.links.get(p.link).map(|l| l.path.clone())
-                }
-                _ => None,
-            }) else {
-                return;
-            };
-            let Some(link) = measure_link_as(state, &path, pdf) else {
-                return;
-            };
-            let link = state.active_mut().document_mut().add_link(link);
-            state.active_mut().document_mut().show_link(id, link);
-        }
-
-        Command::AddTable {
-            bounds,
-            rows,
-            columns,
-        } => {
-            // A story per cell, made here because only the document can mint
-            // one. The table module takes the maker rather than the document,
-            // so it stays a plain node with no idea where stories live.
-            let mut stories = Vec::new();
-            for _ in 0..rows.max(1) * columns.max(1) {
-                stories.push(
-                    state
-                        .active_mut()
-                        .document_mut()
-                        .add_story(Story::default()),
-                );
-            }
-            let mut next = stories.into_iter();
-            let table = tessera_document::table::new(rows, columns, bounds.width, || {
-                next.next().expect("one story per cell")
-            });
-            // A hairline rule, because a table with no rules at all reads as
-            // columns of loose text rather than as a table, and a first
-            // impression of nothing is worse than one of a plain grid.
-            let mut table = table;
-            table.stroke = Some(tessera_document::nodes::Stroke::new(Color::BLACK_INK, 0.5));
-            add(state, bounds, FrameKind::Table(table), Look::Bare);
-        }
-
-        Command::TableRow { id, at, insert } => {
-            let Some(FrameKind::Table(mut table)) =
-                state.active().document().frame(id).map(|f| f.kind.clone())
-            else {
-                return;
-            };
-            if insert {
-                table.insert_row(at, tessera_document::ids::StoryId::default);
-            } else if !table.remove_row(at) {
-                return;
-            }
-            finish_table_edit(state, id, table);
-        }
-
-        Command::TableColumn { id, at, insert } => {
-            let Some(FrameKind::Table(mut table)) =
-                state.active().document().frame(id).map(|f| f.kind.clone())
-            else {
-                return;
-            };
-            if insert {
-                // The new column takes the width of the one it is beside, so a
-                // table that filled its frame still roughly does.
-                let width = table
-                    .columns
-                    .get(at.saturating_sub(1))
-                    .copied()
-                    .unwrap_or(72.0);
-                table.insert_column(at, width, tessera_document::ids::StoryId::default);
-            } else if !table.remove_column(at) {
-                return;
-            }
-            finish_table_edit(state, id, table);
-        }
-
-        Command::MergeCells {
-            id,
-            row,
-            column,
-            span,
-        } => {
-            let Some(FrameKind::Table(mut table)) =
-                state.active().document().frame(id).map(|f| f.kind.clone())
-            else {
-                return;
-            };
-            let absorbed = table.merge(row, column, span);
-            if absorbed.is_empty() && !span.is_single() {
-                state.status = Some(crate::app::Status::error(
-                    "Cannot merge: choose whole cells within the table",
-                ));
-                return;
-            }
-            // The stories the merge swallowed go with it. A story nothing
-            // refers to is a leak the file then carries forever.
-            for story in absorbed {
-                state.active_mut().document_mut().remove_story(story);
-            }
-            finish_table_edit(state, id, table);
-        }
-
-        Command::SplitCell { id, row, column } => {
-            let Some(FrameKind::Table(mut table)) =
-                state.active().document().frame(id).map(|f| f.kind.clone())
-            else {
-                return;
-            };
-            table.split(row, column, tessera_document::ids::StoryId::default);
-            finish_table_edit(state, id, table);
-        }
-
-        Command::SetCellEdges {
-            id,
-            row,
-            column,
-            sides,
-            stroke,
-        } => {
-            let Some(FrameKind::Table(mut table)) =
-                state.active().document().frame(id).map(|f| f.kind.clone())
-            else {
-                return;
-            };
-            for side in sides {
-                table.set_side(row, column, side, stroke.clone());
-            }
-            replace_table(state, id, table);
-        }
-
-        Command::SetTableStroke { id, stroke } => {
-            let Some(FrameKind::Table(mut table)) =
-                state.active().document().frame(id).map(|f| f.kind.clone())
-            else {
-                return;
-            };
-            table.stroke = stroke;
-            table.local.stroke = true;
-            replace_table(state, id, table);
-        }
-
-        Command::SetAlternatingFills { id, alternating } => {
-            let Some(FrameKind::Table(mut table)) =
-                state.active().document().frame(id).map(|f| f.kind.clone())
-            else {
-                return;
-            };
-            table.alternating = alternating.map(Box::new);
-            table.local.alternating = true;
-            replace_table(state, id, table);
-        }
-
-        Command::DefineTableStyle { id, style } => {
-            state
-                .active_mut()
-                .document_mut()
-                .define_table_style(id, style);
-        }
-
-        Command::DefineCellStyle { id, style } => {
-            state
-                .active_mut()
-                .document_mut()
-                .define_cell_style(id, style);
-        }
-
-        Command::RemoveTableStyle(id) => {
-            state.active_mut().document_mut().remove_table_style(id);
-        }
-
-        Command::RemoveCellStyle(id) => {
-            state.active_mut().document_mut().remove_cell_style(id);
-        }
-
-        Command::ApplyTableStyle { id, style } => {
-            let Some(FrameKind::Table(mut table)) =
-                state.active().document().frame(id).map(|f| f.kind.clone())
-            else {
-                return;
-            };
-            table.style = style;
-            table.local = tessera_document::table::TableLocal::default();
-            replace_table(state, id, table);
-        }
-
-        Command::ApplyCellStyle { id, cells, style } => {
-            let Some(FrameKind::Table(mut table)) =
-                state.active().document().frame(id).map(|f| f.kind.clone())
-            else {
-                return;
-            };
-            for (row, column) in cells {
-                if let Some(cell) = table.at_mut(row, column).and_then(|s| s.cell_mut()) {
-                    cell.style = style;
-                    cell.local = tessera_document::table::CellLocal::default();
-                }
-            }
-            replace_table(state, id, table);
-        }
-
-        Command::ContinueTable { id } => {
-            continue_table(state, id);
-        }
-
-        Command::FlowTable { id } => {
-            // A page a time until nothing is left over, and never more than
-            // a long book's worth: a row taller than any page would
-            // otherwise ask for pages for ever.
-            let mut added = 0;
-            while added < 500 && table_needs_room(state, id) {
-                if continue_table(state, id).is_none() {
-                    break;
-                }
-                added += 1;
-            }
-            state.status = Some(crate::app::Status::info(match added {
-                0 => "The table fits: nothing to flow.".to_owned(),
-                1 => "The table runs on over one more page.".to_owned(),
-                n => format!("The table runs on over {n} more pages."),
-            }));
-        }
-
-        Command::StopContinuingTable { id } => {
-            let Some(FrameKind::Table(mut table)) =
-                state.active().document().frame(id).map(|f| f.kind.clone())
-            else {
-                return;
-            };
-            let Some(last) = table.parts.pop() else {
-                return;
-            };
-            state.active_mut().document_mut().remove_frame(last);
-            replace_table(state, id, table);
-        }
-
-        Command::SetTableRegions { id, header, footer } => {
-            let Some(FrameKind::Table(mut table)) =
-                state.active().document().frame(id).map(|f| f.kind.clone())
-            else {
-                return;
-            };
-            // Never more heading and footing than there are rows.
-            let rows = u16::try_from(table.rows()).unwrap_or(u16::MAX);
-            table.header_rows = header.min(rows);
-            table.footer_rows = footer.min(rows - table.header_rows);
-            replace_table(state, id, table);
-        }
-
-        Command::ConvertTextToTable { id } => {
-            let Some(frame) = state.active().document().frame(id).cloned() else {
-                return;
-            };
-            let FrameKind::Text { story, .. } = frame.kind else {
-                return;
-            };
-            // A threaded story runs through other frames too, and turning it
-            // into a table here would leave them showing nothing.
-            if state.active().document().thread_of(id).len() > 1 {
-                state.status = Some(crate::app::Status::error(
-                    "Cannot convert: the text runs on into other frames. Unthread it first.",
-                ));
-                return;
-            }
-            let Some(text) = state.active().document().story(story).cloned() else {
-                return;
-            };
-            let rows = crate::table_ops::cells_of(&text);
-            let columns = rows.iter().map(Vec::len).max().unwrap_or(1).max(1);
-            let mut cells = Vec::with_capacity(rows.len() * columns);
-            for row in rows {
-                let short = columns - row.len();
-                cells.extend(row);
-                cells.extend(std::iter::repeat_with(Story::default).take(short));
-            }
-            let mut ids = Vec::with_capacity(cells.len());
-            for cell in cells {
-                ids.push(state.active_mut().document_mut().add_story(cell));
-            }
-            let row_count = ids.len() / columns;
-            let mut next = ids.into_iter();
-            let mut table =
-                tessera_document::table::new(row_count, columns, frame.bounds.width, || {
-                    next.next().unwrap_or_default()
-                });
-            table.stroke = Some(tessera_document::nodes::Stroke::new(Color::BLACK_INK, 0.5));
-            state.active_mut().document_mut().remove_frame(id);
-            state.active_mut().document_mut().remove_story(story);
-            add(state, frame.bounds, FrameKind::Table(table), Look::Bare);
-            // Where the text stood, turned as it was.
-            if let Some(new) = state.active().selection.single()
-                && let Some(made) = state.active_mut().document_mut().frame_mut(new)
-            {
-                made.transform = frame.transform;
-            }
-        }
-
-        Command::ConvertTableToText { id } => {
-            let Some(frame) = state.active().document().frame(id).cloned() else {
-                return;
-            };
-            let FrameKind::Table(table) = &frame.kind else {
-                return;
-            };
-            let (text, styles, formatted) =
-                crate::table_ops::text_of(state.active().document(), table);
-            let mut story = Story::new(text);
-            for (range, style) in story.paragraph_ranges().into_iter().zip(styles) {
-                if style.is_some() {
-                    story.set_paragraph_style(range, style);
-                }
-            }
-            let cell_stories: Vec<_> = table.stories().collect();
-            let story = state.active_mut().document_mut().add_story(story);
-            state.active_mut().document_mut().remove_frame(id);
-            for cell in cell_stories {
-                state.active_mut().document_mut().remove_story(cell);
-            }
-            add(state, frame.bounds, FrameKind::text(story), Look::Bare);
-            if let Some(new) = state.active().selection.single()
-                && let Some(made) = state.active_mut().document_mut().frame_mut(new)
-            {
-                made.transform = frame.transform;
-            }
-            if formatted {
-                state.status = Some(crate::app::Status::info(
-                    "Converted. Bold, italic and other formatting inside the cells did not \
-                     come across; each row keeps its first cell's paragraph style.",
-                ));
-            }
-        }
-
-        Command::SortTableRows {
-            id,
-            column,
-            descending,
-            skip,
-        } => {
-            let Some(FrameKind::Table(mut table)) =
-                state.active().document().frame(id).map(|f| f.kind.clone())
-            else {
-                return;
-            };
-            let owners = table.owners();
-            let columns = table.columns();
-            if column >= columns {
-                return;
-            }
-            let skip = skip.min(table.rows());
-            let keys: Vec<String> = (skip..table.rows())
-                .map(|row| {
-                    owners[row * columns + column]
-                        .and_then(|(r, c)| table.at(r, c))
-                        .and_then(|slot| slot.cell())
-                        .and_then(|cell| state.active().document().story(cell.story))
-                        .map(|story| story.text.clone())
-                        .unwrap_or_default()
-                })
-                .collect();
-            let order = crate::table_ops::sort_order(&keys, descending);
-            if !table.reorder_rows(skip, &order) {
-                state.status = Some(crate::app::Status::error(
-                    "Cannot sort: a cell spans more than one of the rows. Split it first.",
-                ));
-                return;
-            }
-            replace_table(state, id, table);
-        }
-
-        Command::AddTableFromData { bounds, cells } => {
-            let columns = cells.iter().map(Vec::len).max().unwrap_or(1).max(1);
-            let rows = cells.len().max(1);
-            let mut ids = Vec::with_capacity(rows * columns);
-            for row in 0..rows {
-                for column in 0..columns {
-                    let words = cells
-                        .get(row)
-                        .and_then(|r| r.get(column))
-                        .cloned()
-                        .unwrap_or_default();
-                    ids.push(
-                        state
-                            .active_mut()
-                            .document_mut()
-                            .add_story(Story::new(words)),
-                    );
-                }
-            }
-            let mut next = ids.into_iter();
-            let mut table = tessera_document::table::new(rows, columns, bounds.width, || {
-                next.next().unwrap_or_default()
-            });
-            table.stroke = Some(tessera_document::nodes::Stroke::new(Color::BLACK_INK, 0.5));
-            add(state, bounds, FrameKind::Table(table), Look::Bare);
-        }
-
-        Command::SetTableSizes { id, columns, rows } => {
-            let Some(FrameKind::Table(mut table)) =
-                state.active().document().frame(id).map(|f| f.kind.clone())
-            else {
-                return;
-            };
-            // Only as many as the table has: sizes for a grid that has since
-            // changed shape are not guessed onto the wrong columns.
-            if columns.len() != table.columns() || rows.len() != table.rows() {
-                return;
-            }
-            let width: f64 = columns.iter().sum();
-            table.columns = columns;
-            table.rows = rows;
-            replace_table(state, id, table);
-            if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
-                frame.bounds.width = width;
-            }
-        }
-
-        Command::AddTextFrame(bounds) => {
-            let story = state
-                .active_mut()
-                .document_mut()
-                .add_story(Story::default());
-            // A text frame's own fill is the box behind the glyphs, so it is
-            // transparent by default rather than painting a white rectangle
-            // over whatever it sits on.
-            add(state, bounds, FrameKind::text(story), Look::Bare);
-        }
-
-        Command::SetBounds { id, bounds } => {
-            let placement = state
-                .active()
-                .document()
-                .frame(id)
-                .map_or(Transform::IDENTITY, |f| f.transform);
-            retarget(state, id, bounds, placement);
-        }
-
-        Command::SetRotation { id, degrees } => {
-            let Some(frame) = state.active().document().frame(id) else {
-                return;
-            };
-            let (bounds, was) = (frame.bounds, frame.transform);
-            // Normalised into -180..180 so the inspector never shows 3600 and
-            // a saved document never accumulates whole turns.
-            let wanted = (degrees + 180.0).rem_euclid(360.0) - 180.0;
-            // Turned by the difference about where the frame really is, so a
-            // scale or a shear already on the frame is preserved rather than
-            // being flattened into a bare rotation.
-            let turn = Transform::rotate_about(wanted - was.rotation_degrees(), frame.centre());
-            retarget(state, id, bounds, was.then(turn));
-        }
-
-        Command::SetFill { id, paint } => {
-            if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
-                frame.fill = paint;
-            }
-        }
-
-        Command::SetText { id, text } => {
-            if let Some(FrameKind::Text { story, .. }) =
-                state.active().document().frame(id).map(|f| f.kind.clone())
-                && let Some(mut s) = state.active().document().story(story).cloned()
-            {
-                // Not `s.text = text`. Assigning the string leaves `runs`
-                // describing a length the text no longer has, which is
-                // corruption rather than a glitch and shows up far from here.
-                s.set_text(text);
-                // End the matching session before it can write its old copy back.
-                if editing_buffer_for(state, story).is_some() {
-                    state.active_mut().editing = None;
-                    state.active_mut().editing_cell = None;
-                    state.active_mut().editing_note = None;
-                }
-                state
-                    .active_mut()
-                    .document_mut()
-                    .replace_story_from_edit(story, s);
-            }
-        }
-
-        Command::ReplaceMatches { edits } => {
-            for (story, range, with) in edits {
-                let Some(mut s) = state.active().document().story(story).cloned() else {
-                    continue;
-                };
-                // A range that no longer fits is one the document changed
-                // under the search. Skipped rather than clamped: a clamped
-                // range would edit text nobody looked for.
-                if range.start > range.end
-                    || range.end > s.text.len()
-                    || !s.text.is_char_boundary(range.start)
-                    || !s.text.is_char_boundary(range.end)
-                {
-                    continue;
-                }
-                // Through the story's own operations, which carry the run
-                // table with them. Assigning the string would leave `runs`
-                // describing a length the text no longer has.
-                s.delete_range(range.clone());
-                s.insert_text(range.start, &with);
-                // Protect every caller, including the generic command bridge.
-                // A canvas buffer must never write its pre-replacement copy back.
-                if editing_buffer_for(state, story).is_some() {
-                    state.active_mut().editing = None;
-                    state.active_mut().editing_cell = None;
-                    state.active_mut().editing_note = None;
-                }
-                // As an edit, so a marker replaced away takes its anchored
-                // frame with it rather than leaving it pointing at nothing.
-                state
-                    .active_mut()
-                    .document_mut()
-                    .replace_story_from_edit(story, s);
-            }
-        }
-
-        Command::SetCharacterFormat {
-            story,
-            range,
-            format,
-        } => {
-            // An empty range is a caret, and character formatting needs
-            // something to sit on. Held for the next text typed rather than
-            // discarded — discarding is what used to happen, and it looked
-            // exactly like a broken control: the picker moved and the page did
-            // not.
-            if range.start >= range.end {
-                if let Some(buffer) = editing_buffer_for(state, story) {
-                    buffer.set_pending(&format);
-                }
-                return;
-            }
-
-            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
-                s.apply_character_format(range.clone(), &format);
-            }
-            if let Some(buffer) = editing_buffer_for(state, story) {
-                buffer.apply_character_format(range, &format);
-            }
-        }
-
-        Command::SetParagraphFormat {
-            story,
-            range,
-            format,
-        } => {
-            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
-                s.apply_paragraph_format(range.clone(), &format);
-            }
-            if let Some(buffer) = editing_buffer_for(state, story) {
-                buffer.apply_paragraph_format(range, &format);
-            }
-        }
-
-        Command::DefineCharacterStyle(style) => {
-            state.active_mut().document_mut().add_character_style(style);
-        }
-
-        Command::DefineParagraphStyle(style) => {
-            state.active_mut().document_mut().add_paragraph_style(style);
-        }
-
-        Command::EditCharacterStyle { id, style } => {
-            if let Some(existing) = state.active_mut().document_mut().character_style_mut(id) {
-                *existing = style;
-            }
-        }
-
-        Command::EditParagraphStyle { id, style } => {
-            if let Some(existing) = state.active_mut().document_mut().paragraph_style_mut(id) {
-                *existing = style;
-            }
-        }
-
-        Command::ClearCharacterOverrides { story, range } => {
-            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
-                s.clear_character_overrides(range.clone());
-            }
-            if let Some(buffer) = editing_buffer_for(state, story) {
-                buffer.clear_character_overrides(range);
-            }
-        }
-
-        Command::ClearParagraphOverrides { story, range } => {
-            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
-                s.clear_paragraph_overrides(range.clone());
-            }
-            if let Some(buffer) = editing_buffer_for(state, story) {
-                buffer.clear_paragraph_overrides(range);
-            }
-        }
-
-        Command::RedefineCharacterStyle { id, story, range } => {
-            // What the text says over and above its style, read before
-            // anything moves.
-            let Some(overrides) = state
-                .active()
-                .document()
-                .story(story)
-                .map(|s| s.common_format_local(range.clone()))
-            else {
-                return;
-            };
-            if let Some(style) = state.active_mut().document_mut().character_style_mut(id) {
-                style.format = overrides.over(&style.format);
-            }
-            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
-                s.clear_character_overrides(range.clone());
-            }
-            if let Some(buffer) = editing_buffer_for(state, story) {
-                buffer.clear_character_overrides(range);
-            }
-        }
-
-        Command::RedefineParagraphStyle { id, story, range } => {
-            let Some((paragraph, character)) = state.active().document().story(story).map(|s| {
-                (
-                    s.common_paragraph_format(range.clone()),
-                    s.common_format_local(range.clone()),
-                )
-            }) else {
-                return;
-            };
-            if let Some(style) = state.active_mut().document_mut().paragraph_style_mut(id) {
-                let mut wanted = paragraph;
-                wanted.character = character.over(&wanted.character);
-                style.format = wanted.over(&style.format);
-            }
-            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
-                s.clear_paragraph_overrides(range.clone());
-                s.clear_character_overrides(range.clone());
-            }
-            if let Some(buffer) = editing_buffer_for(state, story) {
-                buffer.clear_paragraph_overrides(range.clone());
-                buffer.clear_character_overrides(range);
-            }
-        }
-
-        Command::BreakCharacterStyleLink { story, range } => {
-            // The style's resolved format has to be read before the link goes,
-            // and it is the *chain* rather than the one style: a child style
-            // whose parent supplied the family would otherwise lose it.
-            let Some((id, format)) = state.active().document().story(story).and_then(|s| {
-                let (id, _) = s.common_character_style(range.clone());
-                id.map(|id| (id, state.active().document().character_chain(id)))
-            }) else {
-                return;
-            };
-            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
-                s.clear_character_style_link(range.clone(), id, &format);
-            }
-            if let Some(buffer) = editing_buffer_for(state, story) {
-                buffer.clear_character_style_link(range, id, &format);
-            }
-        }
-
-        Command::BreakParagraphStyleLink { story, range } => {
-            let Some((id, format)) = state.active().document().story(story).and_then(|s| {
-                let (id, _) = s.common_paragraph_style(range.clone());
-                id.map(|id| (id, state.active().document().paragraph_chain(id)))
-            }) else {
-                return;
-            };
-            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
-                s.clear_paragraph_style_link(range.clone(), id, &format);
-            }
-            if let Some(buffer) = editing_buffer_for(state, story) {
-                buffer.clear_paragraph_style_link(range, id, &format);
-            }
-        }
-
-        Command::SetCharacterStyleBasedOn { id, based_on } => {
-            // A cycle is refused here as well as hidden from the picker: the
-            // command is public and undo replays it.
-            if let Some(parent) = based_on
-                && (parent == id
-                    || state
-                        .active()
-                        .document()
-                        .character_based_on_would_cycle(id, parent))
-            {
-                return;
-            }
-            if let Some(style) = state.active_mut().document_mut().character_style_mut(id) {
-                style.based_on = based_on;
-            }
-        }
-
-        Command::SetParagraphStyleBasedOn { id, based_on } => {
-            if let Some(parent) = based_on
-                && (parent == id
-                    || state
-                        .active()
-                        .document()
-                        .paragraph_based_on_would_cycle(id, parent))
-            {
-                return;
-            }
-            if let Some(style) = state.active_mut().document_mut().paragraph_style_mut(id) {
-                style.based_on = based_on;
-            }
-        }
-
-        Command::DeleteCharacterStyle { id } => {
-            // The format has to be read before the style goes, and every story
-            // folded before anything is removed — a story left referring to a
-            // deleted style silently loses its formatting, because
-            // `resolve_run` treats an unknown id as saying nothing.
-            let Some(format) = state
-                .active()
-                .document()
-                .character_styles
-                .get(id)
-                .map(|_| state.active().document().character_chain(id))
-            else {
-                return;
-            };
-            let ids: Vec<StoryId> = state.active().document().stories.keys().collect();
-            for story in ids {
-                if let Some(s) = state.active_mut().document_mut().story_mut(story) {
-                    s.flatten_character_style(id, &format);
-                }
-            }
-            if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
-                buffer.flatten_character_style(id, &format);
-            }
-            state.active_mut().document_mut().remove_character_style(id);
-        }
-
-        Command::DeleteParagraphStyle { id } => {
-            let Some(format) = state
-                .active()
-                .document()
-                .paragraph_styles
-                .get(id)
-                .map(|_| state.active().document().paragraph_chain(id))
-            else {
-                return;
-            };
-            let ids: Vec<StoryId> = state.active().document().stories.keys().collect();
-            for story in ids {
-                if let Some(s) = state.active_mut().document_mut().story_mut(story) {
-                    s.flatten_paragraph_style(id, &format);
-                }
-            }
-            if let Some((_, buffer)) = state.active_mut().editing.as_mut() {
-                buffer.flatten_paragraph_style(id, &format);
-            }
-            state.active_mut().document_mut().remove_paragraph_style(id);
-        }
-
-        Command::SetCharacterStyleOf {
-            story,
-            range,
-            style,
-        } => {
-            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
-                s.set_character_style(range.clone(), style);
-            }
-            if let Some(buffer) = editing_buffer_for(state, story) {
-                buffer.set_character_style(range, style);
-            }
-        }
-
-        Command::SetParagraphStyleOf {
-            story,
-            range,
-            style,
-        } => {
-            if let Some(s) = state.active_mut().document_mut().story_mut(story) {
-                s.set_paragraph_style(range.clone(), style);
-            }
-            if let Some(buffer) = editing_buffer_for(state, story) {
-                buffer.set_paragraph_style(range, style);
-            }
-        }
-
-        Command::TranslateSelection { dx, dy } => {
-            for id in state.active().selection.as_slice().to_vec() {
-                // Goes through the document so a group carries its children.
-                state
-                    .active_mut()
-                    .document_mut()
-                    .translate_frame(id, dx, dy);
-            }
-            // Dragging an object to another page moves it to that page.
-        }
-
-        Command::SetTransforms(entries) => {
-            for (id, bounds, placement) in entries {
-                if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
-                    frame.bounds = bounds;
-                    frame.transform = placement;
-                }
-            }
-            // Nothing else to do. A frame's page is where it sits, so moving
-            // it *is* changing its page — there is no ownership left to update
-            // and so nothing for a caller to forget.
-        }
-
-        Command::GroupSelection => {
-            state.active_mut().group_selection();
-        }
-
-        Command::UngroupSelection => {
-            let freed: Vec<_> = state
-                .active()
-                .selection
-                .as_slice()
-                .to_vec()
-                .into_iter()
-                .flat_map(|id| state.active_mut().document_mut().ungroup(id))
-                .collect();
-            // Selecting the freed children is what lets a second ungroup
-            // reach a nested group without re-selecting by hand.
-            if !freed.is_empty() {
-                state.active_mut().selection.replace_all(freed);
-            }
-        }
-
-        Command::DeleteSelection => {
-            for id in state.active().selection.as_slice().to_vec() {
-                state.active_mut().document_mut().remove_frame(id);
-            }
-            state.active_mut().selection.clear();
-            state.active_mut().editing = None;
-        }
-
-        Command::DuplicateSelection => {
-            let roots = state.active().selection.as_slice().to_vec();
-            let layer = state.default_layer();
-            let copies = state.active_mut().document_mut().copy_frames(
-                &roots,
-                layer,
-                DUPLICATE_OFFSET,
-                DUPLICATE_OFFSET,
-            );
-            // Select the copies, so a second Ctrl+D duplicates them rather
-            // than making a second copy of the originals.
-            state.active_mut().selection.replace_all(copies);
-        }
-
-        Command::StepAndRepeat { copies, dx, dy } => {
-            let originals: Vec<FrameId> = state.active().selection.as_slice().to_vec();
-            let mut made = Vec::new();
-
-            // **The offset accumulates.** Each copy is `n` steps from the
-            // original, not one step from the copy before it: reading the
-            // previous copy's position would compound any rounding, and a row of
-            // forty would drift visibly by the end.
-            for step in 1..=copies {
-                let by = step as f64;
-                let layer = state.default_layer();
-                made.extend(state.active_mut().document_mut().copy_frames(
-                    &originals,
-                    layer,
-                    dx * by,
-                    dy * by,
-                ));
-            }
-
-            // The copies, not the originals — the same rule Duplicate follows,
-            // so stepping twice steps what was just made.
-            if !made.is_empty() {
-                state.active_mut().selection.replace_all(made);
-            }
-        }
-
-        Command::CopySelection => {
-            let source = std::sync::Arc::new(state.active().document().clone());
-            let items: Vec<Clipboard> = state
-                .active()
-                .selection
-                .iter()
-                .filter(|id| source.frame(*id).is_some())
-                .map(|root| Clipboard {
-                    source: source.clone(),
-                    root,
-                })
-                .collect();
-            if !items.is_empty() {
-                let count = items.len();
-                state.clipboard = items;
-                state.status = Some(crate::app::Status::info(match count {
-                    1 => "Copied".to_string(),
-                    n => format!("Copied {n} objects"),
-                }));
-            }
-        }
-
-        Command::CutSelection => {
-            apply(state, Command::CopySelection);
-            apply(state, Command::DeleteSelection);
-        }
-
-        Command::Paste => {
-            const OFFSET: f64 = 12.0;
-            let Some(first) = state.clipboard.first() else {
-                return;
-            };
-            let source = first.source.clone();
-            let roots: Vec<_> = state.clipboard.iter().map(|item| item.root).collect();
-            let layer = state.default_layer();
-            let pasted = state
-                .active_mut()
-                .document_mut()
-                .import_frames(&source, &roots, layer, OFFSET, OFFSET, false);
-            match pasted {
-                Ok(pasted) => state.active_mut().selection.replace_all(pasted),
-                Err(message) => state.status = Some(crate::app::Status::error(message)),
-            }
-        }
-
-        Command::MoveSelectionInZ(how) => {
-            // Order matters, and not in the obvious way. Each frame moves
-            // relative to the list as it stands, so processing the wrong end
-            // first makes the selection leapfrog itself:
-            //
-            //   [a,b,c], raise {a,b}: a-then-b gives [a,b,c] (no change),
-            //                         b-then-a gives [c,a,b] (correct)
-            //   [a,b,c], front {a,b}: a-then-b gives [c,a,b] (correct),
-            //                         b-then-a gives [c,b,a] (reversed)
-            //
-            // A one-step move must start from the end it is moving toward; a
-            // move-to-the-end must start from the far end.
-            let mut ids = state.active().selection.as_slice().to_vec();
-            if matches!(how, ZMove::Forward | ZMove::ToBack) {
-                ids.reverse();
-            }
-            for id in ids {
-                state.active_mut().document_mut().move_in_z(id, how);
-            }
-        }
-
-        Command::AddPage => {
-            state.active_mut().document_mut().add_page();
-        }
-
-        Command::RemovePage { id } => {
-            state.active_mut().document_mut().remove_page(id);
-        }
-
-        Command::DuplicatePage { id } => {
-            state.active_mut().document_mut().duplicate_page(id);
-        }
-
-        Command::MoveSpread { from, to } => {
-            state.active_mut().document_mut().move_spread(from, to);
-        }
-
-        Command::MovePage { id, to } => {
-            state.active_mut().document_mut().move_page(id, to);
-        }
-
-        Command::InsertPages {
-            after,
-            count,
-            parent,
-        } => {
-            state
-                .active_mut()
-                .document_mut()
-                .insert_pages(after, count, parent);
-        }
-
-        Command::InsertPage { after } => {
-            state.active_mut().document_mut().insert_page_after(after);
-        }
-
-        Command::DuplicatePages { ids } => {
-            state.active_mut().document_mut().duplicate_pages(&ids);
-        }
-
-        Command::RemovePages { ids } => {
-            state.active_mut().document_mut().remove_pages(&ids);
-            // What stood on them has gone with them; a selection still
-            // holding it would draw handles round nothing.
-            state.active_mut().retain_existing_selection();
-        }
-
-        Command::MovePages { ids, to } => {
-            state.active_mut().document_mut().move_pages(&ids, to);
-        }
-
-        Command::ApplyMasterToPages { pages, master } => {
-            state
-                .active_mut()
-                .document_mut()
-                .apply_master_to(&pages, master);
-        }
-
-        Command::SetTextLayout { id, layout } => {
-            if let Some(frame) = state.active_mut().document_mut().frame_mut(id)
-                && let FrameKind::Text { story, .. } = frame.kind
-            {
-                frame.kind = FrameKind::Text { story, layout };
-            }
-            state.active_mut().document_mut().touch();
-        }
-
-        Command::ThreadFrames { from, to } => {
-            state.active_mut().document_mut().thread(from, to);
-        }
-
-        Command::UnthreadFrame { id } => {
-            state.active_mut().document_mut().unthread(id);
-        }
-
-        Command::AddPathLike { bounds, path, from } => {
-            let look = state
-                .active()
-                .document()
-                .frame(from)
-                .map(|f| (f.fill.clone(), f.stroke.clone(), f.blend));
-            add(state, bounds, FrameKind::Path(path), Look::Outline);
-            if let Some((fill, stroke, blend)) = look
-                && let Some(id) = state.active().selection.single()
-                && let Some(made) = state.active_mut().document_mut().frame_mut(id)
-            {
-                made.fill = fill;
-                made.stroke = stroke;
-                made.blend = blend;
-            }
-        }
-
-        Command::SetPath { id, path } => {
-            if let Some(frame) = state.active_mut().document_mut().frame_mut(id)
-                && matches!(frame.kind, FrameKind::Path(_))
-            {
-                // The box follows the shape. The renderer fits the stored
-                // path's box onto the frame's, so a path edited past its box
-                // and left there is drawn squeezed back into it.
-                let (bounds, path) = tessera_document::path::normalised(&path, frame.bounds);
-                frame.bounds = bounds;
-                frame.kind = FrameKind::Path(path);
-            }
-        }
-
-        Command::SetCorners { id, corners } => {
-            if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
-                frame.corners = corners;
-            }
-        }
-
-        Command::ApplyAppearance {
-            id,
-            format,
-            corners,
-            text,
-        } => {
-            let doc = state.active_mut().document_mut();
-            doc.write_object_format(id, &format);
-            if let Some(corners) = corners
-                && let Some(frame) = doc.frame_mut(id)
-            {
-                frame.corners = corners;
-            }
-            if let Some(text) = text
-                && let Some(FrameKind::Text { story, .. }) = doc.frame(id).map(|f| &f.kind)
-            {
-                let story = *story;
-                let len = doc.story(story).map_or(0, |s| s.text.len());
-                if let Some(s) = doc.story_mut(story) {
-                    s.apply_character_format(0..len, &text);
-                }
-            }
-            state.active_mut().document_mut().touch();
-        }
-
-        Command::PutTextOnPath { id, text } => {
-            let doc = state.active_mut().document_mut();
-            let is_path = matches!(doc.frame(id).map(|f| &f.kind), Some(FrameKind::Path(_)));
-            if is_path && doc.path_text(id).is_none() {
-                let story = doc.add_story(Story::new(&text));
-                doc.set_path_text(id, Some(tessera_document::path_text::PathText::new(story)));
-            }
-        }
-
-        Command::SetPathText { id, text } => {
-            state.active_mut().document_mut().set_path_text(id, text);
-        }
-
-        Command::SetBlending { id, blend } => {
-            if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
-                frame.blend = blend;
-            }
-            state.active_mut().document_mut().touch();
-        }
-
-        Command::SetShadow { id, shadow } => {
-            if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
-                frame.shadow = shadow;
-            }
-            state.active_mut().document_mut().touch();
-        }
-
-        Command::SetTextWrap { id, wrap } => {
-            if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
-                frame.wrap = wrap;
-            }
-            state.active_mut().document_mut().touch();
-        }
-
-        Command::AddObjectStyle => {
-            let name = state.active().document().unused_object_style_name();
-            state
-                .active_mut()
-                .document_mut()
-                .add_object_style(tessera_document::object_style::ObjectStyle::new(name));
-        }
-
-        Command::NameObjectStyle { id, name, based_on } => {
-            let doc = state.active_mut().document_mut();
-            // A style based on itself, however indirectly, is a ring. Refusing
-            // it here is better than resolving it to a fixed depth and leaving
-            // somebody to wonder why their style stopped inheriting.
-            let ring = based_on.is_some_and(|base| doc.object_style_inherits(base, id));
-            if let Some(style) = doc.object_styles.get_mut(id) {
-                style.name = name;
-                if !ring {
-                    style.based_on = based_on;
-                }
-            }
-            doc.touch();
-        }
-
-        Command::RestyleObjectStyle { id, format } => {
-            state
-                .active_mut()
-                .document_mut()
-                .restyle_object_style(id, *format);
-        }
-
-        Command::RemoveObjectStyle { id } => {
-            state.active_mut().document_mut().remove_object_style(id);
-        }
-
-        Command::ApplyObjectStyle { id, style } => {
-            state
-                .active_mut()
-                .document_mut()
-                .apply_object_style(id, style);
-        }
-
-        Command::DetachObjectStyle { id } => {
-            if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
-                frame.style = None;
-            }
-            state.active_mut().document_mut().touch();
-        }
-
-        Command::ClearObjectOverrides { id } => {
-            state.active_mut().document_mut().clear_object_overrides(id);
-        }
-
-        Command::SetOutputIntent(intent) => {
-            state.active_mut().document_mut().output_intent = intent.map(|boxed| *boxed);
-            state.active_mut().document_mut().touch();
-        }
-
-        Command::SetSwatch(swatch) => {
-            state.active_mut().document_mut().set_swatch(swatch);
-        }
-
-        Command::EditSwatch { old, swatch } => {
-            state.active_mut().document_mut().edit_swatch(&old, swatch);
-        }
-
-        Command::RemoveSwatch { name } => {
-            state.active_mut().document_mut().remove_swatch(&name);
-        }
-
-        Command::ReplaceSwatch { name, with } => {
-            state
-                .active_mut()
-                .document_mut()
-                .replace_swatch(&name, with.as_deref());
-        }
-
-        Command::MoveSwatch { name, before } => {
-            state
-                .active_mut()
-                .document_mut()
-                .move_swatch(&name, before.as_deref());
-        }
-
-        Command::SortSwatches => {
-            state.active_mut().document_mut().sort_swatches();
-        }
-
-        Command::NameUnnamedColours => {
-            use crate::view::swatch_editor::{BLACK_INK, PAPER_INK};
-            state
-                .active_mut()
-                .document_mut()
-                .name_unnamed_colours(&[PAPER_INK, BLACK_INK]);
-        }
-
-        Command::AddSwatches(swatches) => {
-            state.active_mut().document_mut().add_swatches(swatches);
-        }
-
-        Command::AddMaster => {
-            let name = state.active().document().unused_master_name();
-            state.active_mut().document_mut().add_master(name);
-        }
-
-        Command::RemoveMaster { id } => {
-            state.active_mut().document_mut().remove_master(id);
-            // Its pages and their frames are gone; a selection still holding
-            // one would draw handles round nothing.
-            state.active_mut().retain_existing_selection();
-        }
-
-        Command::RenameMaster { id, name } => {
-            if let Some(master) = state.active_mut().document_mut().masters.get_mut(id) {
-                master.name = name;
-            }
-            state.active_mut().document_mut().touch();
-        }
-
-        Command::ApplyMaster { page, master } => {
-            state.active_mut().document_mut().apply_master(page, master);
-        }
-
-        Command::ApplyMasterToAll { master } => {
-            // One command for the whole document, so applying a master to
-            // twenty pages is one undo entry rather than twenty.
-            let pages: Vec<PageId> = state.active().document().page_ids().collect();
-            for page in pages {
-                state.active_mut().document_mut().apply_master(page, master);
-            }
-        }
-
-        Command::OverrideMasterItem { page, item } => {
-            if let Some(local) = state
-                .active_mut()
-                .document_mut()
-                .override_master_item(page, item)
-            {
-                // Selected, because overriding an item is what you do in order
-                // to change it.
-                state.active_mut().selection.set(local);
-            }
-        }
-
-        Command::RemoveOverrides { page } => {
-            state.active_mut().document_mut().remove_overrides(page);
-            state.active_mut().retain_existing_selection();
-        }
-
-        Command::AddLayer => {
-            let name = state.active().document().unused_layer_name();
-            state.active_mut().document_mut().add_layer(name);
-        }
-
-        Command::RemoveLayer { id } => {
-            state.active_mut().document_mut().remove_layer(id);
-            // Whatever was on it is gone, so the selection cannot still name
-            // it. `restore` does this for undo; a removal has to do it here.
-            state.active_mut().retain_existing_selection();
-        }
-
-        Command::RenameLayer { id, name } => {
-            if let Some(layer) = state.active_mut().document_mut().layers.get_mut(id) {
-                layer.name = name;
-            }
-            state.active_mut().document_mut().touch();
-        }
-
-        Command::SetLayerVisible { id, visible } => {
-            if let Some(layer) = state.active_mut().document_mut().layers.get_mut(id) {
-                layer.visible = visible;
-            }
-            state.active_mut().document_mut().touch();
-            // A hidden layer's frames cannot be selected, so a selection that
-            // was standing on one has to let go — otherwise handles float over
-            // nothing and a drag moves what cannot be seen.
-            drop_the_untouchable(state);
-        }
-
-        Command::SetLayerColour { id, colour } => {
-            if let Some(layer) = state.active_mut().document_mut().layers.get_mut(id) {
-                layer.colour = colour;
-            }
-            state.active_mut().document_mut().touch();
-        }
-
-        Command::SetLayerLocked { id, locked } => {
-            if let Some(layer) = state.active_mut().document_mut().layers.get_mut(id) {
-                layer.locked = locked;
-            }
-            state.active_mut().document_mut().touch();
-            drop_the_untouchable(state);
-        }
-
-        Command::MoveLayer { from, to } => {
-            state.active_mut().document_mut().move_layer(from, to);
-        }
-
-        Command::SetActiveLayer(id) => {
-            if state.active().document().layers.contains_key(id) {
-                state.active_mut().document_mut().set_active_layer(id);
-            }
-        }
-
-        Command::MoveSelectionToLayer(id) => {
-            let frames = state.active().selection.as_slice().to_vec();
-            state
-                .active_mut()
-                .document_mut()
-                .move_frames_to_layer(&frames, id);
-        }
-
-        Command::SetLayersVisible { layers } => {
-            for (id, visible) in layers {
-                if let Some(layer) = state.active_mut().document_mut().layers.get_mut(id) {
-                    layer.visible = visible;
-                }
-            }
-            state.active_mut().document_mut().touch();
-            drop_the_untouchable(state);
-        }
-
-        Command::SetLayersLocked { layers } => {
-            for (id, locked) in layers {
-                if let Some(layer) = state.active_mut().document_mut().layers.get_mut(id) {
-                    layer.locked = locked;
-                }
-            }
-            state.active_mut().document_mut().touch();
-            drop_the_untouchable(state);
-        }
-
-        Command::SetObjectsHidden { ids, hidden } => {
-            state
-                .active_mut()
-                .document_mut()
-                .set_frames_hidden(&ids, hidden);
-            // What cannot be seen cannot stay selected: handles round
-            // nothing, and a nudge moving what nobody can see.
-            drop_the_untouchable(state);
-        }
-
-        Command::SetObjectsLocked { ids, locked } => {
-            state
-                .active_mut()
-                .document_mut()
-                .set_frames_locked(&ids, locked);
-            drop_the_untouchable(state);
-        }
-
-        Command::ArrangeObjects { ids, layer, index } => {
-            state
-                .active_mut()
-                .document_mut()
-                .arrange_frames(&ids, layer, index);
-        }
-
-        Command::SetDocumentSetup(setup) => {
-            state.active_mut().document_mut().set_setup(setup);
-        }
-
-        Command::SetSections(sections) => {
-            state.active_mut().document_mut().set_sections(sections);
-        }
-
-        Command::SetChapter(chapter) => {
-            state.active_mut().document_mut().set_chapter(chapter);
-        }
-
-        Command::SetDataSource(source) => {
-            state.active_mut().document_mut().set_data_source(source);
-        }
-
-        Command::SetMergePicture { frame, field } => {
-            let Some(mut source) = state.active().document().data_merge.clone() else {
-                return;
-            };
-            source.set_picture(frame, field);
-            state
-                .active_mut()
-                .document_mut()
-                .set_data_source(Some(source));
-        }
-
-        Command::SetVariables(variables) => {
-            state.active_mut().document_mut().set_variables(variables);
-        }
-
-        Command::SetTextAnchor { story, index, name } => {
-            if let Some(anchor) = state
-                .active_mut()
-                .document_mut()
-                .story_mut(story)
-                .and_then(|s| s.anchors.get_mut(index))
-            {
-                anchor.name = name.trim().to_owned();
-            }
-            state.active_mut().document_mut().touch();
-            if let Some(buffer) = editing_buffer_for(state, story)
-                && let Some(anchor) = buffer.story_mut().anchors.get_mut(index)
-            {
-                anchor.name = name.trim().to_owned();
-            }
-        }
-        Command::SetCrossReference {
-            story,
-            index,
-            reference,
-        } => {
-            if let Some(slot) = state
-                .active_mut()
-                .document_mut()
-                .story_mut(story)
-                .and_then(|s| s.cross_references.get_mut(index))
-            {
-                *slot = reference.clone();
-            }
-            state.active_mut().document_mut().touch();
-            if let Some(buffer) = editing_buffer_for(state, story)
-                && let Some(slot) = buffer.story_mut().cross_references.get_mut(index)
-            {
-                *slot = reference;
-            }
-        }
-        Command::SetFootnoteText { story, index, text } => {
-            if let Some(note) = state
-                .active_mut()
-                .document_mut()
-                .story_mut(story)
-                .and_then(|s| s.footnotes.get_mut(index))
-            {
-                let prefix = crate::view::long_document::split_prefix(&note.text)
-                    .0
-                    .to_owned();
-                note.set_text(format!("{prefix}{text}"));
-            }
-            state.active_mut().document_mut().touch();
-            // The buffer holds its own copy of the story it is editing.
-            if let Some((id, buffer)) = state.active_mut().editing.as_mut()
-                && let Some(note) = buffer.story_mut().footnotes.get_mut(index)
-            {
-                let _ = id;
-                let prefix = crate::view::long_document::split_prefix(&note.text)
-                    .0
-                    .to_owned();
-                note.set_text(format!("{prefix}{text}"));
-            }
-        }
-
-        Command::SynchroniseStyles(sheet) => {
-            state.active_mut().document_mut().synchronise_styles(&sheet);
-        }
-
-        Command::SetContents(contents) => {
-            state.active_mut().document_mut().set_contents(contents);
-        }
-
-        Command::UpdateContents => {
-            // Built from the layout as it stands, so the resolve comes first
-            // and the write after; the frame the contents go into is the one
-            // they were placed in, measured for the right tab.
-            let contents = state.active().document().contents.clone();
-            let resolved = state.resolve_active().clone();
-            let measure = contents_measure(state, &contents);
-            let doc = state.active().document();
-            let generated = tessera_layout::contents::table_of_contents(
-                doc,
-                &resolved,
-                &contents.title,
-                contents.title_style,
-                &contents.levels,
-                measure,
-            );
-            place_contents(state, generated.story, generated.destinations);
-        }
-
-        Command::PlaceContents {
-            story,
-            destinations,
-        } => place_contents(state, story, destinations),
-
-        Command::SetIndex(index) => {
-            state.active_mut().document_mut().set_index(index);
-        }
-
-        Command::SetDestination { name, page } => {
-            state
-                .active_mut()
-                .document_mut()
-                .set_destination(name, page);
-        }
-
-        Command::SetFootnoteOptions(options) => {
-            state
-                .active_mut()
-                .document_mut()
-                .set_footnote_options(options);
-        }
-
-        Command::PasteAnchored => {
-            use tessera_document::anchored::{Anchored, MARKER};
-            let Some(first) = state.clipboard.first() else {
-                return;
-            };
-            let Some((frame, buffer)) = state.active().editing.as_ref() else {
-                return;
-            };
-            let (frame, at) = (*frame, buffer.cursor().position);
-            let Some(story) =
-                crate::view::viewport::editing_story(state, frame, state.active().editing_cell)
-            else {
-                return;
-            };
-            let source = first.source.clone();
-            let root = first.root;
-            let layer = state.default_layer();
-            let pasted = state.active_mut().document_mut().import_frames(
-                &source,
-                &[root],
-                layer,
-                0.0,
-                0.0,
-                false,
-            );
-            let pasted = match pasted {
-                Ok(pasted) => pasted,
-                Err(message) => {
-                    state.status = Some(crate::app::Status::error(message));
-                    return;
-                }
-            };
-            let Some(id) = pasted.first().copied() else {
-                return;
-            };
-            // Which marker this will be: the ones before the caret come first.
-            let index = state
-                .active()
-                .document()
-                .story(story)
-                .map(|s| {
-                    tessera_document::anchored::marker_offsets(&s.text)
-                        .iter()
-                        .filter(|m| **m < at)
-                        .count()
-                })
-                .unwrap_or(0);
-            // The marker goes into the buffer and is written back the way a
-            // keystroke is, which renumbers the anchors after it; then this
-            // frame takes the index the new marker has.
-            if let Some(buffer) = editing_buffer_for(state, story) {
-                buffer.set_cursor(at);
-                buffer.insert(&MARKER.to_string());
-                let edited = buffer.story().clone();
-                state
-                    .active_mut()
-                    .document_mut()
-                    .replace_story_from_edit(story, edited);
-            } else if let Some(s) = state.active_mut().document_mut().story_mut(story) {
-                s.insert_text(at, &MARKER.to_string());
-            }
-            if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
-                f.anchor = Some(Anchored::new(story, index));
-            }
-            state.active_mut().document_mut().touch();
-            state.active_mut().selection.set(id);
-        }
-
-        Command::PlaceText { id, text } => {
-            let PlacedText {
-                mut story,
-                paragraph_styles,
-                character_styles,
-                paragraph_style_names,
-                run_style_names,
-            } = text;
-            let doc = state.active_mut().document_mut();
-            let mut paragraph_ids = std::collections::HashMap::new();
-            for style in paragraph_styles {
-                let existing = doc
-                    .paragraph_styles
-                    .iter()
-                    .find(|(_, s)| s.name == style.name)
-                    .map(|(id, _)| id);
-                let name = style.name.clone();
-                let id = existing.unwrap_or_else(|| doc.add_paragraph_style(style));
-                paragraph_ids.insert(name, id);
-            }
-            let mut character_ids = std::collections::HashMap::new();
-            for style in character_styles {
-                let existing = doc
-                    .character_styles
-                    .iter()
-                    .find(|(_, s)| s.name == style.name)
-                    .map(|(id, _)| id);
-                let name = style.name.clone();
-                let id = existing.unwrap_or_else(|| doc.add_character_style(style));
-                character_ids.insert(name, id);
-            }
-            for (paragraph, name) in story.paragraphs.iter_mut().zip(&paragraph_style_names) {
-                paragraph.style = name.as_ref().and_then(|n| paragraph_ids.get(n)).copied();
-            }
-            for (run, name) in story.runs.iter_mut().zip(&run_style_names) {
-                run.style = name.as_ref().and_then(|n| character_ids.get(n)).copied();
-            }
-            let into =
-                id.and_then(
-                    |id| match state.active().document().frame(id).map(|f| &f.kind) {
-                        Some(FrameKind::Text { story, .. }) => Some(*story),
-                        _ => None,
-                    },
-                );
-            place_generated(state, story, into, |_, _| {});
-            // What placing a manuscript as body text means is setting all of
-            // it: the thread carries on onto as many pages as it needs, in the
-            // same undo step. Placed into a box of somebody's own, it stays
-            // there, overset, as the box was chosen for it.
-            let placed = id.or_else(|| state.active().selection.single());
-            if state.prefs.flow_placed_text
-                && let Some(frame) = placed
-                && crate::reflow::fills_margins(state.active().document(), frame)
-            {
-                flow_text(state, frame);
-            }
-        }
-
-        Command::FlowText { id } => {
-            flow_text(state, id);
-        }
-
-        Command::UpdateIndex => {
-            let index = state.active().document().index.clone();
-            let resolved = state.resolve_active().clone();
-            let story =
-                tessera_layout::contents::index(state.active().document(), &resolved, &index.title);
-            place_generated(state, story, index.story, |doc, id| {
-                doc.index.story = Some(id);
-            });
-        }
-
-        Command::PlaceIndex { story } => {
-            let at = state.active().document().index.story;
-            place_generated(state, story, at, |doc, id| {
-                doc.index.story = Some(id);
-            });
-        }
-
-        Command::SetEndnotes(endnotes) => {
-            state.active_mut().document_mut().set_endnotes(endnotes);
-        }
-
-        Command::UpdateEndnotes => {
-            let endnotes = state.active().document().endnotes.clone();
-            let resolved = state.resolve_active().clone();
-            let story = tessera_layout::contents::endnotes(
-                state.active().document(),
-                &resolved,
-                &endnotes.title,
-            );
-            place_generated(state, story, endnotes.story, |doc, id| {
-                doc.endnotes.story = Some(id);
-            });
-        }
-
-        Command::SetPageSize { width, height } => {
-            // Every page, in one command so it is one undo entry.
-            let follow = state.prefs.objects_follow_page_edges;
-            state
-                .active_mut()
-                .document_mut()
-                .resize_every_page(width, height, follow);
-        }
-
-        Command::SetPageSizeOf {
-            page,
-            width,
-            height,
-        } => {
-            let follow = state.prefs.objects_follow_page_edges;
-            state
-                .active_mut()
-                .document_mut()
-                .resize_page(page, width, height, follow);
-        }
-
-        Command::SetStroke { id, stroke } => {
-            if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
-                f.stroke = stroke;
-            }
-        }
-
-        Command::TransformAbout {
-            id,
-            anchor,
-            scale,
-            rotate,
-            shear,
-        } => {
-            let Some(frame) = state.active().document().frame(id) else {
-                return;
-            };
-            // The anchor is resolved where the frame really is. `bounds` says
-            // only where it is in its own space, and does not move when the
-            // frame does — so the anchor point has to travel through the
-            // frame's own transform before anything composes onto it.
-            let about = frame.transform.apply(anchor.in_rect(frame.bounds));
-            let mut result = frame.transform;
-
-            if scale != (1.0, 1.0) {
-                result = result.then(Transform::scale_about(scale.0, scale.1, about));
-            }
-            if rotate != 0.0 {
-                result = result.then(Transform::rotate_about(rotate, about));
-            }
-            if shear != 0.0 {
-                result = result.then(Transform::shear_about(shear, about));
-            }
-
-            let bounds = frame.bounds;
-            retarget(state, id, bounds, result);
-        }
-
-        Command::SwapFillAndStroke(id) => {
-            let Some(frame) = state.active().document().frame(id).cloned() else {
-                return;
-            };
-            // A stroke carries one colour, so a gradient fill swapped onto a
-            // stroke becomes one colour from the ramp. Gradient strokes are not
-            // modelled, and quietly refusing the swap would be worse than doing
-            // the part of it that can be done.
-            let fill = frame.fill.representative();
-            let (new_fill, new_stroke) = match frame.stroke {
-                Some(mut stroke) => {
-                    let was = stroke.color.clone();
-                    stroke.color = fill;
-                    (Paint::Solid(was), Some(stroke))
-                }
-                // With no stroke to swap with, the fill becomes one rather
-                // than being discarded — a swap that silently deleted a
-                // colour would be worse than one that had no effect.
-                None => (
-                    Paint::Solid(Color::BLACK_INK),
-                    Some(tessera_document::nodes::Stroke::new(fill, 1.0)),
-                ),
-            };
-            if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
-                f.fill = new_fill;
-                f.stroke = new_stroke;
-            }
-        }
-
-        Command::DefaultFillAndStroke(id) => {
-            if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
-                f.fill = NO_FILL;
-                f.stroke = Some(tessera_document::nodes::Stroke::new(Color::BLACK_INK, 1.0));
-            }
-        }
-
-        Command::ClearFill(id) => {
-            if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
-                // "No fill" is the colour the object had, at no alpha, so that
-                // turning the fill back on gets the colour back rather than
-                // black. A gradient keeps one colour from its ramp: there is no
-                // transparent gradient to hold, and the ramp is what the person
-                // would have to rebuild either way.
-                let [r, g, b, _] = f.fill.representative().to_rgb_f32();
-                f.fill = Paint::Solid(Color::Rgb { r, g, b, a: 0.0 });
-            }
-        }
-
-        Command::Align { edge, to } => {
-            let ids: Vec<_> = state.active().selection.as_slice().to_vec();
-            let doc = state.active().document();
-            let rects: Vec<_> = ids.iter().filter_map(|id| doc.visual_bounds(*id)).collect();
-            if rects.len() != ids.len() || rects.is_empty() {
-                return;
-            }
-
-            let Some(target) = align_target(state, to, &rects) else {
-                return;
-            };
-            let deltas = crate::align::align_deltas(&rects, target, edge);
-            for (id, (dx, dy)) in ids.iter().zip(deltas) {
-                state
-                    .active_mut()
-                    .document_mut()
-                    .translate_frame(*id, dx, dy);
-            }
-        }
-
-        Command::Distribute(axis) => {
-            let ids: Vec<_> = state.active().selection.as_slice().to_vec();
-            let doc = state.active().document();
-            let rects: Vec<_> = ids.iter().filter_map(|id| doc.visual_bounds(*id)).collect();
-            if rects.len() != ids.len() {
-                return;
-            }
-
-            let deltas = crate::align::distribute_deltas(&rects, axis);
-            for (id, (dx, dy)) in ids.iter().zip(deltas) {
-                state
-                    .active_mut()
-                    .document_mut()
-                    .translate_frame(*id, dx, dy);
-            }
-        }
-
-        Command::AddGuide { spread, guide } => {
-            state.active_mut().document_mut().add_guide(spread, guide);
-        }
-
-        Command::MoveGuide {
-            spread,
-            index,
-            position,
-        } => {
-            let doc = state.active_mut().document_mut();
-            if let Some(s) = doc.spreads.get_mut(spread)
-                && let Some(guide) = s.guides.get_mut(index)
-            {
-                guide.position = position;
-                doc.touch();
-            }
-        }
-
-        Command::RemoveGuide { spread, index } => {
-            state
-                .active_mut()
-                .document_mut()
-                .remove_guide(spread, index);
-        }
-
-        Command::FlipSelection {
-            horizontal,
-            vertical,
-        } => {
-            let anchor = state.anchor;
-            for id in state.active().selection.as_slice().to_vec() {
-                apply(
-                    state,
-                    Command::TransformAbout {
-                        id,
-                        anchor,
-                        scale: (
-                            if horizontal { -1.0 } else { 1.0 },
-                            if vertical { -1.0 } else { 1.0 },
-                        ),
-                        rotate: 0.0,
-                        shear: 0.0,
-                    },
-                );
-            }
-        }
-
-        Command::RotateSelection90 { clockwise } => {
-            let anchor = state.anchor;
-            for id in state.active().selection.as_slice().to_vec() {
-                apply(
-                    state,
-                    Command::TransformAbout {
-                        id,
-                        anchor,
-                        scale: (1.0, 1.0),
-                        rotate: if clockwise { 90.0 } else { -90.0 },
-                        shear: 0.0,
-                    },
-                );
-            }
-        }
-
         Command::Undo => {
             if let Some(previous) = state.active_mut().undo() {
                 restore(state, previous);
@@ -3240,6 +1250,215 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             if let Some(next) = state.active_mut().redo() {
                 restore(state, next);
             }
+        }
+
+        // Everything else, by what it acts on.
+        other => match other.area() {
+            Area::Objects => objects::apply(state, other),
+            Area::Artwork => artwork::apply(state, other),
+            Area::Tables => tables::apply(state, other),
+            Area::Text => text::apply(state, other),
+            Area::TextStyles => text_styles::apply(state, other),
+            Area::LongDocument => long_document::apply(state, other),
+            Area::Colour => colour::apply(state, other),
+            Area::Pages => pages::apply(state, other),
+            Area::Layers => layers::apply(state, other),
+            Area::Core => unreachable!("handled above"),
+        },
+    }
+}
+
+/// What a command acts on: which of the modules under `command/` carries
+/// it out. Every variant is named here and the match has no catch-all, so a
+/// new command does not compile until it is given a place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Area {
+    Core,
+    Objects,
+    Artwork,
+    Tables,
+    Text,
+    TextStyles,
+    LongDocument,
+    Colour,
+    Pages,
+    Layers,
+}
+
+impl Command {
+    pub(crate) fn area(&self) -> Area {
+        match self {
+            Command::Together { .. } | Command::Undo | Command::Redo => Area::Core,
+            Command::AddRectangle { .. }
+            | Command::AddEllipse { .. }
+            | Command::AddPath { .. }
+            | Command::AddGraphicFrame { .. }
+            | Command::AddTextFrame { .. }
+            | Command::SetBounds { .. }
+            | Command::SetRotation { .. }
+            | Command::TranslateSelection { .. }
+            | Command::SetTransforms { .. }
+            | Command::GroupSelection
+            | Command::UngroupSelection
+            | Command::DeleteSelection
+            | Command::DuplicateSelection
+            | Command::StepAndRepeat { .. }
+            | Command::CopySelection
+            | Command::CutSelection
+            | Command::Paste
+            | Command::MoveSelectionInZ { .. }
+            | Command::AddPathLike { .. }
+            | Command::SetPath { .. }
+            | Command::SetCorners { .. }
+            | Command::SetTextWrap { .. }
+            | Command::AddObjectStyle
+            | Command::NameObjectStyle { .. }
+            | Command::RestyleObjectStyle { .. }
+            | Command::RemoveObjectStyle { .. }
+            | Command::ApplyObjectStyle { .. }
+            | Command::DetachObjectStyle { .. }
+            | Command::ClearObjectOverrides { .. }
+            | Command::SetObjectsHidden { .. }
+            | Command::SetObjectsLocked { .. }
+            | Command::ArrangeObjects { .. }
+            | Command::TransformAbout { .. }
+            | Command::Align { .. }
+            | Command::Distribute { .. }
+            | Command::FlipSelection { .. }
+            | Command::RotateSelection90 { .. } => Area::Objects,
+            Command::PlaceArtwork { .. }
+            | Command::Relink { .. }
+            | Command::UpdateLink { .. }
+            | Command::UpdateLinks { .. }
+            | Command::RelinkMany { .. }
+            | Command::RefitArtwork { .. }
+            | Command::FitFrameToArtwork { .. }
+            | Command::ShowPdfPage { .. } => Area::Artwork,
+            Command::AddTable { .. }
+            | Command::TableRow { .. }
+            | Command::TableColumn { .. }
+            | Command::MergeCells { .. }
+            | Command::SplitCell { .. }
+            | Command::SetCellEdges { .. }
+            | Command::SetTableStroke { .. }
+            | Command::SetAlternatingFills { .. }
+            | Command::DefineTableStyle { .. }
+            | Command::DefineCellStyle { .. }
+            | Command::RemoveTableStyle { .. }
+            | Command::RemoveCellStyle { .. }
+            | Command::ApplyTableStyle { .. }
+            | Command::ApplyCellStyle { .. }
+            | Command::ContinueTable { .. }
+            | Command::FlowTable { .. }
+            | Command::StopContinuingTable { .. }
+            | Command::SetTableRegions { .. }
+            | Command::ConvertTextToTable { .. }
+            | Command::ConvertTableToText { .. }
+            | Command::SortTableRows { .. }
+            | Command::AddTableFromData { .. }
+            | Command::SetTableSizes { .. } => Area::Tables,
+            Command::FitFrameToText { .. }
+            | Command::ReplaceFamily { .. }
+            | Command::SetText { .. }
+            | Command::ReplaceMatches { .. }
+            | Command::SetCharacterFormat { .. }
+            | Command::SetParagraphFormat { .. }
+            | Command::SetTextLayout { .. }
+            | Command::ThreadFrames { .. }
+            | Command::UnthreadFrame { .. }
+            | Command::PutTextOnPath { .. }
+            | Command::SetPathText { .. }
+            | Command::SetVariables { .. }
+            | Command::SetTextAnchor { .. }
+            | Command::SetCrossReference { .. }
+            | Command::SetFootnoteText { .. }
+            | Command::SetDestination { .. }
+            | Command::SetFootnoteOptions { .. }
+            | Command::PasteAnchored
+            | Command::PlaceText { .. }
+            | Command::FlowText { .. } => Area::Text,
+            Command::DefineCharacterStyle { .. }
+            | Command::DefineParagraphStyle { .. }
+            | Command::EditCharacterStyle { .. }
+            | Command::EditParagraphStyle { .. }
+            | Command::ClearCharacterOverrides { .. }
+            | Command::ClearParagraphOverrides { .. }
+            | Command::RedefineCharacterStyle { .. }
+            | Command::RedefineParagraphStyle { .. }
+            | Command::BreakCharacterStyleLink { .. }
+            | Command::BreakParagraphStyleLink { .. }
+            | Command::SetCharacterStyleBasedOn { .. }
+            | Command::SetParagraphStyleBasedOn { .. }
+            | Command::DeleteCharacterStyle { .. }
+            | Command::DeleteParagraphStyle { .. }
+            | Command::SetCharacterStyleOf { .. }
+            | Command::SetParagraphStyleOf { .. }
+            | Command::SynchroniseStyles { .. } => Area::TextStyles,
+            Command::SetSections { .. }
+            | Command::SetChapter { .. }
+            | Command::SetDataSource { .. }
+            | Command::SetMergePicture { .. }
+            | Command::SetContents { .. }
+            | Command::UpdateContents
+            | Command::PlaceContents { .. }
+            | Command::SetIndex { .. }
+            | Command::UpdateIndex
+            | Command::PlaceIndex { .. }
+            | Command::SetEndnotes { .. }
+            | Command::UpdateEndnotes => Area::LongDocument,
+            Command::RepointSwatch { .. }
+            | Command::SetFill { .. }
+            | Command::ApplyAppearance { .. }
+            | Command::SetBlending { .. }
+            | Command::SetShadow { .. }
+            | Command::SetOutputIntent { .. }
+            | Command::SetSwatch { .. }
+            | Command::EditSwatch { .. }
+            | Command::RemoveSwatch { .. }
+            | Command::ReplaceSwatch { .. }
+            | Command::MoveSwatch { .. }
+            | Command::SortSwatches
+            | Command::NameUnnamedColours
+            | Command::AddSwatches { .. }
+            | Command::SetStroke { .. }
+            | Command::SwapFillAndStroke { .. }
+            | Command::DefaultFillAndStroke { .. }
+            | Command::ClearFill { .. } => Area::Colour,
+            Command::AddPage
+            | Command::RemovePage { .. }
+            | Command::DuplicatePage { .. }
+            | Command::MoveSpread { .. }
+            | Command::MovePage { .. }
+            | Command::InsertPages { .. }
+            | Command::InsertPage { .. }
+            | Command::DuplicatePages { .. }
+            | Command::RemovePages { .. }
+            | Command::MovePages { .. }
+            | Command::ApplyMasterToPages { .. }
+            | Command::AddMaster
+            | Command::RemoveMaster { .. }
+            | Command::RenameMaster { .. }
+            | Command::ApplyMaster { .. }
+            | Command::ApplyMasterToAll { .. }
+            | Command::OverrideMasterItem { .. }
+            | Command::RemoveOverrides { .. }
+            | Command::SetDocumentSetup { .. }
+            | Command::SetPageSize { .. }
+            | Command::SetPageSizeOf { .. }
+            | Command::AddGuide { .. }
+            | Command::MoveGuide { .. }
+            | Command::RemoveGuide { .. } => Area::Pages,
+            Command::AddLayer
+            | Command::RemoveLayer { .. }
+            | Command::RenameLayer { .. }
+            | Command::SetLayerVisible { .. }
+            | Command::SetLayerColour { .. }
+            | Command::SetLayerLocked { .. }
+            | Command::MoveLayer { .. }
+            | Command::SetActiveLayer { .. }
+            | Command::MoveSelectionToLayer { .. }
+            | Command::SetLayersVisible { .. }
+            | Command::SetLayersLocked { .. } => Area::Layers,
         }
     }
 }
