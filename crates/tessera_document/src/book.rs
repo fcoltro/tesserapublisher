@@ -26,6 +26,12 @@ pub struct Book {
     /// which is what a book is for.
     #[serde(default = "yes")]
     pub continue_numbering: bool,
+    /// The chapter whose styles and swatches the others are made the same
+    /// as, by the entry `documents` holds for it; `None` for the first,
+    /// which is InDesign's default. An entry rather than a position, so
+    /// reordering the chapters does not quietly change the source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style_source: Option<PathBuf>,
 }
 
 fn yes() -> bool {
@@ -49,6 +55,7 @@ impl Default for Book {
         Self {
             documents: Vec::new(),
             continue_numbering: true,
+            style_source: None,
         }
     }
 }
@@ -120,6 +127,15 @@ impl Book {
     }
 
     /// Take the entry at `index` out of the book. The file is not touched.
+    /// Which chapter is the style source: the one named, if it is still in
+    /// the book, else the first.
+    pub fn style_source_index(&self) -> usize {
+        self.style_source
+            .as_ref()
+            .and_then(|s| self.documents.iter().position(|d| d == s))
+            .unwrap_or(0)
+    }
+
     pub fn remove(&mut self, index: usize) -> bool {
         if index >= self.documents.len() {
             return false;

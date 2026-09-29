@@ -106,6 +106,8 @@ enum Act {
     AddCurrent,
     Numbering(bool),
     Number,
+    StyleSource(usize),
+    Synchronise,
     Contents,
     Preflight,
     Export,
@@ -667,6 +669,32 @@ fn publish(
         {
             act = Some(Act::Numbering(numbering));
         }
+        // The chapter the others' styles are made the same as.
+        if any {
+            let source = state.book.book.style_source_index();
+            let chapters = state.book.chapters();
+            // The label above, the choice the panel's width: a narrow dock
+            // has no room for the two side by side.
+            ui.label("Style source");
+            egui::ComboBox::from_id_salt("book-style-source")
+                .width(ui.available_width())
+                .truncate()
+                .selected_text(
+                    chapters
+                        .get(source)
+                        .map_or_else(String::new, |p| name_of(p)),
+                )
+                .show_ui(ui, |ui| {
+                    for (index, path) in chapters.iter().enumerate() {
+                        if ui
+                            .selectable_label(index == source, name_of(path))
+                            .clicked()
+                        {
+                            act = Some(Act::StyleSource(index));
+                        }
+                    }
+                });
+        }
         ui.add_space(4.0);
         let active = state.active().current_path.clone();
         let chapter_in_front = active
@@ -702,6 +730,16 @@ fn publish(
                 .clicked()
             {
                 act = Some(Act::Contents);
+            }
+            if panel_ui::action_when(ui, any && missing == 0, Icon::Styles, "Synchronize styles")
+                .on_hover_text(
+                    "Make every chapter's styles and swatches the same as the style \
+                     source's, by name: open chapters as a change to undo, the rest \
+                     saved back",
+                )
+                .clicked()
+            {
+                act = Some(Act::Synchronise);
             }
             if panel_ui::action_when(ui, any, Icon::Preflight, "Check chapters")
                 .on_hover_text("Preflight every chapter, and show what each has")
@@ -789,6 +827,29 @@ fn run(state: &mut TesseraApp, act: Act) {
         Act::Numbering(on) => {
             state.book.book.continue_numbering = on;
             changed(state);
+        }
+        Act::StyleSource(index) => {
+            state.book.book.style_source = state.book.book.documents.get(index).cloned();
+            changed(state);
+        }
+        Act::Synchronise => {
+            let source = state.book.book.style_source_index();
+            match crate::book_ops::synchronise_styles(state, &chapters, source) {
+                Ok((0, _)) => {
+                    state.status = Some(Status::info(
+                        "every chapter has the source's styles already",
+                    ));
+                }
+                Ok((n, synced)) => {
+                    state.status = Some(Status::info(format!(
+                        "{} synchronised: {} added, {} changed",
+                        count(n, "chapter"),
+                        count(synced.added, "style"),
+                        synced.changed
+                    )));
+                }
+                Err(e) => state.status = Some(Status::error(format!("could not synchronise: {e}"))),
+            }
         }
         Act::Number => match crate::book_ops::continue_numbering(state, &chapters) {
             Ok(0) => state.status = Some(Status::info("every chapter is numbered already")),

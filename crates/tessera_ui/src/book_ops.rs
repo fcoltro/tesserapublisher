@@ -100,6 +100,55 @@ pub fn continue_numbering(state: &mut TesseraApp, paths: &[PathBuf]) -> Result<u
     Ok(count)
 }
 
+/// Make every chapter's swatches and styles the same as the chapter at
+/// `source`'s, by name. Open chapters take it as a command in their tab;
+/// closed ones are saved back. Returns how many chapters changed, and how
+/// many styles and swatches were added and changed across them.
+pub fn synchronise_styles(
+    state: &mut TesseraApp,
+    paths: &[PathBuf],
+    source: usize,
+) -> Result<(usize, tessera_document::sync::Synced), FormatError> {
+    use tessera_document::sync::{StyleSheet, Synced};
+    let chapters = chapters(state, paths)?;
+    let Some(sheet) = chapters.get(source).map(|c| StyleSheet::of(&c.document)) else {
+        return Ok((0, Synced::default()));
+    };
+    let mut changed = 0;
+    let mut total = Synced::default();
+    for (index, chapter) in chapters.into_iter().enumerate() {
+        if index == source {
+            continue;
+        }
+        // Tried on a copy first, so an open chapter already the same takes
+        // no command and no undo step.
+        let mut document = chapter.document;
+        let synced = document.synchronise_styles(&sheet);
+        if synced.is_empty() {
+            continue;
+        }
+        changed += 1;
+        total.added += synced.added;
+        total.changed += synced.changed;
+        match chapter.open_as {
+            Some(key) => {
+                let was = state.active;
+                state.active = key;
+                apply(state, Command::SynchroniseStyles(Box::new(sheet.clone())));
+                state.active = was;
+            }
+            None => {
+                format::save(&document, &chapter.path)?;
+                tessera_io::seen::look_now(&chapter.path);
+            }
+        }
+    }
+    if changed > 0 {
+        state.book.summaries.forget();
+    }
+    Ok((changed, total))
+}
+
 /// Every chapter resolved and stacked into one document for the PDF
 /// writer, numbered on first when the book says so — in memory only; the
 /// files are not touched by an export.
@@ -552,6 +601,66 @@ mod tests {
         assert!(made.is_some());
         assert_eq!(summaries(&mut state, &paths, true), first);
         assert_eq!(state.book.summaries.made_from, made, "the same stamps");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_book_synchronises_its_styles_from_the_source_open_and_closed() {
+        let folder = std::env::temp_dir().join(format!("tessera-book-sync-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let one = chapter(&folder, "one", 1, "One");
+        let two = chapter(&folder, "two", 1, "Two");
+        let three = chapter(&folder, "three", 1, "Three");
+        let paths = vec![one.clone(), two.clone(), three.clone()];
+
+        // The source, "two", gives its Chapter heading a size and adds a
+        // style; "one" is open in a tab, "three" is only a file.
+        let mut source = format::load(&two).unwrap();
+        let heading = source
+            .paragraph_styles
+            .iter()
+            .find(|(_, s)| s.name == "Chapter")
+            .map(|(id, _)| id)
+            .unwrap();
+        source.paragraph_styles[heading].format.character.size = Some(30.0);
+        source.add_paragraph_style(ParagraphStyle {
+            name: "Epigraph".into(),
+            based_on: Some(heading),
+            format: Default::default(),
+        });
+        format::save(&source, &two).unwrap();
+
+        let mut state = TesseraApp::headless();
+        crate::file_ops::open_from_path(&mut state, &one).unwrap();
+        let (changed, synced) = synchronise_styles(&mut state, &paths, 1).unwrap();
+        assert_eq!(changed, 2, "the other two chapters");
+        assert_eq!(
+            (synced.added, synced.changed),
+            (2, 2),
+            "Epigraph each, Chapter each"
+        );
+
+        let size = |doc: &Document| {
+            doc.paragraph_styles
+                .values()
+                .find(|s| s.name == "Chapter")
+                .and_then(|s| s.format.character.size)
+        };
+        let open = state.active().document();
+        assert_eq!(size(open), Some(30.0), "the open chapter, in its tab");
+        assert!(open.paragraph_styles.values().any(|s| s.name == "Epigraph"));
+        assert!(state.active().dirty, "and unsaved, as any edit is");
+        assert_eq!(
+            size(&format::load(&three).unwrap()),
+            Some(30.0),
+            "the closed one, saved"
+        );
+
+        // One undo in the open chapter takes it back.
+        apply(&mut state, Command::Undo);
+        assert_eq!(size(state.active().document()), None);
+
         let _ = std::fs::remove_dir_all(&folder);
     }
 

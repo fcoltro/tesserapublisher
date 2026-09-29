@@ -828,6 +828,9 @@ pub enum Command {
         destinations: Vec<(String, PageId)>,
     },
     SetIndex(tessera_document::contents::Index),
+    /// Make this document's swatches and styles the same as a book's style
+    /// source's, by name: see [`tessera_document::sync`].
+    SynchroniseStyles(Box<tessera_document::sync::StyleSheet>),
     UpdateIndex,
     /// The recipe for the endnotes: the list every story's notes are
     /// gathered into when the footnote options set them at the end.
@@ -2800,6 +2803,10 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
                     .to_owned();
                 note.set_text(format!("{prefix}{text}"));
             }
+        }
+
+        Command::SynchroniseStyles(sheet) => {
+            state.active_mut().document_mut().synchronise_styles(&sheet);
         }
 
         Command::SetContents(contents) => {

@@ -36,6 +36,7 @@ pub mod sections;
 pub mod shadow;
 mod swatch_edit;
 pub mod swatch_exchange;
+pub mod sync;
 pub mod table;
 pub mod table_style;
 mod transfer;
