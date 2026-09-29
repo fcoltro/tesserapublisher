@@ -68,6 +68,7 @@ impl Classes {
             let format = doc.character_chain(*id);
             out.push_str(&class_rule(class, &declarations(doc, &format)));
         }
+        out.push_str(&rule(".table", &["border-collapse: collapse".to_owned()]));
         out.push_str(&rule(
             ".footnotes",
             &[
@@ -243,7 +244,7 @@ pub fn paragraph_declarations(_doc: &Document, f: &ParagraphFormat) -> Vec<Strin
 }
 
 /// A number as CSS writes it: no trailing zeros, no "-0".
-fn number(v: f32) -> String {
+pub fn number(v: f32) -> String {
     let s = format!("{:.3}", v);
     let s = s.trim_end_matches('0').trim_end_matches('.');
     if s == "-0" {

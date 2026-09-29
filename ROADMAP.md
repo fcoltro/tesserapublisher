@@ -3597,7 +3597,10 @@ below are its items 1 to 3.
   after their story (2026-09-28); pictures as their frames show them —
   cropped and scaled by the placement, rendered at a chosen resolution,
   JPEG when opaque and PNG when not, in an `images/` folder, anchored
-  ones in the line. **Next:** tables, the dialog.
+  ones in the line; tables with their heading and footing rows, spans,
+  column widths, fills (alternating ones too), edges, insets and
+  vertical placement, an anchored table after its paragraph.
+  **Next:** the dialog.
 - [ ] 22. **EPUB export.**
 - [ ] 23. **Placing EPS**, which needs a PostScript interpreter.
 

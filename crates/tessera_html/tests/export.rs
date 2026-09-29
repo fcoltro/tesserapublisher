@@ -225,3 +225,89 @@ fn a_picture_goes_out_as_its_frame_shows_it() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_table_goes_out_with_its_heading_row_spans_and_fills() {
+    use tessera_document::table::{Slot, Span};
+    let mut doc = Document::new();
+    let mut texts = vec!["Name", "Size", "Wide", "", "a", "b"].into_iter();
+    let mut table = tessera_document::table::new(3, 2, 200.0, || {
+        doc.add_story(Story::new(texts.next().unwrap_or_default()))
+    });
+    table.header_rows = 1;
+    // The second row's first cell spans both columns.
+    if let Some(Slot::Cell(cell)) = table.at_mut(1, 0) {
+        cell.span = Span {
+            columns: 2,
+            rows: 1,
+        };
+    }
+    if let Some(slot) = table.at_mut(1, 1) {
+        *slot = Slot::Covered;
+    }
+    table.alternating = Some(Box::new(
+        tessera_document::table::AlternatingFills::every_other_row(
+            tessera_document::paint::Paint::Solid(tessera_color::Color::Rgb {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            }),
+        ),
+    ));
+    let page = doc.page_ids().next().unwrap();
+    let b = doc.pages[page].bounds;
+    let layer = doc.default_layer().unwrap();
+    doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: b.x + 20.0,
+                y: b.y + 20.0,
+                width: 200.0,
+                height: 60.0,
+            },
+            kind: FrameKind::Table(table),
+            transform: Transform::IDENTITY,
+            fill: tessera_document::paint::Paint::Solid(tessera_color::Color::BLACK),
+            stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
+            shadow: None,
+            anchor: None,
+            style: None,
+            hidden: false,
+            locked: false,
+        },
+    );
+
+    let html = tessera_html::export(&doc, &Default::default()).html;
+    let at = |s: &str| {
+        html.find(s)
+            .unwrap_or_else(|| panic!("{s} missing:\n{html}"))
+    };
+    assert!(
+        at("<thead>") < at("<th ") && at("</thead>") < at("<tbody>"),
+        "{html}"
+    );
+    assert!(html.contains(">Name</p></th>"), "{html}");
+    assert!(html.contains("colspan=\"2\""), "{html}");
+    assert_eq!(
+        html.matches("<td").count(),
+        3,
+        "the covered slot is no cell: {html}"
+    );
+    // Body rows alternate: the first of them red, the next plain.
+    let wide = &html[html.find("colspan").unwrap()..];
+    assert!(
+        wide.split("</tr>")
+            .next()
+            .unwrap()
+            .contains("background: #ff0000"),
+        "{html}"
+    );
+    let last_row = html.rsplit("<tr>").next().unwrap();
+    assert!(!last_row.contains("background"), "{html}");
+    assert!(html.contains("<col style=\"width: 100pt\">"), "{html}");
+}

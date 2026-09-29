@@ -108,8 +108,7 @@ impl<'a> Writer<'a> {
                     out.push_str(&format!("<figure class=\"picture\">{img}</figure>\n"));
                 }
             }
-            // Tables go out from the step that follows.
-            Block::Table(_) => {}
+            Block::Table(frame) => self.table(frame, out),
         }
     }
 
@@ -120,6 +119,137 @@ impl<'a> Writer<'a> {
         };
         let mut notes: Vec<(usize, &Story)> = Vec::new();
         self.paragraphs(story, Some(id), &mut notes, None, out);
+        self.notes(notes, out);
+    }
+
+    /// A table: its heading rows in a `thead`, its footing rows in a
+    /// `tfoot`, spans as spans, the columns' widths, and each cell's fill,
+    /// edges, insets and vertical placement as its style — as the table's
+    /// and cells' styles make them. The notes its cells cite follow it.
+    pub fn table(&mut self, frame: FrameId, out: &mut String) {
+        use tessera_document::nodes::{FrameKind, VerticalJustify};
+        use tessera_document::table::Slot;
+        let doc = self.doc;
+        let Some(FrameKind::Table(table)) = doc.frame(frame).map(|f| &f.kind) else {
+            return;
+        };
+        let table = doc.styled_table(table);
+        let (rows, columns) = (table.rows(), table.columns());
+        let header = usize::from(table.header_rows).min(rows);
+        let footer = usize::from(table.footer_rows).min(rows - header);
+        let body = rows - header - footer;
+        let stroke = |s: &tessera_document::nodes::Stroke| {
+            format!(
+                "{}pt solid {}",
+                css::number(s.width as f32),
+                css::colour(doc, &s.color)
+            )
+        };
+        let paint =
+            |p: &tessera_document::paint::Paint| p.colours().first().map(|c| css::colour(doc, c));
+
+        out.push_str("<table class=\"table\">\n<colgroup>");
+        for width in &table.columns {
+            out.push_str(&format!(
+                "<col style=\"width: {}pt\">",
+                css::number(*width as f32)
+            ));
+        }
+        out.push_str("</colgroup>\n");
+        let mut notes: Vec<(usize, &Story)> = Vec::new();
+        for row in 0..rows {
+            let (section, cell_tag) = if row < header {
+                ("thead", "th")
+            } else if row >= rows - footer {
+                ("tfoot", "td")
+            } else {
+                ("tbody", "td")
+            };
+            let first_of_section = row == 0 || row == header || row == rows - footer;
+            if first_of_section {
+                if row > 0 {
+                    let before = if row == header { "thead" } else { "tbody" };
+                    out.push_str(&format!("</{before}>\n"));
+                }
+                out.push_str(&format!("<{section}>\n"));
+            }
+            out.push_str("<tr>");
+            for column in 0..columns {
+                let Some(Slot::Cell(cell)) = table.at(row, column) else {
+                    continue;
+                };
+                let mut style = Vec::new();
+                // A body row's turn in the alternating fills, under the
+                // cell's own.
+                let fill = cell.fill.as_ref().and_then(paint).or_else(|| {
+                    (row >= header && row < header + body)
+                        .then(|| table.alternating.as_ref())
+                        .flatten()
+                        .and_then(|a| a.fill_for_row(row - header, body))
+                        .and_then(paint)
+                });
+                if let Some(fill) = fill {
+                    style.push(format!("background: {fill}"));
+                }
+                for (side, edge) in [
+                    ("top", &cell.edges.top),
+                    ("right", &cell.edges.right),
+                    ("bottom", &cell.edges.bottom),
+                    ("left", &cell.edges.left),
+                ] {
+                    if let Some(s) = edge.as_ref().or(table.stroke.as_ref()) {
+                        style.push(format!("border-{side}: {}", stroke(s)));
+                    }
+                }
+                let inset = cell.inset;
+                style.push(format!(
+                    "padding: {}pt {}pt {}pt {}pt",
+                    css::number(inset.top as f32),
+                    css::number(inset.right as f32),
+                    css::number(inset.bottom as f32),
+                    css::number(inset.left as f32)
+                ));
+                style.push(
+                    match cell.vertical {
+                        VerticalJustify::Top | VerticalJustify::Justify => "vertical-align: top",
+                        VerticalJustify::Centre => "vertical-align: middle",
+                        VerticalJustify::Bottom => "vertical-align: bottom",
+                    }
+                    .to_owned(),
+                );
+                out.push_str(&format!("<{cell_tag}"));
+                if cell.span.columns > 1 {
+                    out.push_str(&format!(" colspan=\"{}\"", cell.span.columns));
+                }
+                if cell.span.rows > 1 {
+                    out.push_str(&format!(" rowspan=\"{}\"", cell.span.rows));
+                }
+                out.push_str(&format!(" style=\"{}\">", escape(&style.join("; "))));
+                if let Some(story) = doc.story(cell.story) {
+                    let mut inner = String::new();
+                    self.paragraphs(story, Some(cell.story), &mut notes, None, &mut inner);
+                    out.push_str(inner.trim_end());
+                }
+                out.push_str(&format!("</{cell_tag}>"));
+            }
+            out.push_str("</tr>\n");
+        }
+        if rows > 0 {
+            let last = if footer > 0 {
+                "tfoot"
+            } else if body > 0 {
+                "tbody"
+            } else {
+                "thead"
+            };
+            out.push_str(&format!("</{last}>\n"));
+        }
+        out.push_str("</table>\n");
+        self.notes(notes, out);
+    }
+
+    /// The notes a story or a table cites, numbered as they were cited.
+    fn notes(&mut self, notes: Vec<(usize, &Story)>, out: &mut String) {
         if notes.is_empty() {
             return;
         }
@@ -190,14 +320,30 @@ impl<'a> Writer<'a> {
             } else {
                 range.end
             };
-            self.inline(story, id, range.start..end, notes, note_number, out);
+            let mut tables = Vec::new();
+            self.inline(
+                story,
+                id,
+                range.start..end,
+                notes,
+                note_number,
+                &mut tables,
+                out,
+            );
             out.push_str(&format!("</{tag}>\n"));
+            // A table anchored in the paragraph follows it: a table cannot
+            // stand inside a paragraph.
+            for frame in tables {
+                close_list(list.take(), out);
+                self.table(frame, out);
+            }
         }
         close_list(list, out);
     }
 
     /// The runs of `story` over `range`, each in a span when it has a style
     /// or formatting of its own, in a link when it is one.
+    #[allow(clippy::too_many_arguments)]
     fn inline<'s>(
         &mut self,
         story: &'s Story,
@@ -205,6 +351,7 @@ impl<'a> Writer<'a> {
         range: Range<usize>,
         notes: &mut Vec<(usize, &'s Story)>,
         note_number: Option<usize>,
+        tables: &mut Vec<FrameId>,
         out: &mut String,
     ) {
         let footnotes = story.footnote_offsets();
@@ -313,10 +460,18 @@ impl<'a> Writer<'a> {
                             .iter()
                             .position(|m| *m == at)
                             .and_then(|i| anchored.as_ref()?.frame_at(i));
-                        if let Some(frame) = frame
-                            && let Some(img) = self.picture(frame)
-                        {
-                            out.push_str(&img);
+                        let is_table = frame.is_some_and(|f| {
+                            matches!(
+                                self.doc.frame(f).map(|f| &f.kind),
+                                Some(tessera_document::nodes::FrameKind::Table(_))
+                            )
+                        });
+                        if let Some(frame) = frame {
+                            if is_table {
+                                tables.push(frame);
+                            } else if let Some(img) = self.picture(frame) {
+                                out.push_str(&img);
+                            }
                         }
                     }
                     None if c == '\t' => out.push(' '),
