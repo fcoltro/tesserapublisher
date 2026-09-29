@@ -215,6 +215,37 @@ pub fn update_contents(
     Ok(true)
 }
 
+/// The index of the whole book, written into the active document where
+/// its own index goes. The active document must be one of the chapters.
+/// Returns whether it was.
+pub fn update_index(
+    state: &mut TesseraApp,
+    paths: &[PathBuf],
+    continue_numbers: bool,
+) -> Result<bool, FormatError> {
+    let Some(active_path) = state.active().current_path.clone() else {
+        return Ok(false);
+    };
+    if !paths.iter().any(|p| same_file(p, &active_path)) {
+        return Ok(false);
+    }
+    let chapters = chapters(state, paths)?;
+    let mut documents: Vec<Document> = chapters.into_iter().map(|c| c.document).collect();
+    if continue_numbers {
+        tessera_layout::book::continue_numbering(&mut documents);
+    }
+    let resolved: Vec<tessera_layout::ResolvedDocument> = documents
+        .iter()
+        .map(|doc| tessera_layout::resolve::resolve(doc, &mut state.shaper))
+        .collect();
+    let entries: Vec<(&Document, &tessera_layout::ResolvedDocument)> =
+        documents.iter().zip(resolved.iter()).collect();
+    let title = state.active().document().index.title.clone();
+    let story = tessera_layout::book::index(&entries, &title);
+    apply(state, Command::PlaceIndex { story });
+    Ok(true)
+}
+
 // --- what the panel shows ------------------------------------------------------
 
 /// Where a chapter is, as the panel says it.

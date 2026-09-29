@@ -106,6 +106,7 @@ enum Act {
     AddCurrent,
     Numbering(bool),
     Number,
+    Index,
     StyleSource(usize),
     Synchronise,
     Contents,
@@ -731,6 +732,18 @@ fn publish(
             {
                 act = Some(Act::Contents);
             }
+            let can = any && chapter_in_front && missing == 0;
+            if panel_ui::action_when(ui, can, Icon::Contents, "Update index")
+                .on_hover_text(if can {
+                    "Rebuild the index in the chapter in front from every chapter's \
+                     entries, each page as the book numbers it"
+                } else {
+                    "Open the chapter that holds the index first"
+                })
+                .clicked()
+            {
+                act = Some(Act::Index);
+            }
             if panel_ui::action_when(ui, any && missing == 0, Icon::Styles, "Synchronize styles")
                 .on_hover_text(
                     "Make every chapter's styles and swatches the same as the style \
@@ -827,6 +840,18 @@ fn run(state: &mut TesseraApp, act: Act) {
         Act::Numbering(on) => {
             state.book.book.continue_numbering = on;
             changed(state);
+        }
+        Act::Index => {
+            let numbering = state.book.book.continue_numbering;
+            match crate::book_ops::update_index(state, &chapters, numbering) {
+                Ok(true) => state.status = Some(Status::info("index updated across the book")),
+                Ok(false) => {
+                    state.status = Some(Status::error(
+                        "open one of the book's chapters first: the index goes into it",
+                    ));
+                }
+                Err(e) => state.status = Some(Status::error(format!("could not build: {e}"))),
+            }
         }
         Act::StyleSource(index) => {
             state.book.book.style_source = state.book.book.documents.get(index).cloned();

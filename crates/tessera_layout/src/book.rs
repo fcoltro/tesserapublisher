@@ -151,6 +151,16 @@ pub fn combine(parts: Vec<ResolvedDocument>) -> ResolvedDocument {
 ///
 /// `entries` is every document in the book with its resolve, in order;
 /// `placed_in` says which of them holds the contents.
+/// The index of the whole book: every chapter's entries, merged by topic,
+/// each page labelled as its chapter numbers it — which, numbered on by
+/// [`continue_numbering`], is the book's number.
+pub fn index(
+    entries: &[(&Document, &ResolvedDocument)],
+    title: &str,
+) -> tessera_text::story::Story {
+    crate::contents::index_across(entries, title)
+}
+
 pub fn table_of_contents(
     entries: &[(&Document, &ResolvedDocument)],
     placed_in: usize,
@@ -272,6 +282,44 @@ mod tests {
             },
         );
         doc
+    }
+
+    #[test]
+    fn the_book_index_lists_every_chapter_under_one_topic() {
+        use tessera_text::variables::Marker;
+        // Each chapter files its heading under "Type"; the first also under
+        // "Paper". Numbered on, the second chapter's page is 4.
+        let mark = |doc: &mut Document, topics: &[&str]| {
+            let story = doc
+                .stories
+                .values_mut()
+                .next()
+                .expect("the heading's story");
+            for topic in topics {
+                story.insert_text(0, &Marker::IndexEntry.character().to_string());
+                story.index_entries[0].topic = (*topic).to_owned();
+            }
+        };
+        let mut docs = vec![chapter(3, "One"), chapter(2, "Two")];
+        mark(&mut docs[0], &["Type", "Paper"]);
+        mark(&mut docs[1], &["Type"]);
+        continue_numbering(&mut docs);
+        let mut shaper = Shaper::new();
+        let resolved: Vec<ResolvedDocument> = docs
+            .iter()
+            .map(|d| crate::resolve::resolve(d, &mut shaper))
+            .collect();
+        let entries: Vec<(&Document, &ResolvedDocument)> =
+            docs.iter().zip(resolved.iter()).collect();
+
+        let story = index(&entries, "Index");
+        let lines: Vec<&str> = story.text.lines().collect();
+        assert_eq!(
+            lines,
+            vec!["Index", "Paper\t1", "Type\t1, 4"],
+            "{:?}",
+            story.text
+        );
     }
 
     #[test]

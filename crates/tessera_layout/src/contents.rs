@@ -165,10 +165,11 @@ pub fn mentions(doc: &Document, resolved: &ResolvedDocument) -> Vec<Mention> {
                 continue;
             }
             let past = at + width;
-            let Some(first) = lines
-                .iter()
-                .position(|(_, r)| r.start <= past && past <= r.end)
-            else {
+            // The first line reaching past it. Not "the line holding the
+            // position past it": two markers at a line's head both read as
+            // nothing, the line's range starts after the second, and the
+            // first matched no line at all — its entry was dropped.
+            let Some(first) = lines.iter().position(|(_, r)| past <= r.end) else {
                 continue;
             };
             // Where the mention stops: on its own line, or at the end of a
@@ -291,28 +292,38 @@ pub(crate) type Paragraph = (
 /// Build the index story: topics sorted, each with the labels of every page
 /// it is mentioned on, once per page, in page order.
 pub fn index(doc: &Document, resolved: &ResolvedDocument, title: &str) -> Story {
-    let pages: Vec<PageId> = doc.page_ids().collect();
+    index_across(&[(doc, resolved)], title)
+}
+
+/// The index of several documents at once — a book's chapters, in order,
+/// each with its layout. Each page is labelled as its own document numbers
+/// it, and a run of pages is joined within a document and never across two.
+pub fn index_across(entries: &[(&Document, &ResolvedDocument)], title: &str) -> Story {
     // Keyed by the topic's levels: "Type: Serif" is a page under
-    // ["Type", "Serif"], and "Type" alone under ["Type"].
-    let mut by_topic: Vec<(Vec<String>, Vec<PageId>)> = Vec::new();
-    for mention in mentions(doc, resolved) {
-        let levels = tessera_text::story::IndexEntry {
-            topic: mention.topic.clone(),
-            span: Default::default(),
-        }
-        .levels();
-        if levels.is_empty() {
-            continue;
-        }
-        let slot = match by_topic.iter_mut().find(|(t, _)| *t == levels) {
-            Some(slot) => slot,
-            None => {
-                by_topic.push((levels, Vec::new()));
-                by_topic.last_mut().expect("just pushed")
+    // ["Type", "Serif"], and "Type" alone under ["Type"]. Pages by the
+    // document they are in.
+    type Pages = Vec<(usize, PageId)>;
+    let mut by_topic: Vec<(Vec<String>, Pages)> = Vec::new();
+    for (index, (doc, resolved)) in entries.iter().enumerate() {
+        for mention in mentions(doc, resolved) {
+            let levels = tessera_text::story::IndexEntry {
+                topic: mention.topic.clone(),
+                span: Default::default(),
             }
-        };
-        if !slot.1.contains(&mention.page) {
-            slot.1.push(mention.page);
+            .levels();
+            if levels.is_empty() {
+                continue;
+            }
+            let slot = match by_topic.iter_mut().find(|(t, _)| *t == levels) {
+                Some(slot) => slot,
+                None => {
+                    by_topic.push((levels, Vec::new()));
+                    by_topic.last_mut().expect("just pushed")
+                }
+            };
+            if !slot.1.contains(&(index, mention.page)) {
+                slot.1.push((index, mention.page));
+            }
         }
     }
     // A sub-topic needs its topic above it, listed even when nothing is
@@ -335,16 +346,35 @@ pub fn index(doc: &Document, resolved: &ResolvedDocument, title: &str) -> Story 
     if !title.is_empty() {
         paragraphs.push((title.to_owned(), None, false, None, 0));
     }
-    for (levels, mut on) in by_topic {
-        on.sort_by_key(|p| pages.iter().position(|q| q == p));
+    let orders: Vec<Vec<PageId>> = entries
+        .iter()
+        .map(|(doc, _)| doc.page_ids().collect())
+        .collect();
+    for (levels, on) in by_topic {
         let name = levels.last().cloned().unwrap_or_default();
         let depth = levels.len() - 1;
         if on.is_empty() {
             paragraphs.push((name, None, false, None, depth));
-        } else {
-            let labels = page_ranges(doc, &pages, &on);
-            paragraphs.push((format!("{name}\t{labels}"), None, true, None, depth));
+            continue;
         }
+        // Document by document, in the book's order, each's pages in its
+        // own order and its own runs.
+        let mut said = Vec::new();
+        for (index, (doc, _)) in entries.iter().enumerate() {
+            let order = &orders[index];
+            let mut here: Vec<PageId> = on
+                .iter()
+                .filter(|(i, _)| *i == index)
+                .map(|(_, p)| *p)
+                .collect();
+            if here.is_empty() {
+                continue;
+            }
+            here.sort_by_key(|p| order.iter().position(|q| q == p));
+            said.push(page_ranges(doc, order, &here));
+        }
+        let labels = said.join(", ");
+        paragraphs.push((format!("{name}\t{labels}"), None, true, None, depth));
     }
     assemble(paragraphs, 0.0)
 }

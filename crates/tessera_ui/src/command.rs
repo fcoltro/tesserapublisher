@@ -828,6 +828,11 @@ pub enum Command {
         destinations: Vec<(String, PageId)>,
     },
     SetIndex(tessera_document::contents::Index),
+    /// Put an index story already built — by the Book panel, from every
+    /// chapter — where the document's index goes.
+    PlaceIndex {
+        story: Story,
+    },
     /// Make this document's swatches and styles the same as a book's style
     /// source's, by name: see [`tessera_document::sync`].
     SynchroniseStyles(Box<tessera_document::sync::StyleSheet>),
@@ -2991,6 +2996,13 @@ pub fn apply(state: &mut TesseraApp, command: Command) {
             let story =
                 tessera_layout::contents::index(state.active().document(), &resolved, &index.title);
             place_generated(state, story, index.story, |doc, id| {
+                doc.index.story = Some(id);
+            });
+        }
+
+        Command::PlaceIndex { story } => {
+            let at = state.active().document().index.story;
+            place_generated(state, story, at, |doc, id| {
                 doc.index.story = Some(id);
             });
         }
