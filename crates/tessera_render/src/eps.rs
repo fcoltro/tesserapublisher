@@ -5,11 +5,14 @@
 //! PostScript interpreter, so this reads EPS the two ways that need none of
 //! its own:
 //!
-//! - **Ghostscript, when the machine has it.** The file is converted once to
-//!   a PDF, cropped to its bounding box, kept in a cache beside the image
-//!   proxies, and from then on it is a placed PDF: drawn sharp on screen and
-//!   copied as vectors into an export. Ghostscript is never bundled — it is
-//!   AGPL, and a separate program — it is found where it is installed.
+//! - **Ghostscript.** The file is converted once to a PDF, cropped to its
+//!   bounding box, kept in a cache beside the image proxies, and from then on
+//!   it is a placed PDF: drawn sharp on screen and copied as vectors into an
+//!   export. The Windows installer ships a copy beside the application,
+//!   which is looked for first; elsewhere it is found where it is installed.
+//!   It stays a separate program, run and not linked: it is AGPL, which
+//!   Tessera's GPL-3.0 allows beside it, with its licence and the way to its
+//!   source shipped too.
 //! - **Its preview, otherwise.** Most EPS files carry a picture of
 //!   themselves for programs that cannot run them: a TIFF in a binary
 //!   ("DOS") EPS, or hex lines in an EPSI. That picture is what shows and
@@ -149,6 +152,22 @@ pub fn ghostscript() -> Option<&'static Path> {
             } else {
                 &["gs"]
             };
+            // The copy an installer put beside the application — in a Mac
+            // bundle, among its resources — before any other, so the version
+            // shipped is the version used.
+            let bundled = std::env::current_exe().ok().and_then(|exe| {
+                let beside = exe.parent()?.to_path_buf();
+                [
+                    beside.join("ghostscript"),
+                    beside.join("..").join("Resources").join("ghostscript"),
+                ]
+                .into_iter()
+                .flat_map(|dir| names.iter().map(move |n| dir.join("bin").join(n)))
+                .find(|p| p.is_file())
+            });
+            if bundled.is_some() {
+                return bundled;
+            }
             let on_path = std::env::var_os("PATH").and_then(|paths| {
                 std::env::split_paths(&paths)
                     .flat_map(|dir| names.iter().map(move |n| dir.join(n)))

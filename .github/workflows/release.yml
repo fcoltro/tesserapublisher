@@ -67,6 +67,11 @@ jobs:
             exit 1
           fi
 
+      # Bundled into the installer by packaging/build.sh, for placing EPS.
+      - name: Install Ghostscript
+        if: matrix.os == 'windows-latest'
+        run: choco install ghostscript -y --no-progress
+
       - run: cargo build --release -p tessera_app
 
       - name: Package

@@ -14,11 +14,11 @@
 //!
 //! What it reads: PSD and the large-document PSB; 1-bit bitmaps, and 8, 16
 //! and 32 bits a channel; greyscale, duotone (whose composite is its
-//! greyscale), indexed, RGB, CMYK and Lab; stored raw, run-length encoded or
-//! ZIP-compressed with or without prediction; with the transparency
-//! Photoshop writes when the layers leave some of the canvas clear. What it
-//! does not — multichannel — is unreadable, which preflight reports as it
-//! does any other file it cannot open.
+//! greyscale), indexed, RGB, CMYK, Lab and multichannel; stored raw,
+//! run-length encoded or ZIP-compressed with or without prediction; with the
+//! transparency Photoshop writes when the layers leave some of the canvas
+//! clear. A multichannel file is a stack of inks, each shown in the colour
+//! its channel is given, printed one over another.
 
 use std::path::Path;
 
@@ -71,7 +71,7 @@ pub fn read(bytes: &[u8]) -> Result<Composite, Unreadable> {
     let big = header.version == 2;
 
     let palette = at.take_sized(false)?;
-    at.take_sized(false)?; // image resources
+    let resources = at.take_sized(false)?;
     let layers_and_masks = at.take_sized(big)?;
     // A negative layer count is how Photoshop says the first channel past the
     // colours is the composite's transparency; otherwise it is a saved
@@ -84,7 +84,7 @@ pub fn read(bytes: &[u8]) -> Result<Composite, Unreadable> {
             .is_some_and(|info| info.len() >= 2 && i16::from_be_bytes([info[0], info[1]]) < 0)
     };
 
-    let colours = header.mode.colour_channels();
+    let colours = header.colours();
     if header.channels < colours {
         return Err(Unreadable::Unsupported(
             "fewer channels than its colours need",
@@ -92,6 +92,8 @@ pub fn read(bytes: &[u8]) -> Result<Composite, Unreadable> {
     }
     let keep = colours + usize::from(transparent && header.channels > colours);
     let planes = decode_planes(&mut at, &header, keep, big)?;
+    let multichannel =
+        (header.mode == Mode::Multichannel).then(|| channel_inks(resources, colours));
 
     let pixels = header.width as usize * header.height as usize;
     let mut rgba = Vec::with_capacity(pixels * 4);
@@ -111,6 +113,21 @@ pub fn read(bytes: &[u8]) -> Result<Composite, Unreadable> {
             }
             Mode::Rgb => (sample(0), sample(1), sample(2)),
             Mode::Lab => lab_to_srgb(sample(0), sample(1), sample(2)),
+            Mode::Multichannel => {
+                // Each channel is an ink, stored inverted as CMYK's are, and
+                // inks print over one another: every one takes away the
+                // light its colour does not reflect, in proportion to how
+                // much of it there is.
+                let mut light = [1.0f64; 3];
+                for (channel, ink) in multichannel.iter().flatten().enumerate() {
+                    let amount = f64::from(255 - sample(channel)) / 255.0;
+                    for (l, i) in light.iter_mut().zip(ink) {
+                        *l *= 1.0 - amount * (1.0 - f64::from(*i) / 255.0);
+                    }
+                }
+                let byte = |v: f64| (v * 255.0).round() as u8;
+                (byte(light[0]), byte(light[1]), byte(light[2]))
+            }
             Mode::Cmyk => {
                 // Stored inverted: 255 is no ink. What is shown is the plain
                 // arithmetic, not a press's profile: a picture on screen, not
@@ -213,15 +230,109 @@ enum Mode {
     Rgb,
     Cmyk,
     Lab,
+    /// Every channel an ink of its own, spot colours or process.
+    Multichannel,
 }
 
-impl Mode {
-    fn colour_channels(self) -> usize {
-        match self {
+impl Header {
+    /// How many channels are colour; any past them are transparency or
+    /// saved selections. A multichannel file's channels are all inks.
+    fn colours(&self) -> usize {
+        match self.mode {
             Mode::Bitmap | Mode::Grey | Mode::Indexed => 1,
             Mode::Rgb | Mode::Lab => 3,
             Mode::Cmyk => 4,
+            Mode::Multichannel => self.channels,
         }
+    }
+}
+
+/// The colour each of a multichannel file's `count` channels prints in, as
+/// sRGB: from the file's display information (resource 1077, or 1007 in files
+/// before Photoshop 6), and where it gives none, cyan, magenta, yellow and
+/// black in turn — which is what a CMYK file converted to multichannel holds —
+/// then black.
+fn channel_inks(resources: &[u8], count: usize) -> Vec<[u8; 3]> {
+    const PROCESS: [[u8; 3]; 4] = [[0, 255, 255], [255, 0, 255], [255, 255, 0], [0, 0, 0]];
+    let given = display_info(resources);
+    (0..count)
+        .map(|i| {
+            given
+                .get(i)
+                .copied()
+                .flatten()
+                .or_else(|| PROCESS.get(i).copied())
+                .unwrap_or([0, 0, 0])
+        })
+        .collect()
+}
+
+/// The channels' display colours, where the resources hold them: `None` for
+/// one in a colour space not read here.
+fn display_info(resources: &[u8]) -> Vec<Option<[u8; 3]>> {
+    let mut at = Bytes::new(resources);
+    let mut older = None;
+    while at.remaining() >= 12 {
+        let Ok(block) = resource(&mut at) else {
+            break;
+        };
+        match block {
+            // A version, then thirteen bytes a channel.
+            (1077, data) if data.len() >= 4 => {
+                return data[4..].chunks_exact(13).map(display_colour).collect();
+            }
+            // Fourteen bytes a channel, the last padding.
+            (1007, data) => older = Some(data.chunks_exact(14).map(display_colour).collect()),
+            _ => {}
+        }
+    }
+    older.unwrap_or_default()
+}
+
+/// One image resource: its id and its data.
+fn resource<'a>(at: &mut Bytes<'a>) -> Result<(u16, &'a [u8]), Unreadable> {
+    if at.take(4)? != b"8BIM" {
+        return Err(Unreadable::Short);
+    }
+    let id = at.u16()?;
+    // A Pascal string, padded so its length byte and it are even.
+    let name = usize::from(at.take(1)?[0]);
+    at.take(name + (name + 1) % 2)?;
+    let size = at.u32()? as usize;
+    let data = at.take(size)?;
+    if size % 2 == 1 {
+        at.take(1)?;
+    }
+    Ok((id, data))
+}
+
+/// A Photoshop colour: a colour space, then four sixteen-bit components.
+fn display_colour(entry: &[u8]) -> Option<[u8; 3]> {
+    let word = |i: usize| u16::from_be_bytes([entry[2 + 2 * i], entry[3 + 2 * i]]);
+    let high = |v: u16| (v >> 8) as u8;
+    match u16::from_be_bytes([entry[0], entry[1]]) {
+        0 => Some([high(word(0)), high(word(1)), high(word(2))]),
+        // CMYK, where nought is full ink: the plain arithmetic, as for a
+        // CMYK file's composite.
+        2 => {
+            let [c, m, y, k] = [0, 1, 2, 3].map(|i| f64::from(word(i)) / 65535.0);
+            let byte = |v: f64| (v * k * 255.0).round() as u8;
+            Some([byte(c), byte(m), byte(y)])
+        }
+        // Lab: L 0 to 10000, a and b signed hundredths.
+        7 => {
+            let l = f64::from(word(0)) / 10000.0 * 255.0;
+            let signed = |v: u16| f64::from(v as i16) / 100.0 + 128.0;
+            let byte = |v: f64| v.round().clamp(0.0, 255.0) as u8;
+            let (r, g, b) = lab_to_srgb(byte(l), byte(signed(word(1))), byte(signed(word(2))));
+            Some([r, g, b])
+        }
+        // Grey, 0 to 10000 of black.
+        8 => {
+            let v = 255 - (f64::from(word(0).min(10000)) / 10000.0 * 255.0).round() as u8;
+            Some([v, v, v])
+        }
+        _ => None,
     }
 }
 
@@ -254,6 +365,7 @@ impl Header {
             2 => Mode::Indexed,
             3 => Mode::Rgb,
             4 => Mode::Cmyk,
+            7 => Mode::Multichannel,
             9 => Mode::Lab,
             _ => return Err(Unreadable::Unsupported("this colour mode")),
         };
@@ -295,7 +407,7 @@ fn decode_planes(
     keep: usize,
     big: bool,
 ) -> Result<Vec<Vec<u8>>, Unreadable> {
-    let colours = header.mode.colour_channels();
+    let colours = header.colours();
     let raw = decode_raw(at, header, keep, big)?;
     let width = header.width as usize;
     let row_bytes = (width * usize::from(header.depth)).div_ceil(8);
@@ -955,6 +1067,52 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn multichannel_without_colours_is_cyan_magenta_yellow_black() {
+        // Stored inverted: 0 is full ink. Pixel 0 no ink, 1 full cyan, 2 full
+        // cyan and yellow, 3 full black.
+        let multichannel = Psd {
+            mode: 7,
+            planes: vec![
+                vec![255, 0, 0, 255],
+                vec![255, 255, 255, 255],
+                vec![255, 255, 0, 255],
+                vec![255, 255, 255, 0],
+            ],
+            ..Default::default()
+        };
+        let c = read(&multichannel.bytes()).expect("reads");
+        assert_eq!(pixel(&c, 0), [255, 255, 255, 255]);
+        assert_eq!(pixel(&c, 1), [0, 255, 255, 255]);
+        assert_eq!(pixel(&c, 2), [0, 255, 0, 255]);
+        assert_eq!(pixel(&c, 3), [0, 0, 0, 255]);
+        assert!(c.inks.is_none(), "not a CMYK file's own numbers");
+    }
+
+    #[test]
+    fn multichannel_inks_take_the_colours_the_file_gives() {
+        // Display info (1077): version 1, then an RGB orange at half-strength
+        // coverage in one pixel.
+        let mut info = 1u32.to_be_bytes().to_vec();
+        info.extend(0u16.to_be_bytes()); // RGB
+        for v in [65535u16, 32896, 0, 0] {
+            info.extend(v.to_be_bytes());
+        }
+        info.extend(100u16.to_be_bytes()); // solidity
+        info.push(2); // a spot channel
+        let mut resources = b"8BIM".to_vec();
+        resources.extend(1077u16.to_be_bytes());
+        resources.extend([0, 0]);
+        resources.extend((info.len() as u32).to_be_bytes());
+        resources.extend(&info);
+        resources.push(0); // padded to even
+        assert_eq!(
+            channel_inks(&resources, 2),
+            vec![[255, 128, 0], [255, 0, 255]]
+        );
+        // Where the display info stops, the process inks carry on.
+    }
+
+    #[test]
     fn lab_is_shown_as_srgb() {
         // White, black, and a strong red: L 54, a +81, b +70 is sRGB red.
         let lab = Psd {
@@ -983,13 +1141,13 @@ pub(crate) mod tests {
     #[test]
     fn what_it_cannot_read_it_says_so() {
         assert_eq!(read(b"GIF89a").err(), Some(Unreadable::NotPhotoshop));
-        let multichannel = Psd {
-            mode: 7,
+        let unknown = Psd {
+            mode: 5,
             planes: vec![vec![0; 4]; 3],
             ..Default::default()
         };
         assert!(matches!(
-            read(&multichannel.bytes()),
+            read(&unknown.bytes()),
             Err(Unreadable::Unsupported(_))
         ));
 

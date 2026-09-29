@@ -153,6 +153,28 @@
                     KeyPath="yes"/>
             </Component>
           </Directory>
+          <!-- Ghostscript, run as a program of its own to place EPS artwork.
+               The Windows build carries its resources compiled into the DLL,
+               so the console program and the DLL are all it needs; its
+               licence and where its source is travel with it. -->
+          <Directory Id="GhostscriptFolder" Name="ghostscript">
+            <Component Id="GhostscriptNotice" Guid="*">
+              <File Id="GhostscriptReadme" Name="README.txt"
+                    Source="$(var.CargoTargetBinDir)\ghostscript\README.txt"
+                    KeyPath="yes"/>
+              <File Id="GhostscriptLicence" Name="LICENSE"
+                    Source="$(var.CargoTargetBinDir)\ghostscript\LICENSE"/>
+            </Component>
+            <Directory Id="GhostscriptBin" Name="bin">
+              <Component Id="GhostscriptProgram" Guid="*">
+                <File Id="GhostscriptExe" Name="gswin64c.exe"
+                      Source="$(var.CargoTargetBinDir)\ghostscript\bin\gswin64c.exe"
+                      KeyPath="yes"/>
+                <File Id="GhostscriptDll" Name="gsdll64.dll"
+                      Source="$(var.CargoTargetBinDir)\ghostscript\bin\gsdll64.dll"/>
+              </Component>
+            </Directory>
+          </Directory>
         </Directory>
       </Directory>
       <Directory Id="ProgramMenuFolder">
@@ -193,6 +215,8 @@
       <ComponentRef Id="Profile7"/>
       <ComponentRef Id="Profile8"/>
       <ComponentRef Id="Profile9"/>
+      <ComponentRef Id="GhostscriptNotice"/>
+      <ComponentRef Id="GhostscriptProgram"/>
     </Feature>
 
     <Icon Id="ProductIcon" SourceFile="$(var.CargoTargetBinDir)\tessera_app.exe"/>

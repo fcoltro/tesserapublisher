@@ -1153,7 +1153,10 @@ of each carries the full account; this is the index.
   EPS places too (2026-09-29): sized by its bounding box, drawn from its
   own preview (a binary EPS's TIFF, an EPSI's hex), and converted once to
   PDF by Ghostscript where the machine has it — then drawn sharp and
-  exported as vectors. **Left:** multichannel Photoshop files.
+  exported as vectors. Multichannel Photoshop files too (2026-09-29): each
+  channel an ink in the colour the file's display information gives it,
+  printed over the others; cyan, magenta, yellow and black where it gives
+  none.
 - [x] **Default black is [Black] (2026-09-27).** A new shape's hairline, a
   table's rules, Default fill and stroke, a stroke switched on in Properties
   or in an object style, an underline given its own colour, and an imported
@@ -1366,7 +1369,8 @@ full argument, with sources, is in `docs/superpowers/specs/`.
     than the leading — was given one forced word drawn over the object;
     it is now left empty and the text resumes below. Inspector: "Wrap to";
     IDML's `TextWrapSide` imports, with the spine-relative sides dropped out
-    loud. Format **27**. Not built: sides named against the spine.
+    loud. Format **27**. Sides named against the spine were built later, as
+  plan item 4.
 
 ---
 
@@ -3619,8 +3623,8 @@ below are its items 1 to 3.
 - [x] 23. **Placing EPS**, which needs a PostScript interpreter. *Done
   2026-09-29,* without writing one: `tessera_render::eps` reads the
   bounding box and the preview an EPS carries, and hands the file to
-  Ghostscript when it is installed (never bundled: it is AGPL and a
-  program of its own), caching the PDF it makes; every reader of placed
+  Ghostscript when it is installed (bundled with the Windows installer
+  since 2026-09-29: AGPL beside GPL-3.0, run as a program of its own), caching the PDF it makes; every reader of placed
   files takes that PDF when there is one and the preview when not.
 
 ## Platforms — once every feature is built

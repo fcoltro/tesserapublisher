@@ -39,6 +39,40 @@ stage_shared() {
   cp "$root/assets/profiles/LICENCES.md" "$into/profiles/" 2>/dev/null || true
 }
 
+# Ghostscript beside the binary, for placing EPS. Windows only: there a
+# release carries it, since hardly any Windows machine has it; a Mac finds
+# Homebrew's and Linux its distribution's, and a copy of its own would be
+# a dynamically linked program with its libraries to chase.
+#
+# Taken from an installed Ghostscript — TESSERA_GHOSTSCRIPT, or the newest
+# under Program Files — and **fails without one**: the installer lists these
+# files, and a release that quietly dropped them would place EPS artwork as
+# its low-resolution preview with nothing saying why.
+stage_ghostscript() {
+  local into=$1/ghostscript
+  local from=${TESSERA_GHOSTSCRIPT:-}
+  if [ -z "$from" ]; then
+    from=$(ls -d "/c/Program Files/gs/gs"* 2>/dev/null | sort -V | tail -1)
+  fi
+  if [ -z "$from" ] || [ ! -f "$from/bin/gswin64c.exe" ]; then
+    echo "No Ghostscript to bundle. Install it (choco install ghostscript)," >&2
+    echo "or point TESSERA_GHOSTSCRIPT at its folder." >&2
+    exit 1
+  fi
+  mkdir -p "$into/bin"
+  cp "$from/bin/gswin64c.exe" "$from/bin/gsdll64.dll" "$into/bin/"
+  cp "$root/packaging/ghostscript/README.txt" "$into/"
+  # Its licence, AGPL, as its own source tree states it. From the install
+  # when the installer left it there, from the source repository otherwise.
+  if [ -f "$from/LICENSE" ]; then
+    cp "$from/LICENSE" "$into/LICENSE"
+  else
+    curl -fsSL -o "$into/LICENSE" \
+      https://raw.githubusercontent.com/ArtifexSoftware/ghostpdl/master/LICENSE
+  fi
+  echo "Bundled Ghostscript from $from"
+}
+
 # One `.icns` from one PNG. Padded to a square first, centred on
 # transparency: the document icon is a portrait page, and `iconutil` refuses
 # an iconset whose images are not square.
@@ -139,6 +173,7 @@ case "$kind" in
     # so candle never has to guess what a relative path is relative to — and
     # the layout it installs is the layout `bundled_directory` looks for.
     stage_shared "$root/target/release"
+    stage_ghostscript "$root/target/release"
     # No path given: the .wxs lives at apps/tessera_app/wix/main.wxs, which
     # is where cargo-wix looks. Its positional argument is a Cargo.toml, not
     # a wxs, so following the tool's own convention beats passing flags to
