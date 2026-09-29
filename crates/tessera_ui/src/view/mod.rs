@@ -83,6 +83,10 @@ pub(crate) fn primary_button(text: &str) -> egui::Button<'_> {
 }
 
 /// Raw keyboard handlers must respect dialogs as well as egui's focus.
+///
+/// Not the story editor: it is a window beside the page, live both ways,
+/// and the page is worked on while it is open. Its text box holds focus
+/// while typed in, which is what keeps a Delete there off the page.
 pub(crate) fn modal_open(state: &TesseraApp) -> bool {
     state.new_document.open
         || state.palette.open
@@ -104,7 +108,6 @@ pub(crate) fn modal_open(state: &TesseraApp) -> bool {
         || state.hyperlink.open
         || state.footnote_options.open
         || state.spelling.open
-        || state.story_editor.open
         || state.swatches_window.deleting.is_some()
 }
 
@@ -629,7 +632,7 @@ mod interaction_tests {
 
     #[test]
     fn every_modal_blocks_document_delete_shortcuts() {
-        let openers: [fn(&mut TesseraApp); 16] = [
+        let openers: [fn(&mut TesseraApp); 15] = [
             |s| s.print.open = true,
             |s| s.numbering.open = true,
             |s| s.variables.open = true,
@@ -644,7 +647,6 @@ mod interaction_tests {
             |s| s.hyperlink.open = true,
             |s| s.footnote_options.open = true,
             |s| s.spelling.open = true,
-            |s| s.story_editor.open = true,
             |s| s.step.open = true,
         ];
         for open in openers {

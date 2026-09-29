@@ -4,6 +4,11 @@
 //! overset included — for the pass where a person is fixing copy and does
 //! not want the layout in the way. Markers show as the characters they are.
 //!
+//! **Live, both ways**, as InDesign's is: what is typed here shows on the
+//! page as it is typed, and what is typed on the page shows here. A window
+//! beside the page rather than a box over it, so the two can be watched
+//! together.
+//!
 //! ## The edit is applied as an edit, not as a replacement
 //!
 //! Writing the box's text back over the story would flatten every run to
@@ -11,7 +16,7 @@
 //! common prefix, common suffix — and only that stretch is deleted and
 //! retyped, through the story's own operations, so bold stays bold on
 //! either side of the change and an anchored object keeps its marker. One
-//! edit per OK, and one undo entry.
+//! undo step a word, as typing on the page is.
 //!
 //! ## Styles in the margin
 //!
@@ -34,9 +39,17 @@ pub struct StoryEditorWindow {
     pub story: Option<StoryId>,
     pub text: String,
     document: Option<crate::app::DocumentKey>,
-    original: String,
-    /// The story's paragraphs as it was opened, and what each is set in.
+    /// The story's text as the editor last saw it on the page: what a
+    /// change typed here is measured from, and what tells a change made on
+    /// the page from one made here.
+    seen: String,
+    /// The story's paragraphs as last seen, and what each is set in.
     styles: Vec<(std::ops::Range<usize>, String)>,
+    /// Whether a word has been typed since this editor's last undo entry:
+    /// a word boundary opens a new one only then, as typing on the page does.
+    typed_since_entry: bool,
+    /// Whether this editor has an undo entry of its own yet.
+    entry_open: bool,
 }
 
 impl StoryEditorWindow {
@@ -50,8 +63,6 @@ impl StoryEditorWindow {
             let id = state.active().selection.single()?;
             match state.active().document().frame(id).map(|f| &f.kind) {
                 Some(FrameKind::Text { story, .. }) => Some(*story),
-                // A path's text has no caret on the page; this box is how
-                // its words are edited.
                 Some(FrameKind::Path(_)) => {
                     state.active().document().path_text(id).map(|t| t.story)
                 }
@@ -67,46 +78,94 @@ impl StoryEditorWindow {
         else {
             return;
         };
-        self.styles = paragraph_styles(state.active().document(), story);
-        self.story = Some(story);
-        self.document = Some(state.active);
-        self.original = text.clone();
-        self.text = text;
-        self.open = true;
+        *self = Self {
+            open: true,
+            story: Some(story),
+            text: text.clone(),
+            document: Some(state.active),
+            seen: text,
+            styles: paragraph_styles(state.active().document(), story),
+            typed_since_entry: false,
+            entry_open: false,
+        };
     }
 
-    fn conflict(&self, state: &TesseraApp) -> Option<&'static str> {
+    /// Why the editor cannot show its story now, if it cannot.
+    fn away(&self, state: &TesseraApp) -> Option<&'static str> {
         if self.document != Some(state.active) {
-            return Some("Switch back to the original document to apply this draft.");
+            return Some("Its story is in another document: switch back to it to edit here.");
         }
-        let current = self
-            .story
-            .and_then(|story| state.active().document().story(story));
-        match current {
-            None => Some("This story was removed. Copy your draft before closing."),
-            Some(story) if story.text != self.original => Some(
-                "The story changed while this editor was open. Copy your draft and reopen the story to avoid overwriting newer text.",
-            ),
-            _ => None,
+        let story = self.story?;
+        if state.active().document().story(story).is_none() {
+            return Some("This story was removed.");
         }
+        None
     }
 
-    fn apply_draft(&mut self, state: &mut TesseraApp) {
-        if self.conflict(state).is_some() {
+    /// Take in what the page did to the story since the editor last looked:
+    /// its words and its styles, so the editor shows the page as it is.
+    fn pull(&mut self, state: &TesseraApp) {
+        if self.away(state).is_some() {
             return;
         }
-        if let Some(story) = self.story
-            && self.original != self.text
-        {
-            let (range, with) = minimal_edit(&self.original, &self.text);
-            apply(
-                state,
-                Command::ReplaceMatches {
-                    edits: vec![(story, range, with)],
-                },
-            );
+        let Some(story) = self.story else { return };
+        let Some(now) = state
+            .active()
+            .document()
+            .story(story)
+            .map(|s| s.text.clone())
+        else {
+            return;
+        };
+        if now != self.seen {
+            self.text = now.clone();
+            self.seen = now;
+            self.styles = paragraph_styles(state.active().document(), story);
         }
-        self.open = false;
+    }
+
+    /// Put what was typed here on the page, as the smallest edit the two
+    /// texts disagree on, so formatting either side survives.
+    ///
+    /// **One undo step a word**, as typing on the page is: a change that
+    /// types a word boundary after a word opens a new entry, and the
+    /// changes between are held in it.
+    fn push(&mut self, state: &mut TesseraApp) {
+        if self.text == self.seen || self.away(state).is_some() {
+            return;
+        }
+        let Some(story) = self.story else { return };
+        let (range, with) = minimal_edit(&self.seen, &self.text);
+        let boundary = with.chars().any(char::is_whitespace);
+        let fresh = !self.entry_open || (boundary && self.typed_since_entry);
+        let command = Command::ReplaceMatches {
+            edits: vec![(story, range, with.clone())],
+        };
+        if fresh {
+            apply(state, command);
+            self.entry_open = true;
+            self.typed_since_entry = false;
+        } else {
+            // Held in the entry already open: no snapshot of its own.
+            state.active_mut().holding += 1;
+            apply(state, command);
+            let open = state.active_mut();
+            open.holding = open.holding.saturating_sub(1);
+        }
+        if with.chars().any(|c| !c.is_whitespace()) {
+            self.typed_since_entry = true;
+        }
+        // What the page holds now, which is what was typed — or, had the
+        // page refused the edit, what it kept.
+        let now = state
+            .active()
+            .document()
+            .story(story)
+            .map(|s| s.text.clone())
+            .unwrap_or_default();
+        self.text = now.clone();
+        self.seen = now;
+        self.styles = paragraph_styles(state.active().document(), story);
     }
 }
 
@@ -205,17 +264,25 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
         return;
     }
     let mut window = state.story_editor.clone();
-    let mut go = false;
-    let response = egui::Modal::new(egui::Id::new("story-editor"))
-        .frame(super::dialog_frame(ctx))
+    // What the page changed first, so what is typed this frame is measured
+    // against the story as it is.
+    window.pull(state);
+    let away = window.away(state);
+    let mut open = true;
+    egui::Window::new("Story editor")
+        .id(egui::Id::new("story-editor"))
+        .open(&mut open)
+        .default_size([560.0, 420.0])
+        .resizable(true)
+        .collapsible(false)
         .show(ctx, |ui| {
-            let size = ctx.content_rect();
-            ui.set_width((size.width() - 64.0).clamp(360.0, 720.0));
-            ui.heading("Story editor");
-            ui.add_space(Theme::space_2());
-            let names = draft_styles(&window.original, &window.text, &window.styles);
+            if let Some(why) = away {
+                ui.colored_label(Theme::text_muted(), why);
+                return;
+            }
+            let names = draft_styles(&window.seen, &window.text, &window.styles);
             egui::ScrollArea::vertical()
-                .max_height((size.height() - 180.0).max(120.0))
+                .max_height((ui.available_height() - 28.0).max(120.0))
                 .show(ui, |ui| {
                     ui.horizontal_top(|ui| {
                         // The margin the names stand in, left of the text.
@@ -252,32 +319,16 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                         }
                     });
                 });
-            ui.add_space(Theme::space_2());
             ui.weak(format!(
-                "{} words · {} characters",
+                "{} words · {} characters · changes show on the page as you type",
                 window.text.split_whitespace().count(),
                 window.text.chars().count()
             ));
-            if let Some(conflict) = window.conflict(state) {
-                ui.colored_label(Theme::error(), conflict);
-            }
-            ui.horizontal(|ui| {
-                go = ui
-                    .add_enabled(
-                        window.conflict(state).is_none(),
-                        super::primary_button("Apply changes"),
-                    )
-                    .clicked();
-                if ui.button("Cancel").clicked() {
-                    window.open = false;
-                }
-            });
         });
-    if response.should_close() {
+    // What was typed, onto the page, now.
+    window.push(state);
+    if !open {
         window.open = false;
-    }
-    if go {
-        window.apply_draft(state);
     }
     state.story_editor = window;
 }
@@ -348,8 +399,7 @@ mod tests {
         assert_eq!(names, ["[Basic Paragraph]", "Body+"]);
     }
 
-    #[test]
-    fn a_draft_cannot_overwrite_another_document_or_newer_text() {
+    fn a_story(text: &str) -> (TesseraApp, StoryId) {
         let mut state = TesseraApp::headless();
         let bounds = state.first_page_bounds();
         apply(&mut state, Command::AddTextFrame(bounds));
@@ -358,22 +408,32 @@ mod tests {
             &mut state,
             Command::SetText {
                 id: frame,
-                text: "original".into(),
+                text: text.into(),
             },
         );
+        let story = match state.active().document().frame(frame).unwrap().kind {
+            tessera_document::nodes::FrameKind::Text { story, .. } => story,
+            _ => panic!("a text frame"),
+        };
+        (state, story)
+    }
+
+    #[test]
+    fn the_editor_and_the_page_show_each_other_s_changes() {
+        let (mut state, story) = a_story("original");
         let mut editor = StoryEditorWindow::default();
         editor.open(&state);
-        editor.text = "my draft".into();
-        let source = state.active;
-        state.add_document(state.active().document().clone(), None);
-        editor.apply_draft(&mut state);
-        assert!(editor.open);
-        let story = editor.story.unwrap();
+
+        // Typed here: on the page at once.
+        editor.text = "original copy".into();
+        editor.push(&mut state);
         assert_eq!(
             state.active().document().story(story).unwrap().text,
-            "original"
+            "original copy"
         );
-        state.active = source;
+
+        // Typed on the page: here at the next look.
+        let frame = state.active().selection.single().unwrap();
         apply(
             &mut state,
             Command::SetText {
@@ -381,12 +441,57 @@ mod tests {
                 text: "newer copy".into(),
             },
         );
-        editor.apply_draft(&mut state);
-        assert!(editor.open);
-        assert_eq!(editor.text, "my draft");
+        editor.pull(&state);
+        assert_eq!(editor.text, "newer copy");
+    }
+
+    #[test]
+    fn typing_in_the_editor_undoes_a_word_at_a_time() {
+        let (mut state, story) = a_story("one");
+        let depth = state.active().history.undo_depth();
+        let mut editor = StoryEditorWindow::default();
+        editor.open(&state);
+        for typed in [
+            "one ",
+            "one t",
+            "one tw",
+            "one two",
+            "one two ",
+            "one two t",
+        ] {
+            editor.text = typed.into();
+            editor.push(&mut state);
+        }
         assert_eq!(
             state.active().document().story(story).unwrap().text,
-            "newer copy"
+            "one two t"
+        );
+        assert_eq!(
+            state.active().history.undo_depth(),
+            depth + 2,
+            "one entry to open with, one at the space after a word"
+        );
+        apply(&mut state, Command::Undo);
+        assert_eq!(
+            state.active().document().story(story).unwrap().text,
+            "one two"
+        );
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().story(story).unwrap().text, "one");
+    }
+
+    #[test]
+    fn nothing_is_written_into_another_document() {
+        let (mut state, story) = a_story("original");
+        let mut editor = StoryEditorWindow::default();
+        editor.open(&state);
+        state.add_document(state.active().document().clone(), None);
+        assert!(editor.away(&state).is_some());
+        editor.text = "typed away".into();
+        editor.push(&mut state);
+        assert_eq!(
+            state.active().document().story(story).unwrap().text,
+            "original"
         );
     }
 

@@ -2912,8 +2912,10 @@ which cost one afternoon's confusion and a namespace check.
   now go through the same anchor-aware path. **2026-09-28:** each
   paragraph's style is named in a margin beside it, `+` for an override,
   carried through the draft by the diff that applies it (`draft_styles`),
-  so a paragraph typed inside another is named as it will be set. Not
-  built: a live link between the box and the page.
+  so a paragraph typed inside another is named as it will be set. **Live
+  since 2026-09-28**: the editor is a window beside the page, and what is
+  typed in either shows in the other as it is typed, a word to an undo
+  step; the page stays in use while it is open.
 - [x] **Check spelling** (added 2026-09-14, after milestone 12).
   `tessera_text::spell` reads Hunspell dictionaries — the `.dic` word list
   and the `.aff` prefix and suffix rules, in all three flag encodings, with
@@ -3534,7 +3536,8 @@ below are its items 1 to 3.
 - [x] 18. **Spelling**: sound-alike suggestions, two-edit corrections,
   compound words (milestone 12). *Done 2026-09-28* (sound-alike as
   Hunspell's n-gram pass; `PHONE` tables not read).
-- [ ] 19. **The story editor updates live** with the page (milestone 12).
+- [x] 19. **The story editor updates live** with the page (milestone 12).
+  *Done 2026-09-28.*
 - [ ] 20. **Split `command::apply`** (126 cases) into smaller pieces. Nothing
   a person sees, but every later change gets safer.
 
