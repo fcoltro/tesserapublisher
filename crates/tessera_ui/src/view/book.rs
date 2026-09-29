@@ -458,6 +458,53 @@ fn chapter_list(ui: &mut Ui, state: &mut TesseraApp, summaries: &[Summary]) -> O
     act
 }
 
+/// The book's chapters, at the head of the Pages panel, when the document
+/// in front is one of them: each by name with the pages the book gives it,
+/// the one in front marked, another a click away. Nothing when no book is
+/// open or the document in front is not in it. Returns whether it drew.
+pub fn chapters_in_pages(ui: &mut Ui, state: &mut TesseraApp) -> bool {
+    let Some(book_path) = state.book.path.clone() else {
+        return false;
+    };
+    let Some(active) = state.active().current_path.clone() else {
+        return false;
+    };
+    let chapters = state.book.chapters();
+    if !chapters.iter().any(|c| same_file(c, &active)) {
+        return false;
+    }
+    let numbering = state.book.book.continue_numbering;
+    let summaries = crate::book_ops::summaries(state, &chapters, numbering);
+    crate::view::panels::group_label_pub(ui, &format!("Book: {}", name_of(&book_path)));
+    let mut open = None;
+    for summary in &summaries {
+        let here = same_file(&summary.path, &active);
+        let pages = summary
+            .in_book
+            .as_ref()
+            .or(summary.numbered.as_ref())
+            .map(pages_said)
+            .unwrap_or_default();
+        let text = if pages.is_empty() {
+            name_of(&summary.path)
+        } else {
+            format!("{}  {pages}", name_of(&summary.path))
+        };
+        let row = ui.add_enabled(
+            summary_openable(summary),
+            egui::Button::selectable(here, text).truncate(),
+        );
+        if row.clicked() && !here {
+            open = Some(summary.path.clone());
+        }
+    }
+    if let Some(path) = open {
+        open_chapter(state, &path);
+    }
+    ui.add_space(Theme::space_3());
+    true
+}
+
 fn summary_openable(summary: &Summary) -> bool {
     matches!(
         summary.state,
@@ -1187,6 +1234,42 @@ mod tests {
 
     fn order(book: &Book) -> Vec<String> {
         book.documents.iter().map(|p| name_of(p)).collect()
+    }
+
+    #[test]
+    fn a_chapter_in_front_shows_the_book_s_chapters_in_the_pages_panel() {
+        let (mut state, _, folder) = a_book("pages");
+        let ctx = egui::Context::default();
+        let pages_panel = |ctx: &egui::Context, state: &mut TesseraApp| {
+            let mut drew = false;
+            let mut right = 0.0;
+            crate::headless_frame::frame(
+                ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(208.0, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    drew = chapters_in_pages(ui, state);
+                    right = ui.min_rect().right();
+                },
+            );
+            (drew, right)
+        };
+
+        // A document that is not a chapter: nothing.
+        assert!(!pages_panel(&ctx, &mut state).0);
+
+        // Chapter Two in front: the list, fitting a narrow dock.
+        crate::file_ops::open_from_path(&mut state, &folder.join("Two.tsrdf")).unwrap();
+        let (drew, right) = pages_panel(&ctx, &mut state);
+        assert!(drew, "the book's chapters are listed");
+        assert!(right <= 209.0, "within the dock: {right}");
+
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]

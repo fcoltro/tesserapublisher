@@ -2808,9 +2808,17 @@ line of copy. The renderer and the PDF writer draw them without knowing.
   changed and saved back. Window ▸ Book, in the rail: new or open a book,
   add and order chapters (double-click opens one), Number now, Update
   contents, Export PDF…. Tests at every layer, ending with a real
-  five-page PDF from two chapter files. **Not built:** synchronising
-  styles across chapters; an index across the book; a book's chapters
-  shown in the Pages panel.
+  five-page PDF from two chapter files. **2026-09-28, the rest:**
+  Synchronize styles makes every chapter's swatches and styles the same
+  as a style source's, by name (`tessera_document::sync`, a `StyleSheet`
+  laid over a document, ids translated through the names; the source is
+  kept as its entry in the book, so reordering does not move it); Update
+  index builds one index from every chapter's entries, pages labelled as
+  the book numbers them and runs joined only within a chapter
+  (`contents::index_across`) — which found that two index markers at a
+  line's head dropped the first entry, now fixed; and the Pages panel
+  lists the book's chapters, with their pages, when a chapter is in front
+  (`book::chapters_in_pages`).
 - **Footnote text is edited on the canvas (2026-09-28)**, where it is
   set: a click on a note at the foot of a column puts the caret in it, and
   a click back in the copy leaves it. The flow keeps each note line's own
@@ -3509,8 +3517,8 @@ below are its items 1 to 3.
 - [x] 15. **Type on a path**: the caret on the curve, drag handles for
   start, end and flip, and path text as a wrap obstacle (milestone 9).
   *Done 2026-09-28* (start and end handles were already built).
-- [ ] 16. **Book**: chapters in the Pages panel, styles kept the same across
-  chapters, an index across the book (milestone 11).
+- [x] 16. **Book**: chapters in the Pages panel, styles kept the same across
+  chapters, an index across the book (milestone 11). *Done 2026-09-28.*
 - [ ] 17. **More Photoshop files**: ZIP-compressed, Lab, 1-bit and 32-bit.
 - [ ] 18. **Spelling**: sound-alike suggestions, two-edit corrections,
   compound words (milestone 12).

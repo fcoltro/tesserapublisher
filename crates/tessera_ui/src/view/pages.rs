@@ -80,6 +80,8 @@ struct ParentPayload(Option<MasterId>);
 /// rail empty below them.
 pub fn docked(ui: &mut Ui, state: &mut TesseraApp) {
     tidy(state);
+    // A chapter of the open book: the book's chapters above its own pages.
+    crate::view::book::chapters_in_pages(ui, state);
     parents(ui, state);
     ui.add_space(Theme::space_3());
     heading(ui, state);
