@@ -524,6 +524,7 @@ pub struct TesseraApp {
     /// File ▸ Export PNG or JPEG…: which pages, asked each time.
     pub image_export: crate::view::image_export::ImageExportWindow,
     pub html_export: crate::view::html_export::HtmlExportWindow,
+    pub epub_export: crate::view::epub_export::EpubExportWindow,
     /// File ▸ Print…: which pages.
     pub print: crate::view::print_dialog::PrintWindow,
 
@@ -742,6 +743,7 @@ impl TesseraApp {
             export: crate::view::export_dialog::ExportWindow::default(),
             image_export: crate::view::image_export::ImageExportWindow::default(),
             html_export: crate::view::html_export::HtmlExportWindow::default(),
+            epub_export: crate::view::epub_export::EpubExportWindow::default(),
             print: crate::view::print_dialog::PrintWindow::default(),
             closing: None,
             naming_workspace: None,

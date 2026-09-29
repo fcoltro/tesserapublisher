@@ -603,6 +603,144 @@ pub fn export_pdf(state: &mut TesseraApp) {
     });
 }
 
+/// Ask where the book goes, and write it on a thread of its own.
+pub fn export_epub(state: &mut TesseraApp) {
+    // The title as a file name: what a file system will not take, left out.
+    let name: String = state
+        .epub_export
+        .title
+        .chars()
+        .filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        .collect();
+    let name = if name.trim().is_empty() {
+        "Untitled".to_owned()
+    } else {
+        name
+    };
+    let Some(mut path) = rfd::FileDialog::new()
+        .add_filter("EPUB", &["epub"])
+        .set_file_name(format!("{name}.epub"))
+        .save_file()
+    else {
+        return; // cancelled
+    };
+    if path.extension().is_none() {
+        path.set_extension("epub");
+    }
+    let write = match epub_export(state, &path) {
+        Ok(write) => write,
+        Err(why) => {
+            state.status = Some(Status::error(why));
+            return;
+        }
+    };
+    let open_after = state.epub_export.open_after;
+    state.start_job("Exporting EPUB", move |_| {
+        write()?;
+        Ok(crate::background::Finished {
+            said: format!("Exported {}", path.display()),
+            open: if open_after { vec![path] } else { Vec::new() },
+        })
+    });
+}
+
+/// Write the EPUB the EPUB box describes at `path`. Says why when it could
+/// not.
+pub fn export_epub_to(state: &mut TesseraApp, path: &Path) -> Result<(), String> {
+    epub_export(state, path)?()
+}
+
+/// An EPUB export ready to run here or on another thread: the documents
+/// copied and the cover drawn now, where the shaper is; the packing, which
+/// needs nothing of the application's, after.
+fn epub_export(
+    state: &mut TesseraApp,
+    path: &Path,
+) -> Result<impl FnOnce() -> Result<(), String> + Send + 'static, String> {
+    let window = state.epub_export.clone();
+    let documents: Vec<tessera_document::document::Document> = if window.book {
+        let chapters = state.book.chapters();
+        if chapters.is_empty() {
+            return Err("The book has no chapters to export.".to_owned());
+        }
+        let numbering = state.book.book.continue_numbering;
+        crate::book_ops::documents(state, &chapters, numbering)
+            .map_err(|e| format!("Could not read a chapter: {e}"))?
+    } else {
+        vec![state.active().document().clone()]
+    };
+    // The cover: the first page, drawn as a picture.
+    let cover = if window.cover {
+        let resolved = tessera_layout::resolve::resolve(&documents[0], &mut state.shaper);
+        let first = tessera_pdf::pages::assemble(&resolved, &[vec![0]]);
+        tessera_pdf::raster::page_images(
+            &first,
+            &tessera_pdf::raster::ImageOptions::default(),
+            None,
+        )
+        .ok()
+        .and_then(|pictures| pictures.into_iter().next())
+        .map(|picture| (picture.bytes, "png".to_owned()))
+    } else {
+        None
+    };
+    let identifier = if window.identifier.trim().is_empty() {
+        made_up_identifier(&window.title)
+    } else {
+        window.identifier.trim().to_owned()
+    };
+    let options = tessera_html::epub::EpubOptions {
+        content: tessera_html::Options {
+            ppi: window.ppi,
+            images: window.images,
+            ..Default::default()
+        },
+        title: window.title.clone(),
+        author: window.author.clone(),
+        identifier,
+        modified: jiff::Timestamp::now()
+            .strftime("%Y-%m-%dT%H:%M:%SZ")
+            .to_string(),
+        cover,
+    };
+    let path = path.to_path_buf();
+    Ok(move || {
+        let chapters: Vec<&tessera_document::document::Document> = documents.iter().collect();
+        let bytes = tessera_html::epub::export_book(&chapters, &options)?;
+        tessera_io::atomic::write_atomic(&path, &bytes)
+            .map_err(|e| format!("Could not write {}: {e}", path.display()))
+    })
+}
+
+/// A UUID for a book that has no ISBN: made from its title and the moment,
+/// so two exports of one book are told apart as two editions would be.
+fn made_up_identifier(title: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    title.hash(&mut hasher);
+    jiff::Timestamp::now().as_nanosecond().hash(&mut hasher);
+    let a = hasher.finish();
+    a.rotate_left(17).hash(&mut hasher);
+    let b = hasher.finish();
+    let bytes: Vec<u8> = a.to_be_bytes().into_iter().chain(b.to_be_bytes()).collect();
+    let hex = |range: std::ops::Range<usize>| {
+        bytes[range]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    // Version 4, variant 10: what a UUID reader expects to see.
+    format!(
+        "urn:uuid:{}-{}-4{}-{:x}{}-{}",
+        hex(0..4),
+        hex(4..6),
+        &hex(6..8)[1..],
+        8 | (bytes[8] & 0x3),
+        &hex(8..10)[1..],
+        hex(10..16)
+    )
+}
+
 /// Ask where the web page goes, and write it on a thread of its own.
 pub fn export_html(state: &mut TesseraApp) {
     let suggested = state
@@ -1236,6 +1374,36 @@ mod tests {
             dir.join(tessera_html::STYLESHEET).is_file(),
             "the stylesheet beside it"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_document_exports_as_an_epub_with_its_first_page_for_a_cover() {
+        let dir = std::env::temp_dir().join(format!("tessera-epub-ops-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut state = TesseraApp::headless();
+        let bounds = state.first_page_bounds();
+        crate::command::apply(&mut state, crate::command::Command::AddTextFrame(bounds));
+        let id = state.active().selection.single().unwrap();
+        crate::command::apply(
+            &mut state,
+            crate::command::Command::SetText {
+                id,
+                text: "Once upon a time.".into(),
+            },
+        );
+        crate::view::epub_export::open(&mut state, false);
+        state.epub_export.title = "Tale".into();
+        let book = dir.join("Tale.epub");
+        export_epub_to(&mut state, &book).expect("exported");
+        let bytes = std::fs::read(&book).unwrap();
+        // The ZIP's first entry, stored: "mimetype", then its words.
+        assert_eq!(&bytes[..2], b"PK");
+        assert_eq!(&bytes[30..38], b"mimetype");
+        assert_eq!(&bytes[38..58], b"application/epub+zip");
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(text.contains("OEBPS/images/cover.png"), "a cover");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

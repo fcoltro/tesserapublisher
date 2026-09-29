@@ -112,6 +112,7 @@ enum Act {
     Contents,
     Preflight,
     Export,
+    ExportEpub,
     NewBook,
     OpenBook,
     OpenRecent(PathBuf),
@@ -818,6 +819,16 @@ fn publish(
             {
                 act = Some(Act::Export);
             }
+            if panel_ui::action_when(ui, can, Icon::Export, "Export EPUB\u{2026}")
+                .on_hover_text(if can {
+                    "Every chapter, in order, as one reflowable EPUB"
+                } else {
+                    "Find the missing chapters first"
+                })
+                .clicked()
+            {
+                act = Some(Act::ExportEpub);
+            }
         });
     });
     act
@@ -975,6 +986,7 @@ fn run(state: &mut TesseraApp, act: Act) {
             let numbering = state.book.book.continue_numbering;
             export_pdf(state, &chapters, numbering);
         }
+        Act::ExportEpub => crate::view::epub_export::open(state, true),
         Act::NewBook => new_book(state),
         Act::OpenBook => {
             if let Some(path) = rfd::FileDialog::new()

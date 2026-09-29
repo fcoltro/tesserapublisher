@@ -149,6 +149,23 @@ pub fn synchronise_styles(
     Ok((changed, total))
 }
 
+/// Every chapter's document, in order, numbered on first when the book
+/// says so: what a book's EPUB is made from. In memory only.
+pub fn documents(
+    state: &TesseraApp,
+    paths: &[PathBuf],
+    continue_numbers: bool,
+) -> Result<Vec<Document>, FormatError> {
+    let mut documents: Vec<Document> = chapters(state, paths)?
+        .into_iter()
+        .map(|c| c.document)
+        .collect();
+    if continue_numbers {
+        tessera_layout::book::continue_numbering(&mut documents);
+    }
+    Ok(documents)
+}
+
 /// Every chapter resolved and stacked into one document for the PDF
 /// writer, numbered on first when the book says so — in memory only; the
 /// files are not touched by an export.

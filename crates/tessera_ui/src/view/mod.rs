@@ -14,6 +14,7 @@ pub mod cross_reference;
 pub mod data_merge;
 pub mod docks;
 pub mod document_tabs;
+pub mod epub_export;
 pub mod export_dialog;
 pub mod find;
 pub mod footnote_options;
@@ -110,6 +111,7 @@ pub(crate) fn modal_open(state: &TesseraApp) -> bool {
         || state.footnote_options.open
         || state.spelling.open
         || state.html_export.open
+        || state.epub_export.open
         || state.swatches_window.deleting.is_some()
 }
 
@@ -150,6 +152,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     export_dialog::show(ui.ctx(), state);
     image_export::show(ui.ctx(), state);
     html_export::show(ui.ctx(), state);
+    epub_export::show(ui.ctx(), state);
     print_dialog::show(ui.ctx(), state);
     new_document::show(ui.ctx(), state);
     step_repeat::show(ui.ctx(), state);

@@ -296,6 +296,7 @@ pub enum Run {
     ExportPdf,
     ExportImages,
     ExportHtml,
+    ExportEpub,
     /// The pages, as a PDF, to the system's print path.
     Print,
     Place,
@@ -407,6 +408,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::ExportPdf
         | Run::ExportImages
         | Run::ExportHtml
+        | Run::ExportEpub
         | Run::Print
         | Run::Package
         | Run::Place
@@ -664,6 +666,7 @@ pub fn all() -> &'static [Action] {
         a("Export PDF…", Some("Ctrl+Shift+E"), Group::File, ExportPdf),
         a("Export image…", None, Group::File, ExportImages),
         a("Export HTML…", None, Group::File, ExportHtml),
+        a("Export EPUB…", None, Group::File, ExportEpub),
         a("Print…", Some("Ctrl+P"), Group::File, Print),
         // Beside Export, because packaging is the other way a job leaves the
         // studio and somebody looking for one will look where the other is.
@@ -1536,6 +1539,7 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         }
         Run::ExportImages => crate::view::image_export::open(state),
         Run::ExportHtml => state.html_export.open = true,
+        Run::ExportEpub => crate::view::epub_export::open(state, false),
         Run::Print => state.print.open = true,
         Run::Place => crate::file_ops::place(state),
         Run::OpenSettings => state.settings.open = true,
