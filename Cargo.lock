@@ -4432,6 +4432,7 @@ dependencies = [
 name = "tessera_render"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "hayro",
  "image",
  "pollster 1.0.1",

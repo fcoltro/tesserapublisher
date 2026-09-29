@@ -1148,8 +1148,10 @@ of each carries the full account; this is the index.
   A CMYK file's own inks go into a CMYK export untouched. A placed PDF shows
   the page chosen, cut to its crop, art, trim, bleed or media box (Properties
   ▸ Page and Crop to; 2026-09-28) — no wider than its crop box, since the
-  renderer draws nothing past it. **Left:** ZIP-compressed, Lab, 1-bit and
-  32-bit Photoshop files; EPS, which needs a PostScript interpreter.
+  renderer draws nothing past it. Photoshop files ZIP-compressed (with or
+  without prediction), Lab, 1-bit and 32-bit read too (2026-09-28).
+  **Left:** multichannel Photoshop files; EPS, which needs a PostScript
+  interpreter.
 - [x] **Default black is [Black] (2026-09-27).** A new shape's hairline, a
   table's rules, Default fill and stroke, a stroke switched on in Properties
   or in an object style, an underline given its own colour, and an imported
@@ -3519,7 +3521,10 @@ below are its items 1 to 3.
   *Done 2026-09-28* (start and end handles were already built).
 - [x] 16. **Book**: chapters in the Pages panel, styles kept the same across
   chapters, an index across the book (milestone 11). *Done 2026-09-28.*
-- [ ] 17. **More Photoshop files**: ZIP-compressed, Lab, 1-bit and 32-bit.
+- [x] 17. **More Photoshop files**: ZIP-compressed, Lab, 1-bit and 32-bit.
+  *Done 2026-09-28:* ZIP with and without prediction (32-bit rows as
+  byte planes), 32-bit linear light encoded as sRGB with transparency
+  kept linear, a bitmap's ones black, Lab through D50 XYZ to sRGB.
 - [ ] 18. **Spelling**: sound-alike suggestions, two-edit corrections,
   compound words (milestone 12).
 - [ ] 19. **The story editor updates live** with the page (milestone 12).

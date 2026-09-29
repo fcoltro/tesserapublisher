@@ -12,13 +12,13 @@
 //! and in a CMYK file — the kind a press sends back — the fourth channel is
 //! black.
 //!
-//! What it reads: PSD and the large-document PSB, 8 and 16 bits a channel,
-//! greyscale, duotone (whose composite is its greyscale), indexed, RGB and
-//! CMYK, stored raw or run-length encoded, with the transparency Photoshop
-//! writes when the layers leave some of the canvas clear. What it does not —
-//! 1-bit and 32-bit files, Lab, multichannel and ZIP-compressed composites — is
-//! unreadable, which preflight reports as it does any other file it cannot
-//! open.
+//! What it reads: PSD and the large-document PSB; 1-bit bitmaps, and 8, 16
+//! and 32 bits a channel; greyscale, duotone (whose composite is its
+//! greyscale), indexed, RGB, CMYK and Lab; stored raw, run-length encoded or
+//! ZIP-compressed with or without prediction; with the transparency
+//! Photoshop writes when the layers leave some of the canvas clear. What it
+//! does not — multichannel — is unreadable, which preflight reports as it
+//! does any other file it cannot open.
 
 use std::path::Path;
 
@@ -102,7 +102,7 @@ pub fn read(bytes: &[u8]) -> Result<Composite, Unreadable> {
     for i in 0..pixels {
         let sample = |channel: usize| across(channel, i);
         let (r, g, b) = match header.mode {
-            Mode::Grey => (sample(0), sample(0), sample(0)),
+            Mode::Bitmap | Mode::Grey => (sample(0), sample(0), sample(0)),
             Mode::Indexed => {
                 let entry = usize::from(sample(0));
                 // Stored as 256 reds, then 256 greens, then 256 blues.
@@ -110,6 +110,7 @@ pub fn read(bytes: &[u8]) -> Result<Composite, Unreadable> {
                 (at(0), at(1), at(2))
             }
             Mode::Rgb => (sample(0), sample(1), sample(2)),
+            Mode::Lab => lab_to_srgb(sample(0), sample(1), sample(2)),
             Mode::Cmyk => {
                 // Stored inverted: 255 is no ink. What is shown is the plain
                 // arithmetic, not a press's profile: a picture on screen, not
@@ -166,19 +167,59 @@ fn unmatte([r, g, b]: [u8; 3], alpha: u8) -> [u8; 4] {
     [straight(r), straight(g), straight(b), alpha]
 }
 
+/// A Lab sample — L from 0 to 255 for 0 to 100, a and b offset by 128 —
+/// as sRGB. Photoshop's Lab is relative to D50; the matrix takes XYZ under
+/// D50 to linear sRGB with the Bradford adaptation to D65 folded in.
+fn lab_to_srgb(l: u8, a: u8, b: u8) -> (u8, u8, u8) {
+    let l = f64::from(l) * 100.0 / 255.0;
+    let a = f64::from(a) - 128.0;
+    let b = f64::from(b) - 128.0;
+    let fy = (l + 16.0) / 116.0;
+    let fx = fy + a / 500.0;
+    let fz = fy - b / 200.0;
+    let inverse = |t: f64| {
+        const E: f64 = 6.0 / 29.0;
+        if t > E {
+            t * t * t
+        } else {
+            3.0 * E * E * (t - 4.0 / 29.0)
+        }
+    };
+    // D50 white.
+    let (x, y, z) = (0.9642 * inverse(fx), inverse(fy), 0.8249 * inverse(fz));
+    let r = 3.133_856_1 * x - 1.616_866_7 * y - 0.490_614_6 * z;
+    let g = -0.978_768_4 * x + 1.916_141_5 * y + 0.033_454_0 * z;
+    let bl = 0.071_945_3 * x - 0.228_991_4 * y + 1.405_242_7 * z;
+    (encode(r), encode(g), encode(bl))
+}
+
+/// A linear light value, 0 to 1, as an sRGB byte.
+fn encode(linear: f64) -> u8 {
+    let v = linear.clamp(0.0, 1.0);
+    let v = if v <= 0.003_130_8 {
+        12.92 * v
+    } else {
+        1.055 * v.powf(1.0 / 2.4) - 0.055
+    };
+    (v * 255.0).round() as u8
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
+    /// One bit a pixel, black and white.
+    Bitmap,
     Grey,
     Indexed,
     Rgb,
     Cmyk,
+    Lab,
 }
 
 impl Mode {
     fn colour_channels(self) -> usize {
         match self {
-            Mode::Grey | Mode::Indexed => 1,
-            Mode::Rgb => 3,
+            Mode::Bitmap | Mode::Grey | Mode::Indexed => 1,
+            Mode::Rgb | Mode::Lab => 3,
             Mode::Cmyk => 4,
         }
     }
@@ -208,16 +249,21 @@ impl Header {
         let width = at.u32()?;
         let depth = at.u16()?;
         let mode = match at.u16()? {
+            0 => Mode::Bitmap,
             1 | 8 => Mode::Grey,
             2 => Mode::Indexed,
             3 => Mode::Rgb,
             4 => Mode::Cmyk,
-            0 => return Err(Unreadable::Unsupported("1-bit bitmap")),
-            9 => return Err(Unreadable::Unsupported("Lab colour")),
+            9 => Mode::Lab,
             _ => return Err(Unreadable::Unsupported("this colour mode")),
         };
-        if depth != 8 && depth != 16 {
+        if !matches!(depth, 1 | 8 | 16 | 32) {
             return Err(Unreadable::Unsupported("this bit depth"));
+        }
+        if (mode == Mode::Bitmap) != (depth == 1) {
+            return Err(Unreadable::Unsupported(
+                "a bitmap's depth is one bit, and only a bitmap's",
+            ));
         }
         if mode == Mode::Indexed && depth != 8 {
             return Err(Unreadable::Unsupported("indexed colour past 8 bits"));
@@ -240,7 +286,59 @@ impl Header {
 ///
 /// Sixteen-bit samples keep their high byte: the screen and the PDF writer
 /// both work in eight, and the low byte is below what either shows.
+/// Thirty-two-bit samples are linear light, floats: colour is encoded as
+/// sRGB, transparency kept linear, as it always is. A bitmap's bits are
+/// black for one, white for nought.
 fn decode_planes(
+    at: &mut Bytes<'_>,
+    header: &Header,
+    keep: usize,
+    big: bool,
+) -> Result<Vec<Vec<u8>>, Unreadable> {
+    let colours = header.mode.colour_channels();
+    let raw = decode_raw(at, header, keep, big)?;
+    let width = header.width as usize;
+    let row_bytes = (width * usize::from(header.depth)).div_ceil(8);
+    Ok(raw
+        .into_iter()
+        .enumerate()
+        .map(|(channel, plane)| {
+            plane
+                .chunks(row_bytes.max(1))
+                .flat_map(|row| to_eight(row, header.depth, width, channel >= colours))
+                .collect()
+        })
+        .collect())
+}
+
+/// One row of samples at `depth` bits, a byte each: see [`decode_planes`].
+fn to_eight(row: &[u8], depth: u16, width: usize, alpha: bool) -> Vec<u8> {
+    match depth {
+        1 => (0..width)
+            .map(|x| {
+                let bit = row.get(x / 8).is_some_and(|b| b & (0x80 >> (x % 8)) != 0);
+                if bit { 0 } else { 255 }
+            })
+            .collect(),
+        8 => row.to_vec(),
+        16 => high_bytes(row, 16).collect(),
+        32 => row
+            .chunks_exact(4)
+            .map(|b| {
+                let v = f64::from(f32::from_be_bytes([b[0], b[1], b[2], b[3]]));
+                if alpha {
+                    (v.clamp(0.0, 1.0) * 255.0).round() as u8
+                } else {
+                    encode(v)
+                }
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The first `keep` channels' rows as the file stores them, uncompressed.
+fn decode_raw(
     at: &mut Bytes<'_>,
     header: &Header,
     keep: usize,
@@ -248,7 +346,7 @@ fn decode_planes(
 ) -> Result<Vec<Vec<u8>>, Unreadable> {
     let width = header.width as usize;
     let height = header.height as usize;
-    let row_bytes = width * usize::from(header.depth / 8);
+    let row_bytes = (width * usize::from(header.depth)).div_ceil(8);
     // A header can claim a canvas far bigger than the file holds. Nothing is
     // sized from it past what the file has left, so the lie is found by
     // running out of bytes rather than by asking for gigabytes first.
@@ -261,7 +359,7 @@ fn decode_planes(
             for _ in 0..keep {
                 let mut plane = Vec::with_capacity(room(at, pixels));
                 for _ in 0..height {
-                    plane.extend(high_bytes(at.take(row_bytes)?, header.depth));
+                    plane.extend_from_slice(at.take(row_bytes)?);
                 }
                 planes.push(plane);
             }
@@ -285,14 +383,71 @@ fn decode_planes(
                 let mut plane = Vec::new();
                 for &length in channel {
                     unpack(at.take(length)?, row_bytes, &mut row)?;
-                    plane.extend(high_bytes(&row, header.depth));
+                    plane.extend_from_slice(&row);
                 }
                 planes.push(plane);
             }
         }
-        _ => return Err(Unreadable::Unsupported("a ZIP-compressed composite")),
+        // ZIP: every channel's rows in one zlib stream, and with
+        // prediction each row stored as differences along it.
+        compression @ (2 | 3) => {
+            use std::io::Read as _;
+            let plane_bytes = row_bytes.saturating_mul(height);
+            let wanted = plane_bytes.saturating_mul(keep);
+            let mut data = Vec::with_capacity(room(at, wanted));
+            flate2::read::ZlibDecoder::new(at.take(at.remaining())?)
+                .take(wanted as u64)
+                .read_to_end(&mut data)
+                .map_err(|_| Unreadable::Unsupported("a damaged ZIP stream"))?;
+            if data.len() < wanted {
+                return Err(Unreadable::Short);
+            }
+            if compression == 3 {
+                for row in data.chunks_mut(row_bytes.max(1)) {
+                    unpredict(row, header.depth);
+                }
+            }
+            for channel in data.chunks(plane_bytes.max(1)).take(keep) {
+                planes.push(channel.to_vec());
+            }
+        }
+        _ => return Err(Unreadable::Unsupported("this compression")),
     }
     Ok(planes)
+}
+
+/// Undo Photoshop's ZIP prediction on one row: each sample stored as its
+/// difference from the one before. Sixteen-bit samples are differenced as
+/// numbers; thirty-two-bit rows are stored as four planes of bytes, first
+/// bytes then second and so on, differenced as bytes along the whole row.
+fn unpredict(row: &mut [u8], depth: u16) {
+    match depth {
+        16 => {
+            let mut previous = 0u16;
+            for pair in row.chunks_exact_mut(2) {
+                let v = u16::from_be_bytes([pair[0], pair[1]]).wrapping_add(previous);
+                pair.copy_from_slice(&v.to_be_bytes());
+                previous = v;
+            }
+        }
+        32 => {
+            for i in 1..row.len() {
+                row[i] = row[i].wrapping_add(row[i - 1]);
+            }
+            let n = row.len() / 4;
+            let planar = row.to_vec();
+            for x in 0..n {
+                for byte in 0..4 {
+                    row[x * 4 + byte] = planar[byte * n + x];
+                }
+            }
+        }
+        _ => {
+            for i in 1..row.len() {
+                row[i] = row[i].wrapping_add(row[i - 1]);
+            }
+        }
+    }
 }
 
 fn high_bytes(row: &[u8], depth: u16) -> impl Iterator<Item = u8> + '_ {
@@ -677,16 +832,164 @@ pub(crate) mod tests {
         assert_eq!(pixel(&c, 0), [250, 150, 50, 255]);
     }
 
+    /// The same file with its composite ZIP-compressed: the raw planes
+    /// after the compression word, deflated, with or without prediction.
+    fn zipped(raw: &Psd<'_>, predict: bool) -> Vec<u8> {
+        use std::io::Write as _;
+        let plain = raw.bytes();
+        let data: usize = raw.planes.iter().map(Vec::len).sum();
+        let head = plain.len() - data - 2;
+        let mut planes: Vec<u8> = raw.planes.concat();
+        let row = (raw.width as usize * usize::from(raw.depth)).div_ceil(8);
+        if predict {
+            for r in planes.chunks_mut(row) {
+                match raw.depth {
+                    16 => {
+                        let mut previous = 0u16;
+                        for pair in r.chunks_exact_mut(2) {
+                            let v = u16::from_be_bytes([pair[0], pair[1]]);
+                            pair.copy_from_slice(&v.wrapping_sub(previous).to_be_bytes());
+                            previous = v;
+                        }
+                    }
+                    32 => {
+                        let n = r.len() / 4;
+                        let pixels = r.to_vec();
+                        for x in 0..n {
+                            for byte in 0..4 {
+                                r[byte * n + x] = pixels[x * 4 + byte];
+                            }
+                        }
+                        for i in (1..r.len()).rev() {
+                            r[i] = r[i].wrapping_sub(r[i - 1]);
+                        }
+                    }
+                    _ => {
+                        for i in (1..r.len()).rev() {
+                            r[i] = r[i].wrapping_sub(r[i - 1]);
+                        }
+                    }
+                }
+            }
+        }
+        let mut out = plain[..head].to_vec();
+        out.extend(if predict { 3u16 } else { 2u16 }.to_be_bytes());
+        let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        z.write_all(&planes).unwrap();
+        out.extend(z.finish().unwrap());
+        out
+    }
+
+    #[test]
+    fn a_zip_compressed_composite_reads_with_and_without_prediction() {
+        let rgb = Psd {
+            width: 3,
+            height: 2,
+            planes: vec![
+                vec![10, 20, 30, 40, 50, 60],
+                vec![200, 190, 180, 170, 160, 150],
+                vec![0, 255, 0, 255, 0, 255],
+            ],
+            ..Default::default()
+        };
+        let plain = read(&rgb.bytes()).expect("raw");
+        for predict in [false, true] {
+            let zip = read(&zipped(&rgb, predict)).expect("zipped");
+            assert_eq!(zip.rgba, plain.rgba, "predicted: {predict}");
+        }
+        // Sixteen bits, predicted as numbers: the high bytes come back.
+        let deep = Psd {
+            mode: 1,
+            depth: 16,
+            width: 2,
+            height: 1,
+            planes: vec![vec![0x12, 0x34, 0xAB, 0xCD]],
+            ..Default::default()
+        };
+        let c = read(&zipped(&deep, true)).expect("zipped");
+        assert_eq!((pixel(&c, 0)[0], pixel(&c, 1)[0]), (0x12, 0xAB));
+    }
+
+    #[test]
+    fn thirty_two_bit_light_is_encoded_as_srgb() {
+        // Linear 0, 0.2140 (sRGB 128) and 1, one pixel each, in grey; the
+        // same file ZIP-compressed with its byte planes predicted.
+        let floats = [0.0f32, 0.214_041_14, 1.0];
+        let grey = Psd {
+            mode: 1,
+            depth: 32,
+            width: 3,
+            height: 1,
+            planes: vec![floats.iter().flat_map(|f| f.to_be_bytes()).collect()],
+            ..Default::default()
+        };
+        for bytes in [grey.bytes(), zipped(&grey, true)] {
+            let c = read(&bytes).expect("reads");
+            assert_eq!(pixel(&c, 0), [0, 0, 0, 255]);
+            assert_eq!(pixel(&c, 1)[0], 128);
+            assert_eq!(pixel(&c, 2), [255, 255, 255, 255]);
+        }
+    }
+
+    #[test]
+    fn a_bitmap_is_black_for_one() {
+        // Ten pixels a row, so the row is two bytes and the last six bits
+        // are padding: 1010000000 on one row.
+        let bitmap = Psd {
+            mode: 0,
+            depth: 1,
+            width: 10,
+            height: 1,
+            planes: vec![vec![0b1010_0000, 0b0000_0000]],
+            ..Default::default()
+        };
+        let c = read(&bitmap.bytes()).expect("reads");
+        assert_eq!(c.rgba.len(), 10 * 4);
+        assert_eq!(pixel(&c, 0), [0, 0, 0, 255]);
+        assert_eq!(pixel(&c, 1), [255, 255, 255, 255]);
+        assert_eq!(pixel(&c, 2), [0, 0, 0, 255]);
+        assert_eq!(pixel(&c, 9), [255, 255, 255, 255]);
+        // A bitmap claiming eight bits is not one.
+        let wrong = Psd { depth: 8, ..bitmap };
+        assert!(read(&wrong.bytes()).is_err());
+    }
+
+    #[test]
+    fn lab_is_shown_as_srgb() {
+        // White, black, and a strong red: L 54, a +81, b +70 is sRGB red.
+        let lab = Psd {
+            mode: 9,
+            width: 3,
+            height: 1,
+            planes: vec![
+                vec![255, 0, (53.24 * 2.55f64).round() as u8],
+                vec![128, 128, 128 + 80],
+                vec![128, 128, 128 + 67],
+            ],
+            ..Default::default()
+        };
+        let c = read(&lab.bytes()).expect("reads");
+        let near = |a: [u8; 4], b: [u8; 4]| a.iter().zip(b).all(|(x, y)| x.abs_diff(y) <= 3);
+        assert!(
+            near(pixel(&c, 0), [255, 255, 255, 255]),
+            "{:?}",
+            pixel(&c, 0)
+        );
+        assert!(near(pixel(&c, 1), [0, 0, 0, 255]), "{:?}", pixel(&c, 1));
+        let red = pixel(&c, 2);
+        assert!(red[0] > 240 && red[1] < 30 && red[2] < 30, "{red:?}");
+    }
+
     #[test]
     fn what_it_cannot_read_it_says_so() {
         assert_eq!(read(b"GIF89a").err(), Some(Unreadable::NotPhotoshop));
-        let lab = Psd {
-            mode: 9,
+        let multichannel = Psd {
+            mode: 7,
             planes: vec![vec![0; 4]; 3],
             ..Default::default()
         };
         assert!(matches!(
-            read(&lab.bytes()),
+            read(&multichannel.bytes()),
             Err(Unreadable::Unsupported(_))
         ));
 
