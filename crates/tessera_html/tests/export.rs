@@ -415,3 +415,56 @@ fn a_document_packs_as_an_epub_a_reader_can_open() {
             .unwrap_or_else(|e| panic!("{name} is not XML: {e}\n{text}"));
     }
 }
+
+#[test]
+fn a_book_s_chapters_pack_as_one_epub_their_ids_kept_apart() {
+    use std::io::Read as _;
+    // Two chapter documents, each a heading and a paragraph with a note:
+    // alike enough that every id would collide.
+    let chapter = |words: &str| {
+        let mut doc = Document::new();
+        let heading = doc.add_paragraph_style(ParagraphStyle {
+            name: "Chapter".into(),
+            ..Default::default()
+        });
+        doc.contents.levels = vec![Level {
+            style: heading,
+            entry_style: None,
+        }];
+        let mut story = Story::new(format!(
+            "{words}\nA note{}.",
+            Marker::FootnoteReference.character()
+        ));
+        story.footnotes = vec![Story::new_footnote()];
+        story.set_paragraph_style(0..words.len(), Some(heading));
+        let story = doc.add_story(story);
+        frame_at(&mut doc, 20.0, 20.0, story);
+        doc
+    };
+    let (one, two) = (chapter("One"), chapter("Two"));
+    let bytes = tessera_html::epub::export_book(
+        &[&one, &two],
+        &tessera_html::epub::EpubOptions {
+            title: "Two Chapters".into(),
+            ..Default::default()
+        },
+    )
+    .expect("packed");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut read = |name: &str| {
+        let mut text = String::new();
+        zip.by_name(name)
+            .unwrap_or_else(|_| panic!("{name} missing"))
+            .read_to_string(&mut text)
+            .unwrap();
+        text
+    };
+    let nav = read("OEBPS/nav.xhtml");
+    assert!(nav.contains("chapter-1.xhtml#d1-h-1\">One</a>"), "{nav}");
+    assert!(nav.contains("chapter-2.xhtml#d2-h-1\">Two</a>"), "{nav}");
+    let second = read("OEBPS/chapter-2.xhtml");
+    assert!(
+        second.contains("id=\"d2-fnref-1\"") && second.contains("href=\"#d2-fn-1\""),
+        "{second}"
+    );
+}

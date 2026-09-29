@@ -40,6 +40,7 @@ impl HtmlExportWindow {
             inline_css: self.inline_css,
             ppi: self.ppi,
             images: self.images,
+            ..Default::default()
         }
     }
 }

@@ -120,7 +120,39 @@ fn media_type(name: &str) -> &'static str {
 
 /// Export `doc` as a reflowable EPUB 3, its bytes ready to be written.
 pub fn export(doc: &Document, options: &EpubOptions) -> Result<Vec<u8>, String> {
-    let rendered = render(doc, &options.content);
+    export_book(&[doc], options)
+}
+
+/// A book's chapters, in order, as one EPUB: each document's content in
+/// chapters of its own, their ids and pictures kept apart, one table of
+/// contents over all of them. The stylesheet is the first document's with
+/// the others' after it — alike when the book's styles are synchronised.
+pub fn export_book(documents: &[&Document], options: &EpubOptions) -> Result<Vec<u8>, String> {
+    let Some(doc) = documents.first().copied() else {
+        return Err("A book with no chapters has nothing to export.".to_owned());
+    };
+    let many = documents.len() > 1;
+    let mut parts: Vec<String> = Vec::new();
+    let mut rendered = crate::Rendered {
+        body: String::new(),
+        stylesheet: String::new(),
+        files: Vec::new(),
+        headings: Vec::new(),
+    };
+    for (n, chapter) in documents.iter().enumerate() {
+        let mut content = options.content.clone();
+        if many {
+            content.id_prefix = format!("d{}-", n + 1);
+        }
+        let one = render(chapter, &content);
+        // A document begins a chapter of its own, whatever its headings.
+        parts.extend(chapters(&one.body));
+        if n == 0 || !rendered.stylesheet.contains(&one.stylesheet) {
+            rendered.stylesheet.push_str(&one.stylesheet);
+        }
+        rendered.files.extend(one.files);
+        rendered.headings.extend(one.headings);
+    }
     let language = crate::text::document_language(doc);
     let title = if options.title.trim().is_empty() {
         options
@@ -137,8 +169,7 @@ pub fn export(doc: &Document, options: &EpubOptions) -> Result<Vec<u8>, String> 
         title
     };
 
-    // The chapters, and which chapter each id is in.
-    let parts = chapters(&rendered.body);
+    // Which chapter each id is in.
     let mut home: HashMap<String, String> = HashMap::new();
     for (n, part) in parts.iter().enumerate() {
         for id in ids(part) {

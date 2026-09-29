@@ -34,6 +34,9 @@ pub struct Options {
     /// How finely pictures are rendered, in pixels an inch of the page.
     pub ppi: f64,
     pub images: ImageFormat,
+    /// Put before every id and picture name the export makes: what keeps
+    /// the chapters of a book written as one EPUB from naming alike.
+    pub id_prefix: String,
 }
 
 impl Default for Options {
@@ -44,6 +47,7 @@ impl Default for Options {
             // Sharp on a high-density screen at the size the page shows it.
             ppi: 150.0,
             images: ImageFormat::Automatic,
+            id_prefix: String::new(),
         }
     }
 }

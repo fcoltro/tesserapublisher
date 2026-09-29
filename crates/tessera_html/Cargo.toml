@@ -19,4 +19,5 @@ zip.workspace = true
 
 [dev-dependencies]
 image.workspace = true
+zip.workspace = true
 roxmltree.workspace = true

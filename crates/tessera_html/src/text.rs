@@ -35,12 +35,6 @@ pub fn document_language(doc: &Document) -> String {
         .map_or_else(|| "en".to_owned(), |l| l.replace('_', "-"))
 }
 
-/// The id a text anchor goes out with, for a cross-reference or a link to
-/// point at.
-pub fn anchor_id(name: &str) -> String {
-    format!("a-{}", css::slug(name))
-}
-
 /// Writes blocks one after another, numbering footnotes through the whole
 /// document as the notes at the foot of a web page are.
 pub struct Writer<'a> {
@@ -55,6 +49,9 @@ pub struct Writer<'a> {
     pub written_headings: Vec<(usize, String, String)>,
     ppi: f64,
     images: crate::ImageFormat,
+    /// Put before every id and picture name: one chapter's from
+    /// another's, in a book written as one.
+    prefix: String,
 }
 
 impl<'a> Writer<'a> {
@@ -75,7 +72,14 @@ impl<'a> Writer<'a> {
             written_headings: Vec::new(),
             ppi: options.ppi,
             images: options.images,
+            prefix: options.id_prefix.clone(),
         }
+    }
+
+    /// The id a text anchor goes out with, for a cross-reference or a link
+    /// to point at.
+    fn anchor_id(&self, name: &str) -> String {
+        format!("{}a-{}", self.prefix, css::slug(name))
     }
 
     /// A picture's `<img>`, its file written beside the page; nothing for a
@@ -83,8 +87,9 @@ impl<'a> Writer<'a> {
     fn picture(&mut self, frame: FrameId) -> Option<String> {
         let picture = crate::pictures::picture(self.doc, frame, self.ppi, self.images)?;
         let name = format!(
-            "{}/{}-{}.{}",
+            "{}/{}{}-{}.{}",
             crate::IMAGES,
+            self.prefix,
             css::slug(&picture.stem),
             self.files.len() + 1,
             picture.extension
@@ -259,12 +264,13 @@ impl<'a> Writer<'a> {
         }
         out.push_str("<aside class=\"footnotes\">\n<ol>\n");
         for (number, note) in notes {
-            out.push_str(&format!("<li id=\"fn-{number}\" value=\"{number}\">"));
+            let p = self.prefix.clone();
+            out.push_str(&format!("<li id=\"{p}fn-{number}\" value=\"{number}\">"));
             let mut inner = String::new();
             self.paragraphs(note, None, &mut Vec::new(), Some(number), &mut inner);
             out.push_str(inner.trim_end());
             out.push_str(&format!(
-                " <a href=\"#fnref-{number}\" class=\"footnote-back\">\u{21a9}</a></li>\n"
+                " <a href=\"#{p}fnref-{number}\" class=\"footnote-back\">\u{21a9}</a></li>\n"
             ));
         }
         out.push_str("</ol>\n</aside>\n");
@@ -315,7 +321,8 @@ impl<'a> Writer<'a> {
                 .flatten();
             out.push('<');
             out.push_str(&tag);
-            let heading_id = heading.map(|_| format!("h-{}", self.written_headings.len() + 1));
+            let heading_id =
+                heading.map(|_| format!("{}h-{}", self.prefix, self.written_headings.len() + 1));
             if let Some(id) = &heading_id {
                 out.push_str(&format!(" id=\"{id}\""));
             }
@@ -393,7 +400,7 @@ impl<'a> Writer<'a> {
                 // A named destination that is a text anchor; a page has no
                 // place in a web page to go to.
                 Some(Hyperlink::Destination(name)) if anchor_exists(self.doc, name) => {
-                    Some(format!("#{}", anchor_id(name)))
+                    Some(format!("#{}", self.anchor_id(name)))
                 }
                 _ => None,
             };
@@ -427,7 +434,8 @@ impl<'a> Writer<'a> {
                         let n = self.notes_written;
                         notes.push((n, note));
                         out.push_str(&format!(
-                            "<sup class=\"footnote-ref\"><a href=\"#fn-{n}\" id=\"fnref-{n}\">{n}</a></sup>"
+                            "<sup class=\"footnote-ref\"><a href=\"#{p}fn-{n}\" id=\"{p}fnref-{n}\">{n}</a></sup>",
+                            p = self.prefix
                         ));
                     }
                     Some(Marker::FootnoteNumber) => {
@@ -442,7 +450,10 @@ impl<'a> Writer<'a> {
                             .and_then(|i| story.anchors.get(i))
                             .filter(|a| !a.name.trim().is_empty())
                         {
-                            out.push_str(&format!("<a id=\"{}\"></a>", anchor_id(&anchor.name)));
+                            out.push_str(&format!(
+                                "<a id=\"{}\"></a>",
+                                self.anchor_id(&anchor.name)
+                            ));
                         }
                     }
                     Some(Marker::CrossReference) => {
@@ -455,7 +466,7 @@ impl<'a> Writer<'a> {
                                 .unwrap_or_else(|| reference.target.clone());
                             out.push_str(&format!(
                                 "<a href=\"#{}\">{}</a>",
-                                anchor_id(&reference.target),
+                                self.anchor_id(&reference.target),
                                 escape(&reading)
                             ));
                         }
