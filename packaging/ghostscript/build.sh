@@ -7,8 +7,10 @@
 # fonts compiled in (the build's default), and FreeType, Little CMS, libjpeg,
 # libpng, zlib, OpenJPEG and jbig2dec built from the copies in Ghostscript's
 # own source tree — so it needs nothing of the machine but the C library,
-# which Homebrew's and a distribution's builds do not promise. Only the PDF
-# writer is built: converting EPS to PDF is all Tessera asks of it.
+# which Homebrew's and a distribution's builds do not promise. Its output
+# devices are Ghostscript's default set: narrowed to the PDF writer alone,
+# 10.08 does not link, since its PDF reader needs the RC4 filter, which
+# only comes in with the other devices.
 #
 # Run as a program beside Tessera, never linked into it: an EPS is a program,
 # and one that crashes or never ends costs a conversion, not the document
@@ -57,7 +59,6 @@ cd "$work/ghostscript-$version"
 # copies are what gets built in, and nothing is left to look for at run time.
 ./configure \
   --prefix="$work/installed" \
-  --with-drivers=PDFWRITE \
   --without-x \
   --disable-cups \
   --disable-gtk \
