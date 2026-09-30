@@ -1010,6 +1010,18 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
         Tool::Zoom => zoom_gesture(ui, response, rect, state),
         Tool::Measure => measure_gesture(ui, response, rect, state),
         Tool::Gap => gap_gesture(ui, response, rect, state),
+        Tool::Conveyor => {
+            if response.clicked()
+                && let Some(pos) = response.interact_pointer_pos()
+            {
+                if state.conveyor.placing {
+                    let at = doc_pos(state, rect, pos);
+                    apply(state, Command::PlaceFromConveyor { at });
+                } else if let Some(id) = frame_at(state, rect, pos) {
+                    crate::conveyor::collect(state, id);
+                }
+            }
+        }
         Tool::ColourTheme => {
             if response.clicked()
                 && let Some(pos) = response.interact_pointer_pos()
@@ -2441,6 +2453,11 @@ fn canvas_cursor(
         Tool::Eyedropper => Cursor::new(Icon::Pipette),
         Tool::Measure => Cursor::new(Icon::Crosshair),
         Tool::ColourTheme => Cursor::new(Icon::Pipette),
+        Tool::Conveyor => Cursor::new(if state.conveyor.placing {
+            Icon::Crosshair
+        } else {
+            Icon::Plus
+        }),
         // Which way the gap under the pointer moves, or the crosshair where
         // there is none.
         Tool::Gap => {
@@ -3427,6 +3444,7 @@ fn draw_gesture(
             | Tool::Measure
             | Tool::Gap
             | Tool::ColourTheme
+            | Tool::Conveyor
             | Tool::Zoom => {}
         }
     }
@@ -4158,6 +4176,29 @@ fn draw_overlays(
         );
     }
 
+    // The conveyor's next item, as a ghost under the pointer where a click
+    // would place it.
+    if state.active_tool == Tool::Conveyor
+        && state.conveyor.placing
+        && let Some((w, h)) = crate::conveyor::next_size(state)
+        && let Some(pointer) = ui.ctx().pointer_hover_pos()
+        && rect.contains(pointer)
+    {
+        let at = doc_pos(state, rect, pointer);
+        let r = doc_rect_to_screen(DocRect {
+            x: at.x,
+            y: at.y,
+            width: w,
+            height: h,
+        });
+        painter.rect_stroke(
+            r,
+            0.0,
+            Stroke::new(1.0, Theme::accent_edge()),
+            egui::StrokeKind::Middle,
+        );
+    }
+
     // The measure tool's line, with what it measures written beside it.
     if state.active_tool == Tool::Measure
         && let Some(measured) = state.measured
@@ -4649,6 +4690,54 @@ mod tests {
         let canvas = Rect::from_min_max(egui::pos2(60.0, 40.0), egui::pos2(1700.0, 1040.0));
         let inside = egui::pos2(400.0, 500.0);
         assert_eq!(on_canvas(Some(inside), canvas), Some(inside));
+    }
+
+    #[test]
+    fn the_conveyor_collects_then_places_at_the_pointer_and_moves_on() {
+        let mut state = TesseraApp::headless();
+        let page = state.current_page().expect("a page");
+        let origin = state.active().document().pages[page].bounds;
+        let r = DocRect {
+            x: origin.x + 20.0,
+            y: origin.y + 20.0,
+            width: 60.0,
+            height: 30.0,
+        };
+        apply(&mut state, Command::AddRectangle(r));
+        let id = state.active().selection.single().expect("a box");
+
+        crate::actions::run(&mut state, crate::actions::Run::PickTool(Tool::Conveyor));
+        assert!(!state.conveyor.placing, "picked up, it collects");
+        crate::conveyor::collect(&mut state, id);
+        crate::conveyor::collect(&mut state, id);
+        assert_eq!(state.conveyor.items.len(), 2);
+
+        crate::actions::run(&mut state, crate::actions::Run::PickTool(Tool::Conveyor));
+        assert!(state.conveyor.placing, "B again places");
+        let at = DocPoint {
+            x: origin.x + 200.0,
+            y: origin.y + 300.0,
+        };
+        apply(&mut state, Command::PlaceFromConveyor { at });
+        let placed = state.active().selection.single().expect("placed");
+        assert_ne!(placed, id, "a copy");
+        let b = state.active().document().frame(placed).unwrap().corners()[0];
+        assert!((b.x - at.x).abs() < 1e-6 && (b.y - at.y).abs() < 1e-6);
+        assert_eq!(
+            state.conveyor.items.len(),
+            1,
+            "and it came off the conveyor"
+        );
+
+        state.conveyor.keep = true;
+        apply(&mut state, Command::PlaceFromConveyor { at });
+        assert_eq!(state.conveyor.items.len(), 1, "kept when asked");
+        apply(&mut state, Command::Undo);
+        assert_eq!(
+            state.active().document().frames.len(),
+            2,
+            "one undo per placing"
+        );
     }
 
     #[test]

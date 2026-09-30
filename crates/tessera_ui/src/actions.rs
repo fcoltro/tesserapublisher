@@ -1507,6 +1507,12 @@ pub fn all() -> &'static [Action] {
             Group::Tool,
             PickTool(Tool::ColourTheme),
         ),
+        a(
+            "Content collector tool",
+            Some("B"),
+            Group::Tool,
+            PickTool(Tool::Conveyor),
+        ),
     ];
     LIST
 }
@@ -1694,6 +1700,12 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             }
             if tool != Tool::ColourTheme {
                 state.colour_theme = None;
+            }
+            // B while the collector is held turns it to placing and back,
+            // as it does in InDesign; picked up afresh, it collects.
+            if tool == Tool::Conveyor {
+                state.conveyor.placing =
+                    state.active_tool == Tool::Conveyor && !state.conveyor.placing;
             }
             state.active_tool = tool;
         }

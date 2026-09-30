@@ -685,6 +685,8 @@ pub struct TesseraApp {
     /// Every copied frame, so cutting four objects pastes four. Shared, so
     /// that a copy in one document pastes into another.
     pub clipboard: Vec<Clipboard>,
+    /// The content collector's conveyor. See [`crate::conveyor`].
+    pub conveyor: crate::conveyor::Conveyor,
 
     /// The command palette's own state.
     pub palette: crate::view::palette::Palette,
@@ -801,6 +803,7 @@ impl TesseraApp {
             status: None,
             job: None,
             clipboard: Vec::new(),
+            conveyor: crate::conveyor::Conveyor::default(),
             palette: crate::view::palette::Palette::default(),
             prefs: crate::prefs::Preferences::default(),
             update_check: crate::update::Check::default(),

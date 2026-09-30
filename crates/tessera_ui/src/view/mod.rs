@@ -11,6 +11,7 @@ pub mod canvas_toolbar;
 pub mod colour_theme;
 pub mod console;
 pub mod control;
+pub mod conveyor;
 pub mod cross_reference;
 pub mod data_merge;
 pub mod docks;
@@ -164,6 +165,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     table_styles::show(ui.ctx(), state);
     long_document::show(ui.ctx(), state);
     colour_theme::show(ui.ctx(), state);
+    conveyor::show(ui.ctx(), state);
     cross_reference::show(ui.ctx(), state);
     glyph::show(ui.ctx(), state);
     hyperlink::show(ui.ctx(), state);

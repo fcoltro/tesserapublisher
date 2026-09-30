@@ -242,6 +242,11 @@ pub enum Command {
         id: FrameId,
         bounds: DocRect,
     },
+    /// Lay the conveyor's next item on the page with its top left at `at`,
+    /// and take it off the conveyor unless the conveyor keeps them.
+    PlaceFromConveyor {
+        at: tessera_geometry::DocPoint,
+    },
     SetRotation {
         id: FrameId,
         degrees: f64,
@@ -1331,6 +1336,7 @@ impl Command {
             | Command::CopySelection
             | Command::CutSelection
             | Command::Paste
+            | Command::PlaceFromConveyor { .. }
             | Command::MoveSelectionInZ { .. }
             | Command::AddPathLike { .. }
             | Command::SetPath { .. }

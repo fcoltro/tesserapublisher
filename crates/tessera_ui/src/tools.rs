@@ -41,6 +41,9 @@ pub enum Tool {
     /// Pick up the colours a picture or an object is made of, as a theme to
     /// make swatches from. See [`crate::colour_theme`].
     ColourTheme,
+    /// Collect objects onto a conveyor, and — B again — place them. See
+    /// [`crate::conveyor`].
+    Conveyor,
 }
 
 /// A line the measure tool has drawn, in document points. Kept until the
@@ -117,6 +120,7 @@ impl Tool {
             Self::Measure => "Measure",
             Self::Gap => "Gap",
             Self::ColourTheme => "Colour theme",
+            Self::Conveyor => "Content collector",
         }
     }
 
@@ -139,6 +143,7 @@ impl Tool {
             Self::Measure => crate::icons::Icon::TabStop,
             Self::Gap => crate::icons::Icon::DistributeH,
             Self::ColourTheme => crate::icons::Icon::Palette,
+            Self::Conveyor => crate::icons::Icon::Plus,
         }
     }
 
@@ -186,10 +191,12 @@ impl Tool {
             // InDesign's is Shift+I, beside the eyedropper; a tool here takes
             // one key, and J is free.
             Self::ColourTheme => egui::Key::J,
+            // B, as InDesign's content collector is; B again places.
+            Self::Conveyor => egui::Key::B,
         }
     }
 
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::Select,
         Self::DirectSelect,
         Self::Rectangle,
@@ -204,6 +211,7 @@ impl Tool {
         Self::Measure,
         Self::Gap,
         Self::ColourTheme,
+        Self::Conveyor,
         Self::Hand,
         Self::Zoom,
     ];

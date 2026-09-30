@@ -193,6 +193,35 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
             }
         }
 
+        Command::PlaceFromConveyor { at } => {
+            let Some(item) = state.conveyor.items.first() else {
+                return;
+            };
+            let Some(corner) = crate::conveyor::top_left(item) else {
+                state.conveyor.items.remove(0);
+                return;
+            };
+            let (source, root) = (item.source.clone(), item.root);
+            let layer = state.default_layer();
+            let placed = state.active_mut().document_mut().import_frames(
+                &source,
+                &[root],
+                layer,
+                at.x - corner.x,
+                at.y - corner.y,
+                false,
+            );
+            match placed {
+                Ok(placed) => {
+                    state.active_mut().selection.replace_all(placed);
+                    if !state.conveyor.keep {
+                        state.conveyor.items.remove(0);
+                    }
+                }
+                Err(message) => state.status = Some(crate::app::Status::error(message)),
+            }
+        }
+
         Command::MoveSelectionInZ(how) => {
             // Order matters, and not in the obvious way. Each frame moves
             // relative to the list as it stands, so processing the wrong end

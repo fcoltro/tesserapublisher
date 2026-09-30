@@ -45,7 +45,7 @@ outright, so the target is not twenty-six.
 | Direct Selection (anchor editing) | ✅ `Tool::DirectSelect` | — | done, M1 |
 | Page tool (per-page size) | ✅ the control bar's W/H resize the current page; Properties resizes them all; a page's right or bottom edge, or its corner, drags with the select tool | — | done; drag 2026-09-17 |
 | Gap tool | ✅ `Tool::Gap`, U: the strip between frames, or between a frame and the page edge, is highlighted under the pointer and dragged to move it (both sides resize); Ctrl widens or narrows it; Shift takes only the two nearest frames. Upright frames only, as InDesign | — | done 2026-09-30 |
-| Content Collector / Placer | ✗ | — | — |
+| Content Collector / Placer | ✅ `Tool::Conveyor`, B: a click collects a snapshot copy onto the conveyor; B again places, the next item's top left at the pointer, taken off unless the conveyor keeps them. A window lists the conveyor. No linked content: a placed item is a copy, as a paste is | — | done 2026-09-30 |
 | Type | ✅ `Tool::Text` | — | done |
 | Type on a Path | ✅ Type ▸ Type on a path…; start, end, alignment and flip in the inspector; words in the story editor; no on-curve caret or drag handles | — | done 2026-09-17 |
 | Line | ✅ `Tool::Line` | — | done |

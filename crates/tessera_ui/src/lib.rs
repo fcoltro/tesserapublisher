@@ -14,6 +14,7 @@ pub mod catalogue;
 pub mod clock;
 pub mod colour_theme;
 pub mod command;
+pub mod conveyor;
 pub mod cursor;
 pub mod docking;
 pub mod file_ops;
