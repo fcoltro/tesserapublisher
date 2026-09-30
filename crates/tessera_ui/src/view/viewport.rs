@@ -988,6 +988,7 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
         Tool::Pen => pen_gesture(ui, response, rect, state),
         Tool::DirectSelect => direct_gesture(ui, response, rect, state),
         Tool::Zoom => zoom_gesture(ui, response, rect, state),
+        Tool::Measure => measure_gesture(ui, response, rect, state),
         Tool::Eyedropper => {
             if response.clicked()
                 && let Some(pos) = response.interact_pointer_pos()
@@ -2404,6 +2405,7 @@ fn canvas_cursor(
         }
         Tool::Zoom => Cursor::new(Icon::ZoomIn),
         Tool::Eyedropper => Cursor::new(Icon::Pipette),
+        Tool::Measure => Cursor::new(Icon::Crosshair),
         Tool::Polygon => Cursor::new(Icon::Crosshair),
         Tool::Scissors => Cursor::new(Icon::Crosshair),
         // The pointer over an anchor is the anchor's own business; away from
@@ -2585,6 +2587,31 @@ fn zoom_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
             local(rect, pos),
             if out { 1.0 / STEP } else { STEP },
         );
+    }
+}
+
+/// Drag to measure; a click without a drag clears the line. Shift holds it
+/// to 45 degrees, as it holds every line drawn by dragging.
+fn measure_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
+    use crate::tools::Measured;
+    if response.drag_started()
+        && let Some(pos) = press_pos(ui, response)
+    {
+        let at = doc_pos(state, rect, pos);
+        state.measured = Some(Measured { from: at, to: at });
+    }
+    if response.dragged()
+        && let Some(pos) = response.interact_pointer_pos()
+        && let Some(measured) = state.measured
+    {
+        let mut to = doc_pos(state, rect, pos);
+        if ui.input(|i| i.modifiers.shift) {
+            to = Measured::constrained(measured.from, to);
+        }
+        state.measured = Some(Measured { to, ..measured });
+    }
+    if response.clicked() {
+        state.measured = None;
     }
 }
 
@@ -3115,6 +3142,7 @@ fn draw_gesture(
             | Tool::Pen
             | Tool::Scissors
             | Tool::Eyedropper
+            | Tool::Measure
             | Tool::Zoom => {}
         }
     }
@@ -3754,6 +3782,50 @@ fn draw_overlays(
                 painter.circle_filled(hp, h * 0.4, Theme::text_muted());
             }
         }
+    }
+
+    // The measure tool's line, with what it measures written beside it.
+    if state.active_tool == Tool::Measure
+        && let Some(measured) = state.measured
+    {
+        let (a, b) = (to_screen(measured.from), to_screen(measured.to));
+        painter.line_segment([a, b], Stroke::new(1.0, Theme::accent()));
+        for end in [a, b] {
+            let arm = Theme::HANDLE_SIZE * 0.6;
+            painter.line_segment(
+                [end - egui::vec2(arm, 0.0), end + egui::vec2(arm, 0.0)],
+                Stroke::new(1.0, Theme::accent()),
+            );
+            painter.line_segment(
+                [end - egui::vec2(0.0, arm), end + egui::vec2(0.0, arm)],
+                Stroke::new(1.0, Theme::accent()),
+            );
+        }
+        let unit = state.prefs.unit;
+        let (w, h) = measured.across();
+        let said = format!(
+            "D {}   {:.1}\u{b0}\nW {}   H {}",
+            unit.format(measured.distance()),
+            measured.angle(),
+            unit.format(w.abs()),
+            unit.format(h.abs()),
+        );
+        let galley = painter.layout(
+            said,
+            egui::FontId::proportional(11.0),
+            Theme::text_primary(),
+            f32::INFINITY,
+        );
+        let at = b + egui::vec2(10.0, 10.0);
+        let back = Rect::from_min_size(at, galley.size()).expand(4.0);
+        painter.rect_filled(back, 3.0, Theme::panel_bg_solid());
+        painter.rect_stroke(
+            back,
+            3.0,
+            Stroke::new(1.0, Theme::border()),
+            egui::StrokeKind::Inside,
+        );
+        painter.galley(at, galley, Theme::text_primary());
     }
 
     // The gesture in progress.

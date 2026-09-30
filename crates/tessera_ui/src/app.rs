@@ -593,6 +593,8 @@ pub struct TesseraApp {
     pub glyphs: crate::view::glyphs::GlyphsPanel,
     /// What the eyedropper picked up, while it is the tool.
     pub eyedropper: Option<crate::tools::Sampled>,
+    /// The measure tool's line, while the tool is held.
+    pub measured: Option<crate::tools::Measured>,
     /// The Book panel: the chapters of a publication, and the book file.
     pub book: crate::view::book::BookPanel,
 
@@ -775,6 +777,7 @@ impl TesseraApp {
             console: crate::view::console::Console::default(),
             glyphs: crate::view::glyphs::GlyphsPanel::default(),
             eyedropper: None,
+            measured: None,
             book: crate::view::book::BookPanel::default(),
             persists: false,
             editing_master: None,

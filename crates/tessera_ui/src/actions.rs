@@ -1465,6 +1465,12 @@ pub fn all() -> &'static [Action] {
             Group::Tool,
             PickTool(Tool::Eyedropper),
         ),
+        a(
+            "Measure tool",
+            Some("K"),
+            Group::Tool,
+            PickTool(Tool::Measure),
+        ),
     ];
     LIST
 }
@@ -1642,6 +1648,9 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             // for the objects it was pointed at, not for next week.
             if tool != Tool::Eyedropper {
                 state.eyedropper = None;
+            }
+            if tool != Tool::Measure {
+                state.measured = None;
             }
             state.active_tool = tool;
         }

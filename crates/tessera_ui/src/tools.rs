@@ -32,6 +32,54 @@ pub enum Tool {
     Zoom,
     /// Pick an object's appearance up, and put it on others.
     Eyedropper,
+    /// Drag a line to read how far, and at what angle, one place is from
+    /// another. Draws nothing in the document.
+    Measure,
+}
+
+/// A line the measure tool has drawn, in document points. Kept until the
+/// tool is put down, so it can be read after the drag is over.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Measured {
+    pub from: DocPoint,
+    pub to: DocPoint,
+}
+
+impl Measured {
+    /// How far apart the two ends are, in points.
+    pub fn distance(&self) -> f64 {
+        let (w, h) = self.across();
+        w.hypot(h)
+    }
+
+    /// The run and the rise: how far across and how far down.
+    pub fn across(&self) -> (f64, f64) {
+        (self.to.x - self.from.x, self.to.y - self.from.y)
+    }
+
+    /// The line's angle in degrees, **counter-clockwise** from pointing
+    /// right, as InDesign's Info panel reads it: up the page is positive,
+    /// although the document's y axis points down.
+    pub fn angle(&self) -> f64 {
+        let (w, h) = self.across();
+        if w == 0.0 && h == 0.0 {
+            return 0.0;
+        }
+        (-h).atan2(w).to_degrees()
+    }
+
+    /// `to`, held to the nearest multiple of 45 degrees from `from`, at the
+    /// same distance: what Shift does to every line-drawing gesture.
+    pub fn constrained(from: DocPoint, to: DocPoint) -> DocPoint {
+        let (w, h) = (to.x - from.x, to.y - from.y);
+        let length = w.hypot(h);
+        let step = std::f64::consts::FRAC_PI_4;
+        let angle = (h.atan2(w) / step).round() * step;
+        DocPoint {
+            x: from.x + length * angle.cos(),
+            y: from.y + length * angle.sin(),
+        }
+    }
 }
 
 /// What the eyedropper is carrying: an object's appearance, with its
@@ -60,6 +108,7 @@ impl Tool {
             Self::Hand => "Hand",
             Self::Zoom => "Zoom",
             Self::Eyedropper => "Eyedropper",
+            Self::Measure => "Measure",
         }
     }
 
@@ -78,6 +127,8 @@ impl Tool {
             Self::Hand => crate::icons::Icon::Hand,
             Self::Zoom => crate::icons::Icon::ZoomIn,
             Self::Eyedropper => crate::icons::Icon::Pipette,
+            // The ruler the tab stops wear: the same object, measuring.
+            Self::Measure => crate::icons::Icon::TabStop,
         }
     }
 
@@ -118,10 +169,12 @@ impl Tool {
             Self::Zoom => egui::Key::Z,
             // I, as InDesign's eyedropper is.
             Self::Eyedropper => egui::Key::I,
+            // K, as InDesign's measure tool is.
+            Self::Measure => egui::Key::K,
         }
     }
 
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Select,
         Self::DirectSelect,
         Self::Rectangle,
@@ -133,6 +186,7 @@ impl Tool {
         Self::Polygon,
         Self::Scissors,
         Self::Eyedropper,
+        Self::Measure,
         Self::Hand,
         Self::Zoom,
     ];
@@ -368,6 +422,47 @@ impl Drag {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn at(x: f64, y: f64) -> DocPoint {
+        DocPoint { x, y }
+    }
+
+    #[test]
+    fn a_measured_line_reads_its_length_and_its_run_and_rise() {
+        let m = Measured {
+            from: at(10.0, 10.0),
+            to: at(40.0, 50.0),
+        };
+        assert_eq!(m.distance(), 50.0);
+        assert_eq!(m.across(), (30.0, 40.0));
+    }
+
+    #[test]
+    fn up_the_page_is_a_positive_angle_as_in_indesign() {
+        // The document's y runs down; the reading does not.
+        let up = Measured {
+            from: at(0.0, 0.0),
+            to: at(10.0, -10.0),
+        };
+        assert!((up.angle() - 45.0).abs() < 1e-9);
+        let down = Measured {
+            from: at(0.0, 0.0),
+            to: at(10.0, 10.0),
+        };
+        assert!((down.angle() + 45.0).abs() < 1e-9);
+        let nothing = Measured {
+            from: at(3.0, 3.0),
+            to: at(3.0, 3.0),
+        };
+        assert_eq!(nothing.angle(), 0.0);
+    }
+
+    #[test]
+    fn shift_holds_a_measure_to_forty_five_degrees_at_the_same_length() {
+        let held = Measured::constrained(at(0.0, 0.0), at(100.0, 8.0));
+        assert!(held.y.abs() < 1e-9, "nearly flat snaps flat: {held:?}");
+        assert!((held.x - 100.0f64.hypot(8.0)).abs() < 1e-9);
+    }
 
     #[test]
     fn dragging_down_right_yields_the_expected_rectangle() {

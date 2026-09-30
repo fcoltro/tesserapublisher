@@ -63,7 +63,7 @@ outright, so the target is not twenty-six.
 | Note | ✗ | — | — |
 | Eyedropper | ✅ `Tool::Eyedropper`, I: picks up fill, stroke, blend, shadow, corners and a text frame's type; puts them down as one undo; Alt-click picks up afresh | — | done 2026-09-17 |
 | Color Theme | ✗ | — | — |
-| Measure | ✗ | view | — |
+| Measure | ✅ `Tool::Measure`, K: drag a line to read its distance, angle (counter-clockwise, as InDesign) and run and rise in the chosen unit; Shift holds it to 45°; a click clears it | — | done 2026-09-30 |
 | Hand | ✅ `Tool::Hand` | — | done |
 | Zoom | ✅ `Tool::Zoom` | — | done, M1 |
 | Fill / stroke proxy, swap, default, none | ✅ | — | done, M1.5 C5 |
