@@ -47,12 +47,12 @@ outright, so the target is not twenty-six.
 | Gap tool | ✅ `Tool::Gap`, U: the strip between frames, or between a frame and the page edge, is highlighted under the pointer and dragged to move it (both sides resize); Ctrl widens or narrows it; Shift takes only the two nearest frames. Upright frames only, as InDesign | — | done 2026-09-30 |
 | Content Collector / Placer | ✅ `Tool::Conveyor`, B: a click collects a snapshot copy onto the conveyor; B again places, the next item's top left at the pointer, taken off unless the conveyor keeps them. A window lists the conveyor. No linked content: a placed item is a copy, as a paste is | — | done 2026-09-30 |
 | Type | ✅ `Tool::Text` | — | done |
-| Type on a Path | ✅ Type ▸ Type on a path…; start, end, alignment and flip in the inspector; words in the story editor; no on-curve caret or drag handles | — | done 2026-09-17 |
+| Type on a Path | ✅ Type ▸ Type on a path…; start, end, alignment and flip in the inspector; start, end and centre brackets dragged on the path; a caret on the curve where it is clicked; words in the story editor | — | done 2026-09-17 |
 | Line | ✅ `Tool::Line` | — | done |
 | Pen | ✅ `Tool::Pen` | — | done |
 | Add / Delete Anchor Point | ✅ | — | done, M1 |
 | Convert Direction Point | ✅ | — | done, M1 |
-| Pencil / Smooth / Erase | ✗ — the Pen is the drawing tool | view | — |
+| Pencil / Smooth / Erase | ✅ `Tool::Pencil` N: a freehand stroke thinned (Ramer–Douglas–Peucker) and drawn through as a smooth curve; `Tool::Smooth` S: the anchors a brush passes over made smooth, the rest untouched; `Tool::Erase` E: the segments a brush touches taken out, a closed path opened. Each stroke is one undo step | — | done 2026-09-30 |
 | Rectangle, Ellipse | ✅ | — | done |
 | Polygon | ✅ `Tool::Polygon` | — | done, M1 |
 | Rectangle **Frame** (graphic placeholder) | ✅ `Tool::Graphic`, `FrameKind::Graphic` | — | done, M5 |

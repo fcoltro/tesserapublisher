@@ -3648,6 +3648,28 @@ below are its items 1 to 3.
   GPL-3.0, run as a program of its own, never linked), caching the PDF it makes; every reader of placed
   files takes that PDF when there is one and the preview when not.
 
+### The parity table's last gaps — 2026-09-30
+
+Every row of `docs/INDESIGN-PARITY.md` still marked ✗ that InDesign has
+and nothing refused covers, built in one day, each pushed on its own with
+its tests. By test; **the hand check is owed** for all of them, in Tier 5's
+Windows pass.
+
+- [x] **Gradient feather** — opacity stops on the fill's own ramp; screen,
+  PDF soft mask, IDML, object styles. Format 45.
+- [x] **Measure tool** (K).
+- [x] **Notes** — Type ▸ Notes, amber flags on the canvas, IDML. Format 46.
+- [x] **Gap tool** (U).
+- [x] **Adjust layout** — Layout ▸ Adjust layout, or the preference.
+- [x] **Colour theme tool** (J).
+- [x] **Content collector and placer** (B, B again).
+- [x] **Pencil, smooth and erase** (N, S, E).
+
+Also that day: the toolchain is pinned to an exact Rust (1.98.1) in
+`rust-toolchain.toml` and both workflows, which is what CI had been failing
+on since 2026-09-28; keyring 4 is linked through `keyring-core`; and a
+links-panel test that raced on macOS CI has a folder of its own.
+
 ## Platforms — once every feature is built
 
 ### Tier 5 — checking by hand, Windows first
