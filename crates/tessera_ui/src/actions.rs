@@ -1501,6 +1501,12 @@ pub fn all() -> &'static [Action] {
             PickTool(Tool::Measure),
         ),
         a("Gap tool", Some("U"), Group::Tool, PickTool(Tool::Gap)),
+        a(
+            "Colour theme tool",
+            Some("J"),
+            Group::Tool,
+            PickTool(Tool::ColourTheme),
+        ),
     ];
     LIST
 }
@@ -1685,6 +1691,9 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             }
             if tool != Tool::Measure {
                 state.measured = None;
+            }
+            if tool != Tool::ColourTheme {
+                state.colour_theme = None;
             }
             state.active_tool = tool;
         }

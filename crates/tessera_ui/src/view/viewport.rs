@@ -1010,6 +1010,13 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
         Tool::Zoom => zoom_gesture(ui, response, rect, state),
         Tool::Measure => measure_gesture(ui, response, rect, state),
         Tool::Gap => gap_gesture(ui, response, rect, state),
+        Tool::ColourTheme => {
+            if response.clicked()
+                && let Some(pos) = response.interact_pointer_pos()
+            {
+                colour_theme_click(state, rect, pos);
+            }
+        }
         Tool::Eyedropper => {
             if response.clicked()
                 && let Some(pos) = response.interact_pointer_pos()
@@ -2433,6 +2440,7 @@ fn canvas_cursor(
         Tool::Zoom => Cursor::new(Icon::ZoomIn),
         Tool::Eyedropper => Cursor::new(Icon::Pipette),
         Tool::Measure => Cursor::new(Icon::Crosshair),
+        Tool::ColourTheme => Cursor::new(Icon::Pipette),
         // Which way the gap under the pointer moves, or the crosshair where
         // there is none.
         Tool::Gap => {
@@ -3418,6 +3426,7 @@ fn draw_gesture(
             | Tool::Eyedropper
             | Tool::Measure
             | Tool::Gap
+            | Tool::ColourTheme
             | Tool::Zoom => {}
         }
     }
@@ -3480,6 +3489,79 @@ pub(crate) fn eyedropper_click(state: &mut TesseraApp, rect: Rect, pos: egui::Po
                 "picked up: click an object to give it this appearance; Alt-click to pick up another",
             ));
         }
+    }
+}
+
+/// Pick up the colour theme of what is under the pointer: a picture's most
+/// common colours, or the colours an object is painted in. A click on
+/// nothing puts the theme down.
+pub(crate) fn colour_theme_click(state: &mut TesseraApp, rect: Rect, pos: egui::Pos2) {
+    use tessera_color::Color;
+    use tessera_document::nodes::FrameKind;
+    let Some(id) = frame_at(state, rect, pos) else {
+        state.colour_theme = None;
+        return;
+    };
+    let doc = state.active().document();
+    let Some(frame) = doc.frame(id) else {
+        return;
+    };
+    let picture = match &frame.kind {
+        FrameKind::Graphic {
+            placed: Some(placed),
+            ..
+        } => doc.links.get(placed.link).map(|l| l.path.clone()),
+        _ => None,
+    };
+    let picked = if let Some(path) = picture {
+        let name = path.file_stem().map_or_else(
+            || "Picture".to_string(),
+            |s| s.to_string_lossy().into_owned(),
+        );
+        let Some(decoded) = state.images.at_size(&path, Some(256)) else {
+            state.status = Some(crate::app::Status::info(
+                "the picture's file cannot be read, so it has no colours to take",
+            ));
+            return;
+        };
+        let colours = crate::colour_theme::from_pixels(decoded.image.data.data())
+            .into_iter()
+            .map(|[r, g, b]| Color::Rgb { r, g, b, a: 1.0 })
+            .collect();
+        crate::colour_theme::Picked { name, colours }
+    } else {
+        let mut colours: Vec<Color> = frame.fill.colours();
+        if let Some(stroke) = &frame.stroke {
+            colours.push(stroke.color.clone());
+        }
+        if let FrameKind::Text { story, .. } = &frame.kind
+            && let Some(story) = doc.story(*story)
+        {
+            for run in &story.runs {
+                if let Some(c) = story.resolve_run(run, doc).colour {
+                    colours.push(c);
+                }
+            }
+        }
+        if let Some(shadow) = &frame.shadow {
+            colours.push(shadow.colour.clone());
+        }
+        let colours: Vec<Color> = colours.iter().map(|c| doc.resolve_colour(c)).collect();
+        crate::colour_theme::Picked {
+            name: frame_kind_name(&frame.kind).to_string(),
+            colours: crate::colour_theme::from_colours(&colours),
+        }
+    };
+    state.colour_theme = Some(picked);
+}
+
+/// What an object is called when a theme is named after it.
+fn frame_kind_name(kind: &tessera_document::nodes::FrameKind) -> &'static str {
+    use tessera_document::nodes::FrameKind;
+    match kind {
+        FrameKind::Text { .. } => "Text",
+        FrameKind::Graphic { .. } => "Picture",
+        _ => "Object",
     }
 }
 
@@ -4567,6 +4649,66 @@ mod tests {
         let canvas = Rect::from_min_max(egui::pos2(60.0, 40.0), egui::pos2(1700.0, 1040.0));
         let inside = egui::pos2(400.0, 500.0);
         assert_eq!(on_canvas(Some(inside), canvas), Some(inside));
+    }
+
+    #[test]
+    fn the_colour_theme_of_an_object_is_its_colours_and_a_click_on_nothing_drops_it() {
+        use tessera_color::Color;
+        use tessera_document::nodes::Stroke;
+        let mut state = TesseraApp::headless();
+        let canvas = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 800.0));
+        let page = state.current_page().expect("a page");
+        let origin = state.active().document().pages[page].bounds;
+        let r = DocRect {
+            x: origin.x + 20.0,
+            y: origin.y + 20.0,
+            width: 100.0,
+            height: 100.0,
+        };
+        apply(&mut state, Command::AddRectangle(r));
+        let id = state.active().selection.single().expect("a box");
+        let red = Color::Rgb {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        };
+        apply(
+            &mut state,
+            Command::SetFill {
+                id,
+                paint: Paint::Solid(red.clone()),
+            },
+        );
+        apply(
+            &mut state,
+            Command::SetStroke {
+                id,
+                stroke: Some(Stroke::new(Color::BLACK, 2.0)),
+            },
+        );
+        let on_box = to_screen_pos(
+            &state,
+            canvas,
+            DocPoint {
+                x: r.x + 50.0,
+                y: r.y + 50.0,
+            },
+        );
+        colour_theme_click(&mut state, canvas, on_box);
+        let picked = state.colour_theme.clone().expect("a theme");
+        assert_eq!(picked.colours, vec![red, Color::BLACK]);
+
+        let off = to_screen_pos(
+            &state,
+            canvas,
+            DocPoint {
+                x: origin.x + 400.0,
+                y: origin.y + 400.0,
+            },
+        );
+        colour_theme_click(&mut state, canvas, off);
+        assert!(state.colour_theme.is_none());
     }
 
     #[test]

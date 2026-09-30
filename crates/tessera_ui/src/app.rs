@@ -596,6 +596,8 @@ pub struct TesseraApp {
     pub eyedropper: Option<crate::tools::Sampled>,
     /// The measure tool's line, while the tool is held.
     pub measured: Option<crate::tools::Measured>,
+    /// The colour theme tool's last pick, shown in its window.
+    pub colour_theme: Option<crate::colour_theme::Picked>,
     /// The Book panel: the chapters of a publication, and the book file.
     pub book: crate::view::book::BookPanel,
 
@@ -780,6 +782,7 @@ impl TesseraApp {
             glyphs: crate::view::glyphs::GlyphsPanel::default(),
             eyedropper: None,
             measured: None,
+            colour_theme: None,
             book: crate::view::book::BookPanel::default(),
             persists: false,
             editing_master: None,

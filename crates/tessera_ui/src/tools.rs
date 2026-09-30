@@ -38,6 +38,9 @@ pub enum Tool {
     /// Take hold of the space between objects and move it, or widen it.
     /// See [`crate::gap`].
     Gap,
+    /// Pick up the colours a picture or an object is made of, as a theme to
+    /// make swatches from. See [`crate::colour_theme`].
+    ColourTheme,
 }
 
 /// A line the measure tool has drawn, in document points. Kept until the
@@ -113,6 +116,7 @@ impl Tool {
             Self::Eyedropper => "Eyedropper",
             Self::Measure => "Measure",
             Self::Gap => "Gap",
+            Self::ColourTheme => "Colour theme",
         }
     }
 
@@ -134,6 +138,7 @@ impl Tool {
             // The ruler the tab stops wear: the same object, measuring.
             Self::Measure => crate::icons::Icon::TabStop,
             Self::Gap => crate::icons::Icon::DistributeH,
+            Self::ColourTheme => crate::icons::Icon::Palette,
         }
     }
 
@@ -178,10 +183,13 @@ impl Tool {
             Self::Measure => egui::Key::K,
             // U, as InDesign's gap tool is.
             Self::Gap => egui::Key::U,
+            // InDesign's is Shift+I, beside the eyedropper; a tool here takes
+            // one key, and J is free.
+            Self::ColourTheme => egui::Key::J,
         }
     }
 
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Select,
         Self::DirectSelect,
         Self::Rectangle,
@@ -195,6 +203,7 @@ impl Tool {
         Self::Eyedropper,
         Self::Measure,
         Self::Gap,
+        Self::ColourTheme,
         Self::Hand,
         Self::Zoom,
     ];

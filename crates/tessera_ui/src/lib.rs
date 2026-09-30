@@ -12,6 +12,7 @@ pub mod book_ops;
 pub mod camera;
 pub mod catalogue;
 pub mod clock;
+pub mod colour_theme;
 pub mod command;
 pub mod cursor;
 pub mod docking;
