@@ -46,6 +46,7 @@ fn frame(bounds: DocRect, kind: FrameKind) -> Frame {
         blend: Default::default(),
         corners: Default::default(),
         shadow: None,
+        feather: None,
         anchor: None,
         style: None,
         hidden: false,

@@ -3056,6 +3056,7 @@ impl Document {
             blend: crate::blending::Blending::PLAIN,
             corners: crate::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -3289,6 +3290,9 @@ fn write_format(frame: &mut Frame, format: &crate::object_style::ObjectFormat) {
     if let Some(shadow) = &format.shadow {
         frame.shadow = shadow.clone();
     }
+    if let Some(feather) = &format.feather {
+        frame.feather = feather.clone();
+    }
     if let Some(wrap) = &format.wrap {
         frame.wrap = *wrap;
     }
@@ -3323,6 +3327,11 @@ fn differences(
         && frame.shadow != *shadow
     {
         out.shadow = Some(frame.shadow.clone());
+    }
+    if let Some(feather) = &format.feather
+        && frame.feather != *feather
+    {
+        out.feather = Some(frame.feather.clone());
     }
     if let Some(wrap) = &format.wrap
         && frame.wrap != *wrap
@@ -3365,6 +3374,12 @@ fn cascade(
         && let Some(new) = &now.shadow
     {
         frame.shadow = new.clone();
+    }
+    if let Some(old) = &was.feather
+        && frame.feather == *old
+        && let Some(new) = &now.feather
+    {
+        frame.feather = new.clone();
     }
     if let Some(old) = &was.wrap
         && frame.wrap == *old
@@ -3617,6 +3632,7 @@ mod tests {
                     blend: crate::blending::Blending::PLAIN,
                     corners: crate::corners::Corners::SQUARE,
                     shadow: None,
+                    feather: None,
                     anchor: Some(Anchored::new(story, index)),
                     style: None,
                     hidden: false,
@@ -3714,6 +3730,7 @@ mod tests {
                 blend: crate::blending::Blending::PLAIN,
                 corners: crate::corners::Corners::SQUARE,
                 shadow: None,
+                feather: None,
                 anchor: None,
                 style: None,
                 hidden: false,
@@ -3983,6 +4000,7 @@ mod tests {
             blend: crate::blending::Blending::PLAIN,
             corners: crate::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -4212,6 +4230,7 @@ mod tests {
             blend: crate::blending::Blending::PLAIN,
             corners: crate::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -4284,6 +4303,7 @@ mod tests {
             blend: crate::blending::Blending::PLAIN,
             corners: crate::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -4313,6 +4333,7 @@ mod tests {
             blend: crate::blending::Blending::PLAIN,
             corners: crate::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,

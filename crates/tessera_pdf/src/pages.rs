@@ -295,6 +295,7 @@ mod tests {
             spread_area: None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            feather: None,
             kind: ResolvedKind::Rectangle {
                 fill: tessera_document::paint::Paint::default(),
                 stroke: None,

@@ -404,6 +404,7 @@ pub(crate) fn object(
                 ))),
                 blend: Some(tessera_document::blending::Blending::PLAIN),
                 shadow: Some(None),
+                feather: Some(None),
                 wrap: Some(TextWrap::None),
             },
             false,

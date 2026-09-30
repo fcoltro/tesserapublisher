@@ -53,6 +53,7 @@ fn one(kind: ResolvedKind, bounds: DocRect) -> ResolvedDocument {
             spread_area: None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            feather: None,
             bounds,
             kind,
         }],
@@ -201,6 +202,7 @@ fn hyperlinks_become_link_annotations_on_the_page_they_land_on() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -383,6 +385,7 @@ fn several_items_all_reach_the_content_stream() {
                 spread_area: None,
                 blend: tessera_document::blending::Blending::PLAIN,
                 shadow: None,
+                feather: None,
                 bounds: rect(10.0, 10.0, 50.0, 50.0),
                 kind: ResolvedKind::Rectangle {
                     outline: None,
@@ -398,6 +401,7 @@ fn several_items_all_reach_the_content_stream() {
                 spread_area: None,
                 blend: tessera_document::blending::Blending::PLAIN,
                 shadow: None,
+                feather: None,
                 bounds: rect(100.0, 100.0, 80.0, 40.0),
                 kind: ResolvedKind::Ellipse {
                     fill: Paint::Solid(Color::BLACK),
@@ -412,6 +416,7 @@ fn several_items_all_reach_the_content_stream() {
                 spread_area: None,
                 blend: tessera_document::blending::Blending::PLAIN,
                 shadow: None,
+                feather: None,
                 bounds: rect(20.0, 300.0, 400.0, 40.0),
                 kind: ResolvedKind::Text {
                     shaped,
@@ -1075,6 +1080,7 @@ fn one_file_placed_twice_is_embedded_once() {
         spread_area: None,
         blend: tessera_document::blending::Blending::PLAIN,
         shadow: None,
+        feather: None,
         bounds,
         kind: placed(Some(source)),
     };
@@ -1512,6 +1518,46 @@ fn a_document_with_no_shadows_carries_no_masks() {
     assert!(!text.contains("/Sh0 Do"));
 }
 
+// --- gradient feather -------------------------------------------------------
+
+#[test]
+fn a_gradient_feather_masks_the_object_it_fades() {
+    // A soft mask set before the shape is drawn, so everything the object
+    // paints passes through it — the fade is of the object, not of its fill.
+    let mut doc = black_rect(rect(60.0, 60.0, 80.0, 40.0));
+    doc.items[0].feather = Some(tessera_document::feather::GradientFeather::default());
+
+    let bytes = tessera_pdf::export(&doc).expect("export");
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("/SMask"), "the feather carries no soft mask");
+    assert!(
+        text.contains("/Luminosity"),
+        "the mask is not read by luminosity"
+    );
+    let set_at = text.find("/Feather0 gs").expect("the feather is never set");
+    let fill_at = text.find("60 692 80 40 re").expect("the rectangle");
+    assert!(
+        set_at < fill_at,
+        "the shape was drawn before its feather was set"
+    );
+}
+
+#[test]
+fn a_feather_is_set_after_the_shadow_so_the_shadow_is_not_faded() {
+    // The object fades, not the light it blocks.
+    let mut doc = with_shadow(
+        black_rect(rect(60.0, 60.0, 80.0, 40.0)),
+        tessera_document::shadow::Shadow::TYPICAL,
+    );
+    doc.items[0].feather = Some(tessera_document::feather::GradientFeather::default());
+
+    let bytes = tessera_pdf::export(&doc).expect("export");
+    let text = String::from_utf8_lossy(&bytes);
+    let shadow_at = text.find("/Sh0 Do").expect("the shadow");
+    let feather_at = text.find("/Feather0 gs").expect("the feather");
+    assert!(shadow_at < feather_at);
+}
+
 #[test]
 fn a_hard_shadow_still_gets_written() {
     // Zero blur is a real thing to want rather than a degenerate case.
@@ -1595,6 +1641,7 @@ fn one_ink_used_twice_is_one_plate() {
         spread_area: None,
         blend: tessera_document::blending::Blending::PLAIN,
         shadow: None,
+        feather: None,
         bounds,
         kind: ResolvedKind::Rectangle {
             outline: None,

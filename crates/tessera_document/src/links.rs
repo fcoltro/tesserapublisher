@@ -279,6 +279,7 @@ mod tests {
                 blend: crate::blending::Blending::PLAIN,
                 corners: crate::corners::Corners::SQUARE,
                 shadow: None,
+                feather: None,
                 anchor: None,
                 style: None,
                 hidden: false,

@@ -608,6 +608,14 @@ pub enum Command {
         shadow: Option<tessera_document::shadow::Shadow>,
     },
 
+    /// Turn an object's gradient feather on, off, or change it. One command
+    /// for the whole ramp, as the shadow's is, so that dragging a stop is one
+    /// undo step and not one per frame of the drag.
+    SetFeather {
+        id: FrameId,
+        feather: Option<tessera_document::feather::GradientFeather>,
+    },
+
     /// Set how text runs around an object.
     SetTextWrap {
         id: FrameId,
@@ -1417,6 +1425,7 @@ impl Command {
             | Command::ApplyAppearance { .. }
             | Command::SetBlending { .. }
             | Command::SetShadow { .. }
+            | Command::SetFeather { .. }
             | Command::SetOutputIntent { .. }
             | Command::SetSwatch { .. }
             | Command::EditSwatch { .. }
@@ -1728,6 +1737,7 @@ fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, look: Look) {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -3663,6 +3673,7 @@ mod tests {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -5270,6 +5281,7 @@ mod tests {
                 blend: tessera_document::blending::Blending::PLAIN,
                 corners: tessera_document::corners::Corners::SQUARE,
                 shadow: None,
+                feather: None,
                 anchor: None,
                 style: None,
                 hidden: false,
@@ -5624,6 +5636,7 @@ mod tests {
                 blend: tessera_document::blending::Blending::PLAIN,
                 corners: tessera_document::corners::Corners::SQUARE,
                 shadow: None,
+                feather: None,
                 anchor: None,
                 style: None,
                 hidden: false,

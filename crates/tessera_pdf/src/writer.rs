@@ -382,6 +382,7 @@ fn uses_transparency(resolved: &ResolvedDocument) -> bool {
     resolved.items.iter().any(|item| {
         !item.blend.is_plain()
             || item.shadow.is_some()
+            || item.feather.is_some()
             || has_gradient_alpha(&item.kind)
             || item_colours(&item.kind)
                 .iter()
@@ -618,6 +619,7 @@ fn write(
         let page = resolved_page.bounds;
         let content_id = alloc();
         let shadings = collect_shadings(resolved, page, &mut alloc, &ink);
+        let feathers = collect_feathers(resolved, page, &mut alloc);
         let content = build_content(
             resolved,
             &Written {
@@ -625,6 +627,7 @@ fn write(
                 fonts: &fonts,
                 states: &states,
                 shadings: &shadings,
+                feathers: &feathers,
                 pictures: &pictures,
                 shadows: &shadows,
                 plates: &plates,
@@ -679,7 +682,10 @@ fn write(
             font_dict.pair(Name(font.resource.as_bytes()), font.font_ref);
         }
         font_dict.finish();
-        if !states.is_empty() || shadings.iter().flatten().any(|sh| sh.mask.is_some()) {
+        if !states.is_empty()
+            || shadings.iter().flatten().any(|sh| sh.mask.is_some())
+            || feathers.iter().any(Option::is_some)
+        {
             let mut state_dict = resources.ext_g_states();
             for state in &states {
                 state_dict.pair(Name(state.resource.as_bytes()), state.id);
@@ -687,6 +693,9 @@ fn write(
             for shading in shadings.iter().flatten().filter(|sh| sh.mask.is_some()) {
                 let mask = shading.mask.as_ref().expect("filtered mask");
                 state_dict.pair(Name(mask.resource.as_bytes()), mask.state);
+            }
+            for feather in feathers.iter().flatten() {
+                state_dict.pair(Name(feather.resource.as_bytes()), feather.state);
             }
             state_dict.finish();
         }
@@ -733,6 +742,9 @@ fn write(
         }
         for shading in shadings.iter().flatten() {
             write_shading(&mut pdf, shading, &ink);
+        }
+        for feather in feathers.iter().flatten() {
+            write_mask(&mut pdf, feather, &ink);
         }
     }
 
@@ -1541,27 +1553,104 @@ fn write_shading(pdf: &mut Pdf, shading: &Shading, ink: &Ink) {
         .function(shading.join.unwrap_or(shading.pieces[0]));
     written.finish();
     if let Some(mask) = &shading.mask {
-        write_shading(pdf, &mask.shading, ink);
-        let mut content = Content::new();
-        content.shading(Name(b"Alpha"));
-        let bytes = content.finish();
-        let mut form = pdf.form_xobject(mask.form, &bytes);
-        form.bbox(mask.bounds);
-        form.resources()
-            .shadings()
-            .pair(Name(b"Alpha"), mask.shading.id);
-        let mut group = form.group();
-        group.transparency().isolated(true);
-        group.color_space().device_gray();
-        group.finish();
-        form.finish();
-        let mut state = pdf.indirect(mask.state).start::<ExtGraphicsState>();
-        state
-            .soft_mask()
-            .subtype(pdf_writer::types::MaskType::Luminosity)
-            .group(mask.form);
-        state.finish();
+        write_mask(pdf, mask, ink);
     }
+}
+
+/// A luminosity soft mask: a form painting a grey ramp, and the graphics
+/// state that makes it the mask. White keeps what is painted under it and
+/// black removes it.
+fn write_mask(pdf: &mut Pdf, mask: &GradientMask, ink: &Ink) {
+    write_shading(pdf, &mask.shading, ink);
+    let mut content = Content::new();
+    content.shading(Name(b"Alpha"));
+    let bytes = content.finish();
+    let mut form = pdf.form_xobject(mask.form, &bytes);
+    form.bbox(mask.bounds);
+    form.resources()
+        .shadings()
+        .pair(Name(b"Alpha"), mask.shading.id);
+    let mut group = form.group();
+    group.transparency().isolated(true);
+    group.color_space().device_gray();
+    group.finish();
+    form.finish();
+    let mut state = pdf.indirect(mask.state).start::<ExtGraphicsState>();
+    state
+        .soft_mask()
+        .subtype(pdf_writer::types::MaskType::Luminosity)
+        .group(mask.form);
+    state.finish();
+}
+
+/// A soft mask for each item with a gradient feather, `None` for the rest,
+/// by item index as the shadows are.
+///
+/// The ramp is the fill's own geometry on the frame's bounds, written in the
+/// same flipped page space the object's shapes are, and set while the
+/// object's own `cm` is in force, so the mask is carried by the transform
+/// that carries the object. The form's box reaches well past the bounds: a
+/// soft mask is black outside its box, and a box drawn tight to the frame
+/// would cut away a stroke centred on its edge.
+fn collect_feathers(
+    resolved: &ResolvedDocument,
+    page: DocRect,
+    alloc: &mut impl FnMut() -> Ref,
+) -> Vec<Option<GradientMask>> {
+    let flip = |y: f64| to_pdf_y(page, y, 0.0) as f32;
+    resolved
+        .items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let feather = item.feather.as_ref()?;
+            let gradient = feather.as_gradient();
+            let (from, to) = gradient.axis(item.bounds);
+            let axial = matches!(gradient.ramp, tessera_document::paint::Ramp::Linear { .. });
+            let coords = if axial {
+                vec![from.x as f32, flip(from.y), to.x as f32, flip(to.y)]
+            } else {
+                vec![
+                    from.x as f32,
+                    flip(from.y),
+                    0.0,
+                    from.x as f32,
+                    flip(from.y),
+                    gradient.radius(item.bounds) as f32,
+                ]
+            };
+            let count = feather.stops().len().saturating_sub(1);
+            let b = item.bounds;
+            let reach = b.width.max(b.height) as f32 + 72.0;
+            Some(GradientMask {
+                resource: format!("Feather{index}"),
+                state: alloc(),
+                form: alloc(),
+                bounds: Rect::new(
+                    b.x as f32 - reach,
+                    flip(b.y + b.height) - reach,
+                    (b.x + b.width) as f32 + reach,
+                    flip(b.y) + reach,
+                ),
+                shading: Box::new(Shading {
+                    resource: "Alpha".into(),
+                    id: alloc(),
+                    pieces: (0..count).map(|_| alloc()).collect(),
+                    join: (count > 1).then(&mut *alloc),
+                    kind: ShadingKind {
+                        axial,
+                        coords,
+                        stops: feather
+                            .stops()
+                            .iter()
+                            .map(|s| (vec![s.opacity.clamp(0.0, 1.0)], s.at))
+                            .collect(),
+                    },
+                    mask: None,
+                }),
+            })
+        })
+        .collect()
 }
 
 fn paint_shading(content: &mut Content, shading: &Shading) {
@@ -1693,6 +1782,7 @@ struct Written<'a> {
     fonts: &'a [EmbeddedFont],
     states: &'a [GraphicsState],
     shadings: &'a [Option<Shading>],
+    feathers: &'a [Option<GradientMask>],
     pictures: &'a [Picture],
     shadows: &'a [Option<CastShadow>],
     plates: &'a [Plate],
@@ -1743,6 +1833,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
         fonts,
         states,
         shadings,
+        feathers,
         pictures,
         shadows,
         plates,
@@ -1832,6 +1923,14 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
             ]);
             content.x_object(Name(shadow.resource.as_bytes()));
             content.restore_state();
+        }
+
+        // The feather, after the shadow so the shadow is not faded with it —
+        // the object fades, not the light — and before anything the object
+        // draws, which all of it then passes through. Scoped by the item's
+        // own save and restore.
+        if let Some(feather) = feathers.get(index).and_then(|f| f.as_ref()) {
+            content.set_parameters(Name(feather.resource.as_bytes()));
         }
 
         match &item.kind {

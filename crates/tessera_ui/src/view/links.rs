@@ -1741,7 +1741,11 @@ mod tests {
         labels(&ctx, &mut state);
         assert_eq!(state.links.filter, Filter::Missing);
         // undo-bracketed: a test's own setup, not an edit a person makes.
+        // Touched as every real edit is: the panel re-reads the disk when
+        // the revision moves, and without it this test passed only where the
+        // status cache happened to expire first (it failed on macOS CI).
         state.active_mut().document_mut().links.remove(missing);
+        state.active_mut().document_mut().touch();
         labels(&ctx, &mut state);
         assert_eq!(state.links.filter, Filter::All, "not an empty list");
     }

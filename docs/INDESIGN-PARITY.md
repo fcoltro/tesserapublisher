@@ -59,7 +59,7 @@ outright, so the target is not twenty-six.
 | Scissors | ✅ `Tool::Scissors` | — | done, M1 |
 | Free Transform / Rotate / Scale / Shear | ✗ | — | **refused** (D6) |
 | Gradient Swatch | gradients are set in the inspector; there is no drag-to-angle tool, by D6's argument | — | done, M5 |
-| Gradient Feather | ✗ | model | — |
+| Gradient Feather | ✅ linear at an angle or radial, opacity stops; Properties and object styles; drawn, written to PDF as a soft mask, read from IDML. In a PDF, a gradient fill with transparent stops inside a feathered object replaces the feather's mask (one soft mask at a time) | — | done 2026-09-30 |
 | Note | ✗ | — | — |
 | Eyedropper | ✅ `Tool::Eyedropper`, I: picks up fill, stroke, blend, shadow, corners and a text frame's type; puts them down as one undo; Alt-click picks up afresh | — | done 2026-09-17 |
 | Color Theme | ✗ | — | — |
@@ -229,7 +229,7 @@ person reaches for once they start setting copy, and none of it had a row:
 | Story editor | ✅ a plain box over the story, applied as a minimal edit | — | done |
 | Print dialog | ✅ File ▸ Print… (Ctrl+P): a page range, written as a plain PDF and handed to the system's print path — the shell's print verb on Windows, lpr/lp elsewhere | — | done 2026-09-18 |
 | IDML import | ✅ pages, parents, threads, styles, swatches, sections, footnotes, anchored objects, tables, cross-references, object styles, gradients, effects | — | done, M12; appearance 2026-09-17 |
-| Book | ✅ a book file; chapters numbered on, one contents, one PDF; no style synchronising | — | done 2026-09-17 |
+| Book | ✅ a book file; chapters numbered on, one contents, one PDF; styles synchronised from the style source | — | done 2026-09-17 |
 | Word import | ✅ File ▸ Place a `.docx`; styles merged by name | — | done, M12 |
 
 ---

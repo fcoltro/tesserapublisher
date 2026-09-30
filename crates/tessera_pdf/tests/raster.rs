@@ -39,6 +39,7 @@ fn filled(frame: FrameId, bounds: DocRect, colour: Color) -> ResolvedItem {
         spread_area: None,
         blend: tessera_document::blending::Blending::PLAIN,
         shadow: None,
+        feather: None,
         bounds,
         kind: ResolvedKind::Rectangle {
             outline: None,

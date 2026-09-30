@@ -151,6 +151,9 @@ pub struct ResolvedItem {
     /// reason: every kind of object can cast one, and four copies of the field
     /// would be an invitation to forget one.
     pub shadow: Option<tessera_document::shadow::Shadow>,
+    /// How the object fades across itself. A feather that hides nothing is
+    /// left off here, so no painter builds a mask for it.
+    pub feather: Option<tessera_document::feather::GradientFeather>,
     pub kind: ResolvedKind,
 }
 
@@ -1637,6 +1640,7 @@ fn resolve_one<'a>(
                 colour: doc.resolve_colour(&s.colour),
                 ..s.clone()
             }),
+        feather: frame.feather.clone().filter(|f| !f.is_plain()),
         kind,
     })
 }
@@ -1664,6 +1668,7 @@ mod tests {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -1998,6 +2003,7 @@ mod tests {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -3719,6 +3725,7 @@ pub(crate) mod tests_support {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,

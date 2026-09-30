@@ -302,6 +302,7 @@ mod tests {
                 blend: tessera_document::blending::Blending::PLAIN,
                 corners: tessera_document::corners::Corners::SQUARE,
                 shadow: None,
+                feather: None,
                 anchor: None,
                 style: None,
                 hidden: false,

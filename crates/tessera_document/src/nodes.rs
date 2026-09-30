@@ -226,6 +226,12 @@ pub struct Frame {
     /// should not throw those away.
     #[serde(default)]
     pub shadow: Option<crate::shadow::Shadow>,
+    /// How the object fades across itself, if it does: InDesign's gradient
+    /// feather. `Option` for the reason the shadow is one, and left out of
+    /// the file when there is none, so an unfeathered object is written as it
+    /// was before feathers existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feather: Option<crate::feather::GradientFeather>,
     /// Where this frame is anchored in a story, if it is.
     ///
     /// An anchored frame has no position of its own: `bounds` gives its size

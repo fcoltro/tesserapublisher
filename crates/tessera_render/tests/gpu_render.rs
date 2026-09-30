@@ -70,6 +70,7 @@ fn rect_doc(bounds: DocRect, fill: Color) -> ResolvedDocument {
             spread_area: None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            feather: None,
             kind: ResolvedKind::Rectangle {
                 outline: None,
                 fill: tessera_document::paint::Paint::Solid(fill),
@@ -365,6 +366,7 @@ fn text_puts_dark_pixels_on_the_page() {
                 spread_area: None,
                 blend: tessera_document::blending::Blending::PLAIN,
                 shadow: None,
+                feather: None,
                 kind: ResolvedKind::Text {
                     shaped,
                     color: Color::BLACK,
@@ -426,6 +428,7 @@ fn text_on_a_path_marks_the_page_along_the_path_and_nowhere_else() {
                 spread_area: None,
                 blend: tessera_document::blending::Blending::PLAIN,
                 shadow: None,
+                feather: None,
                 kind: ResolvedKind::Path {
                     path: line,
                     fill: None,
@@ -543,6 +546,7 @@ fn a_placed_picture_is_painted_where_its_frame_is() {
                 spread_area,
                 blend: tessera_document::blending::Blending::PLAIN,
                 shadow: None,
+                feather: None,
                 kind: ResolvedKind::Graphic {
                     inner,
                     source: Some(art.clone()),

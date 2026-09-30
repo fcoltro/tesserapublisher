@@ -119,6 +119,7 @@ fn a_document_with_a_rectangle_round_trips_exactly() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -234,6 +235,7 @@ fn any_frame() -> impl Strategy<Value = Frame> {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -290,6 +292,7 @@ fn text_survives_a_save_and_load() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -343,6 +346,7 @@ fn a_version_1_document_still_opens() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -575,6 +579,7 @@ fn a_placement_survives_a_save_and_load() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -617,6 +622,7 @@ fn a_version_2_rotation_becomes_the_placement_that_means_the_same_thing() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -801,6 +807,7 @@ fn a_version_four_document_still_opens_and_gains_no_setup_it_never_had() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -872,8 +879,8 @@ fn the_format_version_is_twenty_six() {
     // frames of its own, never before; 42 a placed PDF's page and the box it
     // is cut to, the first page's crop box before; 43 single-word
     // justification, full justify before; 44 a cell style's paragraph
-    // style, none before.
-    assert_eq!(format::FORMAT_VERSION, 44);
+    // style, none before; 45 a gradient feather, none before.
+    assert_eq!(format::FORMAT_VERSION, 45);
 }
 
 #[test]
@@ -903,6 +910,7 @@ fn type_on_a_path_survives_a_save_and_load() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -1146,6 +1154,7 @@ fn a_table_survives_a_round_trip_with_its_spans_intact() {
         blend: tessera_document::blending::Blending::PLAIN,
         corners: tessera_document::corners::Corners::SQUARE,
         shadow: None,
+        feather: None,
         anchor: None,
         style: None,
         hidden: false,
@@ -1181,6 +1190,7 @@ fn a_frame_written_before_corners_reads_as_square() {
         blend: tessera_document::blending::Blending::PLAIN,
         corners: tessera_document::corners::Corners::SQUARE,
         shadow: None,
+        feather: None,
         anchor: None,
         style: None,
         hidden: false,
@@ -1272,6 +1282,7 @@ fn object_styles_and_the_objects_following_them_round_trip() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -1358,6 +1369,7 @@ fn a_drop_shadow_round_trips() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: Some(shadow.clone()),
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -1368,6 +1380,65 @@ fn a_drop_shadow_round_trips() {
     format::save(&doc, &path).expect("save");
     let back = format::load(&path).expect("load");
     assert_eq!(back.frame(id).expect("frame").shadow, Some(shadow));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_gradient_feather_survives_save_and_load() {
+    use tessera_document::feather::{FeatherStop, GradientFeather};
+    use tessera_document::paint::Ramp;
+
+    let path = std::env::temp_dir().join(format!("tessera-feather-{}.tsrdf", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+
+    let feather = GradientFeather::new(
+        Ramp::Radial,
+        vec![
+            FeatherStop {
+                at: 0.2,
+                opacity: 1.0,
+            },
+            FeatherStop {
+                at: 0.5,
+                opacity: 0.4,
+            },
+            FeatherStop {
+                at: 1.0,
+                opacity: 0.0,
+            },
+        ],
+    );
+    let mut doc = Document::new();
+    let layer = doc.default_layer().expect("layer");
+    let id = doc.add_frame(
+        layer,
+        Frame {
+            bounds: DocRect {
+                x: 0.0,
+                y: 0.0,
+                width: 30.0,
+                height: 30.0,
+            },
+            transform: Default::default(),
+            kind: FrameKind::Rectangle,
+            fill: Paint::Solid(Color::default()),
+            stroke: None,
+            wrap: tessera_document::nodes::TextWrap::None,
+            blend: tessera_document::blending::Blending::PLAIN,
+            corners: tessera_document::corners::Corners::SQUARE,
+            shadow: None,
+            feather: Some(feather.clone()),
+            anchor: None,
+            style: None,
+            hidden: false,
+            locked: false,
+        },
+    );
+
+    format::save(&doc, &path).expect("save");
+    let back = format::load(&path).expect("load");
+    assert_eq!(back.frame(id).expect("frame").feather, Some(feather));
 
     let _ = std::fs::remove_file(&path);
 }
@@ -1416,6 +1487,7 @@ fn a_gradient_fill_round_trips() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -1470,6 +1542,7 @@ fn a_document_written_before_gradients_opens_with_its_colour_intact() {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -1522,6 +1595,7 @@ fn an_objects_opacity_and_blend_mode_round_trip() {
                 mode: BlendMode::Multiply,
             },
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -1587,6 +1661,7 @@ fn placed_artwork_round_trips_as_a_link_rather_than_as_pixels() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -1673,6 +1748,7 @@ fn swatches_and_the_objects_naming_them_round_trip() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -1786,6 +1862,7 @@ fn a_version_nine_text_frame_opens_as_a_single_column() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -1851,6 +1928,7 @@ fn a_columned_text_frame_round_trips() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -1898,6 +1976,7 @@ fn a_version_eight_document_opens_with_no_masters_and_no_overrides() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -1949,6 +2028,7 @@ fn a_master_and_its_overrides_survive_a_round_trip() {
             wrap: tessera_document::nodes::TextWrap::None,
             blend: tessera_document::blending::Blending::PLAIN,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
@@ -2018,6 +2098,7 @@ fn version_7_archive(path: &std::path::Path) -> serde_json::Value {
                 wrap: tessera_document::nodes::TextWrap::None,
                 blend: tessera_document::blending::Blending::PLAIN,
                 shadow: None,
+                feather: None,
                 anchor: None,
                 style: None,
                 hidden: false,

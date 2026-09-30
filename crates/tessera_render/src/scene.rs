@@ -464,7 +464,10 @@ fn build_inner(
         //
         // Only when it needs one. Nearly every object is plain, and a layer per
         // object would cost a composite for each of them.
-        let composited = !item.blend.is_plain();
+        //
+        // A feather needs one too: it fades what the object painted, all of
+        // it together, so there has to be a whole to fade.
+        let composited = !item.blend.is_plain() || item.feather.is_some();
         if composited {
             scene.push_layer(
                 Fill::NonZero,
@@ -552,6 +555,7 @@ fn build_inner(
                     );
                 }
                 if composited {
+                    fade(&mut scene, transform, item, rect);
                     scene.pop_layer();
                 }
                 continue;
@@ -713,6 +717,7 @@ fn build_inner(
         }
 
         if composited {
+            fade(&mut scene, transform, item, rect);
             scene.pop_layer();
         }
     }
@@ -732,6 +737,41 @@ fn build_inner(
 /// Only the separable modes milestone 5 promises. A mode that cannot be
 /// reproduced identically on screen and in the PDF is worse than no mode, so
 /// there is deliberately no catch-all arm converting something else to Normal.
+/// The object's gradient feather, laid over what it painted.
+///
+/// Called with the object's composite group still open. A ramp of black whose
+/// alpha is the feather's opacity is composited **destination-in**: what the
+/// object painted is kept in proportion to the ramp's alpha and nothing of the
+/// ramp's own colour shows. The ramp is the fill's own gradient geometry on
+/// the frame's bounds, padded past them, so a stroke outside the box takes the
+/// end stop's opacity rather than being cut off.
+fn fade(
+    scene: &mut Scene,
+    transform: Affine,
+    item: &tessera_layout::resolve::ResolvedItem,
+    rect: Rect,
+) {
+    let Some(feather) = &item.feather else {
+        return;
+    };
+    let extent = paint_extent(&item.kind, rect);
+    scene.push_layer(
+        Fill::NonZero,
+        vello::peniko::BlendMode::new(vello::peniko::Mix::Normal, vello::peniko::Compose::DestIn),
+        1.0,
+        transform,
+        &extent,
+    );
+    scene.fill(
+        Fill::NonZero,
+        transform,
+        &brush_of(&Paint::Gradient(feather.as_gradient()), item.bounds, None),
+        None,
+        &extent,
+    );
+    scene.pop_layer();
+}
+
 fn mix_of(mode: tessera_document::blending::BlendMode) -> vello::peniko::Mix {
     use tessera_document::blending::BlendMode;
     use vello::peniko::Mix;
@@ -1355,6 +1395,38 @@ mod tests {
     }
 
     #[test]
+    fn a_feathered_object_is_painted_into_a_group_and_masked() {
+        // Two layers: the object's own group, and the destination-in mask laid
+        // over it. Without the group there is no whole to fade, and the ramp
+        // would cut into whatever was painted behind the object too.
+        use tessera_document::feather::GradientFeather;
+
+        let bounds = DocRect {
+            x: 10.0,
+            y: 10.0,
+            width: 80.0,
+            height: 40.0,
+        };
+        let mut doc = one_item(
+            ResolvedKind::Rectangle {
+                outline: None,
+                fill: Paint::Solid(Color::BLACK),
+                stroke: None,
+            },
+            bounds,
+        );
+        let plain = build_scene(&doc, ViewTransform::default())
+            .encoding()
+            .n_clips;
+        doc.items[0].feather = Some(GradientFeather::default());
+        let feathered = build_scene(&doc, ViewTransform::default())
+            .encoding()
+            .n_clips;
+        // Vello counts a layer twice, where it begins and where it ends.
+        assert_eq!(feathered, plain + 4, "a group and a mask");
+    }
+
+    #[test]
     fn a_translucent_object_does_not_fade_its_own_shadow() {
         // The shadow is drawn outside the object’s composite group. Inside it, a
         // 50% object would cast a 25% shadow: it is the object that is
@@ -1522,6 +1594,7 @@ mod tests {
                 spread_area: None,
                 blend: tessera_document::blending::Blending::PLAIN,
                 shadow: None,
+                feather: None,
                 bounds,
                 kind,
             }],

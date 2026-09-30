@@ -57,6 +57,7 @@ fn add_text(d: &mut Document, s: Story) -> FrameId {
             blend: Default::default(),
             corners: Default::default(),
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,

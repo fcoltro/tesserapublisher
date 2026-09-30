@@ -663,6 +663,7 @@ impl Items<'_> {
                 blend: tessera_document::blending::Blending::PLAIN,
                 corners: tessera_document::corners::Corners::SQUARE,
                 shadow: None,
+                feather: None,
                 anchor: Some(tessera_document::anchored::Anchored::new(story, index)),
                 style: None,
                 hidden: false,
@@ -779,7 +780,7 @@ impl Items<'_> {
                 b: 0.0,
                 a: 0.0,
             }));
-        let (blend, shadow) = styles::effects(node, self.colours);
+        let (blend, shadow, feather) = styles::effects(node, self.colours);
         let style =
             attr(node, "AppliedObjectStyle").and_then(|s| self.styles.object.get(s).copied());
         let stroke = match (
@@ -873,6 +874,7 @@ impl Items<'_> {
                 blend,
                 corners: tessera_document::corners::Corners::SQUARE,
                 shadow,
+                feather,
                 anchor: anchored
                     .map(|(story, index)| tessera_document::anchored::Anchored::new(story, index)),
                 style,

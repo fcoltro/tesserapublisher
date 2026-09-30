@@ -86,6 +86,7 @@ pub enum StylePage {
     Stroke,
     Transparency,
     Shadow,
+    Feather,
     TextWrap,
 }
 
@@ -129,6 +130,7 @@ impl StylePage {
                 StylePage::Stroke,
                 StylePage::Transparency,
                 StylePage::Shadow,
+                StylePage::Feather,
                 StylePage::TextWrap,
             ],
         }
@@ -153,6 +155,7 @@ impl StylePage {
             StylePage::Stroke => "Stroke",
             StylePage::Transparency => "Transparency",
             StylePage::Shadow => "Shadow",
+            StylePage::Feather => "Gradient feather",
             StylePage::TextWrap => "Text wrap",
         }
     }
@@ -177,6 +180,7 @@ impl StylePage {
             | StylePage::Stroke
             | StylePage::Transparency
             | StylePage::Shadow
+            | StylePage::Feather
             | StylePage::TextWrap => Some("Appearance"),
         }
     }
@@ -202,6 +206,7 @@ impl StylePage {
             StylePage::Stroke => Icon::StrokeSolid,
             StylePage::Transparency => Icon::Opacity,
             StylePage::Shadow => Icon::Blur,
+            StylePage::Feather => Icon::Opacity,
             StylePage::TextWrap => Icon::WrapBounds,
         }
     }
@@ -230,6 +235,7 @@ impl StylePage {
             StylePage::Stroke => "The line round its edge.",
             StylePage::Transparency => "How much of what is behind shows through.",
             StylePage::Shadow => "Whether it casts one.",
+            StylePage::Feather => "Whether it fades across itself, and how.",
             StylePage::TextWrap => "How text in other frames runs round it.",
         }
     }
@@ -789,6 +795,7 @@ fn clear_character_page(page: StylePage, f: &mut CharacterFormat) {
         | StylePage::Stroke
         | StylePage::Transparency
         | StylePage::Shadow
+        | StylePage::Feather
         | StylePage::TextWrap => {}
     }
 }
@@ -836,6 +843,7 @@ fn clear_object_page(page: StylePage, f: &mut ObjectFormat) {
         StylePage::Stroke => f.stroke = None,
         StylePage::Transparency => f.blend = None,
         StylePage::Shadow => f.shadow = None,
+        StylePage::Feather => f.feather = None,
         StylePage::TextWrap => f.wrap = None,
         _ => {}
     }
@@ -1139,6 +1147,7 @@ fn object_page(
         StylePage::Stroke => object_stroke(ui, format, lineage, palette),
         StylePage::Transparency => object_transparency(ui, format, lineage),
         StylePage::Shadow => object_shadow(ui, format, lineage),
+        StylePage::Feather => object_feather(ui, format, lineage),
         StylePage::TextWrap => object_wrap(ui, format, lineage),
         // Listed rather than caught by a wildcard, so a page added to the
         // sidebar has to say what it draws.
@@ -1211,6 +1220,11 @@ fn object_terms(format: &ObjectFormat) -> Vec<(StylePage, String)> {
             format!("shadow, {} pt blur", number(shadow.blur as f32)),
         )),
         Some(None) => out.push((StylePage::Shadow, "no shadow".to_string())),
+        None => {}
+    }
+    match &format.feather {
+        Some(Some(_)) => out.push((StylePage::Feather, "gradient feather".to_string())),
+        Some(None) => out.push((StylePage::Feather, "no feather".to_string())),
         None => {}
     }
     if let Some(wrap) = &format.wrap {
@@ -1528,6 +1542,45 @@ fn object_transparency(ui: &mut Ui, format: &mut ObjectFormat, lineage: &Lineage
                     .collect();
                 style_ui::segmented(ui, "Blend mode", &mut blend.mode, &options, false);
             });
+        }
+    });
+}
+
+fn object_feather(ui: &mut Ui, format: &mut ObjectFormat, lineage: &Lineage<ObjectFormat>) {
+    use tessera_document::feather::GradientFeather;
+    style_ui::card(ui, None, |ui| {
+        stated_row(
+            ui,
+            "Gradient feather",
+            &mut format.feather,
+            &lineage.find(|f| f.feather.clone()),
+            || Some(GradientFeather::default()),
+            |ui, feather, ghost| {
+                let said = if feather.is_some() {
+                    "Fades across itself"
+                } else {
+                    "No feather"
+                };
+                ui.label(egui::RichText::new(said).color(if ghost {
+                    Theme::text_muted()
+                } else {
+                    Theme::text_primary()
+                }));
+            },
+        );
+    });
+    let Some(feather) = &mut format.feather else {
+        return;
+    };
+    style_ui::card(ui, Some("Gradient feather"), |ui| {
+        named_row(ui, "Fades across itself", |ui| {
+            let mut on = feather.is_some();
+            if style_ui::switch(ui, &mut on, "Fades across itself", false) {
+                *feather = on.then(GradientFeather::default);
+            }
+        });
+        if let Some(f) = feather {
+            super::panels::feather_editor(ui, f);
         }
     });
 }
@@ -3128,6 +3181,7 @@ fn paragraph_page(
         | StylePage::Stroke
         | StylePage::Transparency
         | StylePage::Shadow
+        | StylePage::Feather
         | StylePage::TextWrap => {}
     }
 }
@@ -5376,12 +5430,13 @@ mod tests {
             stroke: Some(Some(Stroke::new(Color::BLACK, 1.0))),
             blend: Some(tessera_document::blending::Blending::PLAIN),
             shadow: Some(Some(tessera_document::shadow::Shadow::TYPICAL)),
+            feather: Some(Some(tessera_document::feather::GradientFeather::default())),
             wrap: Some(TextWrap::Bounds {
                 standoff: Insets::uniform(4.0),
                 sides: WrapTo::Both,
             }),
         };
-        assert_eq!(object_terms(&full).len(), 5, "one term a property");
+        assert_eq!(object_terms(&full).len(), 6, "one term a property");
         let mut emptied = full.clone();
         for page in StylePage::for_kind(StyleKind::Object) {
             let mut cleared = full.clone();

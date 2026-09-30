@@ -157,19 +157,20 @@ pub(crate) struct Styles {
 }
 
 /// An object's effects as IDML writes them, in a `TransparencySetting`
-/// child: opacity and blend mode, and a drop shadow. Absent, the object is
-/// plain and casts none.
+/// child: opacity and blend mode, a drop shadow, and a gradient feather.
+/// Absent, the object is plain, casts none and does not fade.
 pub(crate) fn effects(
     node: Node,
     colours: &Colours,
 ) -> (
     tessera_document::blending::Blending,
     Option<tessera_document::shadow::Shadow>,
+    Option<tessera_document::feather::GradientFeather>,
 ) {
     use tessera_document::blending::{BlendMode, Blending};
     use tessera_document::shadow::Shadow;
     let Some(setting) = child(node, "TransparencySetting") else {
-        return (Blending::PLAIN, None);
+        return (Blending::PLAIN, None, None);
     };
     let mut blend = Blending::PLAIN;
     if let Some(blending) = child(setting, "BlendingSetting") {
@@ -226,7 +227,35 @@ pub(crate) fn effects(
                 colour,
             }
         });
-    (blend, shadow)
+    (blend, shadow, feather(setting))
+}
+
+/// A `GradientFeatherSetting` that is applied: its ramp, and its
+/// `OpacityGradientStop`s as percentages along it. InDesign's ramp has a
+/// start point and a length as well as an angle; the angle is kept and the
+/// ramp runs across the whole object, as a gradient fill's does here.
+fn feather(setting: Node) -> Option<tessera_document::feather::GradientFeather> {
+    use tessera_document::feather::{FeatherStop, GradientFeather};
+    use tessera_document::paint::Ramp;
+    let s =
+        child(setting, "GradientFeatherSetting").filter(|s| attr(*s, "Applied") == Some("true"))?;
+    let ramp = match attr(s, "Type") {
+        Some("Radial") => Ramp::Radial,
+        _ => Ramp::Linear {
+            // InDesign measures counter-clockwise; this model clockwise,
+            // because its y axis points down.
+            angle: -attr_f64(s, "Angle").unwrap_or(0.0),
+        },
+    };
+    let stops = s
+        .descendants()
+        .filter(|n| n.tag_name().name() == "OpacityGradientStop")
+        .map(|n| FeatherStop {
+            at: (attr_f64(n, "Location").unwrap_or(0.0) / 100.0).clamp(0.0, 1.0) as f32,
+            opacity: (attr_f64(n, "Opacity").unwrap_or(100.0) / 100.0).clamp(0.0, 1.0) as f32,
+        })
+        .collect();
+    Some(GradientFeather::new(ramp, stops))
 }
 
 impl Styles {
@@ -310,7 +339,7 @@ impl Styles {
                 (None, _) if attr(node, "StrokeColor").is_some() => Some(None),
                 _ => None,
             };
-            let (blend, shadow) = effects(node, colours);
+            let (blend, shadow, feather) = effects(node, colours);
             let states_effects = child(node, "TransparencySetting").is_some();
             let id = doc.add_object_style(tessera_document::object_style::ObjectStyle {
                 name: shown_name(attr(node, "Name").unwrap_or(name)),
@@ -320,6 +349,7 @@ impl Styles {
                     stroke,
                     blend: states_effects.then_some(blend),
                     shadow: states_effects.then_some(shadow),
+                    feather: states_effects.then_some(feather),
                     wrap: None,
                 },
             });
@@ -571,6 +601,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_applied_gradient_feather_is_read_with_its_stops() {
+        use tessera_document::paint::Ramp;
+        let graphic = roxmltree::Document::parse("<Graphic/>").unwrap();
+        let colours = Colours::read(graphic.root_element());
+        let item = roxmltree::Document::parse(
+            r#"<Rectangle><TransparencySetting><GradientFeatherSetting Applied="true" Type="Linear" Angle="90"><OpacityGradientStop Opacity="100" Location="0"/><OpacityGradientStop Opacity="0" Location="80"/></GradientFeatherSetting></TransparencySetting></Rectangle>"#,
+        )
+        .unwrap();
+        let (_, _, feather) = effects(item.root_element(), &colours);
+        let feather = feather.expect("a feather");
+        // Counter-clockwise in InDesign, clockwise here.
+        assert_eq!(feather.ramp, Ramp::Linear { angle: -90.0 });
+        let stops = feather.stops();
+        assert_eq!((stops[0].at, stops[0].opacity), (0.0, 1.0));
+        assert_eq!((stops[1].at, stops[1].opacity), (0.8, 0.0));
+    }
+
+    #[test]
+    fn a_gradient_feather_not_applied_is_no_feather() {
+        let graphic = roxmltree::Document::parse("<Graphic/>").unwrap();
+        let colours = Colours::read(graphic.root_element());
+        let item = roxmltree::Document::parse(
+            r#"<Rectangle><TransparencySetting><GradientFeatherSetting Applied="false"/></TransparencySetting></Rectangle>"#,
+        )
+        .unwrap();
+        assert!(effects(item.root_element(), &colours).2.is_none());
+    }
+
+    #[test]
     fn a_drop_shadow_with_no_colour_named_is_black_ink() {
         // InDesign's own default effect colour is [Black]: the black plate,
         // at the shadow's opacity.
@@ -580,7 +639,7 @@ mod tests {
             r#"<Rectangle><TransparencySetting><DropShadowSetting Mode="Drop" Opacity="40"/></TransparencySetting></Rectangle>"#,
         )
         .unwrap();
-        let (_, shadow) = effects(item.root_element(), &colours);
+        let (_, shadow, _) = effects(item.root_element(), &colours);
         assert_eq!(
             shadow.expect("a shadow").colour,
             Color::Cmyk {

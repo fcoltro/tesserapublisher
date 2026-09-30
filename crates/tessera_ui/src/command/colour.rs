@@ -56,6 +56,13 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
             state.active_mut().document_mut().touch();
         }
 
+        Command::SetFeather { id, feather } => {
+            if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
+                frame.feather = feather;
+            }
+            state.active_mut().document_mut().touch();
+        }
+
         Command::SetOutputIntent(intent) => {
             state.active_mut().document_mut().output_intent = intent.map(|boxed| *boxed);
             state.active_mut().document_mut().touch();

@@ -48,6 +48,12 @@ pub struct ObjectFormat {
         deserialize_with = "stated"
     )]
     pub shadow: Option<Option<Shadow>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "stated"
+    )]
+    pub feather: Option<Option<crate::feather::GradientFeather>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wrap: Option<TextWrap>,
 }
@@ -62,6 +68,7 @@ impl ObjectFormat {
             stroke: Some(frame.stroke.clone()),
             blend: Some(frame.blend),
             shadow: Some(frame.shadow.clone()),
+            feather: Some(frame.feather.clone()),
             wrap: None,
         }
     }
@@ -87,6 +94,7 @@ impl ObjectFormat {
             stroke: self.stroke.clone().or_else(|| base.stroke.clone()),
             blend: self.blend.or(base.blend),
             shadow: self.shadow.clone().or_else(|| base.shadow.clone()),
+            feather: self.feather.clone().or_else(|| base.feather.clone()),
             wrap: self.wrap.or(base.wrap),
         }
     }

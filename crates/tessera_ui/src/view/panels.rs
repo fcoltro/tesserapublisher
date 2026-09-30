@@ -2716,6 +2716,145 @@ fn effects_section(
     }
 
     shadow_controls(ui, state, id, frame);
+    feather_controls(ui, state, id, frame);
+}
+
+/// The object's gradient feather: whether it fades, and how.
+fn feather_controls(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::FrameId,
+    frame: &tessera_document::nodes::Frame,
+) {
+    use tessera_document::feather::GradientFeather;
+
+    group_label(ui, "Gradient feather");
+
+    let mut on = frame.feather.is_some();
+    if ui.checkbox(&mut on, "Fades across itself").changed() {
+        let feather = on.then(GradientFeather::default);
+        apply(state, Command::SetFeather { id, feather });
+        return;
+    }
+    let Some(existing) = &frame.feather else {
+        return;
+    };
+    let mut feather = existing.clone();
+    if feather_editor(ui, &mut feather) {
+        apply(
+            state,
+            Command::SetFeather {
+                id,
+                feather: Some(feather),
+            },
+        );
+    }
+}
+
+/// A feather's ramp and its stops, edited in place. Shared by the Properties
+/// panel and the object style editor, so the two cannot come to describe a
+/// feather differently. Returns whether anything changed.
+pub(crate) fn feather_editor(
+    ui: &mut Ui,
+    feather: &mut tessera_document::feather::GradientFeather,
+) -> bool {
+    use tessera_document::feather::{FeatherStop, GradientFeather};
+    use tessera_document::paint::Ramp;
+
+    let mut ramp = feather.ramp;
+    let mut stops = feather.stops().to_vec();
+    let mut changed = false;
+
+    let chosen = matches!(ramp, Ramp::Radial);
+    let mut radial = chosen;
+    segmented(
+        ui,
+        "Feather type",
+        &mut radial,
+        &[("Linear", false), ("Radial", true)],
+    );
+    if radial != chosen {
+        ramp = if radial {
+            Ramp::Radial
+        } else {
+            Ramp::Linear { angle: 0.0 }
+        };
+        changed = true;
+    }
+    if let Ramp::Linear { angle } = &mut ramp {
+        changed |= property_field(ui, (crate::icons::Icon::Angle, "Angle"), |ui| {
+            ui.add(
+                egui::DragValue::new(angle)
+                    .speed(1.0)
+                    .range(-360.0..=360.0)
+                    .suffix("\u{b0}"),
+            )
+            .changed()
+        });
+    }
+
+    // Drawn as black going clear: how much of the object each place keeps.
+    ramp_preview(ui, feather.as_gradient().stops());
+
+    group_label(ui, "Opacity stops");
+    let mut remove = None;
+    for (index, stop) in stops.iter_mut().enumerate() {
+        ui.push_id(("feather-stop", index), |ui| {
+            ui.separator();
+            ui.label(format!("Stop {}", index + 1));
+            let mut opacity = stop.opacity * 100.0;
+            if property_field(ui, "Opacity", |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut opacity)
+                        .speed(0.5)
+                        .range(0.0..=100.0)
+                        .suffix("%"),
+                )
+                .changed()
+            }) {
+                stop.opacity = opacity / 100.0;
+                changed = true;
+            }
+            let mut percent = stop.at * 100.0;
+            if property_field(ui, "Position along ramp", |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut percent)
+                        .speed(0.5)
+                        .range(0.0..=100.0)
+                        .suffix("%"),
+                )
+                .changed()
+            }) {
+                stop.at = percent / 100.0;
+                changed = true;
+            }
+            if index >= 2
+                && crate::view::panel_ui::action(ui, crate::icons::Icon::Trash, "Remove stop")
+                    .clicked()
+            {
+                remove = Some(index);
+            }
+        });
+    }
+    if let Some(at) = remove {
+        stops.remove(at);
+        changed = true;
+    }
+    if crate::view::panel_ui::action(ui, crate::icons::Icon::Plus, "Add opacity stop").clicked() {
+        // Halfway between the last two, at the opacity already there, so
+        // adding a stop changes nothing until it is moved.
+        let (a, b) = (stops[stops.len() - 2], stops[stops.len() - 1]);
+        stops.push(FeatherStop {
+            at: (a.at + b.at) / 2.0,
+            opacity: (a.opacity + b.opacity) / 2.0,
+        });
+        changed = true;
+    }
+
+    if changed {
+        *feather = GradientFeather::new(ramp, stops);
+    }
+    changed
 }
 
 /// The shadow an object casts: whether, how far, how soft, and what colour.
@@ -2782,15 +2921,6 @@ fn shadow_controls(
         };
         changed = true;
     }
-
-    // Said where a person can read it, because a shadow that appears on screen
-    // and not in the export is exactly the kind of surprise that reaches a
-    // printer.
-    ui.colored_label(Theme::text_muted(), "Not written to PDF yet.")
-        .on_hover_text(
-            "A blurred shadow in a PDF needs a rasterised soft mask. \
-             Milestone 6 owns export quality and adds it.",
-        );
 
     if changed {
         apply(
@@ -6299,6 +6429,7 @@ mod tests {
             blend: tessera_document::blending::Blending::PLAIN,
             corners: tessera_document::corners::Corners::SQUARE,
             shadow: None,
+            feather: None,
             anchor: None,
             style: None,
             hidden: false,
