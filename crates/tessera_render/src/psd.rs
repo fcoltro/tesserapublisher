@@ -279,10 +279,23 @@ fn display_info(resources: &[u8]) -> Vec<Option<[u8; 3]>> {
         match block {
             // A version, then thirteen bytes a channel.
             (1077, data) if data.len() >= 4 => {
-                return data[4..].chunks_exact(13).map(display_colour).collect();
+                return data[4..]
+                    .as_chunks::<13>()
+                    .0
+                    .iter()
+                    .map(|e| display_colour(e))
+                    .collect();
             }
             // Fourteen bytes a channel, the last padding.
-            (1007, data) => older = Some(data.chunks_exact(14).map(display_colour).collect()),
+            (1007, data) => {
+                older = Some(
+                    data.as_chunks::<14>()
+                        .0
+                        .iter()
+                        .map(|e| display_colour(e))
+                        .collect(),
+                )
+            }
             _ => {}
         }
     }
@@ -435,9 +448,11 @@ fn to_eight(row: &[u8], depth: u16, width: usize, alpha: bool) -> Vec<u8> {
         8 => row.to_vec(),
         16 => high_bytes(row, 16).collect(),
         32 => row
-            .chunks_exact(4)
-            .map(|b| {
-                let v = f64::from(f32::from_be_bytes([b[0], b[1], b[2], b[3]]));
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&b| {
+                let v = f64::from(f32::from_be_bytes(b));
                 if alpha {
                     (v.clamp(0.0, 1.0) * 255.0).round() as u8
                 } else {

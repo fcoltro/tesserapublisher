@@ -1,6 +1,7 @@
-# Pin the channel so local and CI agree. The first CI run failed on a clippy
-# lint that CI's stable had and the local toolchain did not -- a class of
-# surprise worth removing rather than rediscovering.
+# Pin an exact version so local and CI agree. "stable" pinned nothing: CI took
+# each new release's clippy lints the day they shipped and failed on code that
+# passed here. Bump this, the two workflows' `dtolnay/rust-toolchain@` tags,
+# and fix the new lints in one commit.
 [toolchain]
-channel = "stable"
+channel = "1.97.1"
 components = ["clippy", "rustfmt"]

@@ -121,7 +121,7 @@ fn epsi(text: &str) -> Option<(Vec<u8>, (u32, u32))> {
             .bytes()
             .filter_map(|b| (b as char).to_digit(16).map(|d| d as u8))
             .collect();
-        data.extend(digits.chunks_exact(2).map(|p| p[0] << 4 | p[1]));
+        data.extend(digits.as_chunks::<2>().0.iter().map(|p| p[0] << 4 | p[1]));
     }
     let row = (width * depth).div_ceil(8) as usize;
     if data.len() < row * height as usize {

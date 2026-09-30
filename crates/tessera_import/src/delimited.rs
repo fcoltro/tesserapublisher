@@ -231,7 +231,7 @@ fn decode(bytes: &[u8]) -> String {
 }
 
 fn utf16(bytes: &[u8], unit: fn([u8; 2]) -> u16) -> String {
-    let units: Vec<u16> = bytes.chunks_exact(2).map(|p| unit([p[0], p[1]])).collect();
+    let units: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|&p| unit(p)).collect();
     String::from_utf16_lossy(&units)
 }
 
