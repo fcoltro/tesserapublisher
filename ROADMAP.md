@@ -2961,8 +2961,11 @@ which cost one afternoon's confusion and a namespace check.
   a suffix on its last — so German's words check; words two slips away,
   looked up in the list directly (up to fourteen letters); and Hunspell's
   n-gram pass, the listed words that look most like it by shared letters,
-  pairs and triples, for a word no slips reach. Not read: `PHONE` tables,
-  which few dictionaries carry, and the rarer `.aff` tables.
+  pairs and triples, for a word no slips reach. `PHONE` tables are read
+  too (2026-09-29): Björn Jacke's phonet rules, followed step for step from
+  Hunspell's `phonet.cxx`, and the listed words with the same phonetic
+  code are offered after the slips — "night" for "nite". Not read: the
+  rarer `.aff` tables.
 - [x] **Hyperlinks** (added 2026-09-13, after milestone 12). A link rides on
   the character format — `CharacterFormat.link`, a URL or a named
   destination — so it cascades and travels with the words. Destinations are
@@ -3598,7 +3601,7 @@ below are its items 1 to 3.
   kept linear, a bitmap's ones black, Lab through D50 XYZ to sRGB.
 - [x] 18. **Spelling**: sound-alike suggestions, two-edit corrections,
   compound words (milestone 12). *Done 2026-09-28* (sound-alike as
-  Hunspell's n-gram pass; `PHONE` tables not read).
+  Hunspell's n-gram pass; `PHONE` tables read since, 2026-09-29).
 - [x] 19. **The story editor updates live** with the page (milestone 12).
   *Done 2026-09-28.*
 - [x] 20. **Split `command::apply`** (126 cases) into smaller pieces. Nothing

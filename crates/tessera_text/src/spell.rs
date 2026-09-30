@@ -13,24 +13,28 @@
 //! (the language's own list of usual slips); and compounding — `COMPOUNDFLAG`
 //! and the begin, middle and end flags, `COMPOUNDMIN`, `ONLYINCOMPOUND` —
 //! which is how German and the Nordic languages spell words no list could
-//! hold. It does not read `PHONE` tables, which few dictionaries carry.
-//! What it does read is enough for the dictionaries LibreOffice and Firefox
-//! ship, which are the ones a person has.
+//! hold; and `PHONE`, the phonetic rules a few dictionaries carry
+//! ([`phonet`]). That is enough for the dictionaries LibreOffice and
+//! Firefox ship, which are the ones a person has.
 //!
 //! [`Dictionary::suggest`] begins with the classic edit-distance-one walk:
 //! every replacement from `REP`, then every swap of neighbours, dropped
 //! letter, wrong letter and extra letter, then the word split in two —
 //! each kept only if the dictionary passes it. Then, as Hunspell does,
 //! words two slips away, looked up in the word list directly so the walk
-//! stays quick; and last the words that *look* most like it by their
-//! letter pairs and triples — Hunspell's n-gram pass, which is what finds
-//! "phone" for "fone" when no single slip explains it.
+//! stays quick; then, where the dictionary has a `PHONE` table, the words
+//! that *sound* like it — "night" for "nite"; and last the words that
+//! *look* most like it by their letter pairs and triples — Hunspell's
+//! n-gram pass, which is what finds "phone" for "fone" when no single slip
+//! explains it.
 //!
 //! No dictionary is bundled: the word lists are large and licensed each
 //! their own way. Tessera looks in its dictionaries folder for the text's
 //! language, and says so when there is none.
 
 use std::collections::{HashMap, HashSet};
+
+mod phonet;
 
 /// How flags are written after the slash in the word list and on rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -93,6 +97,8 @@ pub struct Dictionary {
     /// A stem that is a word only inside a compound: the German linking
     /// "s" and the like.
     only_in_compound: Option<u32>,
+    /// `PHONE`: what letters sound like, for suggesting by ear.
+    phone: phonet::Table,
 }
 
 /// Where a part stands in a compound.
@@ -276,6 +282,13 @@ impl Dictionary {
             }
         }
 
+        // What sounds like it, where the dictionary says how words sound.
+        if out.len() < 8 && !self.phone.is_empty() {
+            for candidate in self.sounds_like(&base) {
+                offer(candidate, &mut out);
+            }
+        }
+
         // What looks most like it, letter pair by letter pair.
         if out.len() < 8 {
             for candidate in self.look_alikes(&base) {
@@ -367,6 +380,24 @@ impl Dictionary {
             .collect();
         scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
         scored.into_iter().take(4).map(|(_, s)| s.clone()).collect()
+    }
+
+    /// The listed words that sound as `word` does, by the `PHONE` table:
+    /// the same phonetic code, nearest in length first, at most three.
+    fn sounds_like(&self, word: &str) -> Vec<String> {
+        let code = self.phone.code(word);
+        if code.is_empty() {
+            return Vec::new();
+        }
+        let length = word.chars().count();
+        let mut alike: Vec<&String> = self
+            .stems
+            .keys()
+            .filter(|s| s.chars().count().abs_diff(length) <= 4 && !self.is_compound_only(s))
+            .filter(|s| self.phone.code(s) == code)
+            .collect();
+        alike.sort_by_key(|s| (s.chars().count().abs_diff(length), s.as_str()));
+        alike.into_iter().take(3).cloned().collect()
     }
 
     /// A word in the list, a stem with its affixes, or a compound of them.
@@ -594,6 +625,13 @@ impl Dictionary {
                         "COMPOUNDMIDDLE" => self.compound_middle = flag,
                         "COMPOUNDEND" => self.compound_end = flag,
                         _ => self.only_in_compound = flag,
+                    }
+                }
+                // The count line is `PHONE n`; each rule `PHONE search
+                // replacement`.
+                "PHONE" => {
+                    if let (Some(search), Some(replacement)) = (parts.next(), parts.next()) {
+                        self.phone.push(search, replacement);
                     }
                 }
                 "COMPOUNDMIN" => {
@@ -919,6 +957,36 @@ Paris
     fn two_words_run_together_are_split() {
         let d = dictionary();
         assert!(d.suggest("thecat").contains(&"the cat".to_string()));
+    }
+
+    #[test]
+    fn a_phonetic_table_suggests_what_sounds_alike() {
+        let aff = "PHONE 8
+PHONE GH _
+PHONE G K
+PHONE H H
+PHONE I I
+                   PHONE N N
+PHONE T T
+PHONE E$ _
+PHONE E E
+";
+        // One slip from "nite" are "mite", "nice" and "nine", offered
+        // first, as Hunspell does; "night" is three away, and is found by
+        // how it sounds.
+        let dic = "4
+night
+nine
+nice
+mite
+";
+        let with = Dictionary::parse(aff, dic);
+        assert_eq!(with.sounds_like("nite"), ["night"]);
+        let heard = with.suggest("nite");
+        assert_eq!(heard[..3], ["mite", "nice", "nine"], "{heard:?}");
+        assert!(heard.contains(&"night".to_owned()), "{heard:?}");
+        // With no table, nothing is heard.
+        assert!(Dictionary::parse("", dic).sounds_like("nite").is_empty());
     }
 
     #[test]
