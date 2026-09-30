@@ -210,13 +210,14 @@ impl OpenDocument {
         // that holds the edit buffer and the layout at once. A caller that had to
         // supply it would be a caller that could forget to — and forgetting
         // means a composition that is typed and never appears.
-        // A note's composition is not previewed: the layout splices it
-        // into a story, and a note is not one of the document's.
-        let composing = if self.editing_note.is_some() {
-            None
-        } else {
-            composing(&self.document, self.editing.as_ref(), self.editing_cell)
-        };
+        // In a note, into the note: the layout splices it into the
+        // footnote the story carries.
+        let composing = composing(
+            &self.document,
+            self.editing.as_ref(),
+            self.editing_cell,
+            self.editing_note,
+        );
         self.resolved
             .get_composing(&self.document, shaper, scope, composing.as_ref())
     }
@@ -364,6 +365,7 @@ fn composing(
     document: &Document,
     editing: Option<&(tessera_document::ids::FrameId, EditBuffer)>,
     cell: Option<(usize, usize)>,
+    note: Option<usize>,
 ) -> Option<tessera_layout::resolve::Composing> {
     let (id, buffer) = editing?;
     let (replacing, text) = buffer.composing()?;
@@ -381,5 +383,6 @@ fn composing(
         story,
         replacing,
         text: text.to_string(),
+        note,
     })
 }

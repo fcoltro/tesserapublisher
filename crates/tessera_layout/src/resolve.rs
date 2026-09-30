@@ -232,6 +232,10 @@ pub struct Composing {
     /// the same thing, or it is showing a result that will not happen.
     pub replacing: std::ops::Range<usize>,
     pub text: String,
+    /// The footnote of `story` being typed in, by its index, when the
+    /// composition is in a note: `replacing` is then a range of the note's
+    /// text, and the note is what it is spliced into.
+    pub note: Option<usize>,
 }
 
 /// Resolve what `scope` is looking at.
@@ -331,11 +335,19 @@ pub fn resolve_composing(
     };
     // Spliced once, here, and lent to every frame below.
     let spliced = composing.and_then(|c| {
-        Some((
-            c.story,
-            doc.story(c.story)?
-                .with_provisional(c.replacing.clone(), &c.text),
-        ))
+        let story = doc.story(c.story)?;
+        let shown = match c.note {
+            // Into the note, which the story carries and lays out at the
+            // foot of the column its marker is in.
+            Some(index) => {
+                let mut shown = story.clone();
+                let note = shown.footnotes.get_mut(index)?;
+                *note = note.with_provisional(c.replacing.clone(), &c.text);
+                shown
+            }
+            None => story.with_provisional(c.replacing.clone(), &c.text),
+        };
+        Some((c.story, shown))
     });
     let composed = spliced.as_ref().map(|(id, story)| (*id, story));
     resolve_pages(doc, shaper, &shown, composed)

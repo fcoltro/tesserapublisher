@@ -5319,7 +5319,35 @@ mod tests {
             })
             .unwrap();
         assert!(layout.lines[0].baseline > body, "at the foot of the column");
-        assert!(caret_geometry(&mut state).is_some());
+        let before = caret_geometry(&mut state).expect("a caret");
+        assert!(before.composing.is_empty());
+
+        // An input method's composition shows in the note, underlined, with
+        // the caret after it — and nothing reaches the document until it is
+        // committed.
+        let Some((_, buffer)) = state.active_mut().editing.as_mut() else {
+            panic!("editing")
+        };
+        buffer.set_ime_preedit(Some("nihongo".to_string()));
+        let composing = caret_geometry(&mut state).expect("a caret");
+        assert!(
+            !composing.composing.is_empty(),
+            "the composition is underlined"
+        );
+        assert!(
+            composing.geometry.caret.unwrap().x0 > before.geometry.caret.unwrap().x0,
+            "the caret sits after what is being composed"
+        );
+        let s = state.active().document().story(story).unwrap();
+        assert!(
+            s.footnotes[0].text.ends_with("A note."),
+            "not yet in the note"
+        );
+        assert_eq!(s.text, copy, "nor in the copy");
+        let Some((_, buffer)) = state.active_mut().editing.as_mut() else {
+            panic!("editing")
+        };
+        buffer.set_ime_preedit(None);
 
         assert!(type_text(&mut state, " More"));
         let s = state.active().document().story(story).unwrap();

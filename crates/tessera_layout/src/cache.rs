@@ -219,6 +219,7 @@ mod tests {
             story,
             replacing: 2..2,
             text: "hongo".to_string(),
+            note: None,
         };
         let composed = glyphs(cache.get_composing(
             &doc,

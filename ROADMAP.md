@@ -2837,8 +2837,9 @@ line of copy. The renderer and the PDF writer draw them without knowing.
   back in the citing story's list, inside the session's undo entry. What
   acts on "the story being edited" by id — styles, markers, Find — acts on
   nothing while the caret is in a note, so none of it can write note
-  offsets into the copy. Not previewed: an input method's composition in
-  a note.
+  offsets into the copy. An input method's composition is previewed in a
+  note too (2026-09-29): `Composing.note` says which footnote of the story
+  it is typed into, and the layout splices it there.
   Contents entries *are* hyperlinks now — see below.
 
 ---
