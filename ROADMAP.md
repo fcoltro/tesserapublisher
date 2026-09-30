@@ -3431,8 +3431,13 @@ and running headers (milestone 10).
   the page break into the next frame (`Document::table_behind`); a part's
   laid-out cells now carry their row in the whole table, where before they
   counted from the part's own first row, so a click in a continued frame
-  would have reached the row in the same place on the first page.
-  **Left:** running on into a frame drawn by hand.
+  would have reached the row in the same place on the first page. And a
+  table runs on into a frame drawn by hand, threaded as text is: its out
+  port (red when rows are left over, a lone table too tall for its frame
+  included) then an empty frame — nothing placed, a plain rectangle, or a
+  text frame with no text and no thread — or Object ▸ Thread with both
+  selected (`Document::continue_table_into`). Unthread turns the frames
+  after the break back into empty frames (`stop_table_at`).
 - [x] 12. **Data merge, several records to a page**: labels, badges and
   catalogue grids. Days. *Done 2026-09-27.* "Several records to a page"
   in the Data merge panel, with the gap across and down. One record is

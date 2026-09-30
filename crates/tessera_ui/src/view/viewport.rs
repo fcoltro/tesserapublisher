@@ -1556,12 +1556,22 @@ fn overset_frames(state: &mut TesseraApp) -> Vec<FrameId> {
     // baseline grid all change how much fits, and none of them were accounted
     // for either. `flow` is the only thing that knows, so it is what is asked.
     let key = state.active;
-    let overflowing: Vec<FrameId> = state
-        .resolve_active()
+    let resolved = state.resolve_active().clone();
+    let doc = state.documents[key].document();
+    let overflowing: Vec<FrameId> = resolved
         .items
         .iter()
         .filter_map(|item| match &item.kind {
             ResolvedKind::Text { overset_lines, .. } if *overset_lines > 0 => Some(item.frame),
+            // A table's rows left over are counted on its last frame; a
+            // table that runs on nowhere is laid out whole, and is too long
+            // when it is taller than its frame.
+            ResolvedKind::Table { laid, .. } => {
+                let frame = doc.frame(item.frame)?;
+                let alone = matches!(&frame.kind, FrameKind::Table(t) if t.parts.is_empty());
+                (laid.overset_rows > 0 || (alone && laid.size().1 > frame.bounds.height + 0.5))
+                    .then_some(item.frame)
+            }
             _ => None,
         })
         .collect();
@@ -1569,7 +1579,6 @@ fn overset_frames(state: &mut TesseraApp) -> Vec<FrameId> {
     // A frame that passes its overflow on has not lost it. Only the end of a
     // chain can be overset, which is the whole meaning of the mark: copy is
     // here, and there is nowhere for it to go.
-    let doc = state.documents[key].document();
     overflowing
         .into_iter()
         .filter(|id| {
@@ -1864,7 +1873,8 @@ fn threading_click(state: &mut TesseraApp, rect: Rect, pos: egui::Pos2) -> bool 
             // changed their mind, and saying so would be a scolding.
             return true;
         };
-        if !ports::is_text(state, to) {
+        let from_table = state.active().document().table_behind(from).is_some();
+        if !from_table && !ports::is_text(state, to) {
             state.status = Some(crate::app::Status::info(
                 "Text can only continue into another text frame.",
             ));
@@ -1877,10 +1887,13 @@ fn threading_click(state: &mut TesseraApp, rect: Rect, pos: egui::Pos2) -> bool 
         let before = state.active().document().revision();
         apply(state, Command::ThreadFrames { from, to });
         if state.active().document().revision() == before {
-            state.status = Some(crate::app::Status::info(
+            state.status = Some(crate::app::Status::info(if from_table {
+                "A table runs on only into an empty frame: one with nothing \
+                 placed in it, and no text of its own."
+            } else {
                 "Those frames cannot be joined: a frame takes text from one \
-                 place only, and a thread cannot run in a circle.",
-            ));
+                 place only, and a thread cannot run in a circle."
+            }));
         }
         return true;
     }
@@ -4991,6 +5004,130 @@ mod tests {
             state.active().editing.as_ref().map(|(id, _)| *id),
             Some(part),
             "into the frame that shows the row"
+        );
+    }
+
+    #[test]
+    fn a_table_runs_on_into_an_empty_frame_somebody_drew() {
+        use tessera_document::nodes::FrameKind;
+        use tessera_layout::resolve::ResolvedKind;
+        let mut state = TesseraApp::headless();
+        let b = state.first_page_bounds();
+        let mut cells = vec![vec!["Item".to_owned(), "Price".to_owned()]];
+        cells.extend((1..=30).map(|n| vec![format!("Thing {n}"), format!("{n}.00")]));
+        apply(
+            &mut state,
+            Command::AddTableFromData {
+                bounds: DocRect {
+                    x: b.x + 36.0,
+                    y: b.y + 36.0,
+                    width: 200.0,
+                    height: 150.0,
+                },
+                cells,
+            },
+        );
+        let head = state.active().selection.single().expect("the table");
+        let overset = |state: &mut TesseraApp, frame: FrameId| -> usize {
+            state
+                .resolve_active()
+                .items
+                .iter()
+                .find(|i| i.frame == frame)
+                .and_then(|i| match &i.kind {
+                    ResolvedKind::Table { laid, .. } => Some(laid.overset_rows),
+                    _ => None,
+                })
+                .unwrap_or(0)
+        };
+        assert!(
+            overset_frames(&mut state).contains(&head),
+            "and says so at its port"
+        );
+
+        // A frame with text in it is refused: its copy would be lost.
+        apply(
+            &mut state,
+            Command::AddTextFrame(DocRect {
+                x: b.x + 260.0,
+                y: b.y + 36.0,
+                width: 200.0,
+                height: 100.0,
+            }),
+        );
+        let text = state.active().selection.single().unwrap();
+        let story = editing_story(&state, text, None).unwrap();
+        state.active_mut().document_mut().stories[story].insert_text(0, "Copy");
+        apply(
+            &mut state,
+            Command::ThreadFrames {
+                from: head,
+                to: text,
+            },
+        );
+        assert!(matches!(
+            state.active().document().frame(text).map(|f| &f.kind),
+            Some(FrameKind::Text { .. })
+        ));
+
+        // An empty frame, drawn by hand, takes the rows left over.
+        apply(
+            &mut state,
+            Command::AddGraphicFrame(DocRect {
+                x: b.x + 36.0,
+                y: b.y + 300.0,
+                width: 200.0,
+                height: 700.0,
+            }),
+        );
+        let drawn = state.active().selection.single().unwrap();
+        apply(
+            &mut state,
+            Command::ThreadFrames {
+                from: head,
+                to: drawn,
+            },
+        );
+        let doc = state.active().document();
+        assert!(matches!(
+            doc.frame(drawn).map(|f| &f.kind),
+            Some(FrameKind::TablePart { head: h }) if *h == head
+        ));
+        assert_eq!(doc.table_behind(head).unwrap().1.parts, vec![drawn]);
+        assert_eq!(doc.next_table_frame(head), Some(drawn));
+        assert_eq!(overset(&mut state, drawn), 0, "every row has a place now");
+        assert!(!overset_frames(&mut state).contains(&head));
+        assert!(!overset_frames(&mut state).contains(&drawn));
+
+        // Unthreaded, the frame is an empty frame again and the rows are
+        // left over; undone, it runs on as before.
+        apply(&mut state, Command::UnthreadFrame { id: head });
+        assert!(matches!(
+            state.active().document().frame(drawn).map(|f| &f.kind),
+            Some(FrameKind::Graphic { placed: None })
+        ));
+        assert!(overset_frames(&mut state).contains(&head));
+        apply(&mut state, Command::Undo);
+        assert_eq!(
+            state.active().document().next_table_frame(head),
+            Some(drawn)
+        );
+
+        // One undo step puts the frame back as it was drawn.
+        apply(&mut state, Command::Undo);
+        assert!(matches!(
+            state.active().document().frame(drawn).map(|f| &f.kind),
+            Some(FrameKind::Graphic { placed: None })
+        ));
+        assert!(
+            state
+                .active()
+                .document()
+                .table_behind(head)
+                .unwrap()
+                .1
+                .parts
+                .is_empty()
         );
     }
 

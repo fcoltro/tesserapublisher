@@ -145,11 +145,22 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
         }
 
         Command::ThreadFrames { from, to } => {
-            state.active_mut().document_mut().thread(from, to);
+            let doc = state.active_mut().document_mut();
+            // From a table: on into the frame, as its next part.
+            if doc.table_behind(from).is_some() {
+                doc.continue_table_into(from, to);
+            } else {
+                doc.thread(from, to);
+            }
         }
 
         Command::UnthreadFrame { id } => {
-            state.active_mut().document_mut().unthread(id);
+            let doc = state.active_mut().document_mut();
+            if doc.table_behind(id).is_some() {
+                doc.stop_table_at(id);
+            } else {
+                doc.unthread(id);
+            }
         }
 
         Command::PutTextOnPath { id, text } => {

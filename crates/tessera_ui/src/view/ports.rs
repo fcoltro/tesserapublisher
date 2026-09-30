@@ -1,5 +1,9 @@
 //! The in and out ports of a text frame, and threading by clicking them.
 //!
+//! A table has them too: its out port carries rows its frames have no room
+//! for, and clicking it and then an empty frame runs the table on into that
+//! frame, as text runs on into the next frame of a thread.
+//!
 //! Threading through the Object menu needs two frames selected in the right
 //! order, which is a rule nobody can see and most people get backwards. The
 //! ports are the way every layout tool actually does it: click where the text
@@ -59,13 +63,17 @@ pub enum Port {
 }
 
 /// Whether this frame holds text at all.
-///
-/// Only text frames have ports. A rectangle has no overflow to pass on.
 pub fn is_text(state: &TesseraApp, id: FrameId) -> bool {
     matches!(
         state.active().document().frame(id).map(|f| &f.kind),
         Some(FrameKind::Text { .. })
     )
+}
+
+/// Whether this frame has ports: text frames, and the frames a table is set
+/// in. A rectangle has no overflow to pass on.
+pub fn has_ports(state: &TesseraApp, id: FrameId) -> bool {
+    is_text(state, id) || state.active().document().table_behind(id).is_some()
 }
 
 /// Where a port sits on screen.
@@ -129,21 +137,31 @@ pub fn out_port_at(state: &TesseraApp, canvas: Rect, at: egui::Pos2) -> Option<F
         .as_slice()
         .iter()
         .copied()
-        .filter(|id| is_text(state, *id))
+        .filter(|id| has_ports(state, *id))
         .find(|id| port_rect(state, canvas, *id, Port::Out).is_some_and(|rect| rect.contains(at)))
 }
 
-/// Whether this frame takes overflow from another.
+/// Whether this frame takes overflow from another: text threaded into it,
+/// or a table's rows run on into it.
 fn takes_overflow(state: &TesseraApp, id: FrameId) -> bool {
-    state.active().document().previous_in_thread(id).is_some()
+    let doc = state.active().document();
+    doc.previous_in_thread(id).is_some()
+        || matches!(
+            doc.frame(id).map(|f| &f.kind),
+            Some(FrameKind::TablePart { .. })
+        )
 }
 
 /// Whether this frame passes overflow on.
 fn passes_overflow(state: &TesseraApp, id: FrameId) -> bool {
-    matches!(
-        state.active().document().frame(id).map(|f| &f.kind),
-        Some(FrameKind::Text { layout, .. }) if layout.next.is_some()
-    )
+    let doc = state.active().document();
+    match doc.frame(id).map(|f| &f.kind) {
+        Some(FrameKind::Text { layout, .. }) => layout.next.is_some(),
+        Some(FrameKind::Table(_) | FrameKind::TablePart { .. }) => {
+            doc.next_table_frame(id).is_some()
+        }
+        _ => false,
+    }
 }
 
 /// Draw the ports, and the overset marks that are ports too.
@@ -157,7 +175,7 @@ pub fn draw(state: &TesseraApp, canvas: Rect, painter: &egui::Painter, overset: 
         .as_slice()
         .iter()
         .copied()
-        .filter(|id| is_text(state, *id))
+        .filter(|id| has_ports(state, *id))
         .collect();
     for id in overset {
         if !showing.contains(id) {
@@ -170,7 +188,7 @@ pub fn draw(state: &TesseraApp, canvas: Rect, painter: &egui::Painter, overset: 
     // not the other. This is also what the old red mark was accidentally doing
     // — every threaded frame counted as overset, so every one of them drew.
     for id in state.active().document().paint_order() {
-        if is_text(state, id)
+        if has_ports(state, id)
             && (passes_overflow(state, id) || takes_overflow(state, id))
             && !showing.contains(&id)
         {

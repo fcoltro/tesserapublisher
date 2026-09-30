@@ -2665,6 +2665,110 @@ impl Document {
         self.frames.get(id)
     }
 
+    /// Run the table `from` shows on into `to`, a frame somebody drew: it
+    /// becomes the next frame the table runs on into after `from`, as a text
+    /// frame threaded after another takes the text next.
+    ///
+    /// Only an **empty** frame: one with nothing placed in it, a plain
+    /// rectangle, or a text frame with no text that no thread runs through.
+    /// Turning a photograph or somebody's copy into a table's continuation
+    /// would lose them without a word. Returns whether it did anything.
+    pub fn continue_table_into(&mut self, from: FrameId, to: FrameId) -> bool {
+        let Some((head, table)) = self.table_behind(from) else {
+            return false;
+        };
+        if to == from || to == head || table.parts.contains(&to) {
+            return false;
+        }
+        let emptied = match self.frame(to).map(|f| &f.kind) {
+            Some(FrameKind::Graphic { placed: None } | FrameKind::Rectangle) => None,
+            Some(FrameKind::Text { story, layout }) => {
+                let empty = self.story(*story).is_none_or(|s| s.text.is_empty());
+                if !empty || layout.next.is_some() || self.previous_in_thread(to).is_some() {
+                    return false;
+                }
+                Some(*story)
+            }
+            _ => return false,
+        };
+        // After `from`: the first place for a table's own frame, the place
+        // after it for a part.
+        let at = if from == head {
+            0
+        } else {
+            table
+                .parts
+                .iter()
+                .position(|p| *p == from)
+                .map_or(table.parts.len(), |i| i + 1)
+        };
+        if let Some(story) = emptied {
+            self.remove_story(story);
+        }
+        if let Some(frame) = self.frames.get_mut(to) {
+            frame.kind = FrameKind::TablePart { head };
+        }
+        if let Some(FrameKind::Table(table)) = self.frames.get_mut(head).map(|f| &mut f.kind) {
+            table.parts.insert(at.min(table.parts.len()), to);
+        }
+        self.touch();
+        true
+    }
+
+    /// Stop the table at `id`: the frames it ran on into after this one go
+    /// back to being empty frames where they stand, and their rows are left
+    /// over again — what breaking a text thread does to the frames after
+    /// the break. Returns whether it did anything.
+    pub fn stop_table_at(&mut self, id: FrameId) -> bool {
+        let Some((head, table)) = self.table_behind(id) else {
+            return false;
+        };
+        let keep = if id == head {
+            0
+        } else {
+            match table.parts.iter().position(|p| *p == id) {
+                Some(i) => i + 1,
+                None => return false,
+            }
+        };
+        if keep >= table.parts.len() {
+            return false;
+        }
+        let freed: Vec<FrameId> = table.parts[keep..].to_vec();
+        if let Some(FrameKind::Table(table)) = self.frames.get_mut(head).map(|f| &mut f.kind) {
+            table.parts.truncate(keep);
+        }
+        for part in freed {
+            if let Some(frame) = self.frames.get_mut(part)
+                && matches!(frame.kind, FrameKind::TablePart { head: h } if h == head)
+            {
+                frame.kind = FrameKind::Graphic { placed: None };
+            }
+        }
+        self.touch();
+        true
+    }
+
+    /// The frame a table runs on into after `id`, if it runs on.
+    pub fn next_table_frame(&self, id: FrameId) -> Option<FrameId> {
+        let (head, table) = self.table_behind(id)?;
+        let live: Vec<FrameId> = table
+            .parts
+            .iter()
+            .copied()
+            .filter(|p| {
+                matches!(self.frame(*p).map(|f| &f.kind),
+                    Some(FrameKind::TablePart { head: h }) if *h == head)
+            })
+            .collect();
+        if id == head {
+            live.first().copied()
+        } else {
+            let at = live.iter().position(|p| *p == id)?;
+            live.get(at + 1).copied()
+        }
+    }
+
     /// The table a frame shows, and the frame that holds it: the frame
     /// itself for a table, its head for a frame the table runs on into.
     /// What anything acting on "this table" asks, since a continued part
