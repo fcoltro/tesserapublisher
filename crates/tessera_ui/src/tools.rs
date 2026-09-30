@@ -35,6 +35,9 @@ pub enum Tool {
     /// Drag a line to read how far, and at what angle, one place is from
     /// another. Draws nothing in the document.
     Measure,
+    /// Take hold of the space between objects and move it, or widen it.
+    /// See [`crate::gap`].
+    Gap,
 }
 
 /// A line the measure tool has drawn, in document points. Kept until the
@@ -109,6 +112,7 @@ impl Tool {
             Self::Zoom => "Zoom",
             Self::Eyedropper => "Eyedropper",
             Self::Measure => "Measure",
+            Self::Gap => "Gap",
         }
     }
 
@@ -129,6 +133,7 @@ impl Tool {
             Self::Eyedropper => crate::icons::Icon::Pipette,
             // The ruler the tab stops wear: the same object, measuring.
             Self::Measure => crate::icons::Icon::TabStop,
+            Self::Gap => crate::icons::Icon::DistributeH,
         }
     }
 
@@ -171,10 +176,12 @@ impl Tool {
             Self::Eyedropper => egui::Key::I,
             // K, as InDesign's measure tool is.
             Self::Measure => egui::Key::K,
+            // U, as InDesign's gap tool is.
+            Self::Gap => egui::Key::U,
         }
     }
 
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Select,
         Self::DirectSelect,
         Self::Rectangle,
@@ -187,6 +194,7 @@ impl Tool {
         Self::Scissors,
         Self::Eyedropper,
         Self::Measure,
+        Self::Gap,
         Self::Hand,
         Self::Zoom,
     ];
@@ -207,6 +215,16 @@ pub enum DragKind {
     },
     /// Rubber-band selection over empty canvas.
     Marquee,
+    /// Moving or widening the space between objects. Carries the gap as
+    /// found and every bordering frame's box when the drag began, so each
+    /// step is worked out from where it started.
+    Gap {
+        gap: crate::gap::Gap,
+        /// Upright on the page, for the arithmetic.
+        on_page: Vec<(FrameId, DocRect)>,
+        /// In each frame's own space, which is what is written back.
+        own: Vec<(FrameId, DocRect)>,
+    },
     /// Sliding one end of type on a path along the path. Carries the
     /// placement the drag began from, put back before the one command.
     PathTextEnd {

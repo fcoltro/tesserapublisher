@@ -1491,6 +1491,7 @@ pub fn all() -> &'static [Action] {
             Group::Tool,
             PickTool(Tool::Measure),
         ),
+        a("Gap tool", Some("U"), Group::Tool, PickTool(Tool::Gap)),
     ];
     LIST
 }

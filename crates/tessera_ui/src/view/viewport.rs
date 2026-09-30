@@ -1009,6 +1009,7 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
         Tool::DirectSelect => direct_gesture(ui, response, rect, state),
         Tool::Zoom => zoom_gesture(ui, response, rect, state),
         Tool::Measure => measure_gesture(ui, response, rect, state),
+        Tool::Gap => gap_gesture(ui, response, rect, state),
         Tool::Eyedropper => {
             if response.clicked()
                 && let Some(pos) = response.interact_pointer_pos()
@@ -2410,6 +2411,12 @@ fn canvas_cursor(
             | DragKind::PathTextEnd { .. }
             | DragKind::Draw
             | DragKind::Marquee => {}
+            DragKind::Gap { gap, .. } => {
+                return Cursor::new(match gap.axis {
+                    crate::gap::Axis::Across => Icon::DistributeH,
+                    crate::gap::Axis::Down => Icon::DistributeV,
+                });
+            }
         }
     }
 
@@ -2426,6 +2433,16 @@ fn canvas_cursor(
         Tool::Zoom => Cursor::new(Icon::ZoomIn),
         Tool::Eyedropper => Cursor::new(Icon::Pipette),
         Tool::Measure => Cursor::new(Icon::Crosshair),
+        // Which way the gap under the pointer moves, or the crosshair where
+        // there is none.
+        Tool::Gap => {
+            let at = doc_pos(state, rect, pos);
+            match gap_at(state, at, false).map(|(g, _, _)| g.axis) {
+                Some(crate::gap::Axis::Across) => Cursor::new(Icon::DistributeH),
+                Some(crate::gap::Axis::Down) => Cursor::new(Icon::DistributeV),
+                None => Cursor::new(Icon::Crosshair),
+            }
+        }
         Tool::Polygon => Cursor::new(Icon::Crosshair),
         Tool::Scissors => Cursor::new(Icon::Crosshair),
         // The pointer over an anchor is the anchor's own business; away from
@@ -2690,6 +2707,159 @@ fn draw_note_flags(ui: &Ui, notes: &[(tessera_document::ids::StoryId, usize, egu
             AMBER,
             Stroke::NONE,
         ));
+    }
+}
+
+/// The frames a gap may be found between, upright on the page and in
+/// their own spaces, and the page edges that bound one.
+///
+/// Top-level, selectable frames only: a group, a frame anchored in text,
+/// and one that is rotated, sheared or scaled have no straight edge of
+/// their own along a gap to move.
+#[allow(clippy::type_complexity)]
+fn gap_candidates(
+    state: &TesseraApp,
+) -> (
+    Vec<(FrameId, DocRect)>,
+    Vec<(FrameId, DocRect)>,
+    Vec<DocRect>,
+) {
+    let doc = state.active().document();
+    let everywhere = DocRect {
+        x: -1.0e7,
+        y: -1.0e7,
+        width: 2.0e7,
+        height: 2.0e7,
+    };
+    let (mut on_page, mut own) = (Vec::new(), Vec::new());
+    for id in doc.frames_touching(everywhere) {
+        let Some(f) = doc.frame(id) else { continue };
+        if f.anchor.is_some() || matches!(f.kind, tessera_document::nodes::FrameKind::Group(_)) {
+            continue;
+        }
+        let c = f.corners();
+        let upright = (c[0].y - c[1].y).abs() < 1e-6
+            && (c[0].x - c[3].x).abs() < 1e-6
+            && ((c[1].x - c[0].x) - f.bounds.width).abs() < 1e-6
+            && ((c[3].y - c[0].y) - f.bounds.height).abs() < 1e-6;
+        if !upright {
+            continue;
+        }
+        on_page.push((
+            id,
+            DocRect {
+                x: c[0].x,
+                y: c[0].y,
+                width: f.bounds.width,
+                height: f.bounds.height,
+            },
+        ));
+        own.push((id, f.bounds));
+    }
+    let walls = doc.pages.values().map(|p| p.bounds).collect();
+    (on_page, own, walls)
+}
+
+/// The gap at `at`, with the frames that may take part in it.
+#[allow(clippy::type_complexity)]
+fn gap_at(
+    state: &TesseraApp,
+    at: DocPoint,
+    nearest_only: bool,
+) -> Option<(
+    crate::gap::Gap,
+    Vec<(FrameId, DocRect)>,
+    Vec<(FrameId, DocRect)>,
+)> {
+    let (on_page, own, walls) = gap_candidates(state);
+    let gap = crate::gap::find(&on_page, &walls, at, nearest_only)?;
+    Some((gap, on_page, own))
+}
+
+/// Drag a gap to move it; with Ctrl, to widen or narrow it. Shift takes only
+/// the two frames nearest the pointer. Previewed live on the frames, and
+/// committed as one command when the pointer comes up.
+fn gap_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
+    if response.drag_started()
+        && let Some(pos) = press_pos(ui, response)
+    {
+        let at = doc_pos(state, rect, pos);
+        let shift = ui.input(|i| i.modifiers.shift);
+        if let Some((gap, on_page, own)) = gap_at(state, at, shift) {
+            state.drag = Some(Drag::new(at, DragKind::Gap { gap, on_page, own }));
+        }
+    }
+    if response.dragged()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        let at = doc_pos(state, rect, pos);
+        if let Some(drag) = state.drag.as_mut() {
+            drag.current = at;
+        }
+    }
+    let Some(Drag {
+        kind: DragKind::Gap { gap, on_page, own },
+        ..
+    }) = state.drag.clone()
+    else {
+        return;
+    };
+    let (dx, dy) = state.drag.as_ref().map_or((0.0, 0.0), Drag::delta);
+    let by = match gap.axis {
+        crate::gap::Axis::Across => dx,
+        crate::gap::Axis::Down => dy,
+    };
+    let resize = ui.input(|i| i.modifiers.ctrl);
+    // Page rectangle to own box: the same step on both, as a frame here has
+    // no turn, shear or scale for them to differ by.
+    let boxes: Vec<(FrameId, DocRect)> = crate::gap::moved(&gap, &on_page, by, resize)
+        .into_iter()
+        .filter_map(|(id, moved)| {
+            let was = on_page.iter().find(|(i, _)| *i == id)?.1;
+            let mine = own.iter().find(|(i, _)| *i == id)?.1;
+            Some((
+                id,
+                DocRect {
+                    x: mine.x + (moved.x - was.x),
+                    y: mine.y + (moved.y - was.y),
+                    width: mine.width + (moved.width - was.width),
+                    height: mine.height + (moved.height - was.height),
+                },
+            ))
+        })
+        .collect();
+    if response.dragged() {
+        // undo-bracketed: preview only; put back before the one command below.
+        for (id, b) in &boxes {
+            if let Some(f) = state.active_mut().document_mut().frame_mut(*id) {
+                f.bounds = *b;
+            }
+        }
+        // undo-bracketed: preview only, as above.
+        state.active_mut().document_mut().touch();
+    }
+    if response.drag_stopped() {
+        state.drag = None;
+        // undo-bracketed: the boxes the drag began with go back, and the new
+        // ones arrive as one command, so the gesture is one undo step.
+        for (id, b) in &own {
+            if let Some(f) = state.active_mut().document_mut().frame_mut(*id) {
+                f.bounds = *b;
+            }
+        }
+        // undo-bracketed: the same putting back.
+        state.active_mut().document_mut().touch();
+        if by != 0.0 {
+            apply(
+                state,
+                Command::Together(
+                    boxes
+                        .into_iter()
+                        .map(|(id, bounds)| Command::SetBounds { id, bounds })
+                        .collect(),
+                ),
+            );
+        }
     }
 }
 
@@ -2983,7 +3153,8 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
             | DragKind::Rotate { .. }
             | DragKind::Draw
             | DragKind::Anchor { .. }
-            | DragKind::PathTextEnd { .. } => {}
+            | DragKind::PathTextEnd { .. }
+            | DragKind::Gap { .. } => {}
         }
     }
 
@@ -3246,6 +3417,7 @@ fn draw_gesture(
             | Tool::Scissors
             | Tool::Eyedropper
             | Tool::Measure
+            | Tool::Gap
             | Tool::Zoom => {}
         }
     }
@@ -3887,6 +4059,23 @@ fn draw_overlays(
         }
     }
 
+    // The gap tool's gap, under the pointer, before it is taken hold of.
+    if state.active_tool == Tool::Gap
+        && state.drag.is_none()
+        && let Some(pointer) = ui.ctx().pointer_hover_pos()
+        && rect.contains(pointer)
+        && let Some((gap, _, _)) = gap_at(state, doc_pos(state, rect, pointer), false)
+    {
+        let r = doc_rect_to_screen(gap.rect());
+        painter.rect_filled(r, 0.0, Theme::selection().gamma_multiply(0.25));
+        painter.rect_stroke(
+            r,
+            0.0,
+            Stroke::new(1.0, Theme::accent_edge()),
+            egui::StrokeKind::Inside,
+        );
+    }
+
     // The measure tool's line, with what it measures written beside it.
     if state.active_tool == Tool::Measure
         && let Some(measured) = state.measured
@@ -3980,7 +4169,8 @@ fn draw_overlays(
             | DragKind::PageEdge { .. }
             | DragKind::TableEdge { .. }
             | DragKind::Anchor { .. }
-            | DragKind::PathTextEnd { .. } => {}
+            | DragKind::PathTextEnd { .. }
+            | DragKind::Gap { .. } => {}
         }
     }
 
