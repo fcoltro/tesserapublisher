@@ -44,6 +44,12 @@ pub enum Tool {
     /// Collect objects onto a conveyor, and — B again — place them. See
     /// [`crate::conveyor`].
     Conveyor,
+    /// Draw a path freehand. See [`crate::freehand`].
+    Pencil,
+    /// Brush over a path to smooth its anchors.
+    Smooth,
+    /// Brush over a path to take its segments out.
+    Erase,
 }
 
 /// A line the measure tool has drawn, in document points. Kept until the
@@ -121,6 +127,9 @@ impl Tool {
             Self::Gap => "Gap",
             Self::ColourTheme => "Colour theme",
             Self::Conveyor => "Content collector",
+            Self::Pencil => "Pencil",
+            Self::Smooth => "Smooth",
+            Self::Erase => "Erase",
         }
     }
 
@@ -144,6 +153,9 @@ impl Tool {
             Self::Gap => crate::icons::Icon::DistributeH,
             Self::ColourTheme => crate::icons::Icon::Palette,
             Self::Conveyor => crate::icons::Icon::Plus,
+            Self::Pencil => crate::icons::Icon::Pen,
+            Self::Smooth => crate::icons::Icon::Blur,
+            Self::Erase => crate::icons::Icon::Scissors,
         }
     }
 
@@ -193,10 +205,14 @@ impl Tool {
             Self::ColourTheme => egui::Key::J,
             // B, as InDesign's content collector is; B again places.
             Self::Conveyor => egui::Key::B,
+            // N, as InDesign's pencil is; S and E, free and what they say.
+            Self::Pencil => egui::Key::N,
+            Self::Smooth => egui::Key::S,
+            Self::Erase => egui::Key::E,
         }
     }
 
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 20] = [
         Self::Select,
         Self::DirectSelect,
         Self::Rectangle,
@@ -212,6 +228,9 @@ impl Tool {
         Self::Gap,
         Self::ColourTheme,
         Self::Conveyor,
+        Self::Pencil,
+        Self::Smooth,
+        Self::Erase,
         Self::Hand,
         Self::Zoom,
     ];

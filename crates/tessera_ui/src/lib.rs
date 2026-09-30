@@ -19,6 +19,7 @@ pub mod cursor;
 pub mod docking;
 pub mod file_ops;
 pub mod find;
+pub mod freehand;
 pub mod gap;
 pub mod glyph_index;
 #[cfg(test)]

@@ -1513,6 +1513,19 @@ pub fn all() -> &'static [Action] {
             Group::Tool,
             PickTool(Tool::Conveyor),
         ),
+        a(
+            "Pencil tool",
+            Some("N"),
+            Group::Tool,
+            PickTool(Tool::Pencil),
+        ),
+        a(
+            "Smooth tool",
+            Some("S"),
+            Group::Tool,
+            PickTool(Tool::Smooth),
+        ),
+        a("Erase tool", Some("E"), Group::Tool, PickTool(Tool::Erase)),
     ];
     LIST
 }

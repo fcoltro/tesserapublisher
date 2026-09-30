@@ -687,6 +687,10 @@ pub struct TesseraApp {
     pub clipboard: Vec<Clipboard>,
     /// The content collector's conveyor. See [`crate::conveyor`].
     pub conveyor: crate::conveyor::Conveyor,
+    /// The pencil's, the smooth tool's or the eraser's trail while it is
+    /// being dragged, in document points, and the path the last two work on.
+    pub freehand: Vec<tessera_geometry::DocPoint>,
+    pub freehand_target: Option<FrameId>,
 
     /// The command palette's own state.
     pub palette: crate::view::palette::Palette,
@@ -804,6 +808,8 @@ impl TesseraApp {
             job: None,
             clipboard: Vec::new(),
             conveyor: crate::conveyor::Conveyor::default(),
+            freehand: Vec::new(),
+            freehand_target: None,
             palette: crate::view::palette::Palette::default(),
             prefs: crate::prefs::Preferences::default(),
             update_check: crate::update::Check::default(),

@@ -1010,6 +1010,7 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
         Tool::Zoom => zoom_gesture(ui, response, rect, state),
         Tool::Measure => measure_gesture(ui, response, rect, state),
         Tool::Gap => gap_gesture(ui, response, rect, state),
+        Tool::Pencil | Tool::Smooth | Tool::Erase => freehand_gesture(response, rect, state),
         Tool::Conveyor => {
             if response.clicked()
                 && let Some(pos) = response.interact_pointer_pos()
@@ -2453,6 +2454,8 @@ fn canvas_cursor(
         Tool::Eyedropper => Cursor::new(Icon::Pipette),
         Tool::Measure => Cursor::new(Icon::Crosshair),
         Tool::ColourTheme => Cursor::new(Icon::Pipette),
+        Tool::Pencil => Cursor::new(Icon::Pen),
+        Tool::Smooth | Tool::Erase => Cursor::new(Icon::Crosshair),
         Tool::Conveyor => Cursor::new(if state.conveyor.placing {
             Icon::Crosshair
         } else {
@@ -2885,6 +2888,132 @@ fn gap_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tesse
                 ),
             );
         }
+    }
+}
+
+/// How wide the smooth tool's and the eraser's brush is, in screen pixels
+/// either side of the pointer.
+const BRUSH: f64 = 6.0;
+
+/// The pencil, the smooth tool and the eraser: a trail gathered while the
+/// pointer is down, and acted on once when it comes up, so each stroke is
+/// one undo step.
+fn freehand_gesture(response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
+    use tessera_document::nodes::FrameKind;
+    if response.drag_started()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        state.freehand = vec![doc_pos(state, rect, pos)];
+        state.freehand_target = None;
+        if state.active_tool != Tool::Pencil {
+            // The selected path, or the path the stroke starts on.
+            let is_path = |state: &TesseraApp, id: FrameId| {
+                state
+                    .active()
+                    .document()
+                    .frame(id)
+                    .is_some_and(|f| matches!(f.kind, FrameKind::Path(_)))
+            };
+            let target = state
+                .active()
+                .selection
+                .single()
+                .filter(|id| is_path(state, *id))
+                .or_else(|| frame_at(state, rect, pos).filter(|id| is_path(state, *id)));
+            if let Some(id) = target {
+                state.active_mut().selection.set(id);
+            }
+            state.freehand_target = target;
+        }
+    }
+    if response.dragged()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        let at = doc_pos(state, rect, pos);
+        let step = 0.5 / state.active().view.zoom.max(f64::EPSILON);
+        if state
+            .freehand
+            .last()
+            .is_none_or(|p| (p.x - at.x).hypot(p.y - at.y) >= step)
+        {
+            state.freehand.push(at);
+        }
+    }
+    if !response.drag_stopped() {
+        return;
+    }
+    let trail = std::mem::take(&mut state.freehand);
+    let target = state.freehand_target.take();
+    let zoom = state.active().view.zoom.max(f64::EPSILON);
+    freehand_commit(state, &trail, target, zoom);
+}
+
+/// What a freehand stroke does when the pointer comes up: a new path from
+/// the pencil, or the target path smoothed or erased where the brush went.
+/// `trail` is in document points; `zoom` sets how fine the pencil's
+/// tolerance and how wide the brush are.
+pub(crate) fn freehand_commit(
+    state: &mut TesseraApp,
+    trail: &[DocPoint],
+    target: Option<FrameId>,
+    zoom: f64,
+) {
+    use tessera_document::nodes::FrameKind;
+    let points: Vec<kurbo::Point> = trail.iter().map(|p| kurbo::Point::new(p.x, p.y)).collect();
+    match state.active_tool {
+        Tool::Pencil => {
+            use kurbo::Shape as _;
+            let kept = crate::freehand::simplify(&points, 1.5 / zoom);
+            if kept.len() < 2 {
+                return; // a click, not a line
+            }
+            let drawn = crate::freehand::fit(&kept);
+            let b = drawn.bounding_box();
+            let bounds = DocRect {
+                x: b.x0,
+                y: b.y0,
+                width: b.width().max(0.01),
+                height: b.height().max(0.01),
+            };
+            let local = kurbo::Affine::translate((-b.x0, -b.y0)) * drawn;
+            apply(state, Command::AddPath(bounds, local));
+        }
+        Tool::Smooth | Tool::Erase => {
+            let Some(id) = target else { return };
+            let Some(frame) = state.active().document().frame(id) else {
+                return;
+            };
+            let FrameKind::Path(path) = &frame.kind else {
+                return;
+            };
+            // Into the path's own points: its frame's space, from its box's
+            // corner.
+            let back = frame.transform.inverse();
+            let origin = (frame.bounds.x, frame.bounds.y);
+            let local: Vec<kurbo::Point> = trail
+                .iter()
+                .map(|p| {
+                    let own = back.apply(*p);
+                    kurbo::Point::new(own.x - origin.0, own.y - origin.1)
+                })
+                .collect();
+            let radius = BRUSH / zoom;
+            let changed = if state.active_tool == Tool::Smooth {
+                crate::freehand::smooth(path, |a| local.iter().any(|p| (*p - a).hypot() <= radius))
+            } else {
+                crate::freehand::erase(path, |s| crate::freehand::touches(s, &local, radius))
+            };
+            if changed == *path {
+                return;
+            }
+            if changed.elements().is_empty() {
+                state.active_mut().selection.set(id);
+                apply(state, Command::DeleteSelection);
+            } else {
+                apply(state, Command::SetPath { id, path: changed });
+            }
+        }
+        _ => {}
     }
 }
 
@@ -3445,6 +3574,9 @@ fn draw_gesture(
             | Tool::Gap
             | Tool::ColourTheme
             | Tool::Conveyor
+            | Tool::Pencil
+            | Tool::Smooth
+            | Tool::Erase
             | Tool::Zoom => {}
         }
     }
@@ -4199,6 +4331,17 @@ fn draw_overlays(
         );
     }
 
+    // The pencil's line as it is drawn, and the brush's track over a path.
+    if state.freehand.len() > 1 {
+        let run: Vec<egui::Pos2> = state.freehand.iter().map(|p| to_screen(*p)).collect();
+        let stroke = if state.active_tool == Tool::Pencil {
+            Stroke::new(1.0, Theme::accent())
+        } else {
+            Stroke::new((BRUSH * 2.0) as f32, Theme::selection().gamma_multiply(0.3))
+        };
+        painter.add(egui::Shape::line(run, stroke));
+    }
+
     // The measure tool's line, with what it measures written beside it.
     if state.active_tool == Tool::Measure
         && let Some(measured) = state.measured
@@ -4690,6 +4833,56 @@ mod tests {
         let canvas = Rect::from_min_max(egui::pos2(60.0, 40.0), egui::pos2(1700.0, 1040.0));
         let inside = egui::pos2(400.0, 500.0);
         assert_eq!(on_canvas(Some(inside), canvas), Some(inside));
+    }
+
+    #[test]
+    fn the_pencil_draws_a_path_and_the_eraser_takes_out_what_it_crosses() {
+        use tessera_document::nodes::FrameKind;
+        let mut state = TesseraApp::headless();
+        let page = state.current_page().expect("a page");
+        let o = state.active().document().pages[page].bounds;
+        let at = |x: f64, y: f64| DocPoint {
+            x: o.x + x,
+            y: o.y + y,
+        };
+
+        // A shaky stroke across and back down: a path with a few anchors,
+        // not one per pointer event.
+        state.active_tool = Tool::Pencil;
+        let mut trail: Vec<DocPoint> = (0..60)
+            .map(|i| {
+                at(
+                    50.0 + f64::from(i) * 3.0,
+                    100.0 + if i % 2 == 0 { 0.2 } else { -0.2 },
+                )
+            })
+            .collect();
+        trail.extend((1..40).map(|i| at(227.0, 100.0 + f64::from(i) * 3.0)));
+        freehand_commit(&mut state, &trail, None, 1.0);
+        let id = state.active().selection.single().expect("a path");
+        let FrameKind::Path(drawn) = &state.active().document().frame(id).unwrap().kind else {
+            panic!("a path frame");
+        };
+        let anchors = drawn.segments().count();
+        assert!(anchors <= 4, "thinned to its shape: {anchors} segments");
+
+        // The eraser across the first leg cuts it; the path is still there.
+        state.active_tool = Tool::Erase;
+        freehand_commit(
+            &mut state,
+            &[at(120.0, 90.0), at(120.0, 110.0)],
+            Some(id),
+            1.0,
+        );
+        let FrameKind::Path(erased) = &state.active().document().frame(id).unwrap().kind else {
+            panic!("still a path");
+        };
+        assert!(erased.segments().count() < anchors, "a segment went");
+
+        // The smooth tool over what is left keeps the frame.
+        state.active_tool = Tool::Smooth;
+        freehand_commit(&mut state, &[at(227.0, 100.0)], Some(id), 1.0);
+        assert!(state.active().document().frame(id).is_some());
     }
 
     #[test]
