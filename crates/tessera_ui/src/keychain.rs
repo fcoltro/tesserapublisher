@@ -32,12 +32,34 @@ pub fn held(_key: &String) -> bool {
     HELD.load(Ordering::SeqCst)
 }
 
+/// The key's entry, with the platform's store made the default the first
+/// time. `keyring_core` holds no store of its own; naming the two here
+/// rather than taking the `keyring` facade keeps Linux free of the D-Bus
+/// store and its async runtime, which this module does not use.
+fn entry() -> Option<keyring_core::Entry> {
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    {
+        static STORE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let ready = *STORE.get_or_init(|| {
+            #[cfg(target_os = "windows")]
+            let store = windows_native_keyring_store::Store::new();
+            #[cfg(target_os = "macos")]
+            let store = apple_native_keyring_store::keychain::Store::new();
+            store.map(|s| keyring_core::set_default_store(s)).is_ok()
+        });
+        if !ready {
+            return None;
+        }
+    }
+    keyring_core::Entry::new(SERVICE, ACCOUNT).ok()
+}
+
 /// The key the keychain holds, if it holds one.
 pub fn read() -> Option<String> {
     if !IN_KEYCHAIN {
         return None;
     }
-    let entry = keyring::Entry::new(SERVICE, ACCOUNT).ok()?;
+    let entry = entry()?;
     match entry.get_password() {
         Ok(key) => {
             HELD.store(true, Ordering::SeqCst);
@@ -53,13 +75,13 @@ pub fn store(key: &str) -> bool {
     if !IN_KEYCHAIN {
         return false;
     }
-    let Ok(entry) = keyring::Entry::new(SERVICE, ACCOUNT) else {
+    let Some(entry) = entry() else {
         return false;
     };
     let ok = if key.trim().is_empty() {
         matches!(
             entry.delete_credential(),
-            Ok(()) | Err(keyring::Error::NoEntry)
+            Ok(()) | Err(keyring_core::Error::NoEntry)
         )
     } else {
         entry.set_password(key.trim()).is_ok()

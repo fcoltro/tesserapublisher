@@ -3,5 +3,5 @@
 # passed here. Bump this, the two workflows' `dtolnay/rust-toolchain@` tags,
 # and fix the new lints in one commit.
 [toolchain]
-channel = "1.97.1"
+channel = "1.98.1"
 components = ["clippy", "rustfmt"]

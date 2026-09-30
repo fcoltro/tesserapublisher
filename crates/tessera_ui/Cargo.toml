@@ -42,17 +42,21 @@ thiserror.workspace = true
 # which is a runtime dependency a headless box may not have, so there the
 # key stays in the file as before.
 #
-# **Held at 3.** keyring 4 is a facade over per-store crates, and its `v1`
-# module — the only one with `Entry` — is behind a `v1` feature that lists
-# the zbus secret-service store unconditionally. Tried on 2026-09-20 with
-# default features off and only the Apple and Windows stores named: the crate
-# refuses to build without `v1` or `cli`. Taking it means every Linux build
-# carries zbus and an async runtime for a store this module chooses not to
-# use. Re-check when the `v1` feature stops naming the Linux store.
-keyring = { version = "3", features = ["apple-native", "windows-native"] }
+# `keyring_core` and the two stores, not the `keyring` 4 facade: its only
+# `Entry` is behind a `v1` feature that names the zbus secret-service store
+# unconditionally, so every Linux build would carry zbus and an async runtime
+# for a store this module does not use. keyring's own documentation says an
+# application should link the core and its stores directly.
+keyring-core = "1"
 # The Glyphs panel: each character's name and kind, to search and sort by.
 unicode_names2.workspace = true
 unicode-general-category.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-native-keyring-store = { version = "1", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1", features = ["keychain"] }
 
 [dev-dependencies]
 zip.workspace = true

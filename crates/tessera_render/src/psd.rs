@@ -551,7 +551,7 @@ fn unpredict(row: &mut [u8], depth: u16) {
     match depth {
         16 => {
             let mut previous = 0u16;
-            for pair in row.chunks_exact_mut(2) {
+            for pair in row.as_chunks_mut::<2>().0 {
                 let v = u16::from_be_bytes([pair[0], pair[1]]).wrapping_add(previous);
                 pair.copy_from_slice(&v.to_be_bytes());
                 previous = v;
@@ -973,7 +973,7 @@ pub(crate) mod tests {
                 match raw.depth {
                     16 => {
                         let mut previous = 0u16;
-                        for pair in r.chunks_exact_mut(2) {
+                        for pair in r.as_chunks_mut::<2>().0 {
                             let v = u16::from_be_bytes([pair[0], pair[1]]);
                             pair.copy_from_slice(&v.wrapping_sub(previous).to_be_bytes());
                             previous = v;
