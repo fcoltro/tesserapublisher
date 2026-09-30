@@ -243,6 +243,50 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
             }
         }
 
+        Command::SetNoteText { story, index, text } => {
+            if let Some(note) = state
+                .active_mut()
+                .document_mut()
+                .story_mut(story)
+                .and_then(|s| s.notes.get_mut(index))
+            {
+                note.text = text.clone();
+            }
+            state.active_mut().document_mut().touch();
+            // The buffer holds its own copy of the story it is editing, and
+            // writes it back on the next keystroke: it has to agree.
+            if crate::view::long_document::editing_story_is(state, story)
+                && let Some((_, buffer)) = state.active_mut().editing.as_mut()
+                && let Some(note) = buffer.story_mut().notes.get_mut(index)
+            {
+                note.text = text;
+            }
+        }
+
+        Command::RemoveNote { story, index } => {
+            let editing = crate::view::long_document::editing_story_is(state, story);
+            if let Some(s) = state.active_mut().document_mut().story_mut(story)
+                && let Some(at) = s.note_offsets().get(index).copied()
+            {
+                let len = tessera_text::variables::Marker::Note.character().len_utf8();
+                s.delete_range(at..at + len);
+            }
+            state.active_mut().document_mut().touch();
+            if editing && let Some((_, buffer)) = state.active_mut().editing.as_mut() {
+                let at = buffer.story().note_offsets().get(index).copied();
+                if let Some(at) = at {
+                    let len = tessera_text::variables::Marker::Note.character().len_utf8();
+                    let cursor = buffer.cursor().position;
+                    buffer.story_mut().delete_range(at..at + len);
+                    buffer.set_cursor(if cursor > at {
+                        cursor.saturating_sub(len).max(at)
+                    } else {
+                        cursor
+                    });
+                }
+            }
+        }
+
         Command::SetDestination { name, page } => {
             state
                 .active_mut()

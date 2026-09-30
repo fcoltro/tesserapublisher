@@ -40,6 +40,11 @@ pub enum Group {
     /// The characters that read as what the page knows — a page number, a
     /// section marker — a second submenu of Type.
     Markers,
+    /// A footnote's three commands, a third submenu of Type: inserting one,
+    /// rewording it, and the document's options.
+    Footnotes,
+    /// Editorial notes, a fourth: InDesign's Type > Notes.
+    Notes,
     Layout,
     Table,
     Window,
@@ -47,7 +52,7 @@ pub enum Group {
 }
 
 impl Group {
-    pub const ALL: [Group; 18] = [
+    pub const ALL: [Group; 20] = [
         Group::File,
         Group::Edit,
         Group::Spelling,
@@ -62,6 +67,8 @@ impl Group {
         Group::Type,
         Group::Insert,
         Group::Markers,
+        Group::Footnotes,
+        Group::Notes,
         Group::Layout,
         Group::Table,
         Group::Window,
@@ -87,6 +94,8 @@ impl Group {
             // submenu is what InDesign does, and for the same reason.
             Group::Insert => Some("Insert special character"),
             Group::Markers => Some("Insert marker"),
+            Group::Footnotes => Some("Footnotes"),
+            Group::Notes => Some("Notes"),
             Group::Spelling => Some("Spelling"),
             _ => None,
         }
@@ -118,7 +127,9 @@ impl Group {
             | Group::Transform
             | Group::Align => Some("Object"),
             Group::View => Some("View"),
-            Group::Type | Group::Insert | Group::Markers => Some("Type"),
+            Group::Type | Group::Insert | Group::Markers | Group::Footnotes | Group::Notes => {
+                Some("Type")
+            }
             Group::Layout => Some("Layout"),
             Group::Table => Some("Table"),
             Group::Window => Some("Window"),
@@ -316,6 +327,10 @@ pub enum Run {
     DataMerge,
     /// A footnote reference at the caret, and a note to go with it.
     InsertFootnote,
+    /// An editorial note at the caret, which the box then asks the words of.
+    InsertNote,
+    /// Reword the note the caret is at.
+    EditNote,
     /// Reword the footnote the caret is at.
     EditFootnote,
     /// An index marker at the caret, filed under a topic the box asks for.
@@ -449,6 +464,8 @@ pub fn guard(run: Run) -> Guard {
         // Only useful while typing, like the special characters.
         Run::InsertFootnote
         | Run::EditFootnote
+        | Run::InsertNote
+        | Run::EditNote
         | Run::InsertIndexEntry
         | Run::InsertTextAnchor
         | Run::InsertCrossReference => Guard::Always,
@@ -1289,19 +1306,22 @@ pub fn all() -> &'static [Action] {
         a(
             "Insert footnote",
             Some("Ctrl+Alt+F"),
-            Group::Type,
+            Group::Footnotes,
             Run::InsertFootnote,
         ),
         a(
             "Edit footnote\u{2026}",
             None,
-            Group::Type,
+            Group::Footnotes,
             Run::EditFootnote,
         ),
+        // InDesign's Type > Notes > New Note, and its editing box.
+        a("New note", None, Group::Notes, Run::InsertNote),
+        a("Edit note\u{2026}", None, Group::Notes, Run::EditNote),
         a(
             "Footnote options\u{2026}",
             None,
-            Group::Type,
+            Group::Footnotes,
             Run::FootnoteOptions,
         ),
         // Ctrl+K, which is what a hyperlink is in every editor a person has
@@ -1681,6 +1701,19 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             let mut window = std::mem::take(&mut state.footnote);
             window.open(state);
             state.footnote = window;
+        }
+        Run::InsertNote => {
+            if crate::view::viewport::type_text(state, &Marker::Note.character().to_string()) {
+                crate::view::long_document::stamp_note_author(state);
+                let mut window = std::mem::take(&mut state.note);
+                window.open(state);
+                state.note = window;
+            }
+        }
+        Run::EditNote => {
+            let mut window = std::mem::take(&mut state.note);
+            window.open(state);
+            state.note = window;
         }
         Run::EditFootnote => {
             let mut window = std::mem::take(&mut state.footnote);

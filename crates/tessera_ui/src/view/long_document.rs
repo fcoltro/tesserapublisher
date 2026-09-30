@@ -34,6 +34,100 @@ pub struct FootnoteWindow {
     pub text: String,
 }
 
+/// The note box: one editorial note's words, and who left it.
+#[derive(Debug, Clone, Default)]
+pub struct NoteWindow {
+    pub open: bool,
+    pub story: Option<StoryId>,
+    pub index: usize,
+    pub text: String,
+    pub author: String,
+}
+
+impl NoteWindow {
+    /// Open on the note the caret is at or just past.
+    pub fn open(&mut self, state: &TesseraApp) {
+        if let Some((story, index)) = note_at_caret(state) {
+            self.open_on(state, story, index);
+        }
+    }
+
+    /// Open on the story's `index`th note: what clicking its flag does.
+    pub fn open_on(&mut self, state: &TesseraApp, story: StoryId, index: usize) {
+        let Some(note) = state
+            .active()
+            .document()
+            .story(story)
+            .and_then(|s| s.notes.get(index))
+        else {
+            return;
+        };
+        self.story = Some(story);
+        self.index = index;
+        self.text = note.text.clone();
+        self.author = note.author.clone();
+        self.open = true;
+    }
+}
+
+/// The note the caret is at or just past: the last note marker before the
+/// cursor, or the first after it when there is none before.
+pub(crate) fn note_at_caret(state: &TesseraApp) -> Option<(StoryId, usize)> {
+    let (id, buffer) = state.active().editing.as_ref()?;
+    let story = crate::view::viewport::editing_story(state, *id, state.active().editing_cell)?;
+    let offsets = buffer.story().note_offsets();
+    if offsets.is_empty() {
+        return None;
+    }
+    let at = buffer.cursor().position;
+    let index = offsets.iter().rposition(|o| *o < at).unwrap_or(0);
+    Some((story, index))
+}
+
+/// Whether the text being edited is `story`'s.
+pub(crate) fn editing_story_is(state: &TesseraApp, story: StoryId) -> bool {
+    state.active().editing.as_ref().is_some_and(|(id, _)| {
+        crate::view::viewport::editing_story(state, *id, state.active().editing_cell) == Some(story)
+    })
+}
+
+/// Sign the note just typed at the caret with the name of the person at the
+/// machine, as the system knows them. Inside the editing session's own undo
+/// entry, as the marker is.
+pub(crate) fn stamp_note_author(state: &mut TesseraApp) {
+    let author = std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_default();
+    let Some((id, buffer)) = state.active().editing.as_ref() else {
+        return;
+    };
+    let id = *id;
+    let at = buffer.cursor().position;
+    let index = buffer.story().note_at(at).saturating_sub(1);
+    let Some(story) = crate::view::viewport::editing_story(state, id, state.active().editing_cell)
+    else {
+        return;
+    };
+    if let Some((_, buffer)) = state.active_mut().editing.as_mut()
+        && let Some(note) = buffer.story_mut().notes.get_mut(index)
+    {
+        note.author = author;
+    }
+    let Some(updated) = state
+        .active()
+        .editing
+        .as_ref()
+        .map(|(_, buffer)| buffer.story().clone())
+    else {
+        return;
+    };
+    // undo-bracketed: the editing session recorded its entry when it began.
+    state
+        .active_mut()
+        .document_mut()
+        .replace_story_from_edit(story, updated);
+}
+
 /// The index-entry box: the topic to file the caret's place under.
 #[derive(Debug, Clone, Default)]
 pub struct IndexEntryWindow {
@@ -119,6 +213,7 @@ impl FootnoteWindow {
 
 pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
     footnote(ctx, state);
+    note(ctx, state);
     index_entry(ctx, state);
     endnotes(ctx, state);
     contents(ctx, state);
@@ -167,6 +262,67 @@ fn footnote(ctx: &egui::Context, state: &mut TesseraApp) {
         window.open = false;
     }
     state.footnote = window;
+}
+
+fn note(ctx: &egui::Context, state: &mut TesseraApp) {
+    if !state.note.open {
+        return;
+    }
+    let mut window = state.note.clone();
+    let (mut go, mut remove) = (false, false);
+    let response = egui::Modal::new(egui::Id::new("note"))
+        .frame(super::dialog_frame(ctx))
+        .show(ctx, |ui| {
+            ui.set_width((ctx.content_rect().width() - 64.0).clamp(320.0, 480.0));
+            ui.heading("Note");
+            if !window.author.is_empty() {
+                ui.colored_label(Theme::text_muted(), format!("Left by {}", window.author));
+            }
+            ui.add_space(Theme::space_2());
+            crate::icons::speak_as(
+                ui.add(
+                    egui::TextEdit::multiline(&mut window.text)
+                        .hint_text("Not printed, and not exported.")
+                        .desired_rows(4)
+                        .desired_width(f32::INFINITY),
+                ),
+                "Note",
+            );
+            ui.add_space(Theme::space_2());
+            ui.horizontal(|ui| {
+                go = ui.add(super::primary_button("OK")).clicked();
+                if ui.button("Cancel").clicked() {
+                    window.open = false;
+                }
+                remove = ui.button("Delete note").clicked();
+            });
+        });
+    if response.should_close() {
+        window.open = false;
+    }
+    if let Some(story) = window.story {
+        if go {
+            apply(
+                state,
+                Command::SetNoteText {
+                    story,
+                    index: window.index,
+                    text: window.text.trim_end().to_owned(),
+                },
+            );
+            window.open = false;
+        } else if remove {
+            apply(
+                state,
+                Command::RemoveNote {
+                    story,
+                    index: window.index,
+                },
+            );
+            window.open = false;
+        }
+    }
+    state.note = window;
 }
 
 fn index_entry(ctx: &egui::Context, state: &mut TesseraApp) {
@@ -655,6 +811,66 @@ mod tests {
             split_prefix(&buffer.story().footnotes[0].text).1,
             "The source."
         );
+    }
+
+    #[test]
+    fn a_new_note_is_left_at_the_caret_and_the_box_opens_on_it() {
+        let (mut state, id) = editing("Check this");
+        actions::run(&mut state, Run::InsertNote);
+        let story = story_of(&state, id);
+        assert_eq!(story.notes.len(), 1, "one marker, one note");
+        assert!(story.notes_are_sound());
+        assert!(story.text.ends_with(Marker::Note.character()));
+        assert!(state.note.open, "the box opened on it");
+        assert_eq!(state.note.index, 0);
+
+        let story_id = state.note.story.unwrap();
+        apply(
+            &mut state,
+            Command::SetNoteText {
+                story: story_id,
+                index: 0,
+                text: "Is this the right date?".into(),
+            },
+        );
+        assert_eq!(
+            story_of(&state, id).notes[0].text,
+            "Is this the right date?"
+        );
+        // The buffer agrees, so the next keystroke does not undo it.
+        let buffer = &state.active().editing.as_ref().unwrap().1;
+        assert_eq!(buffer.story().notes[0].text, "Is this the right date?");
+    }
+
+    #[test]
+    fn deleting_a_note_takes_its_marker_and_leaves_the_words() {
+        let (mut state, id) = editing("Check this");
+        actions::run(&mut state, Run::InsertNote);
+        let story_id = state.note.story.unwrap();
+        apply(
+            &mut state,
+            Command::RemoveNote {
+                story: story_id,
+                index: 0,
+            },
+        );
+        let story = story_of(&state, id);
+        assert_eq!(story.text, "Check this");
+        assert!(story.notes.is_empty());
+        let buffer = &state.active().editing.as_ref().unwrap().1;
+        assert_eq!(buffer.story().text, "Check this");
+        assert!(buffer.cursor().position <= buffer.story().text.len());
+    }
+
+    #[test]
+    fn a_note_shows_a_flag_on_the_canvas_where_it_sits() {
+        let (mut state, _) = editing("Check this");
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0));
+        assert!(crate::view::viewport::note_flags(&mut state, rect).is_empty());
+        actions::run(&mut state, Run::InsertNote);
+        let flags = crate::view::viewport::note_flags(&mut state, rect);
+        assert_eq!(flags.len(), 1);
+        assert_eq!(flags[0].1, 0);
     }
 
     #[test]

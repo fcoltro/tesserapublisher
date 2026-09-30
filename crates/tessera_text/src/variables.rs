@@ -56,6 +56,10 @@ pub enum Marker {
     /// in as [`Variables::cross_references`]. The `n`th of these in a story is
     /// [`crate::story::Story::cross_references`]`[n]`.
     CrossReference,
+    /// An editorial note: reads as nothing, never prints, and marks where
+    /// somebody left a remark for whoever works on the text next. The `n`th
+    /// of these in a story is [`crate::story::Story::notes`]`[n]`.
+    Note,
     /// The document's `n`th text variable.
     Variable(u8),
     /// The document's `n`th data merge field: reads as the record being
@@ -85,6 +89,7 @@ impl Marker {
             Marker::IndexEntry => BUILT_IN + 6,
             Marker::TextAnchor => BUILT_IN + 7,
             Marker::CrossReference => BUILT_IN + 8,
+            Marker::Note => BUILT_IN + 9,
             Marker::Variable(index) => VARIABLE + u32::from(index),
             Marker::Field(index) => FIELD + u32::from(index),
         };
@@ -104,6 +109,7 @@ impl Marker {
             c if c == BUILT_IN + 6 => Some(Marker::IndexEntry),
             c if c == BUILT_IN + 7 => Some(Marker::TextAnchor),
             c if c == BUILT_IN + 8 => Some(Marker::CrossReference),
+            c if c == BUILT_IN + 9 => Some(Marker::Note),
             c if (VARIABLE..VARIABLE + 256).contains(&c) => {
                 Some(Marker::Variable((c - VARIABLE) as u8))
             }
@@ -129,6 +135,7 @@ impl Marker {
             | Marker::Variable(_)
             | Marker::Field(_)
             | Marker::IndexEntry
+            | Marker::Note
             | Marker::TextAnchor => "",
             // Numbered from the story itself, so it never needs a page; the
             // shaper answers it before asking here. See `shaping_text`.
@@ -180,7 +187,9 @@ impl Variables {
             Marker::NextPageNumber => &self.next_page_number,
             Marker::PreviousPageNumber => &self.previous_page_number,
             Marker::SectionMarker => &self.section_marker,
-            Marker::FootnoteReference | Marker::IndexEntry | Marker::TextAnchor => "",
+            Marker::FootnoteReference | Marker::IndexEntry | Marker::Note | Marker::TextAnchor => {
+                ""
+            }
             Marker::CrossReference => "?",
             Marker::FootnoteNumber => self.footnote_text.as_deref().unwrap_or("#"),
             Marker::Variable(index) => self

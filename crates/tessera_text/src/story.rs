@@ -1058,6 +1058,11 @@ pub struct Story {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub index_entries: Vec<IndexEntry>,
 
+    /// The editorial notes, in text order, under the same arrangement: the
+    /// `n`th [`crate::variables::Marker::Note`] is the `n`th of these.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<Note>,
+
     /// The text anchors, in text order, under the same arrangement: the
     /// `n`th [`crate::variables::Marker::TextAnchor`] is the `n`th of these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1112,6 +1117,17 @@ pub enum IndexSpan {
     ToEndOfStory,
 }
 
+/// A remark left in the text for whoever works on it next: InDesign's
+/// Notes. Never printed, never exported, and read nowhere but the canvas and
+/// the Notes panel.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Note {
+    pub text: String,
+    /// Who left it, as the preferences name the person at the machine.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub author: String,
+}
+
 /// Where a topic is mentioned, for the index to collect.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndexEntry {
@@ -1160,6 +1176,7 @@ impl Story {
             paragraphs,
             footnotes: Vec::new(),
             index_entries: Vec::new(),
+            notes: Vec::new(),
             anchors: Vec::new(),
             cross_references: Vec::new(),
         };
@@ -1178,6 +1195,8 @@ impl Story {
             ];
         let entries = story.count_markers(0..story.text.len(), Marker::IndexEntry);
         story.index_entries = vec![IndexEntry::default(); entries];
+        let notes = story.count_markers(0..story.text.len(), Marker::Note);
+        story.notes = vec![Note::default(); notes];
         story
     }
 
@@ -1215,6 +1234,20 @@ impl Story {
     /// Which index entry the marker at `at` is.
     pub fn index_entry_at(&self, at: usize) -> usize {
         self.count_markers(0..at, Marker::IndexEntry)
+    }
+
+    /// Which note the marker at `at` is.
+    pub fn note_at(&self, at: usize) -> usize {
+        self.count_markers(0..at, Marker::Note)
+    }
+
+    /// Stored offset of every note marker, in order.
+    pub fn note_offsets(&self) -> Vec<usize> {
+        self.text
+            .char_indices()
+            .filter(|(_, c)| Marker::of(*c) == Some(Marker::Note))
+            .map(|(at, _)| at)
+            .collect()
     }
 
     /// Which text anchor the marker at `at` is.
@@ -1294,6 +1327,7 @@ impl Story {
         self.footnotes.len() == self.count_markers(0..self.text.len(), Marker::FootnoteReference)
             && self.index_entries.len()
                 == self.count_markers(0..self.text.len(), Marker::IndexEntry)
+            && self.notes.len() == self.count_markers(0..self.text.len(), Marker::Note)
             && self.anchors.len() == self.count_markers(0..self.text.len(), Marker::TextAnchor)
             && self.cross_references.len()
                 == self.count_markers(0..self.text.len(), Marker::CrossReference)
@@ -1427,6 +1461,14 @@ impl Story {
             self.index_entries
                 .insert(entries_before, IndexEntry::default());
         }
+        let notes_before = self.note_at(at);
+        let notes_in = text
+            .chars()
+            .filter(|c| Marker::of(*c) == Some(Marker::Note))
+            .count();
+        for _ in 0..notes_in {
+            self.notes.insert(notes_before, Note::default());
+        }
         let anchors_before = self.anchor_at(at);
         let anchors_in = text
             .chars()
@@ -1495,6 +1537,11 @@ impl Story {
         let gone = self.count_markers(start..end, Marker::IndexEntry);
         if gone > 0 && first + gone <= self.index_entries.len() {
             self.index_entries.drain(first..first + gone);
+        }
+        let first = self.note_at(start);
+        let gone = self.count_markers(start..end, Marker::Note);
+        if gone > 0 && first + gone <= self.notes.len() {
+            self.notes.drain(first..first + gone);
         }
         let first = self.anchor_at(start);
         let gone = self.count_markers(start..end, Marker::TextAnchor);
@@ -2271,6 +2318,23 @@ mod provisional_tests {
         assert_eq!(story.cross_references[0].target, "");
         assert_eq!(story.anchors[0].name, "start");
         assert!(story.notes_are_sound());
+    }
+
+    #[test]
+    fn notes_follow_their_markers_and_read_as_nothing() {
+        let n = Marker::Note.character();
+        let mut story = Story::new("ab");
+        story.insert_text(1, &n.to_string());
+        story.notes[0].text = "first".into();
+        story.insert_text(0, &n.to_string());
+        story.notes[0].text = "second, earlier".into();
+        assert_eq!(story.note_offsets().len(), 2);
+        assert!(story.notes_are_sound());
+        story.delete_range(0..n.len_utf8());
+        assert_eq!(story.notes.len(), 1);
+        assert_eq!(story.notes[0].text, "first");
+        assert_eq!(Marker::Note.placeholder(), "", "a note never prints");
+        assert_eq!(Marker::of(n), Some(Marker::Note));
     }
 
     #[test]

@@ -60,7 +60,7 @@ outright, so the target is not twenty-six.
 | Free Transform / Rotate / Scale / Shear | ✗ | — | **refused** (D6) |
 | Gradient Swatch | gradients are set in the inspector; there is no drag-to-angle tool, by D6's argument | — | done, M5 |
 | Gradient Feather | ✅ linear at an angle or radial, opacity stops; Properties and object styles; drawn, written to PDF as a soft mask, read from IDML. In a PDF, a gradient fill with transparent stops inside a feathered object replaces the feather's mask (one soft mask at a time) | — | done 2026-09-30 |
-| Note | ✗ | — | — |
+| Note | ✅ Type ▸ Notes ▸ New note at the caret, worded in a box and signed with the system's user name; an amber flag where it sits, clicked to read or delete it; read from IDML; never printed or exported. No tool of its own: the Type tool puts the caret where the Note tool would click | — | done 2026-09-30 |
 | Eyedropper | ✅ `Tool::Eyedropper`, I: picks up fill, stroke, blend, shadow, corners and a text frame's type; puts them down as one undo; Alt-click picks up afresh | — | done 2026-09-17 |
 | Color Theme | ✗ | — | — |
 | Measure | ✅ `Tool::Measure`, K: drag a line to read its distance, angle (counter-clockwise, as InDesign) and run and rise in the chosen unit; Shift holds it to 45°; a click clears it | — | done 2026-09-30 |

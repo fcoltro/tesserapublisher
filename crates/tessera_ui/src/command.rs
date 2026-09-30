@@ -810,6 +810,17 @@ pub enum Command {
         index: usize,
         text: String,
     },
+    /// Reword one editorial note: the story's `index`th.
+    SetNoteText {
+        story: StoryId,
+        index: usize,
+        text: String,
+    },
+    /// Take one editorial note out, marker and all.
+    RemoveNote {
+        story: StoryId,
+        index: usize,
+    },
     /// Name the story's `index`th text anchor — what cross-references point
     /// at. The marker itself is a character in the text.
     SetTextAnchor {
@@ -1386,6 +1397,8 @@ impl Command {
             | Command::SetTextAnchor { .. }
             | Command::SetCrossReference { .. }
             | Command::SetFootnoteText { .. }
+            | Command::SetNoteText { .. }
+            | Command::RemoveNote { .. }
             | Command::SetDestination { .. }
             | Command::SetFootnoteOptions { .. }
             | Command::PasteAnchored

@@ -215,9 +215,15 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
 
     let overset = overset_frames(state);
     let squiggles = squiggle_rects(state);
+    let notes = if state.screen_mode.shows_chrome() {
+        note_flags(state, rect)
+    } else {
+        Vec::new()
+    };
     if state.screen_mode.shows_chrome() {
         draw_overlays(ui, rect, state, caret.as_ref(), &overset);
         draw_squiggles(ui, rect, state, &squiggles);
+        draw_note_flags(ui, &notes);
     }
 
     // The spatial verbs, beside what they act on. After the overlays so it
@@ -929,6 +935,20 @@ fn wholly_visible(state: &TesseraApp, rect: Rect, id: FrameId) -> bool {
 
 fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
     if super::modal_open(state) || !ui.is_enabled() {
+        return;
+    }
+    // A note's flag opens the note, whatever tool is held: the flag is
+    // interface, and what it offers is reading what somebody left there.
+    if response.clicked()
+        && state.screen_mode.shows_chrome()
+        && let Some(pos) = response.interact_pointer_pos()
+        && let Some((story, index, _)) = note_flags(state, rect)
+            .into_iter()
+            .find(|(_, _, at)| note_flag_rect(*at).contains(pos))
+    {
+        let mut window = std::mem::take(&mut state.note);
+        window.open_on(state, story, index);
+        state.note = window;
         return;
     }
     // Text editing takes priority: while a caret is live, keys are text —
@@ -2587,6 +2607,89 @@ fn zoom_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
             local(rect, pos),
             if out { 1.0 / STEP } else { STEP },
         );
+    }
+}
+
+/// Where each editorial note sits on screen: its story, which of the
+/// story's notes it is, and the top of the caret at its marker.
+///
+/// Asked of the layout the canvas draws, so a note moves with its text
+/// through every reflow; and not asked at all when no story has a note,
+/// which is nearly every document.
+pub(crate) fn note_flags(
+    state: &mut TesseraApp,
+    rect: Rect,
+) -> Vec<(tessera_document::ids::StoryId, usize, egui::Pos2)> {
+    use tessera_document::ids::StoryId;
+    let doc = state.active().document();
+    let mut wanted: std::collections::HashMap<FrameId, (StoryId, Vec<usize>)> =
+        std::collections::HashMap::new();
+    for (id, frame) in doc.frames.iter() {
+        if let tessera_document::nodes::FrameKind::Text { story, .. } = &frame.kind
+            && let Some(s) = doc.story(*story)
+            && !s.notes.is_empty()
+        {
+            wanted.insert(id, (*story, s.note_offsets()));
+        }
+    }
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let mut local: Vec<(FrameId, StoryId, usize, f64, f64)> = Vec::new();
+    for item in &state.resolve_active().items {
+        let tessera_layout::resolve::ResolvedKind::Text { shaped, .. } = &item.kind else {
+            continue;
+        };
+        let Some((story, offsets)) = wanted.get(&item.frame) else {
+            continue;
+        };
+        for (index, &at) in offsets.iter().enumerate() {
+            let cursor = tessera_text::edit::TextCursor {
+                position: at,
+                anchor: at,
+            };
+            if let Some(c) = shaped.caret_geometry(cursor, 1.0).caret {
+                local.push((item.frame, *story, index, c.x0, c.y0));
+            }
+        }
+    }
+    let doc = state.active().document();
+    local
+        .into_iter()
+        .filter_map(|(frame, story, index, x, y)| {
+            let f = doc.frame(frame)?;
+            let at = f.transform.apply(DocPoint {
+                x: f.bounds.x + x,
+                y: f.bounds.y + y,
+            });
+            Some((story, index, to_screen_pos(state, rect, at)))
+        })
+        .collect()
+}
+
+/// Where a note's flag can be clicked: a little more than it draws, so it
+/// is not a target only a steady hand can hit.
+fn note_flag_rect(at: egui::Pos2) -> Rect {
+    Rect::from_min_size(at - egui::vec2(2.0, 10.0), egui::vec2(12.0, 12.0))
+}
+
+/// Each note as a small flag at the top of its place in the line: amber,
+/// the colour InDesign's notes wear, and never printed.
+fn draw_note_flags(ui: &Ui, notes: &[(tessera_document::ids::StoryId, usize, egui::Pos2)]) {
+    const AMBER: Color32 = Color32::from_rgb(0xE8, 0xA3, 0x17);
+    let painter = ui.painter();
+    for (_, _, at) in notes {
+        let top = *at;
+        painter.line_segment([top, top - egui::vec2(0.0, 8.0)], Stroke::new(1.0, AMBER));
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                top - egui::vec2(0.0, 8.0),
+                top + egui::vec2(7.0, -6.0),
+                top - egui::vec2(0.0, 4.0),
+            ],
+            AMBER,
+            Stroke::NONE,
+        ));
     }
 }
 

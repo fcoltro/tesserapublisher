@@ -240,6 +240,7 @@ impl Builder {
             paragraphs,
             footnotes,
             index_entries: Vec::<IndexEntry>::new(),
+            notes: Vec::new(),
             anchors: Vec::new(),
             cross_references: Vec::new(),
         };

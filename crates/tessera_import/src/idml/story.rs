@@ -118,6 +118,8 @@ struct Builder<'a, 'i> {
         ParagraphFormat,
     )>,
     footnotes: Vec<Story>,
+    /// Editorial notes, one per marker, in text order.
+    notes: Vec<tessera_text::story::Note>,
     /// Text anchors and cross-references, one per marker, in text order.
     anchors: Vec<TextAnchor>,
     cross_references: Vec<CrossReference>,
@@ -210,6 +212,7 @@ impl<'a, 'i> Builder<'a, 'i> {
             paragraphs,
             footnotes,
             index_entries: vec![IndexEntry::default(); entries],
+            notes: self.notes,
             anchors: self.anchors,
             cross_references: self.cross_references,
         };
@@ -292,6 +295,23 @@ fn read_ranges<'a, 'i>(
                     note.insert_text(0, &format!("{}\t", Marker::FootnoteNumber.character()));
                 }
                 b.footnotes.push(note);
+            }
+            // An editorial note: a marker where it sits, and its words, which
+            // are the note's and not the story's. Its own markers — a note
+            // does not hold footnotes — are dropped with its formatting.
+            "Note" => {
+                b.text.push(Marker::Note.character());
+                let mut inner: Builder<'a, 'i> = Builder::default();
+                read_ranges(child, styles, colours, links, &mut inner);
+                let text: String = inner
+                    .text
+                    .chars()
+                    .filter(|c| Marker::of(*c).is_none())
+                    .collect();
+                b.notes.push(tessera_text::story::Note {
+                    text: text.trim_end().to_owned(),
+                    author: attr(child, "UserName").unwrap_or_default().to_owned(),
+                });
             }
             // An object set into the text — a picture, a shape, a table —
             // is a marker here and a frame anchored to it later.
@@ -397,6 +417,21 @@ mod tests {
         let styles = Styles::read(doc.root(), &mut tessera, &colours);
         let read = read(doc.root_element(), &styles, &colours, links);
         (read.story, read.inline.len())
+    }
+
+    #[test]
+    fn an_indesign_note_becomes_a_note_with_its_words_and_its_author() {
+        let (story, _) = story_from(
+            r#"<Story><ParagraphStyleRange><CharacterStyleRange><Content>Before</Content><Note UserName="Ana"><ParagraphStyleRange><CharacterStyleRange><Content>Check the date</Content></CharacterStyleRange></ParagraphStyleRange></Note><Content>after</Content></CharacterStyleRange></ParagraphStyleRange></Story>"#,
+        );
+        assert_eq!(
+            story.text,
+            format!("Before{}after", Marker::Note.character()),
+            "the note's words are not the story's"
+        );
+        assert_eq!(story.notes.len(), 1);
+        assert_eq!(story.notes[0].text, "Check the date");
+        assert_eq!(story.notes[0].author, "Ana");
     }
 
     #[test]
