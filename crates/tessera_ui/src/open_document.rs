@@ -309,8 +309,14 @@ impl OpenDocument {
                 Some(carried) => (carried.story, None),
                 None => return,
             },
-            (Some(FrameKind::Table(table)), Some((row, column))) => {
-                match table.at(row, column).and_then(|s| s.cell()) {
+            // A table, or a frame it runs on into: the cell's story.
+            (Some(FrameKind::Table(_) | FrameKind::TablePart { .. }), Some((row, column))) => {
+                match self
+                    .document
+                    .table_behind(id)
+                    .and_then(|(_, table)| table.at(row, column))
+                    .and_then(|s| s.cell())
+                {
                     Some(cell) => (cell.story, None),
                     None => return,
                 }
@@ -363,8 +369,10 @@ fn composing(
     let (replacing, text) = buffer.composing()?;
     let story = match &document.frame(*id)?.kind {
         tessera_document::nodes::FrameKind::Text { story, .. } => *story,
-        tessera_document::nodes::FrameKind::Table(table) => {
+        tessera_document::nodes::FrameKind::Table(_)
+        | tessera_document::nodes::FrameKind::TablePart { .. } => {
             let (row, column) = cell?;
+            let (_, table) = document.table_behind(*id)?;
             table.at(row, column)?.cell()?.story
         }
         _ => return None,

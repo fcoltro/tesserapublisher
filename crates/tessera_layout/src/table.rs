@@ -331,8 +331,16 @@ pub fn lay_out_part(
     let Some(body) = shares.get(index) else {
         return LaidTable::default();
     };
-    let part = part_table(&whole, body.clone());
+    let (part, chosen) = part_table(&whole, body.clone());
     let mut laid = lay_out_with(&part, doc, styles, shaper, story_of, references);
+    // Laid out as a table of its own, so its rows count from nought; each
+    // cell says the row it is in the whole table, which is what a click on
+    // it, a caret in it and a Tab out of it are about.
+    for cell in &mut laid.cells {
+        if let Some(&row) = chosen.get(cell.row) {
+            cell.row = row;
+        }
+    }
     if index + 1 == capacities.len() {
         laid.overset_rows = overset;
     }
@@ -472,7 +480,9 @@ pub fn split_rows(
 
 /// The heading rows, the body rows `body`, and the footing rows, as a table
 /// of their own.
-fn part_table(table: &Table, body: std::ops::Range<usize>) -> Table {
+/// The rows a part shows — heading, its share of the body, footing — as a
+/// table of their own, and which row of `table` each of them is.
+fn part_table(table: &Table, body: std::ops::Range<usize>) -> (Table, Vec<usize>) {
     let rows = table.rows();
     let header = usize::from(table.header_rows).min(rows);
     let footer = usize::from(table.footer_rows).min(rows - header);
@@ -486,7 +496,7 @@ fn part_table(table: &Table, body: std::ops::Range<usize>) -> Table {
         .map(|i| table.cells[i].clone())
         .collect();
     part.parts = Vec::new();
-    part
+    (part, chosen)
 }
 
 /// Every rule the table draws, as straight runs.

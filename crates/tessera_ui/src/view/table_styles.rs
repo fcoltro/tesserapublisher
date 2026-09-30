@@ -16,7 +16,7 @@
 use egui::Ui;
 use tessera_color::Color;
 use tessera_document::ids::{CellStyleId, FrameId, TableStyleId};
-use tessera_document::nodes::{FrameKind, Insets, Stroke, VerticalJustify};
+use tessera_document::nodes::{Insets, Stroke, VerticalJustify};
 use tessera_document::paint::Paint;
 use tessera_document::table::{CellEdges, Table};
 use tessera_document::table_style::{CellFormat, CellStyle, Stated, TableFormat, TableStyle};
@@ -47,10 +47,9 @@ pub fn in_hand(state: &TesseraApp) -> Option<InHand> {
         (Some((id, _)), Some(cell)) => (*id, Some(cell)),
         _ => (open.selection.single()?, None),
     };
-    match open.document().frame(id).map(|f| &f.kind) {
-        Some(FrameKind::Table(table)) => Some((id, table.clone(), cell)),
-        _ => None,
-    }
+    // The head, when what is in hand is a frame the table runs on into.
+    let (head, table) = open.document().table_behind(id)?;
+    Some((head, table.clone(), cell))
 }
 
 /// A name no style of the kind has yet: "Table style 3".
@@ -684,6 +683,7 @@ fn count(ui: &mut Ui, label: &str, value: &mut u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tessera_document::nodes::FrameKind;
     use tessera_geometry::DocRect;
 
     fn a_table(state: &mut TesseraApp) -> FrameId {

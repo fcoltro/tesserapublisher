@@ -1492,7 +1492,8 @@ pub fn filtered(query: &str) -> Vec<&'static Action> {
 ///
 /// The one place a named action becomes work, so the palette and the menus
 /// cannot disagree about what a name means.
-/// The table cell the caret is in, if it is in one.
+/// The table cell the caret is in, if it is in one, with the frame that
+/// holds the table — the head, when the caret is in a frame it runs on into.
 ///
 /// Every table command acts on it: there is no separate cell selection, so
 /// "the cell" means the one being typed in.
@@ -1501,7 +1502,8 @@ fn editing_cell(
 ) -> Option<(tessera_document::ids::FrameId, usize, usize)> {
     let (id, _) = state.active().editing.as_ref()?;
     let (row, column) = state.active().editing_cell?;
-    Some((*id, row, column))
+    let (head, _) = state.active().document().table_behind(*id)?;
+    Some((head, row, column))
 }
 
 /// The table the caret is in or that is selected — the head, when what is

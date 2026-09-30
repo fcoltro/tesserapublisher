@@ -1416,7 +1416,9 @@ pub(crate) fn editing_story(
         (Some(FrameKind::Text { story, .. }), _) => Some(*story),
         // Type on a path: the story it carries, edited on the curve.
         (Some(FrameKind::Path(_)), _) => state.active().document().path_text(id).map(|t| t.story),
-        (Some(FrameKind::Table(table)), Some((row, column))) => {
+        // A table, or a frame it runs on into: the cell's own story.
+        (Some(FrameKind::Table(_) | FrameKind::TablePart { .. }), Some((row, column))) => {
+            let (_, table) = state.active().document().table_behind(id)?;
             table.at(row, column)?.cell().map(|c| c.story)
         }
         _ => None,
@@ -3270,12 +3272,31 @@ fn begin_text_edit(response: &egui::Response, rect: Rect, state: &mut TesseraApp
     }
 }
 
-/// Whether this frame is a table.
+/// Whether this frame shows a table: its own, or one running on into it.
 fn is_table(state: &TesseraApp, id: FrameId) -> bool {
-    matches!(
-        state.active().document().frame(id).map(|f| &f.kind),
-        Some(tessera_document::nodes::FrameKind::Table(_))
-    )
+    state.active().document().table_behind(id).is_some()
+}
+
+/// The frame a table's cell is laid out in: the head, or the part it runs
+/// on into that holds the cell's row. The head when the cell is in none —
+/// overset — so the caret still has somewhere to be.
+fn frame_showing_cell(state: &mut TesseraApp, head: FrameId, row: usize, column: usize) -> FrameId {
+    use tessera_layout::resolve::ResolvedKind;
+    let parts: Vec<FrameId> = match state.active().document().table_behind(head) {
+        Some((_, table)) => table.parts.clone(),
+        None => return head,
+    };
+    let resolved = state.resolve_active();
+    std::iter::once(head)
+        .chain(parts)
+        .find(|frame| {
+            resolved.items.iter().any(|i| {
+                i.frame == *frame
+                    && matches!(&i.kind, ResolvedKind::Table { laid, .. }
+                        if laid.cells.iter().any(|c| c.row == row && c.column == column))
+            })
+        })
+        .unwrap_or(head)
 }
 
 /// Move the caret to the next cell, in reading order, wrapping at the end.
@@ -3284,8 +3305,6 @@ fn is_table(state: &TesseraApp, id: FrameId) -> bool {
 /// reaching for the mouse between every cell makes it a clicking job. Covered
 /// slots are skipped — they hold no story, so there is nothing to type into.
 fn step_cell(state: &mut TesseraApp, back: bool) -> bool {
-    use tessera_document::nodes::FrameKind;
-
     let Some((id, _)) = &state.active().editing else {
         return false;
     };
@@ -3293,7 +3312,11 @@ fn step_cell(state: &mut TesseraApp, back: bool) -> bool {
     let Some((row, column)) = state.active().editing_cell else {
         return false;
     };
-    let Some(FrameKind::Table(table)) = state.active().document().frame(id).map(|f| f.kind.clone())
+    let Some((head, table)) = state
+        .active()
+        .document()
+        .table_behind(id)
+        .map(|(head, table)| (head, table.clone()))
     else {
         return false;
     };
@@ -3315,6 +3338,10 @@ fn step_cell(state: &mut TesseraApp, back: bool) -> bool {
         let (r, c) = (at / columns, at % columns);
         if table.at(r, c).and_then(|s| s.cell()).is_some() {
             finish_editing(state);
+            // Into whichever frame holds the cell: a table running across
+            // pages is filled in with Tab as one that fits on one.
+            let id = frame_showing_cell(state, head, r, c);
+            state.active_mut().selection.set(id);
             start_editing_cell(state, id, Some((r, c)));
             // The whole cell, as Tab does in every table anybody has used:
             // the next thing typed replaces what was there.
@@ -4868,6 +4895,103 @@ mod tests {
         start_editing_cell(&mut state, id, Some((2, 2)));
         assert!(step_cell(&mut state, false));
         assert_eq!(state.active().editing_cell, Some((0, 0)));
+    }
+
+    #[test]
+    fn a_cell_in_a_frame_a_table_runs_on_into_is_edited_there() {
+        use tessera_layout::resolve::ResolvedKind;
+        let mut state = TesseraApp::headless();
+        let b = state.first_page_bounds();
+        let mut cells = vec![vec!["Item".to_owned(), "Price".to_owned()]];
+        cells.extend((1..=60).map(|n| vec![format!("Thing {n}"), format!("{n}.00")]));
+        apply(
+            &mut state,
+            Command::AddTableFromData {
+                bounds: DocRect {
+                    x: b.x + 36.0,
+                    y: b.y + 36.0,
+                    width: 300.0,
+                    height: 200.0,
+                },
+                cells,
+            },
+        );
+        let head = state.active().selection.single().expect("the table");
+        apply(&mut state, Command::FlowTable { id: head });
+        let part = state
+            .active()
+            .document()
+            .table_behind(head)
+            .unwrap()
+            .1
+            .parts[0];
+        let rows_in = |state: &mut TesseraApp, frame: FrameId| -> Vec<(usize, DocRect)> {
+            let resolved = state.resolve_active();
+            let item = resolved
+                .items
+                .iter()
+                .find(|i| i.frame == frame)
+                .expect("laid out");
+            let ResolvedKind::Table { laid, .. } = &item.kind else {
+                panic!("a table");
+            };
+            laid.cells
+                .iter()
+                .filter(|c| c.column == 0)
+                .map(|c| (c.row, c.bounds))
+                .collect()
+        };
+
+        // A click on the part's first body cell — below the heading it
+        // repeats — finds that cell, in that frame.
+        let (row, bounds) = rows_in(&mut state, part)
+            .into_iter()
+            .find(|(row, _)| *row > 0)
+            .expect("a body row");
+        let frame = state.active().document().frame(part).unwrap().clone();
+        let rect = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 600.0));
+        let at = to_screen_pos(
+            &state,
+            rect,
+            DocPoint {
+                x: frame.bounds.x + bounds.x + bounds.width / 2.0,
+                y: frame.bounds.y + bounds.y + bounds.height / 2.0,
+            },
+        );
+        assert!(is_table(&state, part));
+        assert_eq!(cell_at(&mut state, rect, part, at), Some((row, 0)));
+        start_editing_cell(&mut state, part, Some((row, 0)));
+        assert!(state.active().editing.is_some(), "the caret is in it");
+        assert!(
+            editing_layout(&mut state).is_some(),
+            "the caret has lines to sit on"
+        );
+
+        // What is typed reaches the table's own cell.
+        let mut story = state.active().editing.as_ref().unwrap().1.story().clone();
+        story.insert_text(0, "Now ");
+        state.active_mut().write_back(story);
+        // Row n of the table is "Thing n": the cell clicked, not the row
+        // in the same place in the head.
+        assert!(row >= 10, "a row the head does not show: {row}");
+        assert_eq!(cell_text(&state, part, row, 0), format!("Now Thing {row}"));
+        assert_eq!(
+            cell_text(&state, head, row, 0),
+            format!("Now Thing {row}"),
+            "one story"
+        );
+        finish_editing(&mut state);
+
+        // Tab from the last cell of the head goes on into the part.
+        let last = rows_in(&mut state, head).last().unwrap().0;
+        start_editing_cell(&mut state, head, Some((last, 1)));
+        assert!(step_cell(&mut state, false));
+        assert_eq!(state.active().editing_cell, Some((last + 1, 0)));
+        assert_eq!(
+            state.active().editing.as_ref().map(|(id, _)| *id),
+            Some(part),
+            "into the frame that shows the row"
+        );
     }
 
     #[test]

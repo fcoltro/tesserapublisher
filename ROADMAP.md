@@ -3426,9 +3426,13 @@ and running headers (milestone 10).
   variables work unchanged; the **alternating fills are written into the
   cells first**, or the pattern would restart on every page. A copied
   table keeps only the parts copied with it. A table with no parts is set
-  as before. **Left:** editing a cell's text from a continued frame (it is
-  edited in the table's own); running on into a frame drawn by hand.
-  Format 41.
+  as before. Format 41. **Since (2026-09-29):** a cell is edited in the
+  frame that shows it — clicked there, typed there, and Tab runs on across
+  the page break into the next frame (`Document::table_behind`); a part's
+  laid-out cells now carry their row in the whole table, where before they
+  counted from the part's own first row, so a click in a continued frame
+  would have reached the row in the same place on the first page.
+  **Left:** running on into a frame drawn by hand.
 - [x] 12. **Data merge, several records to a page**: labels, badges and
   catalogue grids. Days. *Done 2026-09-27.* "Several records to a page"
   in the Data merge panel, with the gap across and down. One record is

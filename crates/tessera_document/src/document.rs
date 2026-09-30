@@ -2665,6 +2665,22 @@ impl Document {
         self.frames.get(id)
     }
 
+    /// The table a frame shows, and the frame that holds it: the frame
+    /// itself for a table, its head for a frame the table runs on into.
+    /// What anything acting on "this table" asks, since a continued part
+    /// holds no table of its own.
+    pub fn table_behind(&self, id: FrameId) -> Option<(FrameId, &crate::table::Table)> {
+        let head = match self.frame(id).map(|f| &f.kind)? {
+            FrameKind::Table(_) => id,
+            FrameKind::TablePart { head } => *head,
+            _ => return None,
+        };
+        match self.frame(head).map(|f| &f.kind)? {
+            FrameKind::Table(table) => Some((head, table)),
+            _ => None,
+        }
+    }
+
     /// Bumps the revision on the assumption the caller mutates. Callers that
     /// only want to read must use [`Document::frame`].
     pub fn frame_mut(&mut self, id: FrameId) -> Option<&mut Frame> {

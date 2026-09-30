@@ -12,7 +12,7 @@
 use egui::Ui;
 use tessera_color::Color;
 use tessera_document::ids::FrameId;
-use tessera_document::nodes::{FrameKind, Stroke};
+use tessera_document::nodes::Stroke;
 use tessera_document::paint::Paint;
 use tessera_document::table::{AlternatingFills, Side, Table};
 
@@ -68,7 +68,7 @@ impl TableOptionsWindow {
         let Some(frame) = frame else {
             return;
         };
-        let Some(FrameKind::Table(table)) = open.document().frame(frame).map(|f| &f.kind) else {
+        let Some((frame, table)) = open.document().table_behind(frame) else {
             return;
         };
         *self = Self::describing(table);
@@ -352,6 +352,7 @@ fn swatch_combo(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tessera_document::nodes::FrameKind;
     use tessera_geometry::DocRect;
 
     fn a_table(state: &mut TesseraApp) -> FrameId {

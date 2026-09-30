@@ -1081,10 +1081,16 @@ fn editing_buffer_for(
             .document()
             .path_text(editing)
             .is_some_and(|t| t.story == story),
-        Some(FrameKind::Table(table)) => state
+        Some(FrameKind::Table(_) | FrameKind::TablePart { .. }) => state
             .active()
             .editing_cell
-            .and_then(|(r, c)| table.at(r, c))
+            .and_then(|(r, c)| {
+                state
+                    .active()
+                    .document()
+                    .table_behind(editing)
+                    .and_then(|(_, t)| t.at(r, c))
+            })
             .and_then(|s| s.cell())
             .is_some_and(|c| c.story == story),
         _ => false,
