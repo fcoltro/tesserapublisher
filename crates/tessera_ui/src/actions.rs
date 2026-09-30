@@ -300,6 +300,8 @@ pub enum Run {
     /// Outline the hyperlinks on the canvas.
     ToggleHyperlinks,
     ToggleDynamicSpelling,
+    /// Whether a layout follows its page's size and margins. A preference.
+    ToggleAdjustLayout,
     NewDocument,
     Open,
     Save,
@@ -443,6 +445,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::ToggleSnapping
         | Run::ToggleHyperlinks
         | Run::ToggleDynamicSpelling
+        | Run::ToggleAdjustLayout
         | Run::ScreenMode(_)
         | Run::ZoomToFit
         | Run::Command(Undo | Redo) => Guard::Always,
@@ -743,6 +746,12 @@ pub fn all() -> &'static [Action] {
             None,
             Group::Layout,
             Run::SectionOptions,
+        ),
+        a(
+            "Adjust layout",
+            None,
+            Group::Layout,
+            Run::ToggleAdjustLayout,
         ),
         // The markers. A page number typed on a parent page reads as each
         // page's own; the shortcut is InDesign's.
@@ -1659,6 +1668,10 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         }
         Run::ToggleDynamicSpelling => {
             state.prefs.dynamic_spelling = !state.prefs.dynamic_spelling;
+            crate::prefs::remember(state);
+        }
+        Run::ToggleAdjustLayout => {
+            state.prefs.adjust_layout = !state.prefs.adjust_layout;
             crate::prefs::remember(state);
         }
         Run::PickTool(tool) => {

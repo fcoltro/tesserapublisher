@@ -157,7 +157,7 @@ of the inspector, M1.5 B7.
 | **Facing Pages** toggle | ✅ | — | done, M1.5 B2 |
 | Margins T/B/L/R with chain | ✅ | — | done, M1.5 B7 |
 | Bleed and slug | ✅ | — | done, M1.5 B7 |
-| Adjust Layout | ✗ | view | — |
+| Adjust Layout | ✅ Layout ▸ Adjust layout, or Preferences: when a page's size or margins change, an edge on a page edge or margin stays on it, a box on both is resized between them, anything else keeps its size and moves in proportion. Upright frames resize, others move; ruler guides stay put | — | done 2026-09-30 |
 | Page navigation, Edit Page | ✅ status bar and pages panel | — | done |
 | Rulers & Grids toggles | ✅ | — | done, M1.5 |
 | Guides toggles | ✅ | — | done, M4 |

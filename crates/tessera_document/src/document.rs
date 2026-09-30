@@ -1299,7 +1299,7 @@ impl Document {
     }
 
     /// Move a frame and its children by an offset.
-    fn translate_deeply(&mut self, id: FrameId, dx: f64, dy: f64) {
+    pub(crate) fn translate_deeply(&mut self, id: FrameId, dx: f64, dy: f64) {
         let children = match self.frames.get_mut(id) {
             Some(frame) => {
                 if frame.transform.is_identity() {

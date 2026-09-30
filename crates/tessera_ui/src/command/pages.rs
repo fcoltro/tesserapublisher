@@ -114,16 +114,29 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
         }
 
         Command::SetDocumentSetup(setup) => {
-            state.active_mut().document_mut().set_setup(setup);
+            // New margins carry the layout with them when Adjust Layout is
+            // on; bleed, slug and facing pages move no object.
+            let before = state
+                .prefs
+                .adjust_layout
+                .then(|| state.active().document().layout_before());
+            let doc = state.active_mut().document_mut();
+            doc.set_setup(setup);
+            if let Some(before) = before {
+                doc.adjust_layout(&before);
+            }
         }
 
         Command::SetPageSize { width, height } => {
             // Every page, in one command so it is one undo entry.
-            let follow = state.prefs.objects_follow_page_edges;
-            state
-                .active_mut()
-                .document_mut()
-                .resize_every_page(width, height, follow);
+            let adjust = state.prefs.adjust_layout;
+            let follow = state.prefs.objects_follow_page_edges && !adjust;
+            let before = adjust.then(|| state.active().document().layout_before());
+            let doc = state.active_mut().document_mut();
+            doc.resize_every_page(width, height, follow);
+            if let Some(before) = before {
+                doc.adjust_layout(&before);
+            }
         }
 
         Command::SetPageSizeOf {
@@ -131,11 +144,15 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
             width,
             height,
         } => {
-            let follow = state.prefs.objects_follow_page_edges;
-            state
-                .active_mut()
-                .document_mut()
-                .resize_page(page, width, height, follow);
+            let adjust = state.prefs.adjust_layout;
+            let follow = state.prefs.objects_follow_page_edges && !adjust;
+            let before = adjust.then(|| state.active().document().layout_before());
+            let doc = state.active_mut().document_mut();
+            if doc.resize_page(page, width, height, follow)
+                && let Some(before) = before
+            {
+                doc.adjust_layout(&before);
+            }
         }
 
         Command::AddGuide { spread, guide } => {

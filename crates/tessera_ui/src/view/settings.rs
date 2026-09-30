@@ -230,6 +230,7 @@ fn restore(state: &mut TesseraApp) {
             state.prefs.reflow_adds_pages = fresh.reflow_adds_pages;
             state.prefs.reflow_removes_pages = fresh.reflow_removes_pages;
             state.prefs.objects_follow_page_edges = fresh.objects_follow_page_edges;
+            state.prefs.adjust_layout = fresh.adjust_layout;
             state.prefs.show_hyperlinks = fresh.show_hyperlinks;
             state.prefs.assistant = fresh.assistant.clone();
             state.prefs.updates.enabled = fresh.updates.enabled;
@@ -370,6 +371,14 @@ fn general(ui: &mut Ui, state: &mut TesseraApp) {
         "Resizing a page carries what stands nearer its right edge or its foot \
          along with that edge, so a folio in the corner stays in the corner. Off, \
          everything keeps its place from the page\u{2019}s top left.",
+    );
+    ui.checkbox(&mut state.prefs.adjust_layout, "Adjust layout");
+    note(
+        ui,
+        "When a page\u{2019}s size or margins change, what sits on its edges or \
+         margins stays on them, a box set margin to margin is resized between \
+         them, and everything else keeps its size and its place in proportion. \
+         Also Layout \u{203a} Adjust layout.",
     );
 
     heading(ui, "Assistant");
@@ -949,6 +958,7 @@ mod tests {
             reflow_adds_pages: false,
             reflow_removes_pages: true,
             objects_follow_page_edges: true,
+            adjust_layout: true,
             show_hyperlinks: true,
         };
 

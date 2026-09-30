@@ -175,6 +175,13 @@ pub struct Preferences {
     #[serde(default)]
     pub objects_follow_page_edges: bool,
 
+    /// Whether what is on a page keeps to its edges and margins when the
+    /// page's size or margins change — InDesign's Adjust Layout, resizing
+    /// what sits margin to margin. Supersedes following the page's edges
+    /// when on. Off, as a layout has always stayed where it was put.
+    #[serde(default)]
+    pub adjust_layout: bool,
+
     /// Whether the canvas outlines the words that are hyperlinks — and
     /// cross-references, which are links too — as InDesign's View ›
     /// Extras › Show Hyperlinks does. Never printed or exported.
@@ -327,6 +334,7 @@ impl Default for Preferences {
             reflow_adds_pages: true,
             reflow_removes_pages: false,
             objects_follow_page_edges: false,
+            adjust_layout: false,
             show_hyperlinks: false,
             swatch_tiles: false,
         }
@@ -551,6 +559,7 @@ mod tests {
             reflow_adds_pages: false,
             reflow_removes_pages: true,
             objects_follow_page_edges: true,
+            adjust_layout: true,
             show_hyperlinks: true,
         };
         written.save_to(&path).expect("save failed");

@@ -1993,6 +1993,55 @@ mod tests {
     }
 
     #[test]
+    fn new_margins_carry_a_margin_to_margin_box_and_undo_with_it() {
+        let mut state = TesseraApp::headless();
+        // Margins of their own first, so the box's edges are on the margins
+        // and not also on the page's edges, which win a tie.
+        let mut setup = state.active().document().setup.clone();
+        setup.margins = tessera_document::nodes::Margins::uniform(36.0);
+        apply(&mut state, Command::SetDocumentSetup(setup));
+        state.prefs.adjust_layout = true;
+        let page = state.active().document().page_ids().next().expect("a page");
+        let m = state
+            .active()
+            .document()
+            .margin_rect(page)
+            .expect("margins");
+        apply(
+            &mut state,
+            Command::AddRectangle(DocRect {
+                x: m.x,
+                y: m.y,
+                width: m.width,
+                height: 40.0,
+            }),
+        );
+        let id = state.active().selection.single().expect("selected");
+        let was = state.active().document().frame(id).unwrap().bounds;
+
+        let mut setup = state.active().document().setup.clone();
+        setup.margins.top += 20.0;
+        setup.margins.inside += 30.0;
+        apply(&mut state, Command::SetDocumentSetup(setup));
+        let now = state
+            .active()
+            .document()
+            .margin_rect(page)
+            .expect("margins");
+        let b = state.active().document().frame(id).unwrap().bounds;
+        assert!((b.x - now.x).abs() < 1e-6 && (b.y - now.y).abs() < 1e-6);
+        assert!((b.width - now.width).abs() < 1e-6, "still margin to margin");
+        assert!((b.height - 40.0).abs() < 1e-6, "its depth is its own");
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(
+            state.active().document().frame(id).unwrap().bounds,
+            was,
+            "one undo takes the margins and the box back together"
+        );
+    }
+
+    #[test]
     fn an_eps_is_placed_at_its_bounding_box() {
         let path = std::env::temp_dir().join(format!("tessera-place-{}.eps", std::process::id()));
         std::fs::write(&path, "%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 120 40\n%%BeginPreview: 8 2 1 2\n% F0\n% F0\n%%EndPreview\n").unwrap();
