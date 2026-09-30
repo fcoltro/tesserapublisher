@@ -1997,7 +1997,7 @@ mod tests {
         let mut state = TesseraApp::headless();
         // Margins of their own first, so the box's edges are on the margins
         // and not also on the page's edges, which win a tie.
-        let mut setup = state.active().document().setup.clone();
+        let mut setup = state.active().document().setup;
         setup.margins = tessera_document::nodes::Margins::uniform(36.0);
         apply(&mut state, Command::SetDocumentSetup(setup));
         state.prefs.adjust_layout = true;
@@ -2019,7 +2019,7 @@ mod tests {
         let id = state.active().selection.single().expect("selected");
         let was = state.active().document().frame(id).unwrap().bounds;
 
-        let mut setup = state.active().document().setup.clone();
+        let mut setup = state.active().document().setup;
         setup.margins.top += 20.0;
         setup.margins.inside += 30.0;
         apply(&mut state, Command::SetDocumentSetup(setup));
