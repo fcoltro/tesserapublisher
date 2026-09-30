@@ -1177,8 +1177,8 @@ of each carries the full account; this is the index.
   JPEG at a chosen quality, bleed optional; both record their resolution
   (`pHYs`, JFIF density). The dialog's sentence says what will be made and
   refuses a picture past 65,535 pixels a side; its choices are remembered.
-  **Left:** SVG, EPUB and HTML export; exporting in the background, since a
-  long document at 300 ppi takes a while.
+  HTML and EPUB export and exporting in the background were built since
+  (plan items 21, 22 and 10); SVG export was struck, as InDesign has none.
 - [x] **Picture export as InDesign has it, and two formats more
   (2026-09-27).** File ▸ Export image… writes PNG, JPEG, TIFF and lossless
   WebP. Pages are a range typed as InDesign types one (`1-3, 6, 9-`), or
@@ -3399,8 +3399,15 @@ and running headers (milestone 10).
   applying a style clears the marks. Deleting a style writes its look
   into what took it, so nothing changes on the page. Styles are made the
   quick InDesign way — New from this table or cell, Redefine from it,
-  Apply, Rename, Delete. **Left:** a cell style carrying a paragraph
-  style for its text; a style editor with every property. Format 40.
+  Apply, Rename, Delete. Format 40. **Since (2026-09-29):** a cell style
+  names a paragraph style for its text, applied to the text when the cell
+  style is applied, when it or the table style over it changes, and when
+  a row moves into another region — not on a rename, and a paragraph
+  restyled by hand keeps its style until then, as in InDesign; an empty
+  cell's first text starts in it (format 44). And the chosen cell style's
+  options edit every property — based on, paragraph style, fill and tint,
+  insets, vertical position, each side's rule — each **set here** or left
+  to the style it is based on.
 - [x] 11. **A table runs across frames and pages**, with header and footer
   rows repeated. About a week — the hardest table item, and what long
   tables and catalogues need. *Done 2026-09-27.* Table ▸ Flow table onto
@@ -3469,7 +3476,7 @@ tested and on `main`** (tier 4 finished 2026-09-29: HTML export, EPUB
 export and placing EPS, in `tessera_html` and `tessera_render::eps`).
 Item 11, SVG export, was struck rather than built: InDesign has none, and
 what InDesign does is the scope. Left: the platform checks of tier 5. The
-file format is at **43**.
+file format is at **44**.
 
 What 2026-09-28 added, a commit to each:
 

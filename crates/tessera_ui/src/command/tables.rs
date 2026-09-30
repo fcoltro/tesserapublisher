@@ -148,17 +148,29 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
         }
 
         Command::DefineTableStyle { id, style } => {
-            state
-                .active_mut()
-                .document_mut()
-                .define_table_style(id, style);
+            let doc = state.active_mut().document_mut();
+            // A rename is not a restyle: the text is touched only when what
+            // the style says, or what it is based on, has changed.
+            let before = id
+                .and_then(|i| doc.table_styles.get(i))
+                .map(|s| (s.based_on, s.format.clone()));
+            let after = (style.based_on, style.format.clone());
+            let id = doc.define_table_style(id, style);
+            if before != Some(after) {
+                doc.restyle_tables_taking(id);
+            }
         }
 
         Command::DefineCellStyle { id, style } => {
-            state
-                .active_mut()
-                .document_mut()
-                .define_cell_style(id, style);
+            let doc = state.active_mut().document_mut();
+            let before = id
+                .and_then(|i| doc.cell_styles.get(i))
+                .map(|s| (s.based_on, s.format.clone()));
+            let after = (style.based_on, style.format.clone());
+            let id = doc.define_cell_style(id, style);
+            if before != Some(after) {
+                doc.restyle_cells_taking(id);
+            }
         }
 
         Command::RemoveTableStyle(id) => {
@@ -178,6 +190,10 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
             table.style = style;
             table.local = tessera_document::table::TableLocal::default();
             replace_table(state, id, table);
+            state
+                .active_mut()
+                .document_mut()
+                .restyle_cell_text(id, |_, _, _| true);
         }
 
         Command::ApplyCellStyle { id, cells, style } => {
@@ -186,13 +202,17 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
             else {
                 return;
             };
-            for (row, column) in cells {
+            for &(row, column) in &cells {
                 if let Some(cell) = table.at_mut(row, column).and_then(|s| s.cell_mut()) {
                     cell.style = style;
                     cell.local = tessera_document::table::CellLocal::default();
                 }
             }
             replace_table(state, id, table);
+            state
+                .active_mut()
+                .document_mut()
+                .restyle_cell_text(id, |row, column, _| cells.contains(&(row, column)));
         }
 
         Command::ContinueTable { id } => {
@@ -238,9 +258,26 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
             };
             // Never more heading and footing than there are rows.
             let rows = u16::try_from(table.rows()).unwrap_or(u16::MAX);
+            let region = |t: &tessera_document::table::Table, row: usize| {
+                if row < usize::from(t.header_rows) {
+                    0
+                } else if row + usize::from(t.footer_rows) >= t.rows() {
+                    2
+                } else {
+                    1
+                }
+            };
+            let before = table.clone();
             table.header_rows = header.min(rows);
             table.footer_rows = footer.min(rows - table.header_rows);
+            let after = table.clone();
             replace_table(state, id, table);
+            // A row that moved into another region takes that region's cell
+            // style, and with it its paragraph style; the rest are left be.
+            state
+                .active_mut()
+                .document_mut()
+                .restyle_cell_text(id, |row, _, _| region(&before, row) != region(&after, row));
         }
 
         Command::ConvertTextToTable { id } => {

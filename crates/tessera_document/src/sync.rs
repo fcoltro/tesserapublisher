@@ -203,6 +203,10 @@ impl Document {
         for (id, style) in &source.cell {
             let mut style = style.clone();
             style.based_on = style.based_on.and_then(|b| cells.get(&b).copied());
+            // The text's paragraph style, as this document numbers it.
+            if let Stated::Is(Some(p)) = style.format.paragraph {
+                style.format.paragraph = Stated::Is(paragraphs.get(&p).copied());
+            }
             write(&mut self.cell_styles, cells[id], style, &added, &mut synced);
         }
 

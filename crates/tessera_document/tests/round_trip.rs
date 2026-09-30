@@ -871,8 +871,9 @@ fn the_format_version_is_twenty_six() {
     // heading and footing rows, none before; 41 a table running on into
     // frames of its own, never before; 42 a placed PDF's page and the box it
     // is cut to, the first page's crop box before; 43 single-word
-    // justification, full justify before.
-    assert_eq!(format::FORMAT_VERSION, 43);
+    // justification, full justify before; 44 a cell style's paragraph
+    // style, none before.
+    assert_eq!(format::FORMAT_VERSION, 44);
 }
 
 #[test]

@@ -1449,10 +1449,18 @@ impl Story {
 
         if self.runs.is_empty() {
             self.runs = vec![Run::plain(0..self.text.len())];
+            // An empty story may still have a styled paragraph — an empty
+            // table cell given its cell style's — and the first text typed
+            // into it starts in that style.
+            let (style, local) = self
+                .paragraphs
+                .first()
+                .map(|p| (p.style, p.local.clone()))
+                .unwrap_or_default();
             self.paragraphs = vec![ParagraphRun {
                 range: 0..self.text.len(),
-                style: None,
-                local: ParagraphFormat::default(),
+                style,
+                local,
             }];
             return;
         }

@@ -23,6 +23,17 @@
 //! whose style shades the body. Applying a style clears the marks, which is
 //! what applying a style means. A table or cell with no style and no marks
 //! reads exactly as it always did, so every earlier document is unchanged.
+//!
+//! ## The text's paragraph style
+//!
+//! A cell style may name a paragraph style for the cell's text, as
+//! InDesign's does. That one is **applied** rather than resolved: the text's
+//! paragraphs take it when the cell style is applied, and again when the
+//! cell style or the table style over it changes
+//! ([`Document::restyle_cell_text`]). Between those, the text is text like
+//! any other, and a paragraph restyled by hand keeps the style it was given —
+//! which is how InDesign behaves, and what a heading cell with one line
+//! set differently needs.
 
 use std::borrow::Cow;
 
@@ -33,6 +44,7 @@ use crate::ids::{CellStyleId, TableStyleId};
 use crate::nodes::{Insets, Stroke, VerticalJustify};
 use crate::paint::Paint;
 use crate::table::{AlternatingFills, CellEdges, Slot, Table};
+use tessera_text::story::ParagraphStyleId;
 
 /// A property a style either states or leaves to what it is based on.
 ///
@@ -80,6 +92,10 @@ pub struct CellFormat {
     pub vertical: Stated<VerticalJustify>,
     #[serde(default)]
     pub edges: Stated<CellEdges>,
+    /// The paragraph style the cell's text takes; `Is(None)` leaves the text
+    /// as it is (InDesign's "[None]").
+    #[serde(default)]
+    pub paragraph: Stated<Option<ParagraphStyleId>>,
 }
 
 impl CellFormat {
@@ -89,6 +105,7 @@ impl CellFormat {
             inset: self.inset.or(&base.inset),
             vertical: self.vertical.or(&base.vertical),
             edges: self.edges.or(&base.edges),
+            paragraph: self.paragraph.or(&base.paragraph),
         }
     }
 }
@@ -141,13 +158,15 @@ pub struct TableStyle {
 
 impl CellFormat {
     /// Everything `cell` shows, stated: what "New cell style from this
-    /// cell" and "Redefine" take.
-    pub fn of(cell: &crate::table::Cell) -> Self {
+    /// cell" and "Redefine" take. `paragraph` is the style of the cell's
+    /// first paragraph, if it has one.
+    pub fn of(cell: &crate::table::Cell, paragraph: Option<ParagraphStyleId>) -> Self {
         Self {
             fill: Stated::Is(cell.fill.clone()),
             inset: Stated::Is(cell.inset),
             vertical: Stated::Is(cell.vertical),
             edges: Stated::Is((*cell.edges).clone()),
+            paragraph: Stated::Is(paragraph),
         }
     }
 }
@@ -291,6 +310,162 @@ impl Document {
 const DEPTH: usize = 16;
 
 impl Document {
+    /// The paragraph style of a cell's first paragraph: what "New from this
+    /// cell" gives the style.
+    pub fn cell_paragraph_style(&self, cell: &crate::table::Cell) -> Option<ParagraphStyleId> {
+        self.stories
+            .get(cell.story)?
+            .paragraphs
+            .first()
+            .and_then(|p| p.style)
+    }
+
+    /// Whether cell style `id` is `ancestor` or based on it, however far back.
+    pub fn cell_style_descends(&self, id: CellStyleId, ancestor: CellStyleId) -> bool {
+        let mut at = Some(id);
+        for _ in 0..DEPTH {
+            match at {
+                Some(style) if style == ancestor => return true,
+                Some(style) => at = self.cell_styles.get(style).and_then(|s| s.based_on),
+                None => return false,
+            }
+        }
+        false
+    }
+
+    /// Whether table style `id` is `ancestor` or based on it.
+    pub fn table_style_descends(&self, id: TableStyleId, ancestor: TableStyleId) -> bool {
+        let mut at = Some(id);
+        for _ in 0..DEPTH {
+            match at {
+                Some(style) if style == ancestor => return true,
+                Some(style) => at = self.table_styles.get(style).and_then(|s| s.based_on),
+                None => return false,
+            }
+        }
+        false
+    }
+
+    /// Give the text of the table's cells the paragraph style their cell
+    /// style names — each cell `which` picks, given its row, its column and
+    /// the cell style it takes (its own, or its region's). A cell whose style
+    /// names none, or `[None]`, keeps its text as it is.
+    ///
+    /// The paragraphs' own overrides stay, as they do when a paragraph style
+    /// is applied by hand. An empty cell is given the style too, so what is
+    /// typed into it later starts in it.
+    pub fn restyle_cell_text(
+        &mut self,
+        frame: crate::ids::FrameId,
+        which: impl Fn(usize, usize, CellStyleId) -> bool,
+    ) {
+        let Some(crate::nodes::FrameKind::Table(table)) = self.frames.get(frame).map(|f| &f.kind)
+        else {
+            return;
+        };
+        let format = table
+            .style
+            .map(|id| self.table_format_of(id))
+            .unwrap_or_default();
+        let (rows, columns) = (table.rows(), table.columns());
+        let (header, footer) = (
+            usize::from(table.header_rows),
+            usize::from(table.footer_rows),
+        );
+        let mut restyle = Vec::new();
+        for row in 0..rows {
+            let region = if row < header {
+                &format.header
+            } else if row + footer >= rows {
+                &format.footer
+            } else {
+                &format.body
+            };
+            for column in 0..columns {
+                let Some(Slot::Cell(cell)) = table.at(row, column) else {
+                    continue;
+                };
+                let Some(style) = cell.style.or(region.get().copied().flatten()) else {
+                    continue;
+                };
+                if !which(row, column, style) {
+                    continue;
+                }
+                if let Some(Some(paragraph)) = self.cell_format_of(style).paragraph.get() {
+                    restyle.push((cell.story, *paragraph));
+                }
+            }
+        }
+        let mut changed = false;
+        for (story, paragraph) in restyle {
+            let Some(story) = self.stories.get_mut(story) else {
+                continue;
+            };
+            if story.text.is_empty() {
+                if story.paragraphs.is_empty() {
+                    story.paragraphs.push(tessera_text::story::ParagraphRun {
+                        range: 0..0,
+                        style: Some(paragraph),
+                        local: Default::default(),
+                    });
+                } else {
+                    for para in &mut story.paragraphs {
+                        para.style = Some(paragraph);
+                    }
+                }
+            } else {
+                let whole = 0..story.text.len();
+                story.set_paragraph_style(whole, Some(paragraph));
+            }
+            changed = true;
+        }
+        if changed {
+            self.touch();
+        }
+    }
+
+    /// Every table the change of cell style `id` reaches, restyled where
+    /// the cell takes `id` or a style based on it.
+    pub fn restyle_cells_taking(&mut self, id: CellStyleId) {
+        let frames: Vec<crate::ids::FrameId> = self.table_frames();
+        for frame in frames {
+            // Computed before the borrow `restyle_cell_text` takes.
+            let reaches: Vec<CellStyleId> = self
+                .cell_styles
+                .keys()
+                .filter(|s| self.cell_style_descends(*s, id))
+                .collect();
+            self.restyle_cell_text(frame, |_, _, style| reaches.contains(&style));
+        }
+    }
+
+    /// Every table taking table style `id`, or one based on it, restyled
+    /// throughout.
+    pub fn restyle_tables_taking(&mut self, id: TableStyleId) {
+        let frames: Vec<crate::ids::FrameId> = self
+            .table_frames()
+            .into_iter()
+            .filter(|f| {
+                matches!(
+                    self.frames.get(*f).map(|f| &f.kind),
+                    Some(crate::nodes::FrameKind::Table(t))
+                        if t.style.is_some_and(|s| self.table_style_descends(s, id))
+                )
+            })
+            .collect();
+        for frame in frames {
+            self.restyle_cell_text(frame, |_, _, _| true);
+        }
+    }
+
+    fn table_frames(&self) -> Vec<crate::ids::FrameId> {
+        self.frames
+            .iter()
+            .filter(|(_, f)| matches!(f.kind, crate::nodes::FrameKind::Table(_)))
+            .map(|(id, _)| id)
+            .collect()
+    }
+
     /// Everything a cell style states, with what it is based on filled in.
     pub fn cell_format_of(&self, id: CellStyleId) -> CellFormat {
         let mut format = CellFormat::default();
