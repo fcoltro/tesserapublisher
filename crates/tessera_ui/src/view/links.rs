@@ -1214,8 +1214,15 @@ mod tests {
     }
 
     /// A folder of its own under the temp directory, empty.
+    /// A fresh folder of its own. Numbered per call, not only per name: the
+    /// tests run in parallel in one process, and several ask for "panel" —
+    /// one clearing the folder deleted another's picture mid-test, which
+    /// failed on macOS CI as a file gone missing.
     fn a_folder(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("tessera-links-{}-{name}", std::process::id()));
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("tessera-links-{}-{name}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a folder");
         dir
@@ -1741,9 +1748,7 @@ mod tests {
         labels(&ctx, &mut state);
         assert_eq!(state.links.filter, Filter::Missing);
         // undo-bracketed: a test's own setup, not an edit a person makes.
-        // Touched as every real edit is: the panel re-reads the disk when
-        // the revision moves, and without it this test passed only where the
-        // status cache happened to expire first (it failed on macOS CI).
+        // Touched as every real edit is, so the panel re-reads the disk.
         state.active_mut().document_mut().links.remove(missing);
         state.active_mut().document_mut().touch();
         labels(&ctx, &mut state);
