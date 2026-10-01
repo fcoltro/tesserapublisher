@@ -76,7 +76,7 @@ jobs:
       # The source build takes minutes and changes only when its script does.
       - name: Cache the Ghostscript build
         if: matrix.os != 'windows-latest'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/ghostscript
           key: ghostscript-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/ghostscript/build.sh') }}
@@ -94,7 +94,7 @@ jobs:
         shell: bash
         run: bash packaging/build.sh "${{ matrix.kind }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tessera-${{ matrix.kind }}
           path: packaging/out/*
@@ -115,7 +115,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
