@@ -30,6 +30,12 @@ pub enum Group {
     Arrange,
     Transform,
     Align,
+    /// Choosing objects by their relation to the selection, a submenu of
+    /// Object: InDesign's Object > Select.
+    Selecting,
+    /// The fill and stroke proxy's three verbs, a submenu of Object: swap,
+    /// default, none. Their single keys are what people use.
+    FillStroke,
     View,
     Tool,
     /// The arrow keys. See [`Group::menu`].
@@ -52,7 +58,7 @@ pub enum Group {
 }
 
 impl Group {
-    pub const ALL: [Group; 20] = [
+    pub const ALL: [Group; 22] = [
         Group::File,
         Group::Edit,
         Group::Spelling,
@@ -61,6 +67,8 @@ impl Group {
         Group::Arrange,
         Group::Transform,
         Group::Align,
+        Group::Selecting,
+        Group::FillStroke,
         Group::View,
         Group::Tool,
         Group::Nudge,
@@ -90,6 +98,8 @@ impl Group {
             Group::Arrange => Some("Arrange"),
             Group::Transform => Some("Transform"),
             Group::Align => Some("Align and distribute"),
+            Group::Selecting => Some("Select"),
+            Group::FillStroke => Some("Fill and stroke"),
             // Twenty-one characters under Type would bury the styles; a
             // submenu is what InDesign does, and for the same reason.
             Group::Insert => Some("Insert special character"),
@@ -125,7 +135,9 @@ impl Group {
             | Group::Visibility
             | Group::Arrange
             | Group::Transform
-            | Group::Align => Some("Object"),
+            | Group::Align
+            | Group::Selecting
+            | Group::FillStroke => Some("Object"),
             Group::View => Some("View"),
             Group::Type | Group::Insert | Group::Markers | Group::Footnotes | Group::Notes => {
                 Some("Type")
@@ -302,6 +314,14 @@ pub enum Run {
     ToggleDynamicSpelling,
     /// Whether a layout follows its page's size and margins. A preference.
     ToggleAdjustLayout,
+    /// The group holding the selected object.
+    SelectContainer,
+    /// The first object inside the selected group.
+    SelectContent,
+    /// The next object along the spread's reading order, as Tab is.
+    SelectNext,
+    /// The previous one, as Shift-Tab is.
+    SelectPrevious,
     NewDocument,
     Open,
     Save,
@@ -446,6 +466,10 @@ pub fn guard(run: Run) -> Guard {
         | Run::ToggleHyperlinks
         | Run::ToggleDynamicSpelling
         | Run::ToggleAdjustLayout
+        | Run::SelectContainer
+        | Run::SelectContent
+        | Run::SelectNext
+        | Run::SelectPrevious
         | Run::ScreenMode(_)
         | Run::ZoomToFit
         | Run::Command(Undo | Redo) => Guard::Always,
@@ -752,6 +776,15 @@ pub fn all() -> &'static [Action] {
             None,
             Group::Layout,
             Run::ToggleAdjustLayout,
+        ),
+        a("Container", None, Group::Selecting, Run::SelectContainer),
+        a("Content", None, Group::Selecting, Run::SelectContent),
+        a("Next object", None, Group::Selecting, Run::SelectNext),
+        a(
+            "Previous object",
+            None,
+            Group::Selecting,
+            Run::SelectPrevious,
         ),
         // The markers. A page number typed on a parent page reads as each
         // page's own; the shortcut is InDesign's.
@@ -1119,16 +1152,16 @@ pub fn all() -> &'static [Action] {
         a(
             "Swap fill and stroke",
             Some("X"),
-            Group::Object,
+            Group::FillStroke,
             Command(SwapFillAndStroke),
         ),
         a(
             "Default fill and stroke",
             Some("D"),
-            Group::Object,
+            Group::FillStroke,
             Command(DefaultFillAndStroke),
         ),
-        a("No fill", Some("/"), Group::Object, Command(ClearFill)),
+        a("No fill", Some("/"), Group::FillStroke, Command(ClearFill)),
         // InDesign's four, on InDesign's keys.
         a(
             "Lock",
@@ -1695,6 +1728,24 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             state.prefs.dynamic_spelling = !state.prefs.dynamic_spelling;
             crate::prefs::remember(state);
         }
+        Run::SelectContainer => {
+            if let Some(id) = state.active().selection.single()
+                && let Some(group) = crate::view::viewport::group_holding(state, id)
+            {
+                state.active_mut().selection.set(group);
+            }
+        }
+        Run::SelectContent => {
+            if let Some(id) = state.active().selection.single()
+                && let Some(tessera_document::nodes::FrameKind::Group(children)) =
+                    state.active().document().frame(id).map(|f| f.kind.clone())
+                && let Some(first) = children.first()
+            {
+                state.active_mut().selection.set(*first);
+            }
+        }
+        Run::SelectNext => crate::view::viewport::walk(state, false),
+        Run::SelectPrevious => crate::view::viewport::walk(state, true),
         Run::ToggleAdjustLayout => {
             state.prefs.adjust_layout = !state.prefs.adjust_layout;
             crate::prefs::remember(state);
@@ -2278,6 +2329,40 @@ mod tests {
             1 + 3 + 2,
             "the caret moved past what it typed"
         );
+    }
+
+    #[test]
+    fn select_container_content_and_next_move_the_selection() {
+        use crate::app::TesseraApp;
+        use crate::command::{Command, apply};
+        let mut state = TesseraApp::headless();
+        let page = state.current_page().expect("a page");
+        let o = state.active().document().pages[page].bounds;
+        let at = |x: f64| tessera_geometry::DocRect {
+            x: o.x + x,
+            y: o.y + 20.0,
+            width: 30.0,
+            height: 30.0,
+        };
+        apply(&mut state, Command::AddRectangle(at(20.0)));
+        let a = state.active().selection.single().expect("a");
+        apply(&mut state, Command::AddRectangle(at(100.0)));
+        let b = state.active().selection.single().expect("b");
+        state.active_mut().selection.replace_all(vec![a, b]);
+        apply(&mut state, Command::GroupSelection);
+        let group = state.active().selection.single().expect("the group");
+
+        run(&mut state, Run::SelectContent);
+        let inner = state.active().selection.single().expect("one inside");
+        assert!(inner == a || inner == b);
+        run(&mut state, Run::SelectContainer);
+        assert_eq!(state.active().selection.single(), Some(group));
+
+        apply(&mut state, Command::AddRectangle(at(300.0)));
+        let c = state.active().selection.single().expect("c");
+        run(&mut state, Run::SelectPrevious);
+        assert_ne!(state.active().selection.single(), Some(c), "stepped off it");
+        assert!(state.active().selection.single().is_some());
     }
 
     #[test]

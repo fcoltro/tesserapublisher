@@ -102,7 +102,7 @@ geometry, from the interface work) and the canvas toolbar (spatial verbs).
 | Text-frame inset, vertical justification | ✅ | — | done, M4 |
 | Text wrap | ✅ box, shape, jump; wrap to largest area, both sides, left, right | — | done, M4; sides 2026-09-15 |
 | Frame fitting options | ✅ fit and fill modes, inner transform | — | done, M5 |
-| Select container / content / prev / next | content by direct-select; no prev / next command | view | — |
+| Select container / content / prev / next | ✅ Object ▸ Select ▸ Container, Content, Next object, Previous object; next and previous are also Tab and Shift-Tab on the canvas | — | done 2026-10-01 |
 | Quick Apply | ✗ | — | **superseded** by the command palette (D3) |
 
 ## ③ Rulers and guides

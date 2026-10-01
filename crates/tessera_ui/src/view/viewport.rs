@@ -886,6 +886,33 @@ fn walk_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tesser
     }
 }
 
+/// The group `id` sits directly inside, if it is in one.
+pub(crate) fn group_holding(state: &TesseraApp, id: FrameId) -> Option<FrameId> {
+    use tessera_document::nodes::FrameKind;
+    state
+        .active()
+        .document()
+        .frames
+        .iter()
+        .find(|(_, f)| matches!(&f.kind, FrameKind::Group(children) if children.contains(&id)))
+        .map(|(group, _)| group)
+}
+
+/// Step the selection along the spread's reading order from a menu, where
+/// there is no canvas rectangle to ask what is in view: what it lands on is
+/// brought into view.
+pub(crate) fn walk(state: &mut TesseraApp, back: bool) {
+    let Some(spread) = current_spread(state) else {
+        return;
+    };
+    let order = crate::object_order::reading_order(state.active().document(), spread);
+    let from = state.active().selection.single();
+    if let Some(next) = crate::object_order::step(&order, from, back) {
+        state.active_mut().selection.set(next);
+        state.reveal = Some(next);
+    }
+}
+
 /// Move the selection one object along the spread's reading order.
 fn walk_selection(state: &mut TesseraApp, rect: Rect, back: bool) {
     let Some(spread) = current_spread(state) else {
