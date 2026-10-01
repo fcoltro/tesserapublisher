@@ -189,6 +189,46 @@
               </Component>
             </Directory>
           </Directory>
+          <!-- The spelling dictionaries, SCOWL's American and British
+               English, and the README holding their licence. A file to a
+               component, as above. -->
+          <Directory Id="DictionariesFolder" Name="dictionaries">
+            <Component Id="DictUsDic" Guid="*">
+              <File Id="DictUsDicFile" Name="en_US.dic"
+                    Source="$(var.CargoTargetBinDir)\dictionaries\en_US.dic"
+                    KeyPath="yes"/>
+            </Component>
+            <Component Id="DictUsAff" Guid="*">
+              <File Id="DictUsAffFile" Name="en_US.aff"
+                    Source="$(var.CargoTargetBinDir)\dictionaries\en_US.aff"
+                    KeyPath="yes"/>
+            </Component>
+            <Component Id="DictGbDic" Guid="*">
+              <File Id="DictGbDicFile" Name="en_GB.dic"
+                    Source="$(var.CargoTargetBinDir)\dictionaries\en_GB.dic"
+                    KeyPath="yes"/>
+            </Component>
+            <Component Id="DictGbAff" Guid="*">
+              <File Id="DictGbAffFile" Name="en_GB.aff"
+                    Source="$(var.CargoTargetBinDir)\dictionaries\en_GB.aff"
+                    KeyPath="yes"/>
+            </Component>
+            <Component Id="DictReadme" Guid="*">
+              <File Id="DictReadmeFile" Name="README.txt"
+                    Source="$(var.CargoTargetBinDir)\dictionaries\README.txt"
+                    KeyPath="yes"/>
+            </Component>
+            <Component Id="DictUsReadme" Guid="*">
+              <File Id="DictUsReadmeFile" Name="README_en_US.txt"
+                    Source="$(var.CargoTargetBinDir)\dictionaries\README_en_US.txt"
+                    KeyPath="yes"/>
+            </Component>
+            <Component Id="DictGbReadme" Guid="*">
+              <File Id="DictGbReadmeFile" Name="README_en_GB-ise.txt"
+                    Source="$(var.CargoTargetBinDir)\dictionaries\README_en_GB-ise.txt"
+                    KeyPath="yes"/>
+            </Component>
+          </Directory>
         </Directory>
       </Directory>
       <Directory Id="ProgramMenuFolder">
@@ -234,6 +274,13 @@
       <ComponentRef Id="GhostscriptCopying"/>
       <ComponentRef Id="GhostscriptExe"/>
       <ComponentRef Id="GhostscriptDll"/>
+      <ComponentRef Id="DictUsDic"/>
+      <ComponentRef Id="DictUsAff"/>
+      <ComponentRef Id="DictGbDic"/>
+      <ComponentRef Id="DictGbAff"/>
+      <ComponentRef Id="DictReadme"/>
+      <ComponentRef Id="DictUsReadme"/>
+      <ComponentRef Id="DictGbReadme"/>
     </Feature>
 
     <Icon Id="ProductIcon" SourceFile="$(var.CargoTargetBinDir)\tessera_app.exe"/>

@@ -225,7 +225,7 @@ person reaches for once they start setting copy, and none of it had a row:
 | Hyperlinks, bookmarks | ✅ URL and page links on text, PDF annotations, contents entries link; the contents headings are the PDF outline | — | done |
 | Language on text; special-character insertion | ✅ | — | done, M9 |
 | Typographer's quotes; Glyphs panel | ✅ a preference; a panel drawing the face's characters (by character, not glyph id), and a box for a code point | — | done; panel 2026-09-17 |
-| Spell check | ✅ Hunspell dictionaries from a folder, dynamic spelling, suggestions in the box and on right-click; no bundled list | — | done; squiggles + suggestions 2026-09-15 |
+| Spell check | ✅ Hunspell dictionaries, dynamic spelling, suggestions in the box and on right-click; American and British English (SCOWL) ship with Tessera, chosen in Preferences, and any other language's Hunspell pair is read from the dictionaries folder | — | done; squiggles + suggestions 2026-09-15 |
 | Story editor | ✅ a plain box over the story, applied as a minimal edit | — | done |
 | Print dialog | ✅ File ▸ Print… (Ctrl+P): a page range, written as a plain PDF and handed to the system's print path — the shell's print verb on Windows, lpr/lp elsewhere | — | done 2026-09-18 |
 | IDML import | ✅ pages, parents, threads, styles, swatches, sections, footnotes, anchored objects, tables, cross-references, object styles, gradients, effects | — | done, M12; appearance 2026-09-17 |

@@ -78,6 +78,17 @@ stage_ghostscript() {
   echo "Bundled Ghostscript from $from"
 }
 
+# The spelling dictionaries, beside the binary, which is where
+# `Dictionaries::shipped` looks: SCOWL's American and British English, with
+# the README carrying their licence, which has to travel with them.
+stage_dictionaries() {
+  local into=$1/dictionaries
+  mkdir -p "$into"
+  cp "$root"/packaging/dictionaries/*.dic \
+     "$root"/packaging/dictionaries/*.aff \
+     "$root"/packaging/dictionaries/*.txt "$into/"
+}
+
 # One `.icns` from one PNG. Padded to a square first, centred on
 # transparency: the document icon is a portrait page, and `iconutil` refuses
 # an iconset whose images are not square.
@@ -108,6 +119,7 @@ case "$kind" in
     cp "$binary" "$app/usr/bin/$slug"
     stage_shared "$app/usr/bin"
     stage_ghostscript "$app/usr/bin"
+    stage_dictionaries "$app/usr/bin"
     cp "$root/packaging/linux/$slug.desktop" "$app/usr/share/applications/"
     cp "$root/packaging/linux/$slug.desktop" "$app/"
     cp "$root/assets/tessera-publisher-logotype.png" \
@@ -153,6 +165,7 @@ case "$kind" in
     cp "$binary" "$app/Contents/MacOS/$slug"
     stage_shared "$app/Contents/Resources"
     stage_ghostscript "$app/Contents/Resources"
+    stage_dictionaries "$app/Contents/Resources"
     sed "s/@VERSION@/$version/g" "$root/packaging/macos/Info.plist" \
       > "$app/Contents/Info.plist"
     cp "$root/assets/tessera-publisher-logotype.png" \
@@ -181,6 +194,7 @@ case "$kind" in
     # the layout it installs is the layout `bundled_directory` looks for.
     stage_shared "$root/target/release"
     stage_ghostscript "$root/target/release"
+    stage_dictionaries "$root/target/release"
     # No path given: the .wxs lives at apps/tessera_app/wix/main.wxs, which
     # is where cargo-wix looks. Its positional argument is a Cargo.toml, not
     # a wxs, so following the tool's own convention beats passing flags to

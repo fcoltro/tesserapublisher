@@ -895,6 +895,9 @@ impl TesseraApp {
         }
         self.dictionaries
             .locate(crate::view::spelling::Dictionaries::folder());
+        self.dictionaries
+            .ship(crate::view::spelling::Dictionaries::shipped());
+        self.dictionaries.set_british(self.prefs.british_spelling);
         if let Some(message) = complaint {
             self.status = Some(Status::error(message));
         }

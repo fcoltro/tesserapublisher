@@ -231,6 +231,8 @@ fn restore(state: &mut TesseraApp) {
             state.prefs.reflow_removes_pages = fresh.reflow_removes_pages;
             state.prefs.objects_follow_page_edges = fresh.objects_follow_page_edges;
             state.prefs.adjust_layout = fresh.adjust_layout;
+            state.prefs.british_spelling = fresh.british_spelling;
+            state.dictionaries.set_british(fresh.british_spelling);
             state.prefs.show_hyperlinks = fresh.show_hyperlinks;
             state.prefs.assistant = fresh.assistant.clone();
             state.prefs.updates.enabled = fresh.updates.enabled;
@@ -321,9 +323,20 @@ fn general(ui: &mut Ui, state: &mut TesseraApp) {
     note(
         ui,
         "A red wave under any word the language\u{2019}s dictionary does not know, \
-         as you type. Needs a dictionary in the dictionaries folder; without one \
-         nothing is marked.",
+         as you type. English, American and British, comes with Tessera; for \
+         another language put its Hunspell .dic and .aff in the dictionaries \
+         folder.",
     );
+    let mut british = state.prefs.british_spelling;
+    ui.horizontal(|ui| {
+        ui.label("English spelling");
+        ui.selectable_value(&mut british, false, "American");
+        ui.selectable_value(&mut british, true, "British");
+    });
+    if british != state.prefs.british_spelling {
+        state.prefs.british_spelling = british;
+        state.dictionaries.set_british(british);
+    }
 
     heading(ui, "Text flow");
     ui.checkbox(
@@ -959,6 +972,7 @@ mod tests {
             reflow_removes_pages: true,
             objects_follow_page_edges: true,
             adjust_layout: true,
+            british_spelling: true,
             show_hyperlinks: true,
         };
 

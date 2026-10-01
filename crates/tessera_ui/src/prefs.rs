@@ -182,6 +182,13 @@ pub struct Preferences {
     #[serde(default)]
     pub adjust_layout: bool,
 
+    /// Whether English is checked against the British dictionary rather
+    /// than the American: text set in English is "en" either way, and
+    /// this says which spelling is right. Off, American, as a new
+    /// installation's.
+    #[serde(default)]
+    pub british_spelling: bool,
+
     /// Whether the canvas outlines the words that are hyperlinks — and
     /// cross-references, which are links too — as InDesign's View ›
     /// Extras › Show Hyperlinks does. Never printed or exported.
@@ -335,6 +342,7 @@ impl Default for Preferences {
             reflow_removes_pages: false,
             objects_follow_page_edges: false,
             adjust_layout: false,
+            british_spelling: false,
             show_hyperlinks: false,
             swatch_tiles: false,
         }
@@ -560,6 +568,7 @@ mod tests {
             reflow_removes_pages: true,
             objects_follow_page_edges: true,
             adjust_layout: true,
+            british_spelling: true,
             show_hyperlinks: true,
         };
         written.save_to(&path).expect("save failed");

@@ -8,12 +8,14 @@
 //!
 //! ## Where the words come from
 //!
-//! Hunspell dictionaries in Tessera's dictionaries folder — beside the
-//! preferences file — named by language: `en.dic` and `en.aff`, `de.dic`
-//! and `de.aff`. LibreOffice's and Firefox's are that format, and there is
-//! no dictionary bundled, because the word lists are large and each has its
-//! own licence. A text whose language has no dictionary is said so, not
-//! checked against English.
+//! Hunspell dictionaries, named by language: `en.dic` and `en.aff`,
+//! `de_DE.dic` and `de_DE.aff`. Looked for first in Tessera's dictionaries
+//! folder — beside the preferences file, where a person puts their own —
+//! and then among the ones Tessera ships beside the application: English,
+//! American and British, SCOWL's (see `packaging/dictionaries`). Which
+//! English is a preference, since text is set in "en" either way.
+//! LibreOffice's and Firefox's dictionaries are this format. A text whose
+//! language has no dictionary is said so, not checked against English.
 //!
 //! Words added go to `user.dic` in the same folder, one per line, and are
 //! read back for every language.
@@ -46,6 +48,10 @@ use crate::theme::Theme;
 pub struct Dictionaries {
     /// Where the `.dic` and `.aff` files and `user.dic` live, once known.
     folder: Option<PathBuf>,
+    /// Where the dictionaries Tessera ships are, looked in after `folder`.
+    shipped: Vec<PathBuf>,
+    /// Check English against `en_GB` rather than `en_US`.
+    british: bool,
     loaded: HashMap<String, Option<Dictionary>>,
     /// The person's own words, kept across languages.
     added: Vec<String>,
@@ -67,6 +73,49 @@ impl Dictionaries {
     /// Where the `.dic` and `.aff` files live on this machine.
     pub fn folder() -> Option<PathBuf> {
         crate::prefs::Preferences::directory().map(|d| d.join("dictionaries"))
+    }
+
+    /// Where an installation keeps the dictionaries it ships: beside the
+    /// application, or in a Mac bundle among its resources — and, in a
+    /// build from the source, the checkout's own copy, so `cargo run`
+    /// spells as an installation does. Only the folders that exist.
+    pub fn shipped() -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        if let Some(beside) = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+        {
+            out.push(beside.join("dictionaries"));
+            out.push(beside.join("..").join("Resources").join("dictionaries"));
+        }
+        if cfg!(debug_assertions) {
+            out.push(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packaging/dictionaries"),
+            );
+        }
+        out.retain(|d| d.is_dir());
+        out
+    }
+
+    /// Look in `folders` too, after the person's own. The application
+    /// calls this once at startup with [`Dictionaries::shipped`]; tests
+    /// never do, so they read only the dictionaries they insert.
+    pub fn ship(&mut self, folders: Vec<PathBuf>) {
+        self.shipped = folders;
+        // A language asked for before now and found nowhere may be here.
+        self.loaded.retain(|_, d| d.is_some());
+        self.generation += 1;
+    }
+
+    /// Check English the British way, or the American. Changing it drops
+    /// the English already loaded, so the next word asked about is read
+    /// against the other.
+    pub fn set_british(&mut self, british: bool) {
+        if self.british != british {
+            self.british = british;
+            self.loaded.remove("en");
+            self.generation += 1;
+        }
     }
 
     /// Read from and write to `folder` from now on. The application calls
@@ -103,10 +152,16 @@ impl Dictionaries {
     }
 
     fn load(&self, language: &str) -> Option<Dictionary> {
-        let folder = self.folder.clone()?;
+        self.folder
+            .iter()
+            .chain(self.shipped.iter())
+            .find_map(|folder| self.load_from(folder, language))
+    }
+
+    fn load_from(&self, folder: &std::path::Path, language: &str) -> Option<Dictionary> {
         // "en" may be shipped as en.dic or en_US.dic; take the exact name
         // first, then anything starting with it.
-        let candidates: Vec<PathBuf> = std::fs::read_dir(&folder)
+        let candidates: Vec<PathBuf> = std::fs::read_dir(folder)
             .ok()?
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.extension().is_some_and(|e| e == "dic"))
@@ -117,13 +172,22 @@ impl Dictionaries {
                 })
             })
             .collect();
+        // English names its spelling: the one the preference chooses, when
+        // there is no plain "en".
+        let variant = match (language, self.british) {
+            ("en", true) => Some("en_gb"),
+            ("en", false) => Some("en_us"),
+            _ => None,
+        };
+        let stem_is = |p: &&PathBuf, name: &str| {
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| s.eq_ignore_ascii_case(name))
+        };
         let dic = candidates
             .iter()
-            .find(|p| {
-                p.file_stem()
-                    .and_then(|s| s.to_str())
-                    .is_some_and(|s| s.eq_ignore_ascii_case(language))
-            })
+            .find(|p| stem_is(p, language))
+            .or_else(|| variant.and_then(|v| candidates.iter().find(|p| stem_is(p, v))))
             .or_else(|| candidates.first())?;
         let aff = dic.with_extension("aff");
         let dic_text = std::fs::read_to_string(dic).ok()?;
@@ -634,6 +698,41 @@ mod tests {
     use super::*;
     use tessera_document::nodes::FrameKind;
     use tessera_geometry::DocRect;
+
+    #[test]
+    fn the_shipped_english_is_found_and_the_preference_chooses_its_spelling() {
+        let shipped =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packaging/dictionaries");
+        let mut d = Dictionaries::default();
+        assert!(d.get("en").is_none(), "nothing until told where");
+        d.ship(vec![shipped]);
+        let us = d.get("en").expect("American English");
+        assert!(us.check("color") && !us.check("colour"));
+
+        let before = d.generation();
+        d.set_british(true);
+        assert!(d.generation() > before, "what was known has changed");
+        let gb = d.get("en").expect("British English");
+        assert!(gb.check("colour") && !gb.check("color"));
+        assert!(d.get("de").is_none(), "no German is shipped");
+    }
+
+    #[test]
+    fn a_dictionary_of_ones_own_wins_over_the_shipped_one() {
+        let own = std::env::temp_dir().join(format!("tessera-own-dict-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&own);
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::write(own.join("en.dic"), "1\nfrobnicate\n").unwrap();
+        std::fs::write(own.join("en.aff"), "").unwrap();
+        let mut d = Dictionaries::default();
+        d.locate(Some(own.clone()));
+        d.ship(vec![
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packaging/dictionaries"),
+        ]);
+        let en = d.get("en").expect("one");
+        assert!(en.check("frobnicate") && !en.check("color"));
+        let _ = std::fs::remove_dir_all(&own);
+    }
 
     #[test]
     fn the_context_brackets_the_word() {

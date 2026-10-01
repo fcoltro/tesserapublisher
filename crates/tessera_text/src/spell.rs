@@ -13,7 +13,8 @@
 //! (the language's own list of usual slips); and compounding — `COMPOUNDFLAG`
 //! and the begin, middle and end flags, `COMPOUNDMIN`, `ONLYINCOMPOUND` —
 //! which is how German and the Nordic languages spell words no list could
-//! hold; and `PHONE`, the phonetic rules a few dictionaries carry
+//! hold; `COMPOUNDRULE`, patterns of flags a compound's parts must follow,
+//! which is how English spells "10th" and "21st"; and `PHONE`, the phonetic rules a few dictionaries carry
 //! ([`phonet`]). That is enough for the dictionaries LibreOffice and
 //! Firefox ship, which are the ones a person has.
 //!
@@ -99,7 +100,24 @@ pub struct Dictionary {
     only_in_compound: Option<u32>,
     /// `PHONE`: what letters sound like, for suggesting by ear.
     phone: phonet::Table,
+    /// `COMPOUNDRULE`: each a pattern of flags, one per part, a part
+    /// repeated (`*`) or optional (`?`).
+    compound_rules: Vec<Vec<(u32, Repeat)>>,
 }
+
+/// How often one element of a `COMPOUNDRULE` may match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Repeat {
+    Once,
+    /// `?`
+    Maybe,
+    /// `*`
+    Any,
+}
+
+/// The most parts a `COMPOUNDRULE` compound may have: "12345th" is six,
+/// and a long run of digits is not a word worth more work.
+const MOST_RULE_PARTS: usize = 12;
 
 /// Where a part stands in a compound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -402,7 +420,99 @@ impl Dictionary {
 
     /// A word in the list, a stem with its affixes, or a compound of them.
     fn check_word(&self, word: &str) -> bool {
-        self.check_exact(word) || self.compound(word, 0)
+        self.check_exact(word) || self.compound(word, 0) || self.ruled_compound(word)
+    }
+
+    /// Whether `word` is parts in the list whose flags follow one of the
+    /// `COMPOUNDRULE` patterns, at least two of them: "10th" is "1" then
+    /// "0th" under English's `n*1t`.
+    fn ruled_compound(&self, word: &str) -> bool {
+        if self.compound_rules.is_empty() || word.chars().count() > 40 {
+            return false;
+        }
+        let bounds: Vec<usize> = word
+            .char_indices()
+            .map(|(i, _)| i)
+            .chain(std::iter::once(word.len()))
+            .collect();
+        self.compound_rules
+            .iter()
+            .any(|rule| self.follows(word, &bounds, 0, rule, 0, 0))
+    }
+
+    /// Whether `word` from the `at`th character on follows `rule` from its
+    /// `step`th element, `parts` parts having been taken already.
+    fn follows(
+        &self,
+        word: &str,
+        bounds: &[usize],
+        at: usize,
+        rule: &[(u32, Repeat)],
+        step: usize,
+        parts: usize,
+    ) -> bool {
+        let end = bounds.len() - 1;
+        if at == end {
+            return parts >= 2 && rule[step..].iter().all(|(_, r)| *r != Repeat::Once);
+        }
+        let Some(&(flag, repeat)) = rule.get(step) else {
+            return false;
+        };
+        if parts >= MOST_RULE_PARTS {
+            return false;
+        }
+        // Skipping an element that may be absent.
+        if repeat != Repeat::Once && self.follows(word, bounds, at, rule, step + 1, parts) {
+            return true;
+        }
+        let min = self.compound_min.max(1);
+        for next in (at + min)..=end {
+            let part = &word[bounds[at]..bounds[next]];
+            if !self.stem_takes(part, flag) {
+                continue;
+            }
+            let again = if repeat == Repeat::Any {
+                step
+            } else {
+                step + 1
+            };
+            if self.follows(word, bounds, next, rule, again, parts + 1)
+                || (repeat == Repeat::Any
+                    && self.follows(word, bounds, next, rule, step + 1, parts + 1))
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// A `COMPOUNDRULE` pattern read into its elements: flags in the
+    /// dictionary's own encoding — a long or numeric flag in parentheses —
+    /// each perhaps followed by `*` or `?`.
+    fn parse_rule(&self, pattern: &str) -> Vec<(u32, Repeat)> {
+        let mut out: Vec<(u32, Repeat)> = Vec::new();
+        let mut chars = pattern.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '*' | '?' => {
+                    if let Some(last) = out.last_mut() {
+                        last.1 = if c == '*' { Repeat::Any } else { Repeat::Maybe };
+                    }
+                }
+                '(' => {
+                    let inner: String = chars.by_ref().take_while(|c| *c != ')').collect();
+                    if let Some(flag) = self.parse_flags(&inner).into_iter().next() {
+                        out.push((flag, Repeat::Once));
+                    }
+                }
+                c => {
+                    if let Some(flag) = self.parse_flags(&c.to_string()).into_iter().next() {
+                        out.push((flag, Repeat::Once));
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// Whether a stem is a word only inside a compound.
@@ -634,6 +744,17 @@ impl Dictionary {
                         self.phone.push(search, replacement);
                     }
                 }
+                // The count line is `COMPOUNDRULE n`; each rule a pattern.
+                "COMPOUNDRULE" => {
+                    if let Some(pattern) = parts.next()
+                        && pattern.parse::<usize>().is_err()
+                    {
+                        let rule = self.parse_rule(pattern);
+                        if !rule.is_empty() {
+                            self.compound_rules.push(rule);
+                        }
+                    }
+                }
                 "COMPOUNDMIN" => {
                     if let Some(n) = parts.next().and_then(|n| n.parse().ok()) {
                         self.compound_min = n;
@@ -815,6 +936,23 @@ Paris
 
     fn dictionary() -> Dictionary {
         Dictionary::parse(AFF, DIC)
+    }
+
+    #[test]
+    fn english_ordinals_are_compounds_the_rules_allow() {
+        // English's own rules and the entries they read, as SCOWL ships
+        // them: "11th" to "19th" under n*1t, the rest under n*mp.
+        let aff = "COMPOUNDMIN 1\nONLYINCOMPOUND c\nCOMPOUNDRULE 2\nCOMPOUNDRULE n*1t\nCOMPOUNDRULE n*mp\n";
+        let dic = "8\n0/nm\n0th/pt\n1/n1\n1st/p\n1th/tc\n2/nm\n2nd/p\n2th/tc\n";
+        let d = Dictionary::parse(aff, dic);
+        for word in [
+            "10th", "11th", "12th", "21st", "22nd", "100th", "1st", "2nd",
+        ] {
+            assert!(d.check(word), "{word}");
+        }
+        for word in ["11st", "1th", "21th", "12nd"] {
+            assert!(!d.check(word), "{word}");
+        }
     }
 
     #[test]
