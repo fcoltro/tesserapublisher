@@ -18,13 +18,15 @@
 //!   within whichever band it was in — margin to margin, or edge to margin.
 //!
 //! Only upright objects are resized: a rotated, sheared or scaled one, a
-//! group, is moved by its centre and keeps its shape. Ruler guides are left
-//! where they are.
+//! group, is moved by its centre and keeps its shape. A ruler guide moves in
+//! proportion with the page it crosses, as a free object's centre does, so a
+//! guide on a margin stays on it.
 
 use tessera_geometry::DocRect;
 
 use crate::document::Document;
-use crate::ids::{FrameId, PageId};
+use crate::ids::{FrameId, PageId, SpreadId};
+use crate::nodes::Axis;
 
 /// How close an edge must be to a line to be on it, in points: the width of
 /// a snap, near enough that nobody put it there by accident.
@@ -38,6 +40,10 @@ pub struct PageBefore {
     pub trim: DocRect,
     pub margins: DocRect,
     pub frames: Vec<FrameId>,
+    /// The ruler guides that cross this page: their spread, their place in
+    /// its list, which way they run, and where they were from the page's top
+    /// left along the axis they cut.
+    pub guides: Vec<(SpreadId, usize, Axis, f64)>,
 }
 
 /// The four lines along one axis, page-relative: edge, margin, margin, edge.
@@ -121,6 +127,53 @@ impl Document {
                         .into_iter()
                         .filter(|f| self.frames.get(*f).is_some_and(|f| f.anchor.is_none()))
                         .collect(),
+                    guides: self.guides_crossing(page),
+                })
+            })
+            .collect()
+    }
+
+    /// The ruler guides that belong to `page` for adjusting: a horizontal
+    /// guide to its spread's first page, a vertical one to the page it
+    /// crosses, or — off every page — to the nearest.
+    fn guides_crossing(&self, page: PageId) -> Vec<(SpreadId, usize, Axis, f64)> {
+        let Some(spread) = self.spread_of(page) else {
+            return Vec::new();
+        };
+        let pages = self.pages_of(spread);
+        let Some(trim) = self.pages.get(page).map(|p| p.bounds) else {
+            return Vec::new();
+        };
+        let distance = |p: PageId, x: f64| {
+            self.pages.get(p).map_or(f64::INFINITY, |p| {
+                let b = p.bounds;
+                if x < b.x {
+                    b.x - x
+                } else if x > b.x + b.width {
+                    x - (b.x + b.width)
+                } else {
+                    0.0
+                }
+            })
+        };
+        self.guides_of(spread)
+            .iter()
+            .enumerate()
+            .filter_map(|(index, guide)| {
+                let mine = match guide.axis {
+                    Axis::Horizontal => pages.first() == Some(&page),
+                    Axis::Vertical => {
+                        pages.iter().copied().min_by(|a, b| {
+                            distance(*a, guide.position).total_cmp(&distance(*b, guide.position))
+                        }) == Some(page)
+                    }
+                };
+                mine.then(|| {
+                    let along = match guide.axis {
+                        Axis::Horizontal => guide.position - trim.y,
+                        Axis::Vertical => guide.position - trim.x,
+                    };
+                    (spread, index, guide.axis, along)
                 })
             })
             .collect()
@@ -150,6 +203,19 @@ impl Document {
             }
             for &id in &was.frames {
                 self.adjust_frame(id, trim, (ox, oy), (nx, ny));
+            }
+            for &(spread, index, axis, along) in &was.guides {
+                let position = match axis {
+                    Axis::Horizontal => trim.y + carry(along, oy, ny),
+                    Axis::Vertical => trim.x + carry(along, ox, nx),
+                };
+                if let Some(guide) = self
+                    .spreads
+                    .get_mut(spread)
+                    .and_then(|s| s.guides.get_mut(index))
+                {
+                    guide.position = position;
+                }
             }
         }
         self.touch();
@@ -237,6 +303,36 @@ mod tests {
             (a, b),
             (50.0, 578.0),
             "hung from its near margin, same size"
+        );
+    }
+
+    #[test]
+    fn a_guide_on_the_margin_stays_on_the_margin() {
+        use crate::nodes::Guide;
+        let mut doc = Document::new();
+        let page = doc.page_ids().next().expect("a page");
+        let spread = doc.spread_of(page).expect("a spread");
+        let margins = doc.margin_rect(page).expect("margins");
+        let trim = doc.pages[page].bounds;
+        let right_margin = margins.x + margins.width;
+        doc.add_guide(
+            spread,
+            Guide {
+                axis: Axis::Vertical,
+                position: right_margin,
+                locked: false,
+            },
+        );
+        let before = doc.layout_before();
+        doc.set_page_size(trim.width + 120.0, trim.height);
+        doc.adjust_layout(&before);
+        let now = doc.margin_rect(page).expect("margins");
+        let guide = doc.guides_of(spread)[0];
+        assert!(
+            (guide.position - (now.x + now.width)).abs() < 1e-6,
+            "{} vs {}",
+            guide.position,
+            now.x + now.width
         );
     }
 

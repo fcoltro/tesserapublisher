@@ -1543,6 +1543,47 @@ fn a_gradient_feather_masks_the_object_it_fades() {
 }
 
 #[test]
+fn a_gradient_with_alpha_in_a_feathered_object_keeps_the_feather_in_its_mask() {
+    // One soft mask at a time: the gradient's own would replace the
+    // feather's, so the gradient's mask paints its ramp through the feather.
+    use tessera_document::paint::{Gradient, Paint, Ramp, Stop};
+    let clear_to_solid = Paint::Gradient(Gradient::new(
+        Ramp::Linear { angle: 0.0 },
+        vec![
+            Stop {
+                at: 0.0,
+                colour: Color::Rgb {
+                    r: 1.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.2,
+                },
+            },
+            Stop {
+                at: 1.0,
+                colour: Color::Rgb {
+                    r: 1.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 1.0,
+                },
+            },
+        ],
+    ));
+    let mut doc = painted_rect(clear_to_solid);
+    doc.items[0].feather = Some(tessera_document::feather::GradientFeather::default());
+    let text = String::from_utf8_lossy(&tessera_pdf::export(&doc).expect("export")).into_owned();
+    assert!(
+        text.contains("/Within gs"),
+        "the ramp is not painted through the feather"
+    );
+    assert!(
+        text.contains("/Within"),
+        "the feather is not in the mask's resources"
+    );
+}
+
+#[test]
 fn a_feather_is_set_after_the_shadow_so_the_shadow_is_not_faded() {
     // The object fades, not the light it blocks.
     let mut doc = with_shadow(

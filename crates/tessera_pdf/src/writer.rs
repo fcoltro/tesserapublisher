@@ -618,8 +618,17 @@ fn write(
         progress.step();
         let page = resolved_page.bounds;
         let content_id = alloc();
-        let shadings = collect_shadings(resolved, page, &mut alloc, &ink);
+        let mut shadings = collect_shadings(resolved, page, &mut alloc, &ink);
         let feathers = collect_feathers(resolved, page, &mut alloc);
+        // A feathered object's gradient with an alpha of its own carries the
+        // feather inside its mask, or the one would replace the other.
+        for (shading, feather) in shadings.iter_mut().zip(&feathers) {
+            if let (Some(shading), Some(feather)) = (shading, feather)
+                && let Some(mask) = shading.mask.as_mut()
+            {
+                mask.within = Some(feather.state);
+            }
+        }
         let content = build_content(
             resolved,
             &Written {
@@ -876,6 +885,14 @@ struct GradientMask {
     form: Ref,
     bounds: Rect,
     shading: Box<Shading>,
+    /// Another soft mask's state, applied to the ramp inside this one.
+    ///
+    /// A page holds one soft mask at a time, so a gradient's own alpha set
+    /// inside a feathered object would replace the feather. Painted through
+    /// the feather inside its own mask instead — a luminosity mask is drawn
+    /// over black, so the ramp through the feather is the product of the
+    /// two — the gradient's mask carries both.
+    within: Option<Ref>,
 }
 
 /// The geometry of one shading, already in PDF space.
@@ -1475,6 +1492,7 @@ fn collect_shadings(
                     },
                     mask: None,
                 }),
+                within: None,
             })
         } else {
             None
@@ -1563,13 +1581,19 @@ fn write_shading(pdf: &mut Pdf, shading: &Shading, ink: &Ink) {
 fn write_mask(pdf: &mut Pdf, mask: &GradientMask, ink: &Ink) {
     write_shading(pdf, &mask.shading, ink);
     let mut content = Content::new();
+    if mask.within.is_some() {
+        content.set_parameters(Name(b"Within"));
+    }
     content.shading(Name(b"Alpha"));
     let bytes = content.finish();
     let mut form = pdf.form_xobject(mask.form, &bytes);
     form.bbox(mask.bounds);
-    form.resources()
-        .shadings()
-        .pair(Name(b"Alpha"), mask.shading.id);
+    let mut resources = form.resources();
+    resources.shadings().pair(Name(b"Alpha"), mask.shading.id);
+    if let Some(within) = mask.within {
+        resources.ext_g_states().pair(Name(b"Within"), within);
+    }
+    resources.finish();
     let mut group = form.group();
     group.transparency().isolated(true);
     group.color_space().device_gray();
@@ -1648,6 +1672,7 @@ fn collect_feathers(
                     },
                     mask: None,
                 }),
+                within: None,
             })
         })
         .collect()
