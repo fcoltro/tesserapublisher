@@ -45,7 +45,7 @@ outright, so the target is not twenty-six.
 | Direct Selection (anchor editing) | ✅ `Tool::DirectSelect` | — | done, M1 |
 | Page tool (per-page size) | ✅ the control bar's W/H resize the current page; Properties resizes them all; a page's right or bottom edge, or its corner, drags with the select tool | — | done; drag 2026-09-17 |
 | Gap tool | ✅ `Tool::Gap`, U: the strip between frames, or between a frame and the page edge, is highlighted under the pointer and dragged to move it (both sides resize); Ctrl widens or narrows it; Shift takes only the two nearest frames. Upright frames only, as InDesign | — | done 2026-09-30 |
-| Content Collector / Placer | ✅ `Tool::Conveyor`, B: a click collects a snapshot copy onto the conveyor; B again places, the next item's top left at the pointer, taken off unless the conveyor keeps them. A window lists the conveyor. No linked content: a placed item is a copy, as a paste is | — | done 2026-09-30 |
+| Content Collector / Placer | ✅ `Tool::Conveyor`, B: a click collects a snapshot copy onto the conveyor; B again places, the next item's top left at the pointer, taken off unless the conveyor keeps them. A window lists the conveyor. With “Link copies to their originals” a copy placed back into its own document is linked content: Properties shows it up to date or changed and updates or unlinks it, preflight warns of a changed one. Single frames only; groups and tables are placed as plain copies | — | done 2026-09-30 |
 | Type | ✅ `Tool::Text` | — | done |
 | Type on a Path | ✅ Type ▸ Type on a path…; start, end, alignment and flip in the inspector; start, end and centre brackets dragged on the path; a caret on the curve where it is clicked; words in the story editor | — | done 2026-09-17 |
 | Line | ✅ `Tool::Line` | — | done |
@@ -59,7 +59,7 @@ outright, so the target is not twenty-six.
 | Scissors | ✅ `Tool::Scissors` | — | done, M1 |
 | Free Transform / Rotate / Scale / Shear | ✗ | — | **refused** (D6) |
 | Gradient Swatch | gradients are set in the inspector; there is no drag-to-angle tool, by D6's argument | — | done, M5 |
-| Gradient Feather | ✅ linear at an angle or radial, opacity stops; Properties and object styles; drawn, written to PDF as a soft mask, read from IDML. In a PDF, a gradient fill with transparent stops inside a feathered object replaces the feather's mask (one soft mask at a time) | — | done 2026-09-30 |
+| Gradient Feather | ✅ linear at an angle or radial, opacity stops; Properties and object styles; drawn, written to PDF as a soft mask, read from IDML. A gradient fill with transparent stops inside a feathered object paints its own PDF mask through the feather, so both hold | — | done 2026-09-30 |
 | Note | ✅ Type ▸ Notes ▸ New note at the caret, worded in a box and signed with the system's user name; an amber flag where it sits, clicked to read or delete it; read from IDML; never printed or exported. No tool of its own: the Type tool puts the caret where the Note tool would click | — | done 2026-09-30 |
 | Eyedropper | ✅ `Tool::Eyedropper`, I: picks up fill, stroke, blend, shadow, corners and a text frame's type; puts them down as one undo; Alt-click picks up afresh | — | done 2026-09-17 |
 | Color Theme | ✅ `Tool::ColourTheme`, J: a click on a picture takes its five most common, distinct colours (k-means, seeded from a histogram, the same theme every time); on a drawn or text object, the colours it is painted in. A window shows them: a chip fills the selection, Add to swatches keeps the theme as one undo step | — | done 2026-09-30 |

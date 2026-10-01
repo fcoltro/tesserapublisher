@@ -3660,9 +3660,12 @@ Windows pass.
 - [x] **Measure tool** (K).
 - [x] **Notes** — Type ▸ Notes, amber flags on the canvas, IDML. Format 46.
 - [x] **Gap tool** (U).
-- [x] **Adjust layout** — Layout ▸ Adjust layout, or the preference.
+- [x] **Adjust layout** — Layout ▸ Adjust layout, or the preference; ruler
+  guides follow their page.
 - [x] **Colour theme tool** (J).
-- [x] **Content collector and placer** (B, B again).
+- [x] **Content collector and placer** (B, B again), with **linked content**
+  (format 47): Properties updates or unlinks a copy, and preflight warns of
+  one whose original changed (`modified-content`).
 - [x] **Pencil, smooth and erase** (N, S, E).
 
 Also that day: the toolchain is pinned to an exact Rust (1.98.1) in
