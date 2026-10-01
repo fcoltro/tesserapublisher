@@ -66,6 +66,8 @@ pub enum Rule {
     MissingLink,
     /// A placed file that has changed on disk since it was placed.
     ModifiedLink,
+    /// A copy placed as linked content whose original has changed since.
+    ModifiedContent,
     /// Artwork reproduced below the resolution asked for.
     LowResolution,
     /// A colour in a space the chosen press cannot print.
@@ -81,10 +83,11 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 9] = [
+    pub const ALL: [Rule; 10] = [
         Rule::OversetText,
         Rule::MissingLink,
         Rule::ModifiedLink,
+        Rule::ModifiedContent,
         Rule::LowResolution,
         Rule::ColourSpaceMismatch,
         Rule::OutsideBleed,
@@ -102,6 +105,10 @@ impl Rule {
             Rule::ModifiedLink => {
                 "The file has changed since it was placed. Update it if the new \
                  version is the one meant."
+            }
+            Rule::ModifiedContent => {
+                "A linked copy's original has changed. Update the copy if it \
+                 should say the same."
             }
             Rule::LowResolution => {
                 "A picture printed at fewer pixels to the inch than asked for \
@@ -136,6 +143,7 @@ impl Rule {
             Rule::OversetText => "overset-text",
             Rule::MissingLink => "missing-link",
             Rule::ModifiedLink => "modified-link",
+            Rule::ModifiedContent => "modified-content",
             Rule::LowResolution => "low-resolution",
             Rule::ColourSpaceMismatch => "colour-space",
             Rule::OutsideBleed => "outside-bleed",
@@ -154,6 +162,7 @@ impl Rule {
             Rule::OversetText => "Overset text",
             Rule::MissingLink => "Missing link",
             Rule::ModifiedLink => "Modified link",
+            Rule::ModifiedContent => "Modified linked content",
             Rule::LowResolution => "Low resolution",
             Rule::ColourSpaceMismatch => "Colour space",
             Rule::OutsideBleed => "Outside the bleed",
@@ -187,6 +196,7 @@ impl Rule {
             // RGB object might be going to a digital press; an object short of
             // the bleed might be exactly where it was put on purpose.
             Rule::ModifiedLink
+            | Rule::ModifiedContent
             | Rule::LowResolution
             | Rule::ColourSpaceMismatch
             | Rule::OutsideBleed

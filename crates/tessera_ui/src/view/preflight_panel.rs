@@ -1579,13 +1579,13 @@ mod tests {
     fn a_check_switched_off_in_the_panel_is_not_run() {
         let (mut state, ..) = troubled();
         let ctx = a_panel();
-        click(&ctx, &mut state, "Checks 9 of 9");
+        click(&ctx, &mut state, "Checks 10 of 10");
         assert!(state.preflight.view.checks);
         click(&ctx, &mut state, "Missing font");
         assert_eq!(state.prefs.preflight_off, ["missing-font"]);
         assert!(!rules(&mut state).contains(&Rule::MissingFont));
         let shown = labels(&ctx, &mut state);
-        assert!(shown.iter().any(|l| l == "Checks 8 of 9"), "{shown:?}");
+        assert!(shown.iter().any(|l| l == "Checks 9 of 10"), "{shown:?}");
         click(&ctx, &mut state, "Turn every check on");
         assert!(state.prefs.preflight_off.is_empty());
     }

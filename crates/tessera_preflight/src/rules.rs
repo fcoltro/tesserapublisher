@@ -36,6 +36,9 @@ pub fn check(doc: &Document, shaper: &mut Shaper, limits: Limits) -> Report {
     if on(Rule::MissingLink) || on(Rule::ModifiedLink) {
         problems.extend(links(doc));
     }
+    if on(Rule::ModifiedContent) {
+        problems.extend(linked_content(doc));
+    }
     if on(Rule::UnresolvedSwatch) {
         problems.extend(unresolved_swatches(doc));
     }
@@ -139,6 +142,24 @@ pub fn links(doc: &Document) -> Vec<Problem> {
         }
     }
     out
+}
+
+/// Copies placed as linked content whose originals have changed since.
+///
+/// A warning, as a modified link is: the copy may be meant to differ, and
+/// only somebody who knows the job can say whether to update it.
+pub fn linked_content(doc: &Document) -> Vec<Problem> {
+    use tessera_document::content_link::LinkState;
+    doc.content_links
+        .iter()
+        .filter(|l| doc.content_link_state(l.copy) == Some(LinkState::Modified))
+        .map(|l| Problem {
+            rule: Rule::ModifiedContent,
+            message: "its original has changed since it was placed".to_string(),
+            at: Where::Frame(l.copy),
+            subject: Subject::None,
+        })
+        .collect()
 }
 
 /// Artwork reproduced below the resolution asked for.
@@ -564,6 +585,35 @@ mod tests {
             width: w,
             height: h,
         }
+    }
+
+    // --- linked content ----------------------------------------------------
+
+    #[test]
+    fn a_linked_copy_whose_original_changed_is_a_warning() {
+        let mut doc = a_document();
+        let black = Paint::Solid(Color::BLACK);
+        let original = add(
+            &mut doc,
+            a_frame(
+                box_at(0.0, 0.0, 10.0, 10.0),
+                FrameKind::Rectangle,
+                black.clone(),
+            ),
+        );
+        let copy = add(
+            &mut doc,
+            a_frame(box_at(50.0, 0.0, 10.0, 10.0), FrameKind::Rectangle, black),
+        );
+        assert!(doc.link_content(original, copy));
+        assert!(linked_content(&doc).is_empty(), "up to date");
+
+        doc.frame_mut(original).unwrap().fill = Paint::Solid(Color::WHITE);
+        let found = linked_content(&doc);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].rule, Rule::ModifiedContent);
+        assert_eq!(found[0].at, Where::Frame(copy));
+        assert_eq!(Rule::ModifiedContent.severity(), crate::Severity::Warning);
     }
 
     // --- swatches ----------------------------------------------------------
