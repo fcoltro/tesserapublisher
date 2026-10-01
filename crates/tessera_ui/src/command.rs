@@ -247,6 +247,14 @@ pub enum Command {
     PlaceFromConveyor {
         at: tessera_geometry::DocPoint,
     },
+    /// Give a linked copy its original's appearance and content again.
+    UpdateLinkedContent {
+        id: FrameId,
+    },
+    /// Make a linked copy an ordinary frame.
+    UnlinkContent {
+        id: FrameId,
+    },
     SetRotation {
         id: FrameId,
         degrees: f64,
@@ -1337,6 +1345,8 @@ impl Command {
             | Command::CutSelection
             | Command::Paste
             | Command::PlaceFromConveyor { .. }
+            | Command::UpdateLinkedContent { .. }
+            | Command::UnlinkContent { .. }
             | Command::MoveSelectionInZ { .. }
             | Command::AddPathLike { .. }
             | Command::SetPath { .. }

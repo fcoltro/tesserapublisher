@@ -219,6 +219,11 @@ pub struct Document {
     #[serde(default)]
     pub footnotes: crate::footnotes::FootnoteOptions,
 
+    /// Copies placed as linked content, each tied to its original. See
+    /// [`crate::content_link`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub content_links: Vec<crate::content_link::ContentLink>,
+
     /// Bumped on every mutation. The renderer rebuilds its scene only when
     /// this moves, so panning the camera does not rebuild anything.
     ///
@@ -290,6 +295,7 @@ impl Document {
             endnotes: crate::contents::Endnotes::default(),
             destinations: Vec::new(),
             footnotes: crate::footnotes::FootnoteOptions::default(),
+            content_links: Vec::new(),
             revision: 0,
             file: crate::variables::FileFacts::default(),
             merge_record: None,

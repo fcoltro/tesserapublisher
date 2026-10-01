@@ -24,6 +24,10 @@ pub struct Conveyor {
     pub placing: bool,
     /// Leave each item on the conveyor after placing it, to place again.
     pub keep: bool,
+    /// Place copies as linked content, tied to their originals, when the
+    /// original is in the document being placed into. See
+    /// [`tessera_document::content_link`].
+    pub link: bool,
 }
 
 /// Put a copy of `id` at the end of the conveyor.
@@ -32,7 +36,12 @@ pub fn collect(state: &mut TesseraApp, id: FrameId) {
     if source.frame(id).is_none() {
         return;
     }
-    state.conveyor.items.push(Clipboard { source, root: id });
+    let from = Some(state.active);
+    state.conveyor.items.push(Clipboard {
+        source,
+        root: id,
+        from,
+    });
     let n = state.conveyor.items.len();
     state.status = Some(crate::app::Status::info(match n {
         1 => "1 item on the conveyor; press B to place".to_string(),

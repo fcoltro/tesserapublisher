@@ -2717,6 +2717,42 @@ fn effects_section(
 
     shadow_controls(ui, state, id, frame);
     feather_controls(ui, state, id, frame);
+    linked_content_controls(ui, state, id);
+}
+
+/// A linked copy's standing with its original, and the two things to do
+/// about it. Shown only on a linked copy.
+fn linked_content_controls(
+    ui: &mut Ui,
+    state: &mut TesseraApp,
+    id: tessera_document::ids::FrameId,
+) {
+    use tessera_document::content_link::LinkState;
+    let Some(standing) = state.active().document().content_link_state(id) else {
+        return;
+    };
+    group_label(ui, "Linked content");
+    let said = match standing {
+        LinkState::UpToDate => "Up to date with its original.",
+        LinkState::Modified => "The original has changed since this was placed.",
+        LinkState::Gone => "The original has been deleted.",
+    };
+    ui.colored_label(
+        if standing == LinkState::Modified {
+            Theme::accent()
+        } else {
+            Theme::text_muted()
+        },
+        said,
+    );
+    ui.horizontal(|ui| {
+        if standing == LinkState::Modified && ui.button("Update").clicked() {
+            apply(state, Command::UpdateLinkedContent { id });
+        }
+        if ui.button("Unlink").clicked() {
+            apply(state, Command::UnlinkContent { id });
+        }
+    });
 }
 
 /// The object's gradient feather: whether it fades, and how.

@@ -880,8 +880,8 @@ fn the_format_version_is_twenty_six() {
     // is cut to, the first page's crop box before; 43 single-word
     // justification, full justify before; 44 a cell style's paragraph
     // style, none before; 45 a gradient feather, none before; 46 editorial
-    // notes in the text, none before.
-    assert_eq!(format::FORMAT_VERSION, 46);
+    // notes in the text, none before; 47 linked content, none before.
+    assert_eq!(format::FORMAT_VERSION, 47);
 }
 
 #[test]

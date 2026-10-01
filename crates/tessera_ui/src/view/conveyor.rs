@@ -50,6 +50,11 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
             }
             ui.add_space(Theme::space_2());
             ui.checkbox(&mut state.conveyor.keep, "Keep items after placing");
+            ui.checkbox(&mut state.conveyor.link, "Link copies to their originals")
+                .on_hover_text(
+                    "A copy placed in the document it came from follows its original: \
+                     Properties says when the original has changed, and updates it.",
+                );
             if !state.conveyor.items.is_empty() {
                 clear = ui.button("Empty the conveyor").clicked();
             }

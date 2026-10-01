@@ -17,6 +17,9 @@ use crate::tools::{Drag, Tool};
 pub struct Clipboard {
     pub source: std::sync::Arc<Document>,
     pub root: FrameId,
+    /// The open document it was taken from, so a copy placed back into the
+    /// same one can be linked to its original.
+    pub from: Option<DocumentKey>,
 }
 
 /// A message for the status bar. Errors are never swallowed; they land here.

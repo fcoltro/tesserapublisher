@@ -4886,6 +4886,63 @@ mod tests {
     }
 
     #[test]
+    fn a_linked_copy_knows_when_its_original_changes_and_takes_the_change() {
+        use tessera_color::Color;
+        use tessera_document::content_link::LinkState;
+        let mut state = TesseraApp::headless();
+        let page = state.current_page().expect("a page");
+        let origin = state.active().document().pages[page].bounds;
+        apply(
+            &mut state,
+            Command::AddRectangle(DocRect {
+                x: origin.x + 20.0,
+                y: origin.y + 20.0,
+                width: 60.0,
+                height: 30.0,
+            }),
+        );
+        let original = state.active().selection.single().expect("a box");
+        crate::conveyor::collect(&mut state, original);
+        state.conveyor.link = true;
+        apply(
+            &mut state,
+            Command::PlaceFromConveyor {
+                at: DocPoint {
+                    x: origin.x + 200.0,
+                    y: origin.y + 200.0,
+                },
+            },
+        );
+        let copy = state.active().selection.single().expect("placed");
+        let doc = state.active().document();
+        assert_eq!(doc.content_link_state(copy), Some(LinkState::UpToDate));
+
+        let red = Paint::Solid(Color::Rgb {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        });
+        apply(
+            &mut state,
+            Command::SetFill {
+                id: original,
+                paint: red.clone(),
+            },
+        );
+        assert_eq!(
+            state.active().document().content_link_state(copy),
+            Some(LinkState::Modified)
+        );
+        apply(&mut state, Command::UpdateLinkedContent { id: copy });
+        let doc = state.active().document();
+        assert_eq!(doc.frame(copy).unwrap().fill, red);
+        assert_eq!(doc.content_link_state(copy), Some(LinkState::UpToDate));
+        apply(&mut state, Command::UnlinkContent { id: copy });
+        assert_eq!(state.active().document().content_link_state(copy), None);
+    }
+
+    #[test]
     fn the_conveyor_collects_then_places_at_the_pointer_and_moves_on() {
         let mut state = TesseraApp::headless();
         let page = state.current_page().expect("a page");

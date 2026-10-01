@@ -150,6 +150,7 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
 
         Command::CopySelection => {
             let source = std::sync::Arc::new(state.active().document().clone());
+            let from = Some(state.active);
             let items: Vec<Clipboard> = state
                 .active()
                 .selection
@@ -158,6 +159,7 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
                 .map(|root| Clipboard {
                     source: source.clone(),
                     root,
+                    from,
                 })
                 .collect();
             if !items.is_empty() {
@@ -202,6 +204,11 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
                 return;
             };
             let (source, root) = (item.source.clone(), item.root);
+            // Linked only back into the document it came from, and only while
+            // its original is still there to follow.
+            let link_to = (state.conveyor.link && item.from == Some(state.active))
+                .then_some(root)
+                .filter(|r| state.active().document().frame(*r).is_some());
             let layer = state.default_layer();
             let placed = state.active_mut().document_mut().import_frames(
                 &source,
@@ -213,6 +220,12 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
             );
             match placed {
                 Ok(placed) => {
+                    if let (Some(original), [copy]) = (link_to, placed.as_slice()) {
+                        state
+                            .active_mut()
+                            .document_mut()
+                            .link_content(original, *copy);
+                    }
                     state.active_mut().selection.replace_all(placed);
                     if !state.conveyor.keep {
                         state.conveyor.items.remove(0);
@@ -220,6 +233,14 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
                 }
                 Err(message) => state.status = Some(crate::app::Status::error(message)),
             }
+        }
+
+        Command::UpdateLinkedContent { id } => {
+            state.active_mut().document_mut().update_linked_content(id);
+        }
+
+        Command::UnlinkContent { id } => {
+            state.active_mut().document_mut().unlink_content(id);
         }
 
         Command::MoveSelectionInZ(how) => {
