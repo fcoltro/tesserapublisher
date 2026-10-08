@@ -5,9 +5,10 @@
 //!   (Ramer–Douglas–Peucker) and drawn through them as a smooth curve
 //!   (Catmull–Rom, written as cubic Béziers), so a shaky hand gives a clean
 //!   line with a handful of anchors rather than hundreds.
-//! - **Smooth**: every anchor the brush passes over has its handles
-//!   recomputed from its neighbours, so a corner becomes a curve and a kink
-//!   straightens; the rest of the path is left exactly as it was.
+//! - **Smooth**: the stretch of path under the brush is read again, thinned
+//!   to the anchors that shape it and drawn as one smooth curve, so wobbles
+//!   lose their anchors, a corner becomes a curve, and each pass smooths
+//!   further; the rest of the path is left exactly as it was.
 //! - **Erase**: every segment the brush touches is taken out, and what is
 //!   left becomes separate runs of the same path. A closed path erased
 //!   anywhere is open.
@@ -135,67 +136,140 @@ fn push_seg(path: &mut BezPath, seg: PathSeg) {
     }
 }
 
-/// `seg` as a cubic, however it was written.
-fn as_cubic(seg: PathSeg) -> CubicBez {
-    match seg {
-        PathSeg::Line(l) => CubicBez::new(
-            l.p0,
-            l.p0.lerp(l.p1, 1.0 / 3.0),
-            l.p0.lerp(l.p1, 2.0 / 3.0),
-            l.p1,
-        ),
-        PathSeg::Quad(q) => q.raise(),
-        PathSeg::Cubic(c) => c,
-    }
-}
+/// How many points each segment is read at when a stretch is refitted.
+const SAMPLES: usize = 8;
 
-/// `path` with every anchor for which `touched` holds made smooth: its
-/// handles recomputed from its neighbours, as a Catmull–Rom curve would have
-/// them. Segments with neither end touched are kept exactly.
-pub fn smooth(path: &BezPath, touched: impl Fn(Point) -> bool) -> BezPath {
+/// `path` smoothed where `touched` holds, as Illustrator's and InDesign's
+/// Smooth tools do it: the stretch of path around the anchors the brush
+/// passed over is read point by point, thinned to the anchors that shape it
+/// within `tolerance`, and drawn again through them as one smooth curve.
+/// Anchors that only made a wobble are gone; a corner becomes a curve; and
+/// a second pass over the same stretch smooths it further. Segments away
+/// from the brush are kept exactly, and a path's ends never move.
+pub fn smooth(path: &BezPath, touched: impl Fn(Point) -> bool, tolerance: f64) -> BezPath {
     let mut out = BezPath::new();
-    for (segs, closed) in runs(path) {
-        let mut anchors: Vec<Point> = segs.iter().map(|s| s.start()).collect();
-        if let Some(last) = segs.last()
-            && !closed
-        {
-            anchors.push(last.end());
+    for (mut segs, closed) in runs(path) {
+        let n = segs.len();
+        // Anchor `i` is where segment `i` starts; an open run has one more,
+        // its end.
+        let mut hit: Vec<bool> = segs.iter().map(|s| touched(s.start())).collect();
+        if !closed {
+            hit.push(touched(segs[n - 1].end()));
         }
-        let n = anchors.len();
-        let neighbour = |i: isize| -> Point {
-            if closed {
-                anchors[i.rem_euclid(n as isize) as usize]
-            } else {
-                anchors[i.clamp(0, n as isize - 1) as usize]
-            }
-        };
-        out.move_to(anchors[0]);
-        for (i, seg) in segs.iter().enumerate() {
-            let a = i as isize;
-            let (from, to) = (neighbour(a), neighbour(a + 1));
-            let (from_touched, to_touched) = (touched(from), touched(to));
-            if !from_touched && !to_touched {
+        if !hit.iter().any(|h| *h) {
+            out.move_to(segs[0].start());
+            for seg in &segs {
                 push_seg(&mut out, *seg);
+            }
+            if closed {
+                out.close_path();
+            }
+            continue;
+        }
+        if closed {
+            match hit.iter().position(|h| !h) {
+                // Start the loop at an anchor the brush missed, so the seam
+                // is somewhere nothing changes.
+                Some(r) => {
+                    segs.rotate_left(r);
+                    hit.rotate_left(r);
+                    hit.push(hit[0]);
+                }
+                // All of it: the whole loop, refitted as a loop.
+                None => {
+                    let mut kept = simplify(&sample(&segs), tolerance);
+                    kept.pop(); // the end is the start again
+                    if kept.len() < 3 {
+                        kept = segs.iter().map(PathSeg::start).collect();
+                    }
+                    let k = kept.len() as isize;
+                    let at = |j: isize| kept[j.rem_euclid(k) as usize];
+                    out.move_to(kept[0]);
+                    for i in 0..k {
+                        let (p0, p1, p2, p3) = (at(i - 1), at(i), at(i + 1), at(i + 2));
+                        out.curve_to(p1 + (p2 - p0) / 6.0, p2 - (p3 - p1) / 6.0, p2);
+                    }
+                    out.close_path();
+                    continue;
+                }
+            }
+        }
+
+        // Each run of touched anchors, widened by one anchor either side:
+        // those are the segments that meet at a touched anchor.
+        let mut spans: Vec<(usize, usize)> = Vec::new();
+        let mut a = 0;
+        while a <= n {
+            if !hit[a] {
+                a += 1;
                 continue;
             }
-            let cubic = as_cubic(*seg);
-            let c1 = if from_touched {
-                from + (to - neighbour(a - 1)) / 6.0
-            } else {
-                cubic.p1
+            let mut b = a;
+            while b < n && hit[b + 1] {
+                b += 1;
+            }
+            let span = (a.saturating_sub(1), (b + 1).min(n));
+            match spans.last_mut() {
+                Some(last) if span.0 < last.1 => last.1 = span.1,
+                _ => spans.push(span),
+            }
+            a = b + 1;
+        }
+
+        out.move_to(segs[0].start());
+        let mut at = 0;
+        for (from, to) in spans {
+            for seg in &segs[at..from] {
+                push_seg(&mut out, *seg);
+            }
+            let kept = simplify(&sample(&segs[from..to]), tolerance);
+            // The neighbours outside the stretch steer the curve's ends, so
+            // it leaves and rejoins the untouched path along it.
+            let before = match from {
+                0 if closed => segs[n - 1].start(),
+                0 => kept[0],
+                f => segs[f - 1].start(),
             };
-            let c2 = if to_touched {
-                to - (neighbour(a + 2) - from) / 6.0
+            let after = if to < n {
+                segs[to].end()
+            } else if closed {
+                segs[0].end()
             } else {
-                cubic.p2
+                kept[kept.len() - 1]
             };
-            out.curve_to(c1, c2, to);
+            let mut steered = Vec::with_capacity(kept.len() + 2);
+            steered.push(before);
+            steered.extend(&kept);
+            steered.push(after);
+            for i in 1..steered.len() - 2 {
+                let (p0, p1, p2, p3) = (steered[i - 1], steered[i], steered[i + 1], steered[i + 2]);
+                out.curve_to(p1 + (p2 - p0) / 6.0, p2 - (p3 - p1) / 6.0, p2);
+            }
+            at = to;
+        }
+        for seg in &segs[at..] {
+            push_seg(&mut out, *seg);
         }
         if closed {
             out.close_path();
         }
     }
     out
+}
+
+/// Points along `segs`, in order, [`SAMPLES`] to a segment: the first
+/// segment's start, and every segment's end.
+fn sample(segs: &[PathSeg]) -> Vec<Point> {
+    let mut points = Vec::with_capacity(segs.len() * SAMPLES + 1);
+    if let Some(first) = segs.first() {
+        points.push(first.start());
+    }
+    for seg in segs {
+        for k in 1..=SAMPLES {
+            points.push(seg.eval(k as f64 / SAMPLES as f64));
+        }
+    }
+    points
 }
 
 /// `path` with every segment for which `hit` holds taken out. What is left
@@ -294,7 +368,7 @@ mod tests {
         path.line_to((100.0, 0.0));
         path.line_to((150.0, 50.0));
         let corner = Point::new(50.0, 50.0);
-        let smoothed = smooth(&path, |p| (p - corner).hypot() < 1.0);
+        let smoothed = smooth(&path, |p| (p - corner).hypot() < 1.0, 0.5);
         let segs: Vec<PathSeg> = smoothed.segments().collect();
         assert_eq!(segs.len(), 3, "no anchors added or lost");
         assert!(
@@ -312,6 +386,64 @@ mod tests {
         };
         let (into, out) = (corner - a.p2, b.p1 - corner);
         assert!(into.cross(out).abs() < 1e-9);
+    }
+
+    #[test]
+    fn smoothing_a_wobble_takes_out_the_anchors_that_made_it() {
+        // A nearly straight line with a dozen small kinks: the brush along
+        // it leaves its two ends and little else.
+        let mut path = BezPath::new();
+        path.move_to((0.0, 0.0));
+        for i in 1..=12 {
+            path.line_to((f64::from(i) * 10.0, if i % 2 == 0 { 0.0 } else { 1.5 }));
+        }
+        let before = path.segments().count();
+        let smoothed = smooth(&path, |p| p.x > 5.0 && p.x < 115.0, 3.0);
+        let after = smoothed.segments().count();
+        assert!(after < before / 2, "{before} segments became {after}");
+        // The ends stay where they were.
+        let ends = |p: &BezPath| {
+            let segs: Vec<PathSeg> = p.segments().collect();
+            (segs[0].start(), segs[segs.len() - 1].end())
+        };
+        assert_eq!(ends(&path), ends(&smoothed));
+    }
+
+    #[test]
+    fn smoothing_a_closed_shape_all_over_keeps_it_closed_and_round() {
+        let smoothed = smooth(&square(), |_| true, 1.0);
+        assert!(
+            smoothed
+                .elements()
+                .iter()
+                .any(|e| matches!(e, PathEl::ClosePath))
+        );
+        assert!(smoothed.segments().all(|s| matches!(s, PathSeg::Cubic(_))));
+    }
+
+    #[test]
+    fn smoothing_one_corner_of_a_square_bends_only_the_sides_that_meet_there() {
+        let corner = Point::new(100.0, 100.0);
+        let smoothed = smooth(&square(), |p| (p - corner).hypot() < 1.0, 1.0);
+        let segs: Vec<PathSeg> = smoothed.segments().collect();
+        assert_eq!(segs.len(), 4);
+        assert_eq!(
+            segs.iter()
+                .filter(|s| matches!(s, PathSeg::Cubic(_)))
+                .count(),
+            2,
+            "only the two sides meeting at the corner bend"
+        );
+    }
+
+    fn square() -> BezPath {
+        let mut square = BezPath::new();
+        square.move_to((0.0, 0.0));
+        square.line_to((100.0, 0.0));
+        square.line_to((100.0, 100.0));
+        square.line_to((0.0, 100.0));
+        square.close_path();
+        square
     }
 
     #[test]

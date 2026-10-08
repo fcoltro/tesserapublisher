@@ -2969,7 +2969,6 @@ const BRUSH: f64 = 6.0;
 /// pointer is down, and acted on once when it comes up, so each stroke is
 /// one undo step.
 fn freehand_gesture(response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
-    use tessera_document::nodes::FrameKind;
     if response.drag_started()
         && let Some(pos) = response.interact_pointer_pos()
     {
@@ -2977,13 +2976,9 @@ fn freehand_gesture(response: &egui::Response, rect: Rect, state: &mut TesseraAp
         state.freehand_target = None;
         if state.active_tool != Tool::Pencil {
             // The selected path, or the path the stroke starts on.
-            let is_path = |state: &TesseraApp, id: FrameId| {
-                state
-                    .active()
-                    .document()
-                    .frame(id)
-                    .is_some_and(|f| matches!(f.kind, FrameKind::Path(_)))
-            };
+            // A rectangle or an ellipse is smoothed or erased as the path it
+            // looks like, and becomes one.
+            let is_path = |state: &TesseraApp, id: FrameId| is_vector_shape(state, id);
             let target = state
                 .active()
                 .selection
@@ -3028,7 +3023,6 @@ pub(crate) fn freehand_commit(
     target: Option<FrameId>,
     zoom: f64,
 ) {
-    use tessera_document::nodes::FrameKind;
     let points: Vec<kurbo::Point> = trail.iter().map(|p| kurbo::Point::new(p.x, p.y)).collect();
     match state.active_tool {
         Tool::Pencil => {
@@ -3053,9 +3047,24 @@ pub(crate) fn freehand_commit(
             let Some(frame) = state.active().document().frame(id) else {
                 return;
             };
-            let FrameKind::Path(path) = &frame.kind else {
+            // The path as drawn: a shape's outline, or a stored path
+            // stretched onto its frame's box as the renderer stretches it.
+            let Some(path) = tessera_document::path::of_shape(
+                &frame.kind,
+                frame.bounds.width,
+                frame.bounds.height,
+            ) else {
                 return;
             };
+            let path = &tessera_document::path::fit_to_bounds(
+                &path,
+                DocRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: frame.bounds.width,
+                    height: frame.bounds.height,
+                },
+            );
             // Into the path's own points: its frame's space, from its box's
             // corner.
             let back = frame.transform.inverse();
@@ -3069,7 +3078,12 @@ pub(crate) fn freehand_commit(
                 .collect();
             let radius = BRUSH / zoom;
             let changed = if state.active_tool == Tool::Smooth {
-                crate::freehand::smooth(path, |a| local.iter().any(|p| (*p - a).hypot() <= radius))
+                // Wobbles smaller than half the brush go.
+                crate::freehand::smooth(
+                    path,
+                    |a| local.iter().any(|p| (*p - a).hypot() <= radius),
+                    radius / 2.0,
+                )
             } else {
                 crate::freehand::erase(path, |s| crate::freehand::touches(s, &local, radius))
             };
@@ -4966,6 +4980,38 @@ mod tests {
         state.active_tool = Tool::Smooth;
         freehand_commit(&mut state, &[at(227.0, 100.0)], Some(id), 1.0);
         assert!(state.active().document().frame(id).is_some());
+    }
+
+    #[test]
+    fn the_smooth_tool_rounds_a_rectangle_s_corner() {
+        use tessera_document::nodes::FrameKind;
+        let mut state = TesseraApp::headless();
+        apply(
+            &mut state,
+            Command::AddRectangle(DocRect {
+                x: 50.0,
+                y: 60.0,
+                width: 100.0,
+                height: 40.0,
+            }),
+        );
+        let id = state.active().selection.single().expect("a rectangle");
+        state.active_tool = Tool::Smooth;
+        // Over the bottom-right corner.
+        freehand_commit(
+            &mut state,
+            &[DocPoint { x: 150.0, y: 100.0 }],
+            Some(id),
+            1.0,
+        );
+        let FrameKind::Path(path) = &state.active().document().frame(id).unwrap().kind else {
+            panic!("smoothed into a path");
+        };
+        assert!(
+            path.segments()
+                .any(|s| matches!(s, kurbo::PathSeg::Cubic(_))),
+            "the corner is a curve now"
+        );
     }
 
     #[test]
