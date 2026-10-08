@@ -376,7 +376,12 @@ mod tests {
 
     /// A 200 by 100 picture placed in a 100-point square frame, chosen.
     fn a_chosen_picture() -> (TesseraApp, FrameId) {
-        let path = std::env::temp_dir().join(format!("tessera-content-{}.png", std::process::id()));
+        // A file per call: the tests run side by side, and one writing the
+        // picture while another reads it measures half a file.
+        static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("tessera-content-{}-{call}.png", std::process::id()));
         image::RgbaImage::from_pixel(200, 100, image::Rgba([0, 0, 0, 255]))
             .save(&path)
             .expect("write a png");
@@ -438,7 +443,10 @@ mod tests {
         let inner = dragged(&state, &held, pulled, true);
         let grown = content_box(inner, natural);
         assert!((grown.width - start.width * 2.0).abs() < 1e-6);
-        assert!((grown.width / grown.height - start.width / start.height).abs() < 1e-9);
+        assert!(
+            (grown.width / grown.height - start.width / start.height).abs() < 1e-9,
+            "{start:?} grew to {grown:?}"
+        );
 
         // Committed as one step; the frame never moved; undo puts it back.
         apply(&mut state, Command::SetContentTransform { id, inner });

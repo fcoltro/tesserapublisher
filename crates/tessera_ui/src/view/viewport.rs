@@ -2113,6 +2113,71 @@ fn settle(
     (dx + snap.dx, dy + snap.dy)
 }
 
+/// The end of a move: the selection taken `dx, dy`, or — `copying`, Alt
+/// held — copies of it put there and the originals left where they were.
+fn release_move(state: &mut TesseraApp, dx: f64, dy: f64, copying: bool) {
+    if dx == 0.0 && dy == 0.0 {
+        return;
+    }
+    apply(
+        state,
+        if copying {
+            Command::StepAndRepeat { copies: 1, dx, dy }
+        } else {
+            Command::TranslateSelection { dx, dy }
+        },
+    );
+}
+
+/// The pointer of a resize, pulled so the edge it drags settles onto the
+/// lines a move would settle onto: guides, margins, page edges and other
+/// objects' edges and middles. Only the axes the handle moves, and only for
+/// an upright frame, whose edges are vertical and horizontal lines — a
+/// turned frame's edge is neither. The edge follows the pointer exactly
+/// (see `transform::resize`), so snapping the pointer is snapping the edge.
+fn settle_edge(state: &mut TesseraApp, at: DocPoint, held_off: bool) -> DocPoint {
+    let Some(Drag {
+        kind:
+            DragKind::Scale {
+                handle,
+                placement,
+                leaves,
+                ..
+            },
+        ..
+    }) = state.drag.as_ref()
+    else {
+        return at;
+    };
+    let upright = placement.is_axis_aligned() && placement.rotation_degrees().abs() < 1e-9;
+    if !state.prefs.snapping || held_off || !upright {
+        state.snapped_to = None;
+        return at;
+    }
+    let (handle, moving): (crate::transform::Handle, Vec<FrameId>) =
+        (*handle, leaves.iter().map(|(id, _, _)| *id).collect());
+    let Some(spread) = moving
+        .first()
+        .and_then(|id| state.active().document().spread_of_frame(*id))
+    else {
+        state.snapped_to = None;
+        return at;
+    };
+    let lines = tessera_layout::snap::lines(state.active().document(), spread, &moving);
+    let threshold = f64::from(Theme::SNAP_THRESHOLD) / state.active().view.zoom;
+    let snap = tessera_layout::snap::solve_edges(
+        handle.moves_x().then_some(at.x),
+        handle.moves_y().then_some(at.y),
+        &lines,
+        threshold,
+    );
+    state.snapped_to = snap.caught().then_some((snap.on_x, snap.on_y));
+    DocPoint {
+        x: at.x + snap.dx,
+        y: at.y + snap.dy,
+    }
+}
+
 /// Whether the pointer is panning rather than working.
 ///
 /// `Response::dragged` is true for **any** button, so a middle-button pan reads
@@ -2469,6 +2534,10 @@ fn canvas_cursor(
                     Icon::Scale,
                     handle.normal_degrees() + placement.rotation_degrees() as f32,
                 );
+            }
+            // Alt makes the drag a copy, and the pointer says so.
+            DragKind::Move { .. } if ui.input(|i| i.modifiers.alt) => {
+                return Cursor::new(Icon::Duplicate);
             }
             DragKind::Move { .. } => return Cursor::new(Icon::Move),
             DragKind::PageEdge { edge, .. } => return page_edge_cursor(*edge),
@@ -3346,9 +3415,14 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
                         f.transform = *origin;
                     }
                 }
-                if dx != 0.0 || dy != 0.0 {
-                    apply(state, Command::TranslateSelection { dx, dy });
-                }
+                // Alt at the moment of letting go copies rather than moves,
+                // as in InDesign and Illustrator: the originals stay, copies
+                // land where the drag put them — snapped exactly as a move
+                // would be — and are what is selected after. One undo step.
+                // Read at release, so pressing or letting go of Alt
+                // mid-drag switches between the two.
+                let copying = ui.input(|i| i.modifiers.alt);
+                release_move(state, dx, dy, copying);
             }
             DragKind::PageEdge {
                 page,
@@ -3520,6 +3594,8 @@ fn transform_gesture(
         && let Some(pos) = response.interact_pointer_pos()
     {
         let at = doc_pos(state, rect, pos);
+        let held_off = ui.input(|i| i.modifiers.ctrl);
+        let at = settle_edge(state, at, held_off);
         if let Some(drag) = state.drag.as_mut() {
             drag.current = at;
         }
@@ -3539,6 +3615,9 @@ fn transform_gesture(
 
     // Restore the starting state, then apply the result once — so the whole
     // gesture is a single undo entry rather than one per pointer move.
+    if response.drag_stopped() {
+        state.snapped_to = None;
+    }
     if response.drag_stopped()
         && let Some(drag) = state.drag.take()
         && let DragKind::Scale { ref leaves, .. } | DragKind::Rotate { ref leaves, .. } = drag.kind
@@ -5020,6 +5099,96 @@ mod tests {
         state.active_tool = Tool::Smooth;
         freehand_commit(&mut state, &[at(227.0, 100.0)], Some(id), 1.0);
         assert!(state.active().document().frame(id).is_some());
+    }
+
+    #[test]
+    fn an_alt_drag_leaves_the_original_and_moves_a_copy_in_one_undo() {
+        let mut state = TesseraApp::headless();
+        let page = state.first_page_bounds();
+        apply(
+            &mut state,
+            Command::AddRectangle(DocRect {
+                x: page.x + 20.0,
+                y: page.y + 20.0,
+                width: 50.0,
+                height: 30.0,
+            }),
+        );
+        let original = state.active().selection.single().expect("drawn");
+        let before = state.active().document().visual_bounds(original).unwrap();
+        let count = state.active().document().frames.len();
+
+        release_move(&mut state, 100.0, 40.0, true);
+
+        assert_eq!(state.active().document().frames.len(), count + 1);
+        assert_eq!(
+            state.active().document().visual_bounds(original).unwrap(),
+            before,
+            "the original stays"
+        );
+        let copy = state
+            .active()
+            .selection
+            .single()
+            .expect("the copy is chosen");
+        assert_ne!(copy, original);
+        let landed = state.active().document().visual_bounds(copy).unwrap();
+        assert!(
+            (landed.x - before.x - 100.0).abs() < 1e-9 && (landed.y - before.y - 40.0).abs() < 1e-9
+        );
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().frames.len(), count, "one undo");
+
+        // Without Alt it is a move.
+        state.active_mut().selection.set(original);
+        release_move(&mut state, 10.0, 0.0, false);
+        assert_eq!(state.active().document().frames.len(), count);
+        let moved = state.active().document().visual_bounds(original).unwrap();
+        assert!((moved.x - before.x - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_resized_edge_settles_on_another_object_s_edge() {
+        let mut state = TesseraApp::headless();
+        let page = state.first_page_bounds();
+        let r = |x: f64, w: f64| DocRect {
+            x: page.x + x,
+            y: page.y + 50.0,
+            width: w,
+            height: 40.0,
+        };
+        apply(&mut state, Command::AddRectangle(r(200.0, 50.0)));
+        apply(&mut state, Command::AddRectangle(r(20.0, 100.0)));
+        let id = state.active().selection.single().expect("the second");
+        state.active_mut().view.zoom = 1.0;
+        let bounds = state.active().document().frame(id).unwrap().bounds;
+        state.drag = Some(Drag::new(
+            DocPoint {
+                x: bounds.x + bounds.width,
+                y: bounds.y + 20.0,
+            },
+            DragKind::Scale {
+                handle: crate::transform::Handle::Right,
+                target: Some(id),
+                origin: bounds,
+                placement: Transform::IDENTITY,
+                leaves: origins_of(&state, id),
+            },
+        ));
+        // Three points short of the other's left edge: pulled onto it, and
+        // only across — a side handle has no say in y.
+        let near = DocPoint {
+            x: page.x + 197.0,
+            y: bounds.y + 23.0,
+        };
+        let settled = settle_edge(&mut state, near, false);
+        assert!((settled.x - (page.x + 200.0)).abs() < 1e-9, "{settled:?}");
+        assert_eq!(settled.y, near.y);
+        assert!(state.snapped_to.is_some(), "the line is shown");
+        // Ctrl held lets go of snapping.
+        assert_eq!(settle_edge(&mut state, near, true), near);
+        assert!(state.snapped_to.is_none());
     }
 
     #[test]

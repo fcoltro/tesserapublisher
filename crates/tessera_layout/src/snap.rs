@@ -173,6 +173,21 @@ pub fn solve(rect: DocRect, lines: &Lines, threshold: f64) -> Snap {
     }
 }
 
+/// Where an edge being dragged should settle: `x` onto a vertical line and
+/// `y` onto a horizontal one, each only when given — a side handle moves
+/// one edge, a corner two. What resizing snaps with: the edge under the
+/// pointer is pulled onto the line, and the edge held still stays put.
+pub fn solve_edges(x: Option<f64>, y: Option<f64>, lines: &Lines, threshold: f64) -> Snap {
+    let horizontally = x.and_then(|x| nearest([x; 3], &lines.vertical, threshold));
+    let vertically = y.and_then(|y| nearest([y; 3], &lines.horizontal, threshold));
+    Snap {
+        dx: horizontally.map_or(0.0, |(d, _)| d),
+        dy: vertically.map_or(0.0, |(d, _)| d),
+        on_x: horizontally.map(|(_, line)| line),
+        on_y: vertically.map(|(_, line)| line),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,6 +212,17 @@ mod tests {
     }
 
     // --- the arithmetic -----------------------------------------------------
+
+    #[test]
+    fn a_dragged_edge_settles_only_on_the_axes_it_moves() {
+        let lines = lines_at(&[100.0], &[50.0]);
+        let both = solve_edges(Some(97.0), Some(52.0), &lines, 5.0);
+        assert_eq!((both.dx, both.dy), (3.0, -2.0));
+        let across = solve_edges(Some(97.0), None, &lines, 5.0);
+        assert_eq!((across.dx, across.dy, across.on_y), (3.0, 0.0, None));
+        let far = solve_edges(Some(80.0), None, &lines, 5.0);
+        assert!(!far.caught());
+    }
 
     #[test]
     fn an_edge_within_the_threshold_is_pulled_onto_the_line() {
