@@ -2232,6 +2232,12 @@ fn grabbable(
     state: &TesseraApp,
 ) -> Option<(Option<FrameId>, DocRect, tessera_geometry::Transform)> {
     if let Some(id) = state.active().selection.single() {
+        // Under the direct-select tool a shape is its anchor points, not a
+        // box to scale: no handles drawn, none to catch a press meant for a
+        // corner point sitting under one.
+        if state.active_tool == Tool::DirectSelect && is_vector_shape(state, id) {
+            return None;
+        }
         let (bounds, placement) = presented(state, id)?;
         return Some((Some(id), bounds, placement));
     }
@@ -3614,17 +3620,12 @@ fn draw_gesture(
             // None of these draws a frame by dragging. Listed rather than
             // caught by a wildcard, so a new drawing tool has to answer here.
             Tool::Polygon => {
-                let path = tessera_document::polygon::path(
-                    tessera_geometry::DocRect {
-                        x: 0.0,
-                        y: 0.0,
-                        width: bounds.width,
-                        height: bounds.height,
-                    },
+                let (frame, path) = drag.polygon(
                     state.prefs.polygon_sides,
                     state.prefs.polygon_inset,
+                    constrain_held,
                 );
-                apply(state, Command::AddPath(bounds, path));
+                apply(state, Command::AddPath(frame, path));
             }
             // None of these draws a frame by dragging. Listed rather than
             // caught by a wildcard, so a new drawing tool has to answer here.
@@ -3881,7 +3882,24 @@ fn begin_text_edit(response: &egui::Response, rect: Rect, state: &mut TesseraApp
         // first cell" would put the caret somewhere they did not click.
         state.active_mut().selection.set(id);
         start_editing_cell(state, id, Some(cell));
+    } else if is_vector_shape(state, id) {
+        // A shape is opened the way InDesign and Illustrator open one: the
+        // direct-select tool, on its anchor points.
+        state.active_mut().selection.set(id);
+        state.active_tool = Tool::DirectSelect;
     }
+}
+
+/// Whether a frame is a drawn shape — rectangle, ellipse or path — rather
+/// than text, a picture or a table.
+fn is_vector_shape(state: &TesseraApp, id: FrameId) -> bool {
+    use tessera_document::nodes::FrameKind;
+    state.active().document().frame(id).is_some_and(|f| {
+        matches!(
+            f.kind,
+            FrameKind::Path(_) | FrameKind::Rectangle | FrameKind::Ellipse
+        )
+    })
 }
 
 /// Whether this frame shows a table: its own, or one running on into it.
@@ -4461,6 +4479,7 @@ fn draw_overlays(
                     state.active_tool,
                     state.prefs.polygon_sides,
                     state.prefs.polygon_inset,
+                    ui.input(|i| i.modifiers.shift),
                 );
                 let tolerance = 0.25 / state.active().view.zoom.max(f64::EPSILON);
                 let mut run: Vec<egui::Pos2> = Vec::new();
@@ -4947,6 +4966,50 @@ mod tests {
         state.active_tool = Tool::Smooth;
         freehand_commit(&mut state, &[at(227.0, 100.0)], Some(id), 1.0);
         assert!(state.active().document().frame(id).is_some());
+    }
+
+    #[test]
+    fn a_rectangle_is_edited_by_its_corners_and_becomes_a_path() {
+        use tessera_document::nodes::FrameKind;
+        let mut state = TesseraApp::headless();
+        let bounds = DocRect {
+            x: 50.0,
+            y: 60.0,
+            width: 100.0,
+            height: 40.0,
+        };
+        apply(&mut state, Command::AddRectangle(bounds));
+        let id = state.active().selection.single().expect("a rectangle");
+
+        // Under the direct-select tool: its four corners, and no box to scale.
+        state.active_tool = Tool::DirectSelect;
+        assert!(grabbable(&state).is_none(), "no scale handles");
+        let path = super::super::anchors::path_of(&state, id).expect("a shape is a path");
+        assert_eq!(tessera_document::anchors::anchors(&path).len(), 4);
+
+        // One corner pulled out: a path now, its box grown to follow.
+        super::super::anchors::nudge(
+            &mut state,
+            id,
+            2,
+            super::super::anchors::Grip::Anchor,
+            20.0,
+            10.0,
+        );
+        let frame = state.active().document().frame(id).unwrap();
+        assert!(matches!(frame.kind, FrameKind::Path(_)));
+        assert!((frame.bounds.width - 120.0).abs() < 1e-9);
+        assert!((frame.bounds.height - 50.0).abs() < 1e-9);
+
+        // And one undo gives the rectangle back.
+        apply(&mut state, Command::Undo);
+        let frame = state.active().document().frame(id).unwrap();
+        assert!(matches!(frame.kind, FrameKind::Rectangle));
+        assert_eq!(frame.bounds, bounds);
+
+        // The select tool still scales it.
+        state.active_tool = Tool::Select;
+        assert!(grabbable(&state).is_some());
     }
 
     #[test]

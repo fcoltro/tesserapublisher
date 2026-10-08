@@ -38,12 +38,19 @@ pub struct Onscreen {
     pub at: egui::Pos2,
 }
 
-/// The path a frame holds, if it holds one.
+/// The path a frame is: the one it holds, or the outline of a rectangle or
+/// ellipse, which turns into a path frame when an anchor of it is edited.
 pub fn path_of(state: &TesseraApp, id: FrameId) -> Option<kurbo::BezPath> {
-    match &state.active().document().frame(id)?.kind {
-        FrameKind::Path(path) => Some(path.clone()),
-        _ => None,
-    }
+    let frame = state.active().document().frame(id)?;
+    tessera_document::path::of_shape(&frame.kind, frame.bounds.width, frame.bounds.height)
+}
+
+/// Whether a frame's kind can be edited as a path.
+fn is_shape(kind: &FrameKind) -> bool {
+    matches!(
+        kind,
+        FrameKind::Path(_) | FrameKind::Rectangle | FrameKind::Ellipse
+    )
 }
 
 /// Every anchor of every selected path, placed on screen.
@@ -250,13 +257,17 @@ pub fn nudge(state: &mut TesseraApp, id: FrameId, at: usize, grip: Grip, dx: f64
 pub struct Held {
     pub path: kurbo::BezPath,
     pub bounds: tessera_geometry::DocRect,
+    /// What the frame was: a rectangle stays one until the drag commits.
+    pub kind: FrameKind,
 }
 
 impl Held {
     pub fn of(state: &TesseraApp, id: FrameId) -> Option<Self> {
+        let frame = state.active().document().frame(id)?;
         Some(Self {
             path: path_of(state, id)?,
-            bounds: state.active().document().frame(id)?.bounds,
+            bounds: frame.bounds,
+            kind: frame.kind.clone(),
         })
     }
 }
@@ -278,7 +289,7 @@ pub fn preview(
     let (bounds, path) = tessera_document::path::normalised(&moved, held.bounds);
     // undo-bracketed: preview only, see above.
     if let Some(frame) = state.active_mut().document_mut().frame_mut(id)
-        && matches!(frame.kind, FrameKind::Path(_))
+        && is_shape(&frame.kind)
     {
         frame.bounds = bounds;
         frame.kind = FrameKind::Path(path);
@@ -298,10 +309,10 @@ pub fn commit(
     // undo-bracketed: the preview is put back before the one real command
     // below writes the same result on top of it.
     if let Some(frame) = state.active_mut().document_mut().frame_mut(id)
-        && matches!(frame.kind, FrameKind::Path(_))
+        && is_shape(&frame.kind)
     {
         frame.bounds = held.bounds;
-        frame.kind = FrameKind::Path(held.path.clone());
+        frame.kind = held.kind.clone();
     }
     if dx == 0.0 && dy == 0.0 {
         return; // a click on an anchor picks it and changes nothing

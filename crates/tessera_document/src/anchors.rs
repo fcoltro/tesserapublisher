@@ -52,14 +52,28 @@ pub struct Anchor {
 pub fn anchors(path: &BezPath) -> Vec<Anchor> {
     let elements = path.elements();
     let mut out = Vec::new();
+    let mut start = None;
 
     for (at, element) in elements.iter().enumerate() {
         let point = match element {
-            PathEl::MoveTo(p) | PathEl::LineTo(p) => *p,
+            PathEl::MoveTo(p) => {
+                start = Some(*p);
+                *p
+            }
+            PathEl::LineTo(p) => *p,
             PathEl::CurveTo(_, _, p) => *p,
             PathEl::QuadTo(_, p) => *p,
             PathEl::ClosePath => continue,
         };
+        // A closed shape whose last curve comes back onto its first point —
+        // an ellipse, a circle drawn with the pen — has that point once, not
+        // twice: the seam moves with the first anchor (see `move_anchor`).
+        if matches!(elements.get(at + 1), Some(PathEl::ClosePath))
+            && !matches!(element, PathEl::MoveTo(_))
+            && start.is_some_and(|s| s.distance(point) < 1e-6)
+        {
+            continue;
+        }
         out.push(Anchor {
             at,
             point,

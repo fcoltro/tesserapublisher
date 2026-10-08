@@ -442,7 +442,7 @@ impl Drag {
     /// is the wrong diagonal half the time. The polygon is the very path the
     /// commit makes, so the two cannot drift apart; the ellipse is kurbo's, as
     /// the renderer draws it.
-    pub fn preview(&self, tool: Tool, sides: u32, inset: f64) -> kurbo::BezPath {
+    pub fn preview(&self, tool: Tool, sides: u32, inset: f64, regular: bool) -> kurbo::BezPath {
         use kurbo::Shape as _;
         let r = self.rect();
         let bounds = kurbo::Rect::new(r.x, r.y, r.x + r.width, r.y + r.height);
@@ -455,20 +455,43 @@ impl Drag {
                 path
             }
             Tool::Polygon => {
-                let mut path = tessera_document::polygon::path(
-                    DocRect {
-                        x: 0.0,
-                        y: 0.0,
-                        width: r.width,
-                        height: r.height,
-                    },
-                    sides,
-                    inset,
-                );
-                path.apply_affine(kurbo::Affine::translate((r.x, r.y)));
+                let (frame, mut path) = self.polygon(sides, inset, regular);
+                path.apply_affine(kurbo::Affine::translate((frame.x, frame.y)));
                 path
             }
             _ => bounds.to_path(0.1),
+        }
+    }
+
+    /// The polygon this drag makes: its frame's box in the document, and the
+    /// path in that frame's own space.
+    ///
+    /// A path is drawn stretched from its own box onto its frame's
+    /// ([`tessera_document::path::fit_to_bounds`]), and a regular polygon
+    /// rarely fills the square it is inscribed in — a hexagon is 0.87 as
+    /// wide as it is tall. So `regular` (Shift held) gives the frame the
+    /// polygon's own box, and the shape keeps its equal sides; otherwise the
+    /// polygon fills the box that was dragged, as InDesign's does.
+    pub fn polygon(&self, sides: u32, inset: f64, regular: bool) -> (DocRect, kurbo::BezPath) {
+        let r = self.rect();
+        let local = DocRect {
+            x: 0.0,
+            y: 0.0,
+            width: r.width,
+            height: r.height,
+        };
+        let path = tessera_document::polygon::path(local, sides, inset);
+        if regular {
+            let (inner, path) = tessera_document::path::normalised(&path, local);
+            let frame = DocRect {
+                x: r.x + inner.x,
+                y: r.y + inner.y,
+                width: inner.width,
+                height: inner.height,
+            };
+            (frame, path)
+        } else {
+            (r, tessera_document::path::fit_to_bounds(&path, local))
         }
     }
 }
@@ -551,7 +574,7 @@ mod tests {
     fn drawn(tool: Tool, sides: u32, inset: f64) -> kurbo::BezPath {
         let mut d = Drag::new(DocPoint { x: 10.0, y: 20.0 }, DragKind::Draw);
         d.current = DocPoint { x: 70.0, y: 60.0 };
-        d.preview(tool, sides, inset)
+        d.preview(tool, sides, inset, false)
     }
 
     fn corners(path: &kurbo::BezPath) -> Vec<kurbo::Point> {
@@ -570,21 +593,57 @@ mod tests {
         // land and nothing about its shape. Now the preview is the very path
         // the commit makes, placed where the drag is.
         let preview = drawn(Tool::Polygon, 6, 0.0);
-        let committed = tessera_document::polygon::path(
-            DocRect {
-                x: 0.0,
-                y: 0.0,
-                width: 60.0,
-                height: 40.0,
-            },
-            6,
-            0.0,
-        );
+        let mut d = Drag::new(DocPoint { x: 10.0, y: 20.0 }, DragKind::Draw);
+        d.current = DocPoint { x: 70.0, y: 60.0 };
+        let (_, committed) = d.polygon(6, 0.0, false);
         let expected: Vec<kurbo::Point> = corners(&committed)
             .into_iter()
             .map(|p| kurbo::Point::new(p.x + 10.0, p.y + 20.0))
             .collect();
         assert_eq!(corners(&preview), expected);
+    }
+
+    #[test]
+    fn a_shift_drawn_polygon_keeps_equal_sides_once_drawn() {
+        // The bug: the preview was regular, and the commit put the hexagon in
+        // the square that was dragged, where drawing stretches a path's box
+        // onto its frame's. The frame now takes the polygon's own box.
+        use kurbo::Shape as _;
+        let mut d = Drag::new(DocPoint { x: 0.0, y: 0.0 }, DragKind::Draw);
+        d.current = DocPoint { x: 100.0, y: 100.0 };
+        let (frame, path) = d.polygon(6, 0.0, true);
+        let b = path.bounding_box();
+        assert!((b.width() - frame.width).abs() < 1e-9);
+        assert!((b.height() - frame.height).abs() < 1e-9);
+        assert!(
+            (b.x0).abs() < 1e-9 && (b.y0).abs() < 1e-9,
+            "re-based to the frame's corner"
+        );
+        // As drawn, the stretch is an identity: every side is the same length.
+        let drawn = tessera_document::path::fit_to_bounds(&path, frame);
+        let points = corners(&drawn);
+        let side = |i: usize| points[i].distance(points[(i + 1) % points.len()]);
+        for i in 0..points.len() {
+            assert!((side(i) - side(0)).abs() < 1e-6, "side {i} differs");
+        }
+        // And the preview is that same shape, where the frame is.
+        let preview = d.preview(Tool::Polygon, 6, 0.0, true);
+        let shifted: Vec<kurbo::Point> = corners(&path)
+            .into_iter()
+            .map(|p| kurbo::Point::new(p.x + frame.x, p.y + frame.y))
+            .collect();
+        assert_eq!(corners(&preview), shifted);
+    }
+
+    #[test]
+    fn a_polygon_drawn_without_shift_fills_the_box() {
+        use kurbo::Shape as _;
+        let mut d = Drag::new(DocPoint { x: 10.0, y: 20.0 }, DragKind::Draw);
+        d.current = DocPoint { x: 70.0, y: 60.0 };
+        let (frame, path) = d.polygon(6, 0.0, false);
+        assert_eq!(frame, d.rect());
+        let b = path.bounding_box();
+        assert!((b.width() - 60.0).abs() < 1e-9 && (b.height() - 40.0).abs() < 1e-9);
     }
 
     #[test]
@@ -594,7 +653,7 @@ mod tests {
         let mut d = Drag::new(DocPoint { x: 70.0, y: 60.0 }, DragKind::Draw);
         d.current = DocPoint { x: 10.0, y: 20.0 };
         assert_eq!(
-            corners(&d.preview(Tool::Line, 6, 0.0)),
+            corners(&d.preview(Tool::Line, 6, 0.0, false)),
             vec![kurbo::Point::new(70.0, 60.0), kurbo::Point::new(10.0, 20.0)]
         );
     }

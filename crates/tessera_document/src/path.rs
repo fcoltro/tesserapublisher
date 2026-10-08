@@ -47,6 +47,53 @@ pub fn fit_to_bounds(path: &kurbo::BezPath, bounds: DocRect) -> kurbo::BezPath {
     out
 }
 
+/// The outline a frame's shape is, as a path in the frame's own space: a
+/// rectangle's four corners, an ellipse's four quarter-curves, or the path a
+/// path frame holds. `None` for a frame that is not a shape (text, a
+/// picture).
+///
+/// What lets the direct-select tool, the scissors and the smooth tool treat
+/// every shape as the path it looks like; the frame becomes a
+/// [`FrameKind::Path`] only when one of them changes it.
+///
+/// [`FrameKind::Path`]: crate::nodes::FrameKind::Path
+pub fn of_shape(kind: &crate::nodes::FrameKind, width: f64, height: f64) -> Option<kurbo::BezPath> {
+    use crate::nodes::FrameKind;
+    use kurbo::Shape as _;
+    let area = kurbo::Rect::new(0.0, 0.0, width, height);
+    match kind {
+        FrameKind::Rectangle => {
+            // Corner by corner, not kurbo's `to_path`, which would give the
+            // same four points but no promise of where they start.
+            let mut path = kurbo::BezPath::new();
+            path.move_to((0.0, 0.0));
+            path.line_to((width, 0.0));
+            path.line_to((width, height));
+            path.line_to((0.0, height));
+            path.close_path();
+            Some(path)
+        }
+        FrameKind::Ellipse => {
+            // kurbo's ellipse ends back at its start without closing, which
+            // fills the same but strokes a seam and counts the start twice.
+            let mut elements = kurbo::Ellipse::from_rect(area)
+                .to_path(0.1)
+                .elements()
+                .to_vec();
+            if let (Some(kurbo::PathEl::MoveTo(start)), Some(kurbo::PathEl::CurveTo(a, b, _))) =
+                (elements.first().copied(), elements.last().copied())
+            {
+                let last = elements.len() - 1;
+                elements[last] = kurbo::PathEl::CurveTo(a, b, start);
+            }
+            elements.push(kurbo::PathEl::ClosePath);
+            Some(kurbo::BezPath::from_vec(elements))
+        }
+        FrameKind::Path(path) => Some(path.clone()),
+        _ => None,
+    }
+}
+
 /// The box an edited path now needs, and the path re-based into it.
 ///
 /// The inverse of [`fit_to_bounds`], and what keeps it honest. That function
@@ -187,5 +234,18 @@ mod tests {
         let b = out.bounding_box();
         assert!(b.y0.is_finite() && b.y0.abs() < 1e-9, "y0 {}", b.y0);
         assert!((b.width() - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_rectangle_and_an_ellipse_are_the_paths_they_look_like() {
+        use crate::nodes::FrameKind;
+        use kurbo::Shape as _;
+        let rect = of_shape(&FrameKind::Rectangle, 80.0, 40.0).expect("a shape");
+        assert_eq!(rect.bounding_box(), kurbo::Rect::new(0.0, 0.0, 80.0, 40.0));
+        assert_eq!(crate::anchors::anchors(&rect).len(), 4);
+        let oval = of_shape(&FrameKind::Ellipse, 80.0, 40.0).expect("a shape");
+        let b = oval.bounding_box();
+        assert!((b.width() - 80.0).abs() < 1e-6 && (b.height() - 40.0).abs() < 1e-6);
+        assert_eq!(crate::anchors::anchors(&oval).len(), 4);
     }
 }

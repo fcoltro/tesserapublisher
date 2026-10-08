@@ -282,8 +282,12 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
         }
 
         Command::SetPath { id, path } => {
+            // A rectangle or ellipse edited as a path becomes one.
             if let Some(frame) = state.active_mut().document_mut().frame_mut(id)
-                && matches!(frame.kind, FrameKind::Path(_))
+                && matches!(
+                    frame.kind,
+                    FrameKind::Path(_) | FrameKind::Rectangle | FrameKind::Ellipse
+                )
             {
                 // The box follows the shape. The renderer fits the stored
                 // path's box onto the frame's, so a path edited past its box
