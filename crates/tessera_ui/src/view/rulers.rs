@@ -54,8 +54,7 @@ pub fn paint(ui: &Ui, state: &TesseraApp, canvas: Rect, horizontal: Rect, vertic
     // nothing to anybody, because a page is laid out against its own edges.
     // Each spread starts at zero, which is what a ruler in a layout tool has
     // always done.
-    let page = crate::view::panels::current_spread_origin(state);
-    let origin = state.ruler_origin.unwrap_or(page);
+    let origin = state.ruler_origin.unwrap_or_else(|| natural_origin(state));
 
     for (strip, is_horizontal) in [(horizontal, true), (vertical, false)] {
         let painter = ui.painter_at(strip);
@@ -324,6 +323,129 @@ pub fn resolve_zero_drag(ui: &Ui, state: &mut TesseraApp, canvas: Rect) {
     }
 }
 
+/// Where the rulers count from when the zero point has not been dragged:
+/// the spread's corner, the page's, or the spine, as the preference says.
+pub fn natural_origin(state: &TesseraApp) -> DocPoint {
+    use crate::prefs::RulerOrigin;
+    let spread = crate::view::panels::current_spread_origin(state);
+    let doc = state.active().document();
+    match state.prefs.ruler_origin {
+        RulerOrigin::Spread => spread,
+        RulerOrigin::Page => {
+            state
+                .current_page()
+                .and_then(|p| doc.pages.get(p))
+                .map_or(spread, |p| DocPoint {
+                    x: p.bounds.x,
+                    y: p.bounds.y,
+                })
+        }
+        // The fold: where the spread's second page begins, or the middle of
+        // a spread that has one page.
+        RulerOrigin::Spine => {
+            let pages = doc
+                .spread_ids()
+                .nth(state.active().current_spread)
+                .map(|s| doc.pages_of(s))
+                .unwrap_or_default();
+            let x = match pages.as_slice() {
+                [_, second, ..] => doc.pages.get(*second).map(|p| p.bounds.x),
+                [only] => doc
+                    .pages
+                    .get(*only)
+                    .map(|p| p.bounds.x + p.bounds.width / 2.0),
+                [] => None,
+            };
+            DocPoint {
+                x: x.unwrap_or(spread.x),
+                y: spread.y,
+            }
+        }
+    }
+}
+
+/// The menu a right-click on either ruler opens, InDesign's: the units with
+/// the current one ticked, where the rulers count from, hiding them, and
+/// clearing the spread's guides.
+pub fn context_menu(ui: &Ui, state: &mut TesseraApp, across: Rect, down: Rect) {
+    use crate::prefs::RulerOrigin;
+    for (strip, salt) in [(across, "ruler-menu-across"), (down, "ruler-menu-down")] {
+        let response = ui.interact(strip, egui::Id::new(salt), egui::Sense::click());
+        response.context_menu(|ui| {
+            for unit in Unit::ALL {
+                if ui
+                    .add(egui::Button::selectable(
+                        state.prefs.unit == unit,
+                        unit.name(),
+                    ))
+                    .clicked()
+                {
+                    state.prefs.unit = unit;
+                    crate::prefs::remember(state);
+                    ui.close();
+                }
+            }
+            ui.separator();
+            for (origin, label) in [
+                (RulerOrigin::Page, "Ruler per page"),
+                (RulerOrigin::Spread, "Ruler per spread"),
+                (RulerOrigin::Spine, "Ruler on spine"),
+            ] {
+                if ui
+                    .add(egui::Button::selectable(
+                        state.prefs.ruler_origin == origin,
+                        label,
+                    ))
+                    .clicked()
+                {
+                    state.prefs.ruler_origin = origin;
+                    // A dragged zero point is somewhere chosen by hand; the
+                    // choice of a natural one puts it back.
+                    state.ruler_origin = None;
+                    crate::prefs::remember(state);
+                    ui.close();
+                }
+            }
+            ui.separator();
+            if ui
+                .add(egui::Button::new("Hide rulers").shortcut_text("Ctrl+R"))
+                .clicked()
+            {
+                crate::actions::run(state, crate::actions::Run::ToggleRulers);
+                ui.close();
+            }
+            let spread = state
+                .active()
+                .document()
+                .spread_ids()
+                .nth(state.active().current_spread);
+            let guides = spread.map_or(0, |s| state.active().document().guides_of(s).len());
+            if ui
+                .add_enabled(guides > 0, egui::Button::new("Delete all guides on spread"))
+                .clicked()
+                && let Some(spread) = spread
+            {
+                delete_guides(state, spread);
+                ui.close();
+            }
+        });
+    }
+}
+
+/// Take every guide off `spread`, as one undo step.
+pub fn delete_guides(state: &mut TesseraApp, spread: tessera_document::ids::SpreadId) {
+    let count = state.active().document().guides_of(spread).len();
+    if count == 0 {
+        return;
+    }
+    // Last first, so each index still names the guide it named.
+    let removals = (0..count)
+        .rev()
+        .map(|index| crate::command::Command::RemoveGuide { spread, index })
+        .collect();
+    crate::command::apply(state, crate::command::Command::Together(removals));
+}
+
 /// The unit selector, at the corner where the two rulers meet.
 ///
 /// Writes the preference **and saves it**, so the choice survives a restart —
@@ -340,6 +462,7 @@ pub fn unit_selector(ui: &mut Ui, state: &mut TesseraApp) {
                 for unit in Unit::ALL {
                     if ui
                         .selectable_label(unit == current, unit.suffix())
+                        .on_hover_text(unit.name())
                         .clicked()
                     {
                         chosen = unit;
@@ -531,5 +654,50 @@ mod paint_tests {
                 down.width()
             );
         }
+    }
+
+    #[test]
+    fn the_spread_s_guides_go_in_one_undo_and_the_origin_follows_the_choice() {
+        use crate::command::{Command, apply};
+        use tessera_document::nodes::{Axis, Guide};
+        let mut state = TesseraApp::headless();
+        let spread = state
+            .active()
+            .document()
+            .spread_ids()
+            .next()
+            .expect("a spread");
+        for position in [10.0, 20.0, 30.0] {
+            apply(
+                &mut state,
+                Command::AddGuide {
+                    spread,
+                    guide: Guide {
+                        axis: Axis::Vertical,
+                        position,
+                        locked: false,
+                    },
+                },
+            );
+        }
+        delete_guides(&mut state, spread);
+        assert!(state.active().document().guides_of(spread).is_empty());
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().guides_of(spread).len(), 3);
+
+        // A single page: per page and per spread are its corner, the spine
+        // its middle.
+        let page = state.active().document().first_page_bounds();
+        state.prefs.ruler_origin = crate::prefs::RulerOrigin::Page;
+        assert_eq!(
+            natural_origin(&state),
+            DocPoint {
+                x: page.x,
+                y: page.y
+            }
+        );
+        state.prefs.ruler_origin = crate::prefs::RulerOrigin::Spine;
+        let spine = natural_origin(&state);
+        assert!((spine.x - (page.x + page.width / 2.0)).abs() < 1e-9);
     }
 }

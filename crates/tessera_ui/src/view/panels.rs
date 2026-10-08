@@ -1,6 +1,6 @@
 //! The tool strip, the inspector and the status bar.
 
-use egui::{Sense, Ui, Vec2};
+use egui::{Rect, Sense, Ui, Vec2};
 use tessera_color::Color;
 use tessera_document::ids::StoryId;
 use tessera_document::nodes::{Orientation, PagePreset};
@@ -3254,49 +3254,55 @@ fn linked_group_heading(ui: &mut Ui, id: egui::Id, title: &str, default: bool) -
             if response.clicked() {
                 linked = !linked;
             }
-            if linked || response.hovered() {
-                ui.painter()
-                    .rect_filled(rect, Theme::RADIUS, Theme::selected_bg());
-            }
-            if response.has_focus() {
-                ui.painter().rect_stroke(
-                    rect,
-                    Theme::RADIUS,
-                    egui::Stroke::new(1.0, Theme::focus()),
-                    egui::StrokeKind::Inside,
-                );
-            }
-            crate::icons::paint(
-                ui.painter(),
-                rect,
-                if linked {
-                    crate::icons::Icon::Link2
-                } else {
-                    crate::icons::Icon::Unlink2
-                },
-                if linked {
-                    Theme::text_primary()
-                } else {
-                    Theme::text_muted()
-                },
-            );
-            response.widget_info(|| {
-                egui::WidgetInfo::selected(
-                    egui::WidgetType::Checkbox,
-                    ui.is_enabled(),
-                    linked,
-                    format!("Link {title} values"),
-                )
-            });
-            response.on_hover_text(if linked {
-                "Linked: editing one value changes all. Click to edit independently."
-            } else {
-                "Link values: the next value you edit will apply to all sides."
-            });
+            paint_link(ui, rect, &response, linked, title);
         });
     });
     ui.ctx().data_mut(|data| data.insert_temp(id, linked));
     linked
+}
+
+/// The chain that links a group's values: drawn on `rect`, which `response`
+/// is the press of, named for the screen reader and the tooltip.
+fn paint_link(ui: &Ui, rect: Rect, response: &egui::Response, linked: bool, title: &str) {
+    if linked || response.hovered() {
+        ui.painter()
+            .rect_filled(rect, Theme::RADIUS, Theme::selected_bg());
+    }
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect,
+            Theme::RADIUS,
+            egui::Stroke::new(1.0, Theme::focus()),
+            egui::StrokeKind::Inside,
+        );
+    }
+    crate::icons::paint(
+        ui.painter(),
+        rect,
+        if linked {
+            crate::icons::Icon::Link2
+        } else {
+            crate::icons::Icon::Unlink2
+        },
+        if linked {
+            Theme::text_primary()
+        } else {
+            Theme::text_muted()
+        },
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Checkbox,
+            ui.is_enabled(),
+            linked,
+            format!("Link {title} values"),
+        )
+    });
+    response.clone().on_hover_text(if linked {
+        "Linked: editing one value changes all. Click to edit independently."
+    } else {
+        "Link values: the next value you edit will apply to all sides."
+    });
 }
 
 fn propagate_linked_edit(values: &mut [f64; 4], edited: [bool; 4], linked: bool) -> bool {
@@ -3317,18 +3323,66 @@ pub(crate) fn linked_edges(
     values: [&mut f64; 4],
     unit: Unit,
 ) -> bool {
-    let linked = linked_group_heading(ui, id, title, false);
+    // The chain at the right of the four fields, joined to them by a
+    // bracket, as InDesign's Document Setup draws it: what it links is
+    // what it is beside.
+    let mut linked = ui.ctx().data_mut(|data| *data.get_temp_mut_or(id, false));
+    group_label(ui, title);
     let [mut top, mut bottom, mut left, mut right] = values.each_ref().map(|value| **value);
-    let (a, b) = pair(
-        ui,
-        (labels[0], |ui: &mut Ui| measure_bare(ui, &mut top, unit)),
-        (labels[1], |ui: &mut Ui| measure_bare(ui, &mut bottom, unit)),
-    );
-    let (c, d) = pair(
-        ui,
-        (labels[2], |ui: &mut Ui| measure_bare(ui, &mut left, unit)),
-        (labels[3], |ui: &mut Ui| measure_bare(ui, &mut right, unit)),
-    );
+    let side = Theme::control_height();
+    let [a, b, c, d] = ui
+        .horizontal(|ui| {
+            let fields_width = (ui.available_width() - side - ui.spacing().item_spacing.x).max(0.0);
+            let fields = ui.allocate_ui(Vec2::new(fields_width, 0.0), |ui| {
+                ui.set_width(fields_width);
+                ui.vertical(|ui| {
+                    let (a, b) = pair(
+                        ui,
+                        (labels[0], |ui: &mut Ui| measure_bare(ui, &mut top, unit)),
+                        (labels[1], |ui: &mut Ui| measure_bare(ui, &mut bottom, unit)),
+                    );
+                    let (c, d) = pair(
+                        ui,
+                        (labels[2], |ui: &mut Ui| measure_bare(ui, &mut left, unit)),
+                        (labels[3], |ui: &mut Ui| measure_bare(ui, &mut right, unit)),
+                    );
+                    [a, b, c, d]
+                })
+                .inner
+            });
+            let rows = fields.response.rect;
+            let (column, _) =
+                ui.allocate_exact_size(Vec2::new(side, rows.height()), Sense::hover());
+            let button = Rect::from_center_size(
+                egui::pos2(column.center().x, rows.center().y),
+                Vec2::splat(side),
+            );
+            // The bracket: a tick toward each row of fields, and a spine down
+            // to the chain and on from it.
+            let x = column.center().x;
+            let (y0, y1) = (rows.top() + side / 2.0, rows.bottom() - side / 2.0);
+            let ink = egui::Stroke::new(1.0, Theme::border());
+            let painter = ui.painter();
+            painter.line_segment([egui::pos2(column.left(), y0), egui::pos2(x, y0)], ink);
+            painter.line_segment([egui::pos2(column.left(), y1), egui::pos2(x, y1)], ink);
+            if button.top() - 2.0 > y0 {
+                painter.line_segment([egui::pos2(x, y0), egui::pos2(x, button.top() - 2.0)], ink);
+            }
+            if button.bottom() + 2.0 < y1 {
+                painter.line_segment(
+                    [egui::pos2(x, button.bottom() + 2.0), egui::pos2(x, y1)],
+                    ink,
+                );
+            }
+            let response = ui.interact(button, id.with("chain"), Sense::click());
+            if response.clicked() {
+                linked = !linked;
+            }
+            paint_link(ui, button, &response, linked, title);
+            fields.inner
+        })
+        .inner;
+    ui.ctx().data_mut(|data| data.insert_temp(id, linked));
     let mut edited = [top, bottom, left, right];
     let changed = propagate_linked_edit(&mut edited, [a, b, c, d], linked);
     for (target, value) in values.into_iter().zip(edited) {
@@ -4007,21 +4061,74 @@ pub(crate) fn section_heading_with(ui: &mut Ui, title: &str, open: bool) -> bool
     if response.clicked() { !open } else { open }
 }
 
-/// A measurement control with no label of its own.
+/// A measurement control with no label of its own: InDesign's up and down
+/// arrows at its left, then the number.
+///
+/// The arrows sit **over** the field's left edge rather than beside it: the
+/// field is the one widget its label names and sizes (`FieldLabel::field`),
+/// and a widget put in front of it would take both.
 pub(crate) fn measure_bare(ui: &mut Ui, points: &mut f64, unit: Unit) -> bool {
     let mut shown = unit.from_points(*points);
-    let changed = ui
-        .add(
-            egui::DragValue::new(&mut shown)
-                .speed(0.25)
-                .custom_formatter(move |v, _| format!("{v:.2} {}", unit.suffix()))
-                .custom_parser(move |text| {
-                    Unit::parse_to_points(text, unit).map(|p| unit.from_points(p))
-                }),
-        )
-        .changed();
+    let response = ui.add(
+        egui::DragValue::new(&mut shown)
+            .speed(0.25)
+            .custom_formatter(move |v, _| format!("{v:.2} {}", unit.suffix()))
+            .custom_parser(move |text| {
+                Unit::parse_to_points(text, unit).map(|p| unit.from_points(p))
+            }),
+    );
+    let strip = Rect::from_min_size(
+        response.rect.min + Vec2::new(1.0, 0.0),
+        Vec2::new(STEPPER, response.rect.height()),
+    );
+    let stepped = stepper(ui, strip, response.id, &mut shown, unit.step());
+    let changed = response.changed() || stepped;
     if changed {
         *points = unit.to_points(shown);
+    }
+    changed
+}
+
+/// How wide a field's up and down arrows are.
+const STEPPER: f32 = 10.0;
+
+/// The up and down arrows on `strip`: a press steps the value by `step`,
+/// ten steps with Shift held, as InDesign's do.
+pub(crate) fn stepper(ui: &mut Ui, strip: Rect, id: egui::Id, value: &mut f64, step: f64) -> bool {
+    let ten = ui.input(|i| i.modifiers.shift);
+    let mut changed = false;
+    for (half, sign, name, turn) in [
+        (
+            Rect::from_min_max(strip.min, egui::pos2(strip.max.x, strip.center().y)),
+            1.0,
+            "Step up",
+            -90.0,
+        ),
+        (
+            Rect::from_min_max(egui::pos2(strip.min.x, strip.center().y), strip.max),
+            -1.0,
+            "Step down",
+            90.0,
+        ),
+    ] {
+        let response = ui.interact(half, id.with(name), Sense::click());
+        if response.clicked() {
+            *value += sign * step * if ten { 10.0 } else { 1.0 };
+            changed = true;
+        }
+        let colour = if response.hovered() {
+            Theme::text_primary()
+        } else {
+            Theme::text_muted()
+        };
+        crate::icons::paint_rotated(
+            ui.painter(),
+            Rect::from_center_size(half.center(), Vec2::splat(7.0)),
+            crate::icons::Icon::Disclosure,
+            colour,
+            turn,
+        );
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name));
     }
     changed
 }
@@ -5559,6 +5666,9 @@ pub(crate) fn unit_name(unit: Unit) -> &'static str {
         Unit::Pixels => "pixels",
         Unit::Inches => "inches",
         Unit::Picas => "picas",
+        Unit::Centimetres => "centimetres",
+        Unit::Ciceros => "ciceros",
+        Unit::Agates => "agates",
     }
 }
 

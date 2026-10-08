@@ -294,6 +294,27 @@ pub struct Preferences {
     /// does. Never printed or exported.
     #[serde(default)]
     pub show_hidden_characters: bool,
+
+    /// Whether the rulers are shown (View > Hide rulers, Ctrl+R).
+    #[serde(default = "yes")]
+    pub show_rulers: bool,
+
+    /// Where the rulers count from: the spread's corner, the page's, or the
+    /// spine — InDesign's Ruler per spread, per page and on spine.
+    #[serde(default)]
+    pub ruler_origin: RulerOrigin,
+}
+
+/// Where the rulers' zero is, when nobody has dragged it somewhere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum RulerOrigin {
+    /// The top left of the spread being looked at.
+    #[default]
+    Spread,
+    /// The top left of the page being worked on.
+    Page,
+    /// The fold of a facing spread, counting out both ways.
+    Spine,
 }
 
 fn yes() -> bool {
@@ -352,6 +373,8 @@ impl Default for Preferences {
             show_hyperlinks: false,
             swatch_tiles: false,
             show_hidden_characters: false,
+            show_rulers: true,
+            ruler_origin: RulerOrigin::Spread,
         }
     }
 }
@@ -571,6 +594,8 @@ mod tests {
             recent_books: vec!["novel.tesserabook".into()],
             swatch_tiles: true,
             show_hidden_characters: true,
+            show_rulers: false,
+            ruler_origin: RulerOrigin::Spine,
             flow_placed_text: false,
             reflow_adds_pages: false,
             reflow_removes_pages: true,

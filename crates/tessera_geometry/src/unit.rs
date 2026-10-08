@@ -13,16 +13,28 @@ pub enum Unit {
     Pixels,
     Inches,
     Picas,
+    Centimetres,
+    /// Twelve Didot points: the European pica.
+    Ciceros,
+    /// A newspaper's column-inch fourteenth.
+    Agates,
 }
+
+/// A Didot point, in PostScript points: 0.376 mm, as InDesign has it.
+const DIDOT: f64 = 1.065_74;
 
 impl Unit {
     /// Every unit, for iteration in tests and in a unit picker.
-    pub const ALL: [Unit; 5] = [
-        Unit::Millimetres,
+    /// In InDesign's order, which is the one its ruler menu lists them in.
+    pub const ALL: [Unit; 8] = [
         Unit::Points,
-        Unit::Pixels,
-        Unit::Inches,
         Unit::Picas,
+        Unit::Inches,
+        Unit::Millimetres,
+        Unit::Centimetres,
+        Unit::Ciceros,
+        Unit::Agates,
+        Unit::Pixels,
     ];
 
     /// How many points one of this unit is worth.
@@ -37,6 +49,9 @@ impl Unit {
             Unit::Inches => 72.0,
             Unit::Picas => 12.0,
             Unit::Millimetres => 72.0 / 25.4,
+            Unit::Centimetres => 72.0 / 2.54,
+            Unit::Ciceros => 12.0 * DIDOT,
+            Unit::Agates => 5.14,
         }
     }
 
@@ -55,6 +70,33 @@ impl Unit {
             Unit::Pixels => "px",
             Unit::Inches => "in",
             Unit::Picas => "p",
+            Unit::Centimetres => "cm",
+            Unit::Ciceros => "c",
+            Unit::Agates => "ag",
+        }
+    }
+
+    /// The unit's name in full, as a menu lists it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Unit::Millimetres => "Millimetres",
+            Unit::Points => "Points",
+            Unit::Pixels => "Pixels",
+            Unit::Inches => "Inches",
+            Unit::Picas => "Picas",
+            Unit::Centimetres => "Centimetres",
+            Unit::Ciceros => "Ciceros",
+            Unit::Agates => "Agates",
+        }
+    }
+
+    /// How far one press of a field's stepper moves it, in this unit: one of
+    /// it, but a sixteenth of an inch, a tenth of a centimetre.
+    pub fn step(self) -> f64 {
+        match self {
+            Unit::Inches => 0.0625,
+            Unit::Centimetres => 0.1,
+            _ => 1.0,
         }
     }
 
@@ -69,27 +111,39 @@ impl Unit {
             return None;
         }
 
-        // Picas-and-points, before the suffix table, because `p` is an infix
-        // here rather than a suffix. Both halves must be plain digits, which
-        // is what keeps `px` and `pt` out of this branch.
-        if let Some((picas, points)) = text.split_once('p') {
-            let digits = |s: &str| s.chars().all(|c| c.is_ascii_digit() || c == '.');
-            if digits(picas) && points.chars().all(|c| c.is_ascii_digit()) {
-                let picas: f64 = if picas.is_empty() {
-                    0.0
-                } else {
-                    picas.parse().ok()?
-                };
-                let points: f64 = if points.is_empty() {
-                    0.0
-                } else {
-                    points.parse().ok()?
-                };
-                return Some(picas * 12.0 + points);
+        // Picas-and-points, and ciceros-and-Didot-points the same way (1c6),
+        // before the suffix table, because `p` and `c` are infixes here
+        // rather than suffixes. Both halves must be plain digits, which is
+        // what keeps `px`, `pt` and `cm` out of this branch.
+        for (mark, whole, part) in [('p', 12.0, 1.0), ('c', 12.0 * DIDOT, DIDOT)] {
+            if let Some((big, small)) = text.split_once(mark) {
+                // "3 p" is how a field writes three picas.
+                let (big, small) = (big.trim(), small.trim());
+                let digits = |s: &str| s.chars().all(|c| c.is_ascii_digit() || c == '.');
+                if digits(big) && small.chars().all(|c| c.is_ascii_digit()) {
+                    let big: f64 = if big.is_empty() {
+                        0.0
+                    } else {
+                        big.parse().ok()?
+                    };
+                    let small: f64 = if small.is_empty() {
+                        0.0
+                    } else {
+                        small.parse().ok()?
+                    };
+                    return Some(big * whole + small * part);
+                }
             }
         }
 
-        for unit in [Unit::Millimetres, Unit::Points, Unit::Pixels, Unit::Inches] {
+        for unit in [
+            Unit::Millimetres,
+            Unit::Centimetres,
+            Unit::Points,
+            Unit::Pixels,
+            Unit::Inches,
+            Unit::Agates,
+        ] {
             if let Some(number) = text.strip_suffix(unit.suffix()) {
                 return Some(unit.to_points(number.trim().parse().ok()?));
             }
@@ -122,6 +176,34 @@ mod tests {
     fn a_millimetre_is_the_metric_share_of_an_inch() {
         let expected = 72.0 / 25.4;
         assert!((Unit::Millimetres.to_points(1.0) - expected).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_cicero_is_twelve_didot_points_and_an_agate_five_and_a_bit() {
+        assert!((Unit::Ciceros.to_points(1.0) - 12.788_88).abs() < 1e-6);
+        assert_eq!(Unit::Agates.to_points(1.0), 5.14);
+        assert!((Unit::Centimetres.to_points(1.0) - 72.0 / 2.54).abs() < 1e-12);
+        assert_eq!(
+            Unit::parse_to_points("2cm", Unit::Points),
+            Some(Unit::Centimetres.to_points(2.0))
+        );
+        assert_eq!(
+            Unit::parse_to_points("1c6", Unit::Points),
+            Some(18.0 * 1.065_74)
+        );
+        assert_eq!(
+            Unit::parse_to_points("14ag", Unit::Points),
+            Some(14.0 * 5.14)
+        );
+        // Every suffix reads back as its own unit.
+        for unit in Unit::ALL {
+            let written = unit.format(unit.to_points(3.0));
+            let read = Unit::parse_to_points(&written, Unit::Points).expect("reads");
+            assert!(
+                (read - unit.to_points(3.0)).abs() < 1e-6,
+                "{unit:?}: {written}"
+            );
+        }
     }
 
     #[test]

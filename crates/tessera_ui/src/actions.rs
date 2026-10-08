@@ -314,6 +314,7 @@ pub enum Run {
     ToggleHyperlinks,
     ToggleDynamicSpelling,
     ToggleHiddenCharacters,
+    ToggleRulers,
     FillPlaceholder,
     /// Whether a layout follows its page's size and margins. A preference.
     ToggleAdjustLayout,
@@ -470,6 +471,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::ToggleHyperlinks
         | Run::ToggleDynamicSpelling
         | Run::ToggleHiddenCharacters
+        | Run::ToggleRulers
         | Run::ToggleAdjustLayout
         | Run::SelectContainer
         | Run::SelectContent
@@ -1505,6 +1507,7 @@ pub fn all() -> &'static [Action] {
         ),
         a("Soft proof", Some("Ctrl+Y"), Group::View, ToggleSoftProof),
         a("Snap to guides", None, Group::View, ToggleSnapping),
+        a("Show rulers", Some("Ctrl+R"), Group::View, ToggleRulers),
         a("Show hyperlinks", None, Group::View, ToggleHyperlinks),
         //
         a(
@@ -1757,6 +1760,10 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             // A preference, as snapping is: somebody checking links turns
             // this on for the job, not for a minute.
             state.prefs.show_hyperlinks = !state.prefs.show_hyperlinks;
+            crate::prefs::remember(state);
+        }
+        Run::ToggleRulers => {
+            state.prefs.show_rulers = !state.prefs.show_rulers;
             crate::prefs::remember(state);
         }
         Run::ToggleHiddenCharacters => {
@@ -2461,6 +2468,7 @@ mod tests {
                 | "Links"
                 | "Paragraph and character styles"
                 | "Show hidden characters"
+                | "Show rulers"
                 | "Preview view"
                 | "Current page number"
                 | "Insert footnote"

@@ -333,8 +333,9 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
             // guessed it would be a frame behind every pan.
             let mut across = egui::Rect::NOTHING;
             let mut down = egui::Rect::NOTHING;
+            let rulers_shown = state.screen_mode.shows_chrome() && state.prefs.show_rulers;
 
-            if state.screen_mode.shows_chrome() {
+            if rulers_shown {
                 // `response.rect` rather than the inner `ui.max_rect()`. A
                 // panel's content rect has the frame's margins taken off it,
                 // which on a 20-point strip leaves four — and the ruler paints
@@ -368,9 +369,10 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
             let canvas = ui.available_rect_before_wrap();
             viewport::show(ui, frame, state);
 
-            if state.screen_mode.shows_chrome() {
+            if rulers_shown {
                 rulers::paint(ui, state, canvas, across, down);
                 if !modal_open(state) {
+                    rulers::context_menu(ui, state, across, down);
                     rulers::drag_out(ui, state, canvas, across, down);
                     rulers::resolve_zero_drag(ui, state, canvas);
                 }
