@@ -41,10 +41,11 @@ pub enum Dock {
     Glyphs,
     Book,
     Links,
+    Info,
 }
 
 impl Dock {
-    pub const ALL: [Dock; 10] = [
+    pub const ALL: [Dock; 11] = [
         Dock::Properties,
         Dock::Pages,
         Dock::Layers,
@@ -57,6 +58,8 @@ impl Dock {
         // than while you are working.
         Dock::Preflight,
         Dock::Console,
+        // InDesign's Window > Info: read off rather than worked in.
+        Dock::Info,
     ];
 
     pub fn title(self) -> &'static str {
@@ -71,6 +74,7 @@ impl Dock {
             Dock::Glyphs => "Glyphs",
             Dock::Book => "Book",
             Dock::Links => "Links",
+            Dock::Info => "Info",
         }
     }
 
@@ -86,6 +90,7 @@ impl Dock {
             Dock::Glyphs => Icon::Glyphs,
             Dock::Book => Icon::Book,
             Dock::Links => Icon::Link2,
+            Dock::Info => Icon::Info,
         }
     }
 
@@ -101,6 +106,7 @@ impl Dock {
             Self::Glyphs => "Find and insert special characters",
             Self::Book => "Assemble documents into a book",
             Self::Links => "The artwork files this document points at",
+            Self::Info => "Where the pointer is, and the numbers of what is chosen",
         }
     }
 
@@ -121,6 +127,7 @@ impl Dock {
             Dock::Glyphs => state.glyphs.open,
             Dock::Book => state.book.open,
             Dock::Links => state.links.open,
+            Dock::Info => state.info_open,
         }
     }
 
@@ -136,6 +143,7 @@ impl Dock {
             Dock::Glyphs => state.glyphs.open = open,
             Dock::Book => state.book.open = open,
             Dock::Links => state.links.open = open,
+            Dock::Info => state.info_open = open,
         }
     }
 }
@@ -216,6 +224,7 @@ pub(crate) fn body(ui: &mut Ui, state: &mut TesseraApp, dock: Dock) {
         Dock::Glyphs => crate::view::glyphs::docked(ui, state),
         Dock::Book => crate::view::book::docked(ui, state),
         Dock::Links => crate::view::links::docked(ui, state),
+        Dock::Info => crate::view::info::docked(ui, state),
     }
 }
 
@@ -240,6 +249,7 @@ mod tests {
             Dock::Glyphs,
             Dock::Book,
             Dock::Links,
+            Dock::Info,
         ] {
             assert!(!dock.is_open(&state), "{} starts shut", dock.title());
         }

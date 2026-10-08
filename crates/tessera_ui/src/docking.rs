@@ -448,7 +448,8 @@ mod tests {
                 "Styles",
                 "Glyphs",
                 "Preflight",
-                "AI Console"
+                "AI Console",
+                "Info"
             ]
         );
     }
@@ -462,6 +463,8 @@ mod tests {
             right: vec![Stack::of(chosen.clone())],
         };
         docking.reconcile();
+        // Kept as it was; a panel it never had is added at the end.
+        chosen.push("Info".to_string());
         assert_eq!(docking.right[0].panels, chosen);
     }
 }

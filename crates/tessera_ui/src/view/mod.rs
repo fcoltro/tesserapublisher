@@ -29,6 +29,7 @@ pub mod html_export;
 pub mod hyperlink;
 pub mod identity;
 pub mod image_export;
+pub mod info;
 pub mod invert_host;
 pub mod layers;
 pub mod links;

@@ -254,6 +254,14 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
         crate::view::canvas_toolbar::show(ui, state, box_on_screen, rect);
     }
 
+    // Where the pointer is, for the Info panel.
+    let over = ui
+        .ctx()
+        .pointer_latest_pos()
+        .filter(|p| rect.contains(*p))
+        .map(|p| doc_pos(state, rect, p));
+    super::info::track(state, over);
+
     // Last, so the pointer is painted over everything it points at.
     show_cursor(ui, &response, rect, state);
 }

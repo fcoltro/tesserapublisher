@@ -265,6 +265,8 @@ pub enum Icon {
     /// The content collector: a tray with an arrow dropping into it, which
     /// is what the tool does with whatever it is pointed at.
     Collect,
+    /// The Info panel: a lower-case i in a ring.
+    Info,
 }
 
 impl Icon {
@@ -288,6 +290,12 @@ impl Icon {
                 "M17 22h-1a4 4 0 0 1-4-4V6a4 4 0 0 1 4-4h1",
                 "M7 22h1a4 4 0 0 0 4-4v-1",
                 "M7 2h1a4 4 0 0 1 4 4v1",
+            ],
+            // lucide: info
+            Self::Info => &[
+                "M22 12 A10 10 0 1 1 2 12 A10 10 0 1 1 22 12 Z",
+                "M12 16v-4",
+                "M12 8h.01",
             ],
             // lucide: eraser
             Self::Eraser => &[
@@ -584,6 +592,7 @@ impl Icon {
             | Self::Crosshair
             | Self::Eraser
             | Self::Collect
+            | Self::Info
             // The toolbar's verbs are never cursors, so their hotspot is only
             // ever the centre. Listed rather than caught by a wildcard, so
             // that adding a cursor icon later still has to answer this.
@@ -878,6 +887,7 @@ impl Icon {
             Self::Scale
             | Self::Eraser
             | Self::Collect
+            | Self::Info
             | Self::TextCursor
             | Self::Crosshair
             | Self::LetterSpacing
@@ -1256,7 +1266,7 @@ fn texture(ctx: &egui::Context, icon: Icon, side: u32, degrees: f32) -> egui::Te
 /// **An icon missing from this list is missing from its own tests.** Seventeen
 /// were once, and three more — `Book`, `Pipette`, `Pi` — until the move to
 /// Spectrum, when a count taken by hand matched a list that was short.
-pub const ALL: [Icon; 162] = [
+pub const ALL: [Icon; 163] = [
     Icon::StrokeWeight,
     Icon::Disclosure,
     Icon::Book,
@@ -1419,6 +1429,7 @@ pub const ALL: [Icon; 162] = [
     Icon::ViewGrid,
     Icon::Eraser,
     Icon::Collect,
+    Icon::Info,
 ];
 
 #[cfg(test)]
@@ -1627,6 +1638,6 @@ mod tests {
         // count is what is checked, and it is the enum's own count.
         let unique: std::collections::HashSet<_> = ALL.iter().collect();
         assert_eq!(unique.len(), ALL.len(), "an icon is listed twice");
-        assert_eq!(ALL.len(), 162);
+        assert_eq!(ALL.len(), 163);
     }
 }

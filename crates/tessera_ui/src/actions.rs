@@ -315,6 +315,7 @@ pub enum Run {
     ToggleDynamicSpelling,
     ToggleHiddenCharacters,
     ToggleRulers,
+    ToggleInfo,
     FillPlaceholder,
     /// Whether a layout follows its page's size and margins. A preference.
     ToggleAdjustLayout,
@@ -462,6 +463,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::ToggleGlyphs
         | Run::ToggleBook
         | Run::ToggleLinks
+        | Run::ToggleInfo
         | Run::ToggleStyles
         | Run::ToggleSoftProof
         | Run::ToggleSwatches
@@ -1486,6 +1488,8 @@ pub fn all() -> &'static [Action] {
         a("Glyphs", None, Group::Window, ToggleGlyphs),
         a("Book", None, Group::Window, ToggleBook),
         a("Links", Some("Ctrl+Shift+D"), Group::Window, ToggleLinks),
+        // InDesign's is F8, which is Preflight's here.
+        a("Info", None, Group::Window, ToggleInfo),
         a("Data merge", None, Group::Window, Run::DataMerge),
         // Under Edit, where every application that is not macOS puts it, and
         // last in that menu because it is the one entry there that is not an
@@ -1761,6 +1765,13 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             // this on for the job, not for a minute.
             state.prefs.show_hyperlinks = !state.prefs.show_hyperlinks;
             crate::prefs::remember(state);
+        }
+        Run::ToggleInfo => {
+            state.info_open = !state.info_open;
+            if state.info_open {
+                state.rail_open = true;
+                state.prefs.docking.reveal("Info");
+            }
         }
         Run::ToggleRulers => {
             state.prefs.show_rulers = !state.prefs.show_rulers;

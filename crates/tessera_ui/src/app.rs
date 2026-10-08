@@ -569,6 +569,11 @@ pub struct TesseraApp {
     pub step: crate::view::step_repeat::StepWindow,
     /// Help > About Tessera, open.
     pub about_open: bool,
+    /// The Info panel, open.
+    pub info_open: bool,
+    /// Where the pointer is on the document, while it is over the canvas:
+    /// what the Info panel reads.
+    pub pointer_at: Option<tessera_geometry::DocPoint>,
     pub numbering: crate::view::sections::SectionsWindow,
     pub variables: crate::view::variables::VariablesWindow,
     pub table_options: crate::view::table_options::TableOptionsWindow,
@@ -769,6 +774,8 @@ impl TesseraApp {
             new_document: crate::view::new_document::NewDocument::default(),
             step: crate::view::step_repeat::StepWindow::default(),
             about_open: false,
+            info_open: false,
+            pointer_at: None,
             numbering: crate::view::sections::SectionsWindow::default(),
             variables: crate::view::variables::VariablesWindow::default(),
             table_options: crate::view::table_options::TableOptionsWindow::default(),
