@@ -3233,12 +3233,15 @@ pub(crate) fn group_label(ui: &mut Ui, text: &str) {
     ui.add(egui::Label::new(group_text(text)).selectable(false));
 }
 
-/// A readable sentence-case label for a subgroup of controls.
+/// The label for a group of fields: the third level, below a section and
+/// a section's sections. In small capitals, muted, so it names what follows
+/// without reading as another thing to open.
 fn group_text(text: &str) -> egui::RichText {
-    egui::RichText::new(text)
-        .size(Theme::TYPE_SM)
+    egui::RichText::new(text.to_uppercase())
+        .size(Theme::TYPE_SM - 1.5)
         .strong()
-        .color(Theme::text_primary())
+        .extra_letter_spacing(0.6)
+        .color(Theme::text_muted())
 }
 
 /// Linking is UI state, scoped to this document/object and group. Toggling it
@@ -3596,14 +3599,91 @@ fn icon_toggles(ui: &mut Ui, toggles: &[(crate::icons::Icon, &str, bool)]) -> Op
 }
 
 fn property_disclosure(ui: &mut Ui, state: &mut TesseraApp, title: &'static str) -> bool {
-    // No gap above: the heading's own rule is the break between sections,
-    // and a gap as well spent a row's height on air for every closed one.
-    let open = section_heading(ui, state, title);
+    // A section inside a section — Character options inside Text — and
+    // drawn as one: see `subsection_heading_with`.
+    let was = state.sections.is_open(title);
+    let open = subsection_heading_with(ui, title, was);
+    if open != was {
+        state.sections.set_open(title, open);
+    }
     if open {
         ui.add_space(Theme::space_2());
     }
     open
 }
+
+/// A heading one level down: a section's own sections.
+///
+/// **Three levels, three looks**, or the panel is one flat list. A section
+/// (Text, Transform, Fill) has the rule above it, the heavy title and the
+/// chevron at the right. Its sections (Character options, Tabs) sit in from
+/// the edge on a sunk band, the chevron at the left where the eye starts, the
+/// title regular and quieter. A group of fields inside either (Indents,
+/// Paragraph spacing) is a small-capital label with no band and no chevron,
+/// because it does not open and shut.
+pub(crate) fn subsection_heading_with(ui: &mut Ui, title: &str, open: bool) -> bool {
+    let (row, response) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), Theme::control_height()),
+        Sense::click(),
+    );
+    let rect = Rect::from_min_max(egui::pos2(row.left() + SUB_INDENT, row.top()), row.max);
+    let painter = ui.painter_at(row);
+    painter.rect_filled(
+        rect,
+        Theme::RADIUS,
+        if response.hovered() {
+            Theme::hover_bg()
+        } else {
+            Theme::panel_bg_alt()
+        },
+    );
+    if response.has_focus() {
+        painter.rect_stroke(
+            rect,
+            Theme::RADIUS,
+            egui::Stroke::new(1.0, Theme::focus()),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let caret = Rect::from_center_size(
+        egui::pos2(rect.left() + Theme::space_2() + 4.0, rect.center().y),
+        Vec2::splat(8.0),
+    );
+    crate::icons::paint_rotated(
+        &painter,
+        caret,
+        crate::icons::Icon::Disclosure,
+        Theme::text_muted(),
+        if open { 90.0 } else { 0.0 },
+    );
+    let text_left = caret.right() + Theme::space_2();
+    let galley = ui.fonts_mut(|fonts| {
+        let mut job = egui::text::LayoutJob::simple_singleline(
+            title.to_owned(),
+            egui::FontId::proportional(Theme::TYPE_SM + 0.5),
+            Theme::text_primary(),
+        );
+        job.wrap.max_width = (rect.right() - Theme::space_2() - text_left).max(0.0);
+        job.wrap.max_rows = 1;
+        job.wrap.break_anywhere = true;
+        fonts.layout_job(job)
+    });
+    painter.galley(
+        egui::pos2(text_left, rect.center().y - galley.size().y / 2.0),
+        galley,
+        Theme::text_primary(),
+    );
+    let response = crate::icons::reads_as(
+        response.on_hover_text(title),
+        title,
+        egui::WidgetType::CollapsingHeader,
+        Some(open),
+    );
+    if response.clicked() { !open } else { open }
+}
+
+/// How far a section's own sections sit in from its edge.
+const SUB_INDENT: f32 = 8.0;
 
 /// A row of mutually exclusive choices, the shape a three-way property wants.
 fn segmented<T: PartialEq + Copy>(ui: &mut Ui, label: &str, value: &mut T, options: &[(&str, T)]) {
