@@ -49,10 +49,10 @@ impl Dock {
         Dock::Pages,
         Dock::Layers,
         Dock::Links,
-        Dock::Styles,
-        Dock::Swatches,
-        Dock::Glyphs,
         Dock::Book,
+        Dock::Swatches,
+        Dock::Styles,
+        Dock::Glyphs,
         // Last, because it is the one you go to when you have finished rather
         // than while you are working.
         Dock::Preflight,

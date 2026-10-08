@@ -152,10 +152,10 @@ impl Tool {
             Self::Measure => crate::icons::Icon::TabStop,
             Self::Gap => crate::icons::Icon::DistributeH,
             Self::ColourTheme => crate::icons::Icon::Palette,
-            Self::Conveyor => crate::icons::Icon::Plus,
+            Self::Conveyor => crate::icons::Icon::Collect,
             Self::Pencil => crate::icons::Icon::Pen,
             Self::Smooth => crate::icons::Icon::Blur,
-            Self::Erase => crate::icons::Icon::Scissors,
+            Self::Erase => crate::icons::Icon::Eraser,
         }
     }
 

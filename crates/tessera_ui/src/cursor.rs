@@ -80,6 +80,77 @@ pub fn mesh(at: Pos2, cursor: Cursor, pixels_per_point: f32) -> Mesh {
     )
 }
 
+/// The two arrows, as Adobe draws them: one outline on Spectrum's 20 grid,
+/// tip at the top left.
+const ARROW: &str = "M5 2.5 L5 16.8 L8.4 13.6 L10.7 18.6 L13 17.6 L10.7 12.7 L15.3 12.7 Z";
+/// Where the arrow's tip is in that grid.
+const ARROW_TIP: (f32, f32) = (5.0, 2.5);
+
+/// Select and Direct Select are not inverted but **painted**: Select a
+/// solid black arrow, Direct Select a white one, each ringed in the other
+/// colour so it reads on any ground. Every illustrator knows the pair by
+/// sight, and an inverted arrow over a mid grey is a mid grey.
+///
+/// `None` for every other cursor, which goes through the inverting pass.
+pub fn solid(at: Pos2, cursor: Cursor, pixels_per_point: f32) -> Option<Mesh> {
+    let (body, ring) = match cursor.icon {
+        Icon::Select => (Color32::BLACK, Color32::WHITE),
+        Icon::DirectSelect => (Color32::WHITE, Color32::BLACK),
+        _ => return None,
+    };
+    let ppp = pixels_per_point.max(f32::EPSILON);
+    let side = icons::device_side(Theme::CURSOR_SIZE, ppp);
+    let scale = Theme::CURSOR_SIZE / 20.0;
+    let centre = at - egui::vec2((ARROW_TIP.0 - 10.0) * scale, (ARROW_TIP.1 - 10.0) * scale);
+    let target = icons::pixel_box(centre, side, ppp);
+    let step = 1.0 / ppp;
+    let mut mesh = Mesh::default();
+    // The ring first, as the arrow filled and stroked wide; the body over it.
+    for (layer, colour) in [
+        (arrow_coverage(side, 2.4), ring),
+        (arrow_coverage(side, 0.0), body),
+    ] {
+        for (index, &covered) in layer.iter().enumerate() {
+            if covered == 0 {
+                continue;
+            }
+            let (x, y) = ((index as u32 % side) as f32, (index as u32 / side) as f32);
+            let pixel = Rect::from_min_size(
+                target.min + egui::vec2(x * step, y * step),
+                egui::Vec2::splat(step),
+            );
+            mesh.add_colored_rect(pixel, colour.gamma_multiply(f32::from(covered) / 255.0));
+        }
+    }
+    Some(mesh)
+}
+
+/// The arrow's coverage at `side` pixels, its outline widened by `ring`
+/// grid units (none for the body alone).
+fn arrow_coverage(side: u32, ring: f32) -> Vec<u8> {
+    let stroke = if ring > 0.0 {
+        format!(r##" stroke="#000" stroke-width="{ring}" stroke-linejoin="round""##)
+    } else {
+        String::new()
+    };
+    let svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="{ARROW}" fill="#000"{stroke}/></svg>"##
+    );
+    let Ok(tree) = usvg::Tree::from_str(&svg, &usvg::Options::default()) else {
+        return Vec::new();
+    };
+    let Some(mut pixmap) = tiny_skia::Pixmap::new(side, side) else {
+        return Vec::new();
+    };
+    let scale = side as f32 / 20.0;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    pixmap.pixels().iter().map(|p| p.alpha()).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,5 +224,21 @@ mod tests {
                 "hotspot drifted at {degrees} degrees"
             );
         }
+    }
+
+    #[test]
+    fn the_select_arrows_are_painted_black_and_white() {
+        let at = Pos2::new(100.0, 50.0);
+        let black = solid(at, Cursor::new(Icon::Select), 1.0).expect("painted");
+        let white = solid(at, Cursor::new(Icon::DirectSelect), 1.0).expect("painted");
+        let solid_of = |m: &Mesh, c: Color32| m.vertices.iter().any(|v| v.color == c);
+        assert!(solid_of(&black, Color32::BLACK) && solid_of(&black, Color32::WHITE));
+        assert!(solid_of(&white, Color32::BLACK) && solid_of(&white, Color32::WHITE));
+        // The tip is under the pointer: something is drawn within a pixel
+        // and a half of it, and nothing up and to the left of it.
+        let bounds = black.calc_bounds();
+        assert!(bounds.min.x > at.x - 2.5 && bounds.min.y > at.y - 2.5);
+        assert!(bounds.min.x < at.x + 1.0 && bounds.min.y < at.y + 1.0);
+        assert!(solid(at, Cursor::new(Icon::Crosshair), 1.0).is_none());
     }
 }

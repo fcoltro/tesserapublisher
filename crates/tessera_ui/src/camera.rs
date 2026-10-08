@@ -45,6 +45,23 @@ pub fn zoom_to(view: &mut ViewTransform, area: DocRect, width: f32, height: f32)
     zoom_to_fit(view, area, width, height);
 }
 
+/// How far a scrubby-zoom drag has zoomed, as a factor of the zoom it
+/// started at: double for every [`SCRUB_DOUBLING`] pixels to the right, half
+/// for as many to the left — Illustrator's feel, where the same distance
+/// always means the same change however far in somebody already is.
+pub fn scrub_factor(dx: f32) -> f64 {
+    2f64.powf(f64::from(dx) / SCRUB_DOUBLING)
+}
+
+/// Screen pixels of horizontal drag that double the zoom.
+pub const SCRUB_DOUBLING: f64 = 120.0;
+
+/// Set the zoom to `zoom`, keeping the document point under `about` fixed.
+pub fn zoom_to_level(view: &mut ViewTransform, about: ScreenPoint, zoom: f64) {
+    let factor = zoom / view.zoom.max(f64::MIN_POSITIVE);
+    zoom_about(view, about, factor);
+}
+
 pub fn pan_by(view: &mut ViewTransform, screen_dx: f32, screen_dy: f32) {
     view.pan.x -= f64::from(screen_dx) / view.zoom;
     view.pan.y -= f64::from(screen_dy) / view.zoom;
@@ -135,5 +152,25 @@ mod tests {
         pan_by(&mut view, 10.0, 0.0);
         // Dragging right moves the camera left, so content follows the cursor.
         assert!(view.pan.x < 0.0);
+    }
+
+    #[test]
+    fn a_scrub_doubles_to_the_right_and_halves_to_the_left() {
+        assert!((scrub_factor(0.0) - 1.0).abs() < 1e-9);
+        assert!((scrub_factor(120.0) - 2.0).abs() < 1e-9);
+        assert!((scrub_factor(-120.0) - 0.5).abs() < 1e-9);
+        // The same distance is the same change: two halves make the whole.
+        assert!((scrub_factor(60.0) * scrub_factor(60.0) - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn zooming_to_a_level_keeps_the_point_under_the_pointer() {
+        let mut view = ViewTransform::default();
+        let about = ScreenPoint { x: 200.0, y: 100.0 };
+        let before = view.screen_to_doc(about);
+        zoom_to_level(&mut view, about, 3.0);
+        assert!((view.zoom - 3.0).abs() < 1e-9);
+        let after = view.screen_to_doc(about);
+        assert!((before.x - after.x).abs() < 1e-9 && (before.y - after.y).abs() < 1e-9);
     }
 }

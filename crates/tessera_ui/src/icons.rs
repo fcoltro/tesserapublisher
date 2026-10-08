@@ -259,6 +259,12 @@ pub enum Icon {
     /// A list shown as rows, and as tiles.
     ViewList,
     ViewGrid,
+    /// The erase tool: an eraser's block, worn at one corner. Not the
+    /// scissors, which cut a path in two rather than rub part of it out.
+    Eraser,
+    /// The content collector: a tray with an arrow dropping into it, which
+    /// is what the tool does with whatever it is pointed at.
+    Collect,
 }
 
 impl Icon {
@@ -282,6 +288,19 @@ impl Icon {
                 "M17 22h-1a4 4 0 0 1-4-4V6a4 4 0 0 1 4-4h1",
                 "M7 22h1a4 4 0 0 0 4-4v-1",
                 "M7 2h1a4 4 0 0 1 4 4v1",
+            ],
+            // lucide: eraser
+            Self::Eraser => &[
+                "m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21",
+                "M22 21H7",
+                "m5 11 9 9",
+            ],
+            // lucide: inbox, with an arrow dropping into it
+            Self::Collect => &[
+                "M22 13h-6l-2 3h-4l-2-3H2",
+                "M2 13v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6",
+                "M12 2v9",
+                "m8 7 4 4 4-4",
             ],
             // lucide: crosshair
             Self::Crosshair => &[
@@ -563,6 +582,8 @@ impl Icon {
             | Self::TextCursor
             | Self::TextFrame
             | Self::Crosshair
+            | Self::Eraser
+            | Self::Collect
             // The toolbar's verbs are never cursors, so their hotspot is only
             // ever the centre. Listed rather than caught by a wildcard, so
             // that adding a cursor icon later still has to answer this.
@@ -855,6 +876,8 @@ impl Icon {
             Self::ViewGrid => s2!("ViewGrid"),
             // Page-layout ideas Spectrum has no picture of: drawn here.
             Self::Scale
+            | Self::Eraser
+            | Self::Collect
             | Self::TextCursor
             | Self::Crosshair
             | Self::LetterSpacing
@@ -1174,14 +1197,14 @@ pub fn coverage_mesh(
 }
 
 /// The whole number of device pixels `side` points covers, never none.
-fn device_side(side: f32, pixels_per_point: f32) -> u32 {
+pub(crate) fn device_side(side: f32, pixels_per_point: f32) -> u32 {
     (side * pixels_per_point).round().max(1.0) as u32
 }
 
 /// A square `side` device pixels across, centred as near `centre` as whole
 /// pixels allow. Off the pixel grid, every edge of the icon would be shared
 /// between two pixels and read as grey.
-fn pixel_box(centre: Pos2, side: u32, pixels_per_point: f32) -> Rect {
+pub(crate) fn pixel_box(centre: Pos2, side: u32, pixels_per_point: f32) -> Rect {
     let points = side as f32 / pixels_per_point;
     let min = centre - egui::Vec2::splat(points / 2.0);
     let min = egui::pos2(
@@ -1233,7 +1256,7 @@ fn texture(ctx: &egui::Context, icon: Icon, side: u32, degrees: f32) -> egui::Te
 /// **An icon missing from this list is missing from its own tests.** Seventeen
 /// were once, and three more — `Book`, `Pipette`, `Pi` — until the move to
 /// Spectrum, when a count taken by hand matched a list that was short.
-pub const ALL: [Icon; 160] = [
+pub const ALL: [Icon; 162] = [
     Icon::StrokeWeight,
     Icon::Disclosure,
     Icon::Book,
@@ -1394,6 +1417,8 @@ pub const ALL: [Icon; 160] = [
     Icon::InsertText,
     Icon::ViewList,
     Icon::ViewGrid,
+    Icon::Eraser,
+    Icon::Collect,
 ];
 
 #[cfg(test)]
@@ -1602,6 +1627,6 @@ mod tests {
         // count is what is checked, and it is the enum's own count.
         let unique: std::collections::HashSet<_> = ALL.iter().collect();
         assert_eq!(unique.len(), ALL.len(), "an icon is listed twice");
-        assert_eq!(ALL.len(), 160);
+        assert_eq!(ALL.len(), 162);
     }
 }

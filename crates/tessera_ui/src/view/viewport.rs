@@ -2347,7 +2347,12 @@ fn show_cursor(ui: &Ui, response: &egui::Response, rect: Rect, state: &TesseraAp
     // a blend that inverts the screen, so it is black on the page, white on
     // the pasteboard, and the other colour over anything drawn on either.
     // Added after every overlay, so it is over the handles, not under them.
-    let mesh = crate::cursor::mesh(pos, cursor, ui.ctx().pixels_per_point());
+    let ppp = ui.ctx().pixels_per_point();
+    if let Some(mesh) = crate::cursor::solid(pos, cursor, ppp) {
+        ui.painter_at(rect).add(egui::Shape::mesh(mesh));
+        return;
+    }
+    let mesh = crate::cursor::mesh(pos, cursor, ppp);
     ui.painter_at(rect)
         .add(egui_wgpu::Callback::new_paint_callback(
             rect,
@@ -2477,7 +2482,13 @@ fn canvas_cursor(
         Tool::Rectangle | Tool::Ellipse | Tool::Line | Tool::Graphic => {
             Cursor::new(Icon::Crosshair)
         }
-        Tool::Zoom => Cursor::new(Icon::ZoomIn),
+        // Alt turns the zoom tool round, and the pointer says so before the
+        // click rather than after it.
+        Tool::Zoom => Cursor::new(if ui.input(|i| i.modifiers.alt) {
+            Icon::ZoomOut
+        } else {
+            Icon::ZoomIn
+        }),
         Tool::Eyedropper => Cursor::new(Icon::Pipette),
         Tool::Measure => Cursor::new(Icon::Crosshair),
         Tool::ColourTheme => Cursor::new(Icon::Pipette),
@@ -2486,7 +2497,7 @@ fn canvas_cursor(
         Tool::Conveyor => Cursor::new(if state.conveyor.placing {
             Icon::Crosshair
         } else {
-            Icon::Plus
+            Icon::Collect
         }),
         // Which way the gap under the pointer moves, or the crosshair where
         // there is none.
@@ -2500,9 +2511,8 @@ fn canvas_cursor(
         }
         Tool::Polygon => Cursor::new(Icon::Crosshair),
         Tool::Scissors => Cursor::new(Icon::Crosshair),
-        // The pointer over an anchor is the anchor's own business; away from
-        // one it is still the tool that picks parts.
-        Tool::DirectSelect => Cursor::new(Icon::Crosshair),
+        // Adobe's white arrow: the tool that picks parts rather than wholes.
+        Tool::DirectSelect => Cursor::new(Icon::DirectSelect),
         Tool::Select => match grab_at(state, rect, pos) {
             Some(grabbed) => grip_cursor(&grabbed),
             // A chosen table's boundary can be pulled, before the table
@@ -2643,11 +2653,38 @@ fn direct_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
 /// Click to zoom in, Alt to zoom out, drag to zoom to what was dragged around.
 fn zoom_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
     const STEP: f64 = 1.6;
+    // A drag scrubs, as Illustrator's does: right zooms in and left zooms
+    // out, about where the press went down. Shift at the press draws the
+    // marquee to zoom to instead. Where the scrub began and the zoom it began
+    // at live in the context, since nothing outside this gesture needs them.
+    let scrub = egui::Id::new("tessera-zoom-scrub");
 
     if response.drag_started()
         && let Some(pos) = response.interact_pointer_pos()
     {
-        state.drag = Some(Drag::new(doc_pos(state, rect, pos), DragKind::Marquee));
+        if ui.input(|i| i.modifiers.shift) {
+            state.drag = Some(Drag::new(doc_pos(state, rect, pos), DragKind::Marquee));
+        } else {
+            let start = (pos, state.active().view.zoom);
+            ui.ctx().data_mut(|d| d.insert_temp(scrub, start));
+        }
+    }
+
+    if response.dragged()
+        && let Some((press, zoom)) = ui.ctx().data(|d| d.get_temp::<(egui::Pos2, f64)>(scrub))
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        let target = zoom * camera::scrub_factor(pos.x - press.x);
+        camera::zoom_to_level(&mut state.active_mut().view, local(rect, press), target);
+    }
+    if response.drag_stopped()
+        && ui
+            .ctx()
+            .data(|d| d.get_temp::<(egui::Pos2, f64)>(scrub))
+            .is_some()
+    {
+        ui.ctx().data_mut(|d| d.remove::<(egui::Pos2, f64)>(scrub));
+        return;
     }
 
     if response.drag_stopped()

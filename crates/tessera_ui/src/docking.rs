@@ -73,6 +73,20 @@ pub struct Docking {
     pub right: Vec<Stack>,
 }
 
+/// The rail's order before the one [`Dock::ALL`] gives now.
+const PREVIOUS_DEFAULT: [&str; 10] = [
+    "Properties",
+    "Pages",
+    "Layers",
+    "Links",
+    "Styles",
+    "Swatches",
+    "Glyphs",
+    "Book",
+    "Preflight",
+    "AI Console",
+];
+
 impl Default for Docking {
     /// Everything in one stack on the right, in the order the rail listed them.
     ///
@@ -206,6 +220,20 @@ impl Docking {
     /// unreachable for anybody with a saved layout.
     pub fn reconcile(&mut self) {
         let known: Vec<&'static str> = Dock::ALL.iter().map(|d| d.title()).collect();
+
+        // The rail as it came before 2026-10 was never chosen by anybody who
+        // still has it, so it follows the new default rather than freezing
+        // the old one; an arrangement somebody made is left alone.
+        if self.left.is_empty()
+            && let [stack] = self.right.as_mut_slice()
+            && stack.panels.iter().map(String::as_str).eq(PREVIOUS_DEFAULT)
+        {
+            let active = stack.panels.get(stack.active).cloned();
+            stack.panels = known.iter().map(|t| t.to_string()).collect();
+            stack.active = active
+                .and_then(|a| stack.panels.iter().position(|p| *p == a))
+                .unwrap_or(0);
+        }
 
         for region in Region::ALL {
             for stack in self.side_mut(region).iter_mut() {
@@ -390,5 +418,50 @@ mod tests {
         let text = serde_json::to_string(&docking).expect("write");
         let back: Docking = serde_json::from_str(&text).expect("read");
         assert_eq!(back, docking);
+    }
+
+    #[test]
+    fn the_old_default_rail_takes_the_new_order() {
+        let mut docking = Docking {
+            left: Vec::new(),
+            right: vec![Stack::of(
+                PREVIOUS_DEFAULT.iter().map(|t| t.to_string()).collect(),
+            )],
+        };
+        docking.right[0].active = 5; // Swatches
+        docking.reconcile();
+        assert_eq!(docking, {
+            let mut d = Docking::default();
+            d.right[0].active = 5; // Swatches is fifth from zero now too
+            d
+        });
+        let order: Vec<&str> = docking.right[0].panels.iter().map(String::as_str).collect();
+        assert_eq!(
+            order,
+            [
+                "Properties",
+                "Pages",
+                "Layers",
+                "Links",
+                "Book",
+                "Swatches",
+                "Styles",
+                "Glyphs",
+                "Preflight",
+                "AI Console"
+            ]
+        );
+    }
+
+    #[test]
+    fn an_order_somebody_chose_is_kept() {
+        let mut chosen: Vec<String> = PREVIOUS_DEFAULT.iter().map(|t| t.to_string()).collect();
+        chosen.swap(0, 1);
+        let mut docking = Docking {
+            left: Vec::new(),
+            right: vec![Stack::of(chosen.clone())],
+        };
+        docking.reconcile();
+        assert_eq!(docking.right[0].panels, chosen);
     }
 }
