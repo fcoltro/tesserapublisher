@@ -971,6 +971,7 @@ mod tests {
             show_hidden_characters: false,
             show_rulers: true,
             ruler_origin: crate::prefs::RulerOrigin::Spread,
+            saved_queries: Vec::new(),
             flow_placed_text: false,
             reflow_adds_pages: false,
             reflow_removes_pages: true,
@@ -1007,6 +1008,7 @@ mod tests {
                 show_hidden_characters: false,
                 show_rulers: true,
                 ruler_origin: crate::prefs::RulerOrigin::Spread,
+                saved_queries: Vec::new(),
                 // Kept: what the last picture export was, remembered for the
                 // next, as the export presets are.
                 image_export: crate::view::image_export::Choices {

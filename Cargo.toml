@@ -132,6 +132,9 @@ unicode-general-category = "1.1"
 # Document model and format.
 slotmap    = { version = "1.1", features = ["serde"] }
 serde      = { version = "1", features = ["derive"] }
+# Find and Change's GREP: byte offsets into the text it searches, which is
+# what every edit to a story takes.
+regex      = "1"
 # float_roundtrip is REQUIRED, not an optimisation. Without it serde_json
 # parses floats to "best-effort precision" and a saved document comes back
 # with geometry altered in the last bit — silently rewriting the user's work

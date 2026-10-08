@@ -30,6 +30,14 @@ pub struct Query {
     pub match_case: bool,
     /// A match must not have a letter or digit immediately beside it.
     pub whole_word: bool,
+    /// The needle is a regular expression, as InDesign's GREP tab takes it:
+    /// `^` and `$` are a paragraph's start and end, `\r` a paragraph break,
+    /// and the change-to text can say `$1` for what a group caught.
+    pub grep: bool,
+    /// Only text set in this paragraph style.
+    pub paragraph_style: Option<tessera_text::story::ParagraphStyleId>,
+    /// Only text set in this character style.
+    pub character_style: Option<tessera_text::story::CharacterStyleId>,
 }
 
 impl Query {
@@ -38,10 +46,84 @@ impl Query {
     /// The empty string is a substring of every position in every story, so
     /// "find" on an empty box would report a hit between every pair of
     /// characters in the document and "change all" would splice text into all
-    /// of them.
+    /// of them. A GREP that does not compile finds nothing either; the window
+    /// says why ([`pattern_error`]).
     pub fn is_runnable(&self) -> bool {
-        !self.needle.is_empty()
+        !self.needle.is_empty() && (!self.grep || self.regex().is_some())
     }
+
+    /// The needle as a compiled expression, when it is a GREP that compiles.
+    fn regex(&self) -> Option<regex::Regex> {
+        build_regex(self).ok()
+    }
+}
+
+/// What InDesign writes `^t`, `^p` and the rest as, in Text mode and in
+/// any change-to text: the characters nobody can type into a box.
+pub const TOKENS: &[(&str, char)] = &[
+    ("^t", '\t'),
+    ("^p", '\n'),
+    ("^m", '\u{2003}'),
+    ("^>", '\u{2002}'),
+    ("^<", '\u{2009}'),
+    ("^|", '\u{200A}'),
+    ("^s", '\u{00A0}'),
+    ("^_", '\u{2014}'),
+    ("^=", '\u{2013}'),
+    ("^-", '\u{00AD}'),
+    ("^~", '\u{2011}'),
+    ("^8", '\u{2022}'),
+    ("^e", '\u{2026}'),
+    ("^^", '^'),
+];
+
+/// `text` with every `^` token turned into its character, left to right, so
+/// `^^t` is a caret and a t rather than a caret and a tab.
+pub fn expand_tokens(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    'scan: while !rest.is_empty() {
+        if rest.starts_with('^') {
+            for (token, c) in TOKENS {
+                if let Some(after) = rest.strip_prefix(token) {
+                    out.push(*c);
+                    rest = after;
+                    continue 'scan;
+                }
+            }
+        }
+        let c = rest.chars().next().expect("not empty");
+        out.push(c);
+        rest = &rest[c.len_utf8()..];
+    }
+    out
+}
+
+/// The GREP as the regex crate takes it: `\r` is a paragraph break, which
+/// Tessera writes `\n`; `^` and `$` mean a paragraph's ends; case and whole
+/// words as the boxes say.
+fn build_regex(query: &Query) -> Result<regex::Regex, regex::Error> {
+    let pattern = query.needle.replace(r"\r", r"\n");
+    let pattern = if query.whole_word {
+        format!(r"\b(?:{pattern})\b")
+    } else {
+        pattern
+    };
+    regex::RegexBuilder::new(&pattern)
+        .case_insensitive(!query.match_case)
+        .multi_line(true)
+        .build()
+}
+
+/// Why a GREP will not run, in words, or `None` when it will.
+pub fn pattern_error(query: &Query) -> Option<String> {
+    if !query.grep || query.needle.is_empty() {
+        return None;
+    }
+    build_regex(query).err().map(|e| match e {
+        regex::Error::Syntax(text) => text.lines().last().unwrap_or("").trim().to_string(),
+        other => other.to_string(),
+    })
 }
 
 /// One occurrence.
@@ -80,6 +162,9 @@ pub fn search(doc: &Document, query: &Query) -> Vec<Hit> {
             continue;
         };
         for range in ranges_in(&text.text, query) {
+            if !formatted_as(text, range.start, query) {
+                continue;
+            }
             hits.push(Hit {
                 story,
                 frame,
@@ -89,6 +174,75 @@ pub fn search(doc: &Document, query: &Query) -> Vec<Hit> {
         }
     }
     hits
+}
+
+/// Whether the text at `at` is set in the styles the query asks for.
+fn formatted_as(story: &tessera_text::story::Story, at: usize, query: &Query) -> bool {
+    let paragraph = query
+        .paragraph_style
+        .is_none_or(|want| story.paragraph_run_at(at).and_then(|r| r.style) == Some(want));
+    let character = query
+        .character_style
+        .is_none_or(|want| story.run_at(at).and_then(|r| r.style) == Some(want));
+    paragraph && character
+}
+
+/// What a hit is changed to: the change-to text with its tokens, or for a
+/// GREP, with `$1` and the other groups filled from what this hit caught.
+pub fn replacement_for(text: &str, range: &Range<usize>, query: &Query, change: &str) -> String {
+    if query.grep
+        && let Some(re) = query.regex()
+        && let Some(caught) = re.captures_at(text, range.start)
+        && caught.get(0).is_some_and(|m| m.start() == range.start)
+    {
+        let mut out = String::new();
+        caught.expand(change, &mut out);
+        return expand_tokens(&out);
+    }
+    expand_tokens(change)
+}
+
+/// The edits that change every hit, each to what [`replacement_for`] makes
+/// of it, back to front as [`edits_for`] orders them.
+pub fn edits_for_query(
+    doc: &Document,
+    hits: &[Hit],
+    query: &Query,
+    change: &str,
+) -> Vec<(StoryId, Range<usize>, String)> {
+    let mut edits: Vec<_> = hits
+        .iter()
+        .map(|hit| {
+            let text = doc.story(hit.story).map_or("", |s| s.text.as_str());
+            (
+                hit.story,
+                hit.range.clone(),
+                replacement_for(text, &hit.range, query, change),
+            )
+        })
+        .collect();
+    edits.sort_by_key(|(_, range, _)| std::cmp::Reverse(range.start));
+    edits
+}
+
+/// Where each edit's new text lies once all of them are made: what a change
+/// of formatting is applied to after the words are changed.
+pub fn landed(edits: &[(StoryId, Range<usize>, String)]) -> Vec<(StoryId, Range<usize>)> {
+    let mut ordered: Vec<_> = edits.to_vec();
+    ordered.sort_by_key(|(story, range, _)| (*story, range.start));
+    let mut out = Vec::new();
+    let mut shift: isize = 0;
+    let mut current: Option<StoryId> = None;
+    for (story, range, text) in ordered {
+        if current != Some(story) {
+            shift = 0;
+            current = Some(story);
+        }
+        let start = (range.start as isize + shift) as usize;
+        out.push((story, start..start + text.len()));
+        shift += text.len() as isize - range.len() as isize;
+    }
+    out
 }
 
 /// Every place text is set in a character style, in reading order, each
@@ -285,6 +439,24 @@ pub fn ranges_in(haystack: &str, query: &Query) -> Vec<Range<usize>> {
     if !query.is_runnable() {
         return found;
     }
+    if query.grep {
+        // The regex crate's offsets are bytes into the haystack itself, so
+        // they are offsets the story accepts. An empty match — `^` alone —
+        // is skipped: changing it would splice text in at every paragraph.
+        if let Some(re) = query.regex() {
+            found.extend(
+                re.find_iter(haystack)
+                    .filter(|m| !m.is_empty())
+                    .map(|m| m.range()),
+            );
+        }
+        return found;
+    }
+    let expanded = Query {
+        needle: expand_tokens(&query.needle),
+        ..query.clone()
+    };
+    let query = &expanded;
 
     let mut at = 0usize;
     while at < haystack.len() {
@@ -374,6 +546,61 @@ mod tests {
     }
 
     #[test]
+    fn a_grep_finds_by_pattern_and_changes_with_what_it_caught() {
+        let q = Query {
+            needle: r"(\d+) (cats?)".into(),
+            grep: true,
+            ..Default::default()
+        };
+        let text = "1 cat, 12 cats and a dog";
+        let found = ranges_in(text, &q);
+        assert_eq!(found, vec![0..5, 7..14]);
+        assert_eq!(replacement_for(text, &found[1], &q, "$2 x$1"), "cats x12");
+        // A paragraph's start and end, and \r for its break.
+        let starts = Query {
+            needle: r"^\w+".into(),
+            grep: true,
+            ..Default::default()
+        };
+        assert_eq!(ranges_in("one two\nthree", &starts), vec![0..3, 8..13]);
+        let breaks = Query {
+            needle: r"\r".into(),
+            grep: true,
+            ..Default::default()
+        };
+        assert_eq!(ranges_in("a\nb", &breaks), vec![1..2]);
+    }
+
+    #[test]
+    fn a_grep_that_does_not_compile_finds_nothing_and_says_why() {
+        let q = Query {
+            needle: "(unclosed".into(),
+            grep: true,
+            ..Default::default()
+        };
+        assert!(!q.is_runnable());
+        assert!(ranges_in("(unclosed", &q).is_empty());
+        assert!(pattern_error(&q).is_some());
+    }
+
+    #[test]
+    fn tokens_stand_for_the_characters_nobody_can_type() {
+        assert_eq!(expand_tokens("a^tb^pc^m"), "a\tb\nc\u{2003}");
+        assert_eq!(expand_tokens("^^t"), "^t", "a doubled caret is a caret");
+        assert_eq!(ranges_in("one\ttwo", &query("^t")), vec![3..4]);
+    }
+
+    #[test]
+    fn changed_text_lands_where_the_edits_leave_it() {
+        let story = StoryId::default();
+        let edits = vec![
+            (story, 10..12, "xyz".to_string()),
+            (story, 0..4, "a".to_string()),
+        ];
+        assert_eq!(landed(&edits), vec![(story, 0..1), (story, 7..10)]);
+    }
+
+    #[test]
     fn an_empty_needle_finds_nothing() {
         // It is a substring of every position, so the honest answer to "find
         // nothing" is nothing — not a hit between every pair of characters,
@@ -403,6 +630,7 @@ mod tests {
             needle: "dog".into(),
             match_case: true,
             whole_word: false,
+            ..Default::default()
         };
         assert_eq!(ranges_in("Dog dog DOG", &exact), vec![4..7]);
     }
@@ -439,6 +667,7 @@ mod tests {
             needle: "cat".into(),
             match_case: false,
             whole_word: true,
+            ..Default::default()
         };
         assert_eq!(ranges_in("the cat in concatenate", &whole), vec![4..7]);
         // Punctuation is not part of a word, so the last one still counts.
@@ -451,6 +680,7 @@ mod tests {
             needle: "cat".into(),
             match_case: false,
             whole_word: true,
+            ..Default::default()
         };
         assert_eq!(ranges_in("cat", &whole), vec![0..3]);
     }

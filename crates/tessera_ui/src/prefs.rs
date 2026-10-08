@@ -303,6 +303,23 @@ pub struct Preferences {
     /// spine — InDesign's Ruler per spread, per page and on spine.
     #[serde(default)]
     pub ruler_origin: RulerOrigin,
+
+    /// Find and Change's saved queries: what to find and what to change it
+    /// to, under a name, kept across documents as InDesign keeps them.
+    #[serde(default)]
+    pub saved_queries: Vec<SavedQuery>,
+}
+
+/// A Find and Change query kept under a name. Its words and switches only:
+/// a style belongs to one document, and a saved query is for any.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedQuery {
+    pub name: String,
+    pub needle: String,
+    pub change: String,
+    pub match_case: bool,
+    pub whole_word: bool,
+    pub grep: bool,
 }
 
 /// Where the rulers' zero is, when nobody has dragged it somewhere.
@@ -375,6 +392,7 @@ impl Default for Preferences {
             show_hidden_characters: false,
             show_rulers: true,
             ruler_origin: RulerOrigin::Spread,
+            saved_queries: Vec::new(),
         }
     }
 }
@@ -596,6 +614,14 @@ mod tests {
             show_hidden_characters: true,
             show_rulers: false,
             ruler_origin: RulerOrigin::Spine,
+            saved_queries: vec![SavedQuery {
+                name: "Double spaces".into(),
+                needle: "  +".into(),
+                change: " ".into(),
+                match_case: false,
+                whole_word: false,
+                grep: true,
+            }],
             flow_placed_text: false,
             reflow_adds_pages: false,
             reflow_removes_pages: true,

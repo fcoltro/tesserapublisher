@@ -19,6 +19,12 @@ pub struct FindWindow {
     pub open: bool,
     pub query: Query,
     pub replacement: String,
+    /// The paragraph style the changed text is set in, when one is asked.
+    pub change_paragraph_style: Option<tessera_text::story::ParagraphStyleId>,
+    /// The character style the changed text is set in, when one is asked.
+    pub change_character_style: Option<tessera_text::story::CharacterStyleId>,
+    /// The name the query is saved under, as typed.
+    pub save_as: String,
     /// Which hit of the last search we are standing on.
     ///
     /// Invalidated whenever the document, revision or query changes.
@@ -89,9 +95,23 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
     }
 
     ui.horizontal(|ui| {
+        // Text or GREP, as InDesign's two tabs: one box, two languages.
+        ui.selectable_value(&mut state.find.query.grep, false, "Text")
+            .on_hover_text(TOKEN_HELP);
+        ui.selectable_value(&mut state.find.query.grep, true, "GREP")
+            .on_hover_text("A regular expression: ^ and $ are a paragraph's ends, \\r its break, and $1 in the change-to text is what the first group caught.");
+        ui.separator();
         ui.checkbox(&mut state.find.query.match_case, "Match case");
         ui.checkbox(&mut state.find.query.whole_word, "Whole word");
     });
+    if let Some(error) = find::pattern_error(&state.find.query) {
+        ui.colored_label(
+            Theme::error(),
+            format!("The expression does not read: {error}"),
+        );
+    }
+    formats(ui, state);
+    saved_queries(ui, state);
     sync_context(state);
 
     // Return in the find box is Find Next, which is what every search box in
@@ -153,6 +173,182 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
         ui.colored_label(Theme::text_muted(), note);
     } else {
         ui.weak("Enter to find next · Shift+Enter to find previous");
+    }
+}
+
+/// What the `^` tokens stand for, said where they are typed.
+const TOKEN_HELP: &str = "Special characters: ^t tab, ^p paragraph break, ^m em space, ^> en space, ^< thin space, ^| hair space, ^s non-breaking space, ^_ em dash, ^= en dash, ^- discretionary hyphen, ^~ non-breaking hyphen, ^8 bullet, ^e ellipsis, ^^ a caret.";
+
+/// Find format and Change format: the styles text must be set in to be
+/// found, and the styles changed text is set in.
+fn formats(ui: &mut Ui, state: &mut TesseraApp) {
+    let doc = state.active().document();
+    let paragraph: Vec<_> = doc
+        .paragraph_styles
+        .iter()
+        .map(|(id, s)| (id, s.name.clone()))
+        .collect();
+    let character: Vec<_> = doc
+        .character_styles
+        .iter()
+        .map(|(id, s)| (id, s.name.clone()))
+        .collect();
+    if paragraph.is_empty() && character.is_empty() {
+        return;
+    }
+    fn pick<K: Copy + PartialEq>(
+        ui: &mut Ui,
+        salt: &str,
+        none: &str,
+        value: &mut Option<K>,
+        styles: &[(K, String)],
+    ) {
+        let shown = value
+            .and_then(|v| styles.iter().find(|(k, _)| *k == v))
+            .map_or(none.to_string(), |(_, n)| n.clone());
+        egui::ComboBox::from_id_salt(salt)
+            .selected_text(shown)
+            .width(150.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(value, None, none);
+                for (k, name) in styles {
+                    ui.selectable_value(value, Some(*k), name);
+                }
+            });
+    }
+    egui::Grid::new("find-formats")
+        .num_columns(3)
+        .show(ui, |ui| {
+            ui.label("Find format");
+            pick(
+                ui,
+                "find-para",
+                "Any paragraph style",
+                &mut state.find.query.paragraph_style,
+                &paragraph,
+            );
+            pick(
+                ui,
+                "find-char",
+                "Any character style",
+                &mut state.find.query.character_style,
+                &character,
+            );
+            ui.end_row();
+            ui.label("Change format");
+            pick(
+                ui,
+                "change-para",
+                "Paragraph style as is",
+                &mut state.find.change_paragraph_style,
+                &paragraph,
+            );
+            pick(
+                ui,
+                "change-char",
+                "Character style as is",
+                &mut state.find.change_character_style,
+                &character,
+            );
+            ui.end_row();
+        });
+}
+
+/// Saved queries: a menu of them, and saving or deleting the one in the
+/// boxes. Kept in the preferences, so they are there in every document.
+fn saved_queries(ui: &mut Ui, state: &mut TesseraApp) {
+    ui.horizontal(|ui| {
+        let mut chosen = None;
+        egui::ComboBox::from_id_salt("find-saved")
+            .selected_text("Saved queries")
+            .width(150.0)
+            .show_ui(ui, |ui| {
+                if state.prefs.saved_queries.is_empty() {
+                    ui.weak("None saved yet");
+                }
+                for (at, saved) in state.prefs.saved_queries.iter().enumerate() {
+                    if ui.selectable_label(false, &saved.name).clicked() {
+                        chosen = Some(at);
+                    }
+                }
+            });
+        if let Some(at) = chosen
+            && let Some(saved) = state.prefs.saved_queries.get(at).cloned()
+        {
+            state.find.query.needle = saved.needle;
+            state.find.replacement = saved.change;
+            state.find.query.match_case = saved.match_case;
+            state.find.query.whole_word = saved.whole_word;
+            state.find.query.grep = saved.grep;
+            state.find.save_as = saved.name;
+        }
+        ui.add(
+            egui::TextEdit::singleline(&mut state.find.save_as)
+                .desired_width(110.0)
+                .hint_text("name"),
+        );
+        let name = state.find.save_as.trim().to_string();
+        if ui
+            .add_enabled(
+                !name.is_empty() && !state.find.query.needle.is_empty(),
+                egui::Button::new("Save"),
+            )
+            .clicked()
+        {
+            let saved = crate::prefs::SavedQuery {
+                name: name.clone(),
+                needle: state.find.query.needle.clone(),
+                change: state.find.replacement.clone(),
+                match_case: state.find.query.match_case,
+                whole_word: state.find.query.whole_word,
+                grep: state.find.query.grep,
+            };
+            // The same name again replaces it, as saving over a file does.
+            state.prefs.saved_queries.retain(|q| q.name != name);
+            state.prefs.saved_queries.push(saved);
+            crate::prefs::remember(state);
+        }
+        let known = state.prefs.saved_queries.iter().any(|q| q.name == name);
+        if ui.add_enabled(known, egui::Button::new("Delete")).clicked() {
+            state.prefs.saved_queries.retain(|q| q.name != name);
+            crate::prefs::remember(state);
+        }
+    });
+}
+
+/// The command that changes `hits`: their words, then the styles the
+/// window asks for on the words that took their place — one undo step.
+fn change_command(state: &TesseraApp, hits: &[find::Hit]) -> crate::Command {
+    let edits = find::edits_for_query(
+        state.active().document(),
+        hits,
+        &state.find.query,
+        &state.find.replacement,
+    );
+    let landed = find::landed(&edits);
+    let mut commands = vec![crate::Command::ReplaceMatches { edits }];
+    for (story, range) in landed {
+        if let Some(style) = state.find.change_paragraph_style {
+            commands.push(crate::Command::SetParagraphStyleOf {
+                story,
+                range: range.clone(),
+                style: Some(style),
+            });
+        }
+        if let Some(style) = state.find.change_character_style
+            && !range.is_empty()
+        {
+            commands.push(crate::Command::SetCharacterStyleOf {
+                story,
+                range,
+                style: Some(style),
+            });
+        }
+    }
+    if commands.len() == 1 {
+        commands.pop().expect("one")
+    } else {
+        crate::Command::Together(commands)
     }
 }
 
@@ -243,11 +439,19 @@ fn change_one(state: &mut TesseraApp) {
 
     // The edit closes the editing session, because the buffer holds its own
     // copy of the story and would write a stale one back over the change.
-    let edits = find::edits_for(&hits[at..=at], &state.find.replacement);
-    crate::apply(state, crate::Command::ReplaceMatches { edits });
+    let command = change_command(state, &hits[at..=at]);
+    let inserted = find::edits_for_query(
+        state.active().document(),
+        &hits[at..=at],
+        &state.find.query,
+        &state.find.replacement,
+    )
+    .first()
+    .map_or(0, |(_, _, text)| text.len());
+    crate::apply(state, command);
 
     // Resume beyond the inserted text, whose length may differ from the hit.
-    let resume = hits[at].range.start + state.find.replacement.len();
+    let resume = hits[at].range.start + inserted;
     let remaining = find::search(state.active().document(), &state.find.query);
     sync_context(state);
     if remaining.is_empty() {
@@ -279,8 +483,8 @@ fn change_every(state: &mut TesseraApp) {
         return;
     }
     let count = hits.len();
-    let edits = find::edits_for(&hits, &state.find.replacement);
-    crate::apply(state, crate::Command::ReplaceMatches { edits });
+    let command = change_command(state, &hits);
+    crate::apply(state, command);
     sync_context(state);
     state.find.at = None;
     state.find.note = Some(match count {
@@ -294,6 +498,50 @@ mod tests {
     use super::*;
     use crate::command::{Command, apply};
     use tessera_geometry::DocRect;
+
+    #[test]
+    fn a_grep_change_all_uses_what_each_hit_caught_in_one_undo() {
+        let mut state = a_document_saying("1 cat, 12 cats");
+        state.find.query.needle = r"(\d+) (cats?)".into();
+        state.find.query.grep = true;
+        state.find.replacement = "$2^t$1".into();
+        change_every(&mut state);
+        assert_eq!(text_of(&state), "cat\t1, cats\t12");
+        apply(&mut state, Command::Undo);
+        assert_eq!(text_of(&state), "1 cat, 12 cats");
+    }
+
+    #[test]
+    fn changed_text_takes_the_style_asked_for() {
+        let mut state = a_document_saying("old and old");
+        let style = tessera_text::story::CharacterStyle {
+            name: "Strong".into(),
+            ..Default::default()
+        };
+        apply(&mut state, Command::DefineCharacterStyle(style));
+        let id = state
+            .active()
+            .document()
+            .character_styles
+            .iter()
+            .next()
+            .map(|(id, _)| id)
+            .expect("defined");
+        state.find.query.needle = "old".into();
+        state.find.replacement = "new".into();
+        state.find.change_character_style = Some(id);
+        change_every(&mut state);
+        assert_eq!(text_of(&state), "new and new");
+        let doc = state.active().document();
+        let story = doc.stories.values().next().expect("a story");
+        assert_eq!(story.run_at(1).and_then(|r| r.style), Some(id));
+        assert_eq!(story.run_at(9).and_then(|r| r.style), Some(id));
+        assert_ne!(
+            story.run_at(4).and_then(|r| r.style),
+            Some(id),
+            "and stays between"
+        );
+    }
 
     #[test]
     fn enter_and_shift_enter_keep_search_focus_and_navigate() {

@@ -329,6 +329,11 @@ fn find_text(state: &mut TesseraApp, arguments: &Value) -> Result<Value, String>
             .get("whole_word")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        grep: arguments
+            .get("grep")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        ..Default::default()
     };
     if query.needle.is_empty() {
         return Err("query must not be empty".into());
