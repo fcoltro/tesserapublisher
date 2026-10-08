@@ -655,7 +655,7 @@ fn delete_dialog(ctx: &egui::Context, state: &mut TesseraApp) {
             ui.add_space(Theme::space_3());
             ui.horizontal(|ui| {
                 go = ui.add(super::primary_button("Delete")).clicked();
-                cancel = ui.button("Cancel").clicked();
+                cancel = ui.add(crate::view::secondary_button("Cancel")).clicked();
             });
         });
     if response.should_close() || cancel {
@@ -710,6 +710,7 @@ fn editor(ctx: &egui::Context, state: &mut TesseraApp) {
         .corner_radius(WINDOW_RADIUS)
         .inner_margin(0);
     egui::Window::new(format!("Swatch: {}", swatch.name))
+        .collapsible(false)
         // By id, not title: the title changes with every rename.
         .id(egui::Id::new("swatch-editor"))
         .title_bar(false)

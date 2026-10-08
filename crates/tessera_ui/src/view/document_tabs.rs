@@ -209,7 +209,7 @@ pub fn confirm_close(ctx: &egui::Context, state: &mut TesseraApp) {
                 if ui.button("Save and close").clicked() {
                     decided = Some(Decision::Save);
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.add(crate::view::secondary_button("Cancel")).clicked() {
                     decided = Some(Decision::Keep);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

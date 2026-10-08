@@ -240,7 +240,7 @@ fn footnote(ctx: &egui::Context, state: &mut TesseraApp) {
             ui.add_space(Theme::space_2());
             ui.horizontal(|ui| {
                 go = ui.add(super::primary_button("OK")).clicked();
-                if ui.button("Cancel").clicked() {
+                if ui.add(crate::view::secondary_button("Cancel")).clicked() {
                     window.open = false;
                 }
             });
@@ -291,7 +291,7 @@ fn note(ctx: &egui::Context, state: &mut TesseraApp) {
             ui.add_space(Theme::space_2());
             ui.horizontal(|ui| {
                 go = ui.add(super::primary_button("OK")).clicked();
-                if ui.button("Cancel").clicked() {
+                if ui.add(crate::view::secondary_button("Cancel")).clicked() {
                     window.open = false;
                 }
                 remove = ui.button("Delete note").clicked();
@@ -398,7 +398,7 @@ fn index_entry(ctx: &egui::Context, state: &mut TesseraApp) {
                         super::primary_button("Add"),
                     )
                     .clicked();
-                if ui.button("Cancel").clicked() {
+                if ui.add(crate::view::secondary_button("Cancel")).clicked() {
                     window.open = false;
                 }
             });
@@ -595,7 +595,7 @@ fn contents(ctx: &egui::Context, state: &mut TesseraApp) {
                 go = ui
                     .add_enabled(!draft.levels.is_empty(), super::primary_button(verb))
                     .clicked();
-                if ui.button("Cancel").clicked() {
+                if ui.add(crate::view::secondary_button("Cancel")).clicked() {
                     window.open = false;
                 }
             });
@@ -664,7 +664,7 @@ fn endnotes(ctx: &egui::Context, state: &mut TesseraApp) {
                     "Place on this page"
                 };
                 go = ui.add(super::primary_button(verb)).clicked();
-                if ui.button("Cancel").clicked() {
+                if ui.add(crate::view::secondary_button("Cancel")).clicked() {
                     window.open = false;
                 }
             });
@@ -717,7 +717,7 @@ fn index(ctx: &egui::Context, state: &mut TesseraApp) {
                     "Place on this page"
                 };
                 go = ui.add(super::primary_button(verb)).clicked();
-                if ui.button("Cancel").clicked() {
+                if ui.add(crate::view::secondary_button("Cancel")).clicked() {
                     window.open = false;
                 }
             });

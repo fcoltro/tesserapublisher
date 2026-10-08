@@ -81,6 +81,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
     let mut open = true;
 
     egui::Window::new("Table and cell styles")
+        .collapsible(false)
         .open(&mut open)
         .default_width(340.0)
         .show(ctx, |ui| {
@@ -315,6 +316,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                 ui.add_space(Theme::space_1());
                 egui::CollapsingHeader::new("Cell style options")
                     .id_salt("cell-style-options")
+                    .icon(crate::view::chevron_icon)
                     .show(ui, |ui| {
                         cell_style_options(ui, style, &mut edited, &choices)
                     });

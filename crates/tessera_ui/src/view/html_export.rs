@@ -102,7 +102,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) -> bool {
     let mut go = false;
     ui.horizontal(|ui| {
         go = ui.add(super::primary_button("Export…")).clicked();
-        if ui.button("Cancel").clicked() {
+        if ui.add(crate::view::secondary_button("Cancel")).clicked() {
             window.open = false;
         }
     });

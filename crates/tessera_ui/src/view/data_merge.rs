@@ -258,6 +258,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
     let mut open = true;
 
     egui::Window::new("Data merge")
+        .collapsible(false)
         .open(&mut open)
         .resizable(false)
         .default_width(280.0)

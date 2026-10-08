@@ -517,6 +517,9 @@ impl Theme {
     pub const CURSOR_ON_LIGHT: Color32 = Color32::from_rgb(0x12, 0x13, 0x15);
     /// Side of a painted cursor, in logical points.
     pub const CURSOR_SIZE: f32 = 20.0;
+    /// The blue of the Tessera logotype: the dialogs' main button, in both
+    /// themes, since it is the brand's and not the palette's.
+    pub const BRAND: Color32 = Color32::from_rgb(0x3E, 0x4E, 0xFA);
 
     /// The reference point a rotation turns about.
     pub const REFERENCE_MARK: f32 = 4.0;
@@ -1283,5 +1286,10 @@ mod tests {
                 "{name}: paper does not separate from its pasteboard ({ratio:.2}:1)"
             );
         }
+    }
+
+    #[test]
+    fn white_reads_on_the_brand_blue() {
+        assert!(contrast_ratio(Color32::WHITE, Theme::BRAND) >= 4.5);
     }
 }

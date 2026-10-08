@@ -212,7 +212,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                 if window.had_link && ui.button("Remove link").clicked() {
                     remove = true;
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.add(crate::view::secondary_button("Cancel")).clicked() {
                     window.open = false;
                 }
             });

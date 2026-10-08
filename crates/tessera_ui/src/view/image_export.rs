@@ -477,7 +477,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) -> bool {
         go = ui
             .add_enabled(plan.is_ok(), super::primary_button("Export…"))
             .clicked();
-        if ui.button("Cancel").clicked() {
+        if ui.add(crate::view::secondary_button("Cancel")).clicked() {
             state.image_export.open = false;
         }
     });

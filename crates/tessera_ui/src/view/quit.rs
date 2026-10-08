@@ -67,7 +67,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                 discard = ui.button("Discard and quit").clicked();
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     save = ui.add(super::primary_button("Save all and quit")).clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    cancel = ui.add(crate::view::secondary_button("Cancel")).clicked();
                 });
             });
         });

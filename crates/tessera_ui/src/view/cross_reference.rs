@@ -111,7 +111,7 @@ fn anchor_box(ctx: &egui::Context, state: &mut TesseraApp) {
                         super::primary_button("Insert"),
                     )
                     .clicked();
-                if ui.button("Cancel").clicked() {
+                if ui.add(crate::view::secondary_button("Cancel")).clicked() {
                     window.open = false;
                 }
             });
@@ -202,7 +202,7 @@ fn reference_box(ctx: &egui::Context, state: &mut TesseraApp) {
                 go = ui
                     .add_enabled(!window.target.is_empty(), super::primary_button(verb))
                     .clicked();
-                if ui.button("Cancel").clicked() {
+                if ui.add(crate::view::secondary_button("Cancel")).clicked() {
                     window.open = false;
                 }
             });

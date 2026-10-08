@@ -143,7 +143,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
             ui.add_space(Theme::space_2());
             ui.horizontal(|ui| {
                 go = ui.add(super::primary_button("OK")).clicked();
-                if ui.button("Cancel").clicked() {
+                if ui.add(crate::view::secondary_button("Cancel")).clicked() {
                     window.open = false;
                 }
             });

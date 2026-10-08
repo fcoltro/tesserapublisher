@@ -84,10 +84,42 @@ pub(crate) fn dialog_frame(ctx: &egui::Context) -> egui::Frame {
         .corner_radius(10)
 }
 
+/// A dialog's main button, in InDesign's shape: a pill, filled in the
+/// Tessera blue with white type (5.7:1, past AA).
 pub(crate) fn primary_button(text: &str) -> egui::Button<'_> {
-    egui::Button::new(egui::RichText::new(text).color(crate::theme::readable_on(Theme::accent())))
-        .fill(Theme::accent())
+    egui::Button::new(egui::RichText::new(text).color(egui::Color32::WHITE))
+        .fill(Theme::BRAND)
+        .stroke(egui::Stroke::NONE)
+        .corner_radius(PILL)
+        .min_size(egui::vec2(72.0, 26.0))
 }
+
+/// A dialog's other buttons — Cancel, Close: the same pill, outlined, with
+/// nothing behind the words, so the eye goes to the one that does the job.
+pub(crate) fn secondary_button(text: &str) -> egui::Button<'_> {
+    egui::Button::new(egui::RichText::new(text).color(Theme::text_primary()))
+        .fill(egui::Color32::TRANSPARENT)
+        .stroke(egui::Stroke::new(1.0, Theme::border()))
+        .corner_radius(PILL)
+        .min_size(egui::vec2(72.0, 26.0))
+}
+
+/// The disclosure mark for an egui collapsing header: the sections' thin
+/// chevron, turned down as it opens, rather than egui's filled triangle.
+pub(crate) fn chevron_icon(ui: &mut egui::Ui, openness: f32, response: &egui::Response) {
+    let rect = egui::Rect::from_center_size(response.rect.center(), egui::Vec2::splat(10.0));
+    crate::icons::paint_rotated(
+        ui.painter(),
+        rect,
+        crate::icons::Icon::Disclosure,
+        Theme::text_muted(),
+        90.0 * openness,
+    );
+}
+
+/// A radius larger than any button is tall, which egui draws as fully
+/// round ends.
+const PILL: u8 = 255;
 
 /// Raw keyboard handlers must respect dialogs as well as egui's focus.
 ///
@@ -517,7 +549,7 @@ pub fn name_workspace(ctx: &egui::Context, state: &mut TesseraApp) {
                     || (named
                         && box_.lost_focus()
                         && ui.input(|i| i.key_pressed(egui::Key::Enter)));
-                cancel = ui.button("Cancel").clicked();
+                cancel = ui.add(crate::view::secondary_button("Cancel")).clicked();
             });
         });
 

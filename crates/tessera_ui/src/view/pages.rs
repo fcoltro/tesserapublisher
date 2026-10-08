@@ -242,7 +242,7 @@ fn insert_form(ui: &mut Ui, state: &mut TesseraApp) {
             if super::panel_ui::action(ui, Icon::Plus, &label).clicked() {
                 go = true;
             }
-            if ui.button("Cancel").clicked() {
+            if ui.add(crate::view::secondary_button("Cancel")).clicked() {
                 cancel = true;
             }
         });

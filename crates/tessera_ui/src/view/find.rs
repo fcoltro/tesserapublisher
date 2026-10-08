@@ -47,6 +47,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
     }
     let mut open = true;
     egui::Window::new("Find and Change")
+        .collapsible(false)
         .open(&mut open)
         .resizable(false)
         .default_width(420.0)

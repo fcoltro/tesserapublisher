@@ -13,7 +13,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
     let mut clear = false;
     egui::Window::new("Conveyor")
         .resizable(false)
-        .collapsible(true)
+        .collapsible(false)
         .default_pos(ctx.content_rect().left_bottom() + egui::vec2(80.0, -260.0))
         .show(ctx, |ui| {
             ui.horizontal(|ui| {

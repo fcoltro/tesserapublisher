@@ -384,7 +384,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                             super::primary_button("Create"),
                         )
                         .clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    cancel = ui.add(crate::view::secondary_button("Cancel")).clicked();
                 });
             });
         });

@@ -270,6 +270,7 @@ pub fn editor(ctx: &egui::Context, state: &mut TesseraApp) {
         .corner_radius(WINDOW_RADIUS)
         .inner_margin(0);
     egui::Window::new(window_title(state))
+        .collapsible(false)
         // Named by its id rather than its title, which changes with the
         // style: a window keyed on its title would jump back to where it
         // first opened every time another style was chosen.

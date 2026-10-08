@@ -91,7 +91,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                 {
                     go = true;
                 }
-                if ui.button("Close").clicked() {
+                if ui.add(crate::view::secondary_button("Close")).clicked() {
                     window.open = false;
                 }
             });

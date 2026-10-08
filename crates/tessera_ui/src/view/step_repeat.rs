@@ -69,7 +69,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
                 // Said rather than left to a button that does nothing: an
                 // enabled control that changes nothing reads as broken.
                 ui.colored_label(Theme::text_muted(), "Nothing is selected.");
-                if ui.button("Close").clicked() {
+                if ui.add(crate::view::secondary_button("Close")).clicked() {
                     window.open = false;
                 }
                 return;
@@ -104,7 +104,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
             ui.add_space(Theme::space_2());
             ui.horizontal(|ui| {
                 go = ui.add(super::primary_button("Make copies")).clicked();
-                if ui.button("Cancel").clicked() {
+                if ui.add(crate::view::secondary_button("Cancel")).clicked() {
                     window.open = false;
                 }
             });

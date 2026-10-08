@@ -101,6 +101,7 @@ pub fn show(ctx: &egui::Context, state: &mut TesseraApp) {
 
     let mut open = true;
     egui::Window::new("Preferences")
+        .collapsible(false)
         .open(&mut open)
         .resizable(true)
         .default_width(520.0)
