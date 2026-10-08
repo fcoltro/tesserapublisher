@@ -69,6 +69,10 @@ pub struct OpenDocument {
     /// the caret is in a note at the foot of a column rather than in the
     /// copy. Beside `editing` for the reason `editing_cell` is.
     pub editing_note: Option<usize>,
+    /// The picture frame whose picture, rather than the frame, is chosen:
+    /// see [`crate::view::content`]. Read through `content::chosen`, which
+    /// also asks that the frame is still the selection.
+    pub content: Option<FrameId>,
     /// Whether anything has been typed since the editing session's last undo
     /// entry. A word boundary opens a new entry only when there is a word to
     /// close: two spaces in a row are one thing typed, not two undo steps.
@@ -110,6 +114,7 @@ impl OpenDocument {
             editing: None,
             editing_cell: None,
             editing_note: None,
+            content: None,
             typed_since_entry: false,
             current_path: None,
             dirty: false,

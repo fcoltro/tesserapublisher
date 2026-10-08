@@ -882,7 +882,12 @@ fn walk_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tesser
     }
 
     if ui.input(|i| i.key_pressed(egui::Key::Escape)) && !state.active().selection.is_empty() {
-        state.active_mut().selection.clear();
+        // Out of the picture to its frame first, then out of the frame.
+        if super::content::chosen(state).is_some() {
+            super::content::release(state);
+        } else {
+            state.active_mut().selection.clear();
+        }
     }
 }
 
@@ -2238,6 +2243,11 @@ fn grabbable(
         if state.active_tool == Tool::DirectSelect && is_vector_shape(state, id) {
             return None;
         }
+        // Nor while the picture inside it is chosen: the handles are the
+        // picture's then.
+        if super::content::chosen(state) == Some(id) {
+            return None;
+        }
         let (bounds, placement) = presented(state, id)?;
         return Some((Some(id), bounds, placement));
     }
@@ -2519,6 +2529,9 @@ fn canvas_cursor(
         Tool::Scissors => Cursor::new(Icon::Crosshair),
         // Adobe's white arrow: the tool that picks parts rather than wholes.
         Tool::DirectSelect => Cursor::new(Icon::DirectSelect),
+        Tool::Select if super::content::grabber_at(state, rect, pos).is_some() => {
+            Cursor::new(Icon::Hand)
+        }
         Tool::Select => match grab_at(state, rect, pos) {
             Some(grabbed) => grip_cursor(&grabbed),
             // A chosen table's boundary can be pulled, before the table
@@ -2547,6 +2560,20 @@ fn canvas_cursor(
 /// that did nothing away from an anchor would mean choosing a path to edit
 /// required switching tools twice: once to select it, once to edit it.
 fn direct_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
+    // On a picture frame, the direct-select tool takes the picture inside
+    // it, as InDesign's does.
+    if (response.drag_started() || response.clicked())
+        && let Some(pos) = press_pos(ui, response)
+        && super::anchors::grip_at(state, rect, pos).is_none()
+        && let Some(id) = frame_at(state, rect, pos)
+        && super::content::placement(state, id).is_some()
+        && super::content::chosen(state) != Some(id)
+    {
+        super::content::choose(state, id);
+    }
+    if super::content::gesture(ui, response, rect, state, |s, p| doc_pos(s, rect, p)) {
+        return;
+    }
     if response.drag_started()
         && let Some(pos) = response.interact_pointer_pos()
     {
@@ -3137,6 +3164,10 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
     if super::path_text_handles::gesture(response, press_pos(ui, response), rect, state, |s, p| {
         doc_pos(s, rect, p)
     }) {
+        return;
+    }
+    // The picture inside a frame, when it is chosen or its grabber pressed.
+    if super::content::gesture(ui, response, rect, state, |s, p| doc_pos(s, rect, p)) {
         return;
     }
     if transform_gesture(ui, response, rect, state) {
@@ -3896,6 +3927,9 @@ fn begin_text_edit(response: &egui::Response, rect: Rect, state: &mut TesseraApp
         // first cell" would put the caret somewhere they did not click.
         state.active_mut().selection.set(id);
         start_editing_cell(state, id, Some(cell));
+    } else if super::content::placement(state, id).is_some() {
+        // The picture in it, as InDesign's double-click takes it.
+        super::content::choose(state, id);
     } else if is_vector_shape(state, id) {
         // A shape is opened the way InDesign and Illustrator open one: the
         // direct-select tool, on its anchor points.
@@ -4184,7 +4218,7 @@ fn draw_overlays(
             .collect()
     }
 
-    // A text frame's edge is always drawn, selected or not — the way InDesign
+    // A text or picture frame's edge is always drawn, selected or not — the way InDesign
     // shows one. An empty text frame has no ink of its own, so without this it
     // is invisible until something is typed into it, and there is nothing to
     // aim at when nothing has been. In its layer's colour, as InDesign draws
@@ -4195,8 +4229,13 @@ fn draw_overlays(
         let Some(frame) = state.active().document().frame(id) else {
             continue;
         };
-        if !matches!(frame.kind, tessera_document::nodes::FrameKind::Text { .. })
-            || state.active().selection.contains(id)
+        // A picture frame's too: where it crops is part of the layout, and
+        // an image filling it says nothing of where its edge is.
+        if !matches!(
+            frame.kind,
+            tessera_document::nodes::FrameKind::Text { .. }
+                | tessera_document::nodes::FrameKind::Graphic { .. }
+        ) || state.active().selection.contains(id)
         {
             continue; // a selected frame has its outline drawn below
         }
@@ -4213,6 +4252,7 @@ fn draw_overlays(
     if state.active_tool == Tool::DirectSelect {
         super::anchors::draw(state, rect, &painter);
     }
+    super::content::draw(state, rect, &painter);
     super::path_text_handles::draw(state, rect, &painter);
     super::ports::draw_loading(ui, state, rect);
     snap_indicator(state, rect, &painter);

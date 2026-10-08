@@ -10,6 +10,7 @@ pub mod book;
 pub mod canvas_toolbar;
 pub mod colour_theme;
 pub mod console;
+pub mod content;
 pub mod control;
 pub mod conveyor;
 pub mod cross_reference;

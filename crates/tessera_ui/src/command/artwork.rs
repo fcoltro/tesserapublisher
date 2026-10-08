@@ -78,6 +78,14 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
             state.active_mut().document_mut().refit(id, fit);
         }
 
+        Command::SetContentTransform { id, inner } => {
+            if let Some(frame) = state.active_mut().document_mut().frame_mut(id)
+                && let FrameKind::Graphic { placed: Some(p) } = &mut frame.kind
+            {
+                p.inner = inner;
+            }
+        }
+
         Command::FitFrameToArtwork { id } => {
             state.active_mut().document_mut().fit_frame_to_content(id);
         }

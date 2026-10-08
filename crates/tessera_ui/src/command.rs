@@ -231,6 +231,12 @@ pub enum Command {
     FitFrameToArtwork {
         id: FrameId,
     },
+    /// Put the picture in a frame somewhere else inside it, at another
+    /// size: what dragging it by hand does.
+    SetContentTransform {
+        id: FrameId,
+        inner: tessera_geometry::Transform,
+    },
     /// Show another page of the PDF placed in a frame, or cut it to another
     /// of its boxes. This frame alone: others showing the file keep theirs.
     ShowPdfPage {
@@ -1374,6 +1380,7 @@ impl Command {
             | Command::RelinkMany { .. }
             | Command::RefitArtwork { .. }
             | Command::FitFrameToArtwork { .. }
+            | Command::SetContentTransform { .. }
             | Command::ShowPdfPage { .. } => Area::Artwork,
             Command::AddTable { .. }
             | Command::TableRow { .. }
