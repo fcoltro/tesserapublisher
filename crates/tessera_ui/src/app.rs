@@ -567,6 +567,8 @@ pub struct TesseraApp {
 
     /// The Step and Repeat box, and what it was last asked for.
     pub step: crate::view::step_repeat::StepWindow,
+    /// Help > About Tessera, open.
+    pub about_open: bool,
     pub numbering: crate::view::sections::SectionsWindow,
     pub variables: crate::view::variables::VariablesWindow,
     pub table_options: crate::view::table_options::TableOptionsWindow,
@@ -766,6 +768,7 @@ impl TesseraApp {
             picked_anchor: None,
             new_document: crate::view::new_document::NewDocument::default(),
             step: crate::view::step_repeat::StepWindow::default(),
+            about_open: false,
             numbering: crate::view::sections::SectionsWindow::default(),
             variables: crate::view::variables::VariablesWindow::default(),
             table_options: crate::view::table_options::TableOptionsWindow::default(),

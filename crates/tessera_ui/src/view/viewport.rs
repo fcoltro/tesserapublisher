@@ -220,9 +220,28 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     } else {
         Vec::new()
     };
+    let hidden = if state.screen_mode.shows_chrome() && state.prefs.show_hidden_characters {
+        super::hidden::marks(state)
+    } else {
+        Vec::new()
+    };
     if state.screen_mode.shows_chrome() {
         draw_overlays(ui, rect, state, caret.as_ref(), &overset);
         draw_squiggles(ui, rect, state, &squiggles);
+        if !hidden.is_empty() {
+            let view = state.active().view;
+            let to_screen = |p: DocPoint| {
+                let s = view.doc_to_screen(p);
+                egui::pos2(rect.min.x + s.x, rect.min.y + s.y)
+            };
+            super::hidden::draw(
+                &ui.painter_at(rect),
+                &to_screen,
+                view.zoom,
+                &hidden,
+                Theme::accent(),
+            );
+        }
         draw_note_flags(ui, &notes);
     }
 

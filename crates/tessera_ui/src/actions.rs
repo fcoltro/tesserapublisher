@@ -293,6 +293,7 @@ pub enum Run {
     Insert(Special),
     OpenSettings,
     ShowShortcuts,
+    ShowAbout,
     Package,
     TogglePreflight,
     ToggleConsole,
@@ -312,6 +313,8 @@ pub enum Run {
     /// Outline the hyperlinks on the canvas.
     ToggleHyperlinks,
     ToggleDynamicSpelling,
+    ToggleHiddenCharacters,
+    FillPlaceholder,
     /// Whether a layout follows its page's size and margins. A preference.
     ToggleAdjustLayout,
     /// The group holding the selected object.
@@ -451,6 +454,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::Place
         | Run::OpenSettings
         | Run::ShowShortcuts
+        | Run::ShowAbout
         | Run::ChooseOutputIntent
         | Run::TogglePreflight
         | Run::ToggleConsole
@@ -465,6 +469,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::ToggleSnapping
         | Run::ToggleHyperlinks
         | Run::ToggleDynamicSpelling
+        | Run::ToggleHiddenCharacters
         | Run::ToggleAdjustLayout
         | Run::SelectContainer
         | Run::SelectContent
@@ -488,6 +493,8 @@ pub fn guard(run: Run) -> Guard {
         // Only means anything while typing, like the special characters.
         Run::PasteAnchored => Guard::Always,
         Run::StoryEditor | Run::TypeOnPath => Guard::NotWhileTyping,
+        // A text frame chosen or being typed in: `enabled` asks which.
+        Run::FillPlaceholder => Guard::Always,
         // Only useful while typing, like the special characters.
         Run::InsertFootnote
         | Run::EditFootnote
@@ -573,6 +580,17 @@ pub fn enabled(state: &crate::app::TesseraApp, run: Run) -> bool {
             )
         }),
         Run::Command(Cmd::RemovePage) => doc.document().page_ids().count() > 1,
+        Run::FillPlaceholder => doc
+            .editing
+            .as_ref()
+            .map(|(id, _)| *id)
+            .or_else(|| doc.selection.single())
+            .is_some_and(|id| {
+                matches!(
+                    doc.document().frame(id).map(|f| &f.kind),
+                    Some(tessera_document::nodes::FrameKind::Text { .. })
+                )
+            }),
         Run::Command(Cmd::UnlockAll) => {
             doc.editing.is_none() && !on_spread(state, |f| f.locked).is_empty()
         }
@@ -1337,6 +1355,19 @@ pub fn all() -> &'static [Action] {
             Run::StoryEditor,
         ),
         a("Type on a path\u{2026}", None, Group::Type, Run::TypeOnPath),
+        // InDesign's, and its shortcut.
+        a(
+            "Fill with placeholder text",
+            None,
+            Group::Type,
+            Run::FillPlaceholder,
+        ),
+        a(
+            "Show hidden characters",
+            Some("Ctrl+Alt+I"),
+            Group::Type,
+            Run::ToggleHiddenCharacters,
+        ),
         a(
             "Text variables\u{2026}",
             None,
@@ -1374,10 +1405,12 @@ pub fn all() -> &'static [Action] {
             Group::Type,
             Run::Hyperlink,
         ),
+        // With the other markers: an index entry is one, and Type is at its
+        // dozen lines.
         a(
             "Insert index entry\u{2026}",
             None,
-            Group::Type,
+            Group::Markers,
             Run::InsertIndexEntry,
         ),
         // Under Insert marker with the page numbers: an anchor and a
@@ -1459,6 +1492,7 @@ pub fn all() -> &'static [Action] {
         // Where InDesign keeps it: the list of keys is something a person
         // looks up, and Help is where looking things up lives.
         a("Keyboard shortcuts...", None, Group::Help, ShowShortcuts),
+        a("About Tessera...", None, Group::Help, ShowAbout),
         // Under View, because a soft proof is a way of *looking* at the document.
         // Choosing the press is under View too rather than under File: the
         // decision is inseparable from seeing its effect, and separating them
@@ -1639,6 +1673,7 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         Run::Print => state.print.open = true,
         Run::Place => crate::file_ops::place(state),
         Run::OpenSettings => state.settings.open = true,
+        Run::ShowAbout => state.about_open = true,
         Run::ShowShortcuts => {
             state.settings.page = crate::view::settings::Page::Shortcuts;
             state.settings.open = true;
@@ -1723,6 +1758,21 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             // this on for the job, not for a minute.
             state.prefs.show_hyperlinks = !state.prefs.show_hyperlinks;
             crate::prefs::remember(state);
+        }
+        Run::ToggleHiddenCharacters => {
+            state.prefs.show_hidden_characters = !state.prefs.show_hidden_characters;
+            crate::prefs::remember(state);
+        }
+        Run::FillPlaceholder => {
+            let frame = state
+                .active()
+                .editing
+                .as_ref()
+                .map(|(id, _)| *id)
+                .or_else(|| state.active().selection.single());
+            if let Some(id) = frame {
+                crate::placeholder::fill(state, id);
+            }
         }
         Run::ToggleDynamicSpelling => {
             state.prefs.dynamic_spelling = !state.prefs.dynamic_spelling;
@@ -2410,6 +2460,7 @@ mod tests {
                 | "Book"
                 | "Links"
                 | "Paragraph and character styles"
+                | "Show hidden characters"
                 | "Preview view"
                 | "Current page number"
                 | "Insert footnote"

@@ -5,6 +5,7 @@
 //! attaching to a `Context`. That matches eframe 0.35 handing the app a root
 //! `Ui`, so the whole window is one tree.
 
+pub mod about;
 pub mod anchors;
 pub mod book;
 pub mod canvas_toolbar;
@@ -23,6 +24,7 @@ pub mod find;
 pub mod footnote_options;
 pub mod glyph;
 pub mod glyphs;
+pub mod hidden;
 pub mod html_export;
 pub mod hyperlink;
 pub mod identity;
@@ -159,6 +161,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     print_dialog::show(ui.ctx(), state);
     new_document::show(ui.ctx(), state);
     step_repeat::show(ui.ctx(), state);
+    about::show(ui.ctx(), state);
     sections::show(ui.ctx(), state);
     variables::show(ui.ctx(), state);
     table_options::show(ui.ctx(), state);

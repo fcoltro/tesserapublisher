@@ -967,6 +967,7 @@ mod tests {
             },
             recent_books: vec!["novel.tesserabook".into()],
             swatch_tiles: true,
+            show_hidden_characters: false,
             flow_placed_text: false,
             reflow_adds_pages: false,
             reflow_removes_pages: true,
@@ -1000,6 +1001,7 @@ mod tests {
                 // Kept: how a panel is being looked at, as where the panels
                 // are docked is.
                 swatch_tiles: true,
+                show_hidden_characters: false,
                 // Kept: what the last picture export was, remembered for the
                 // next, as the export presets are.
                 image_export: crate::view::image_export::Choices {

@@ -288,6 +288,12 @@ pub struct Preferences {
     /// rows: a look along a palette, against a read down its names.
     #[serde(default)]
     pub swatch_tiles: bool,
+
+    /// Whether the canvas shows the characters that set no ink — spaces,
+    /// tabs, paragraph ends — as InDesign's Type > Show Hidden Characters
+    /// does. Never printed or exported.
+    #[serde(default)]
+    pub show_hidden_characters: bool,
 }
 
 fn yes() -> bool {
@@ -345,6 +351,7 @@ impl Default for Preferences {
             british_spelling: false,
             show_hyperlinks: false,
             swatch_tiles: false,
+            show_hidden_characters: false,
         }
     }
 }
@@ -563,6 +570,7 @@ mod tests {
             },
             recent_books: vec!["novel.tesserabook".into()],
             swatch_tiles: true,
+            show_hidden_characters: true,
             flow_placed_text: false,
             reflow_adds_pages: false,
             reflow_removes_pages: true,

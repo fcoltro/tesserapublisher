@@ -33,6 +33,7 @@ pub mod object_order;
 pub mod open_document;
 pub mod package;
 pub mod pen;
+pub mod placeholder;
 pub mod preflight;
 pub mod prefs;
 pub mod print;
