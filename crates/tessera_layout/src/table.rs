@@ -194,7 +194,7 @@ pub fn lay_out_with(
             };
             let mut shaped = shaper.shape(&story, cell_styles, inner);
             shaped.resolve_colours(|c| doc.resolve_colour(c));
-            let needs = shaped.height + cell.inset.top + cell.inset.bottom;
+            let needs = shaped.height_to_set() + cell.inset.top + cell.inset.bottom;
             measured.push(Measured {
                 row,
                 column,

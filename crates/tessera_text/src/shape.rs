@@ -1900,6 +1900,24 @@ pub struct ShapedText {
 }
 
 impl ShapedText {
+    /// How tall a box must be for [`flow`] to set every line in it.
+    ///
+    /// Not always [`ShapedText::height`], which is measured by the leading:
+    /// the flow puts the first line's ascent against the top and wants the
+    /// last line's descent inside the foot, and a face whose ascent and
+    /// descent are together taller than its leading — Inter at the default
+    /// leading, any face set solid — needs that much more.
+    pub fn height_to_set(&self) -> f64 {
+        let Some(first) = self.lines.first() else {
+            return self.height;
+        };
+        let (above, _) = extent(first);
+        self.lines
+            .iter()
+            .map(|line| above + line.baseline - first.baseline + extent(line).1)
+            .fold(self.height, f64::max)
+    }
+
     /// The lines of the footnote whose marker is at `at`, as text of its
     /// own: where the flow set them, with the note's offsets and layout
     /// back on them — what a caret in the note is placed and moved by.
@@ -2823,11 +2841,18 @@ impl Shaper {
     /// only the first call pays for the scan.
     pub fn families(&mut self) -> &[String] {
         if self.families.is_none() {
-            let mut names: Vec<String> = self
+            let listed: Vec<String> = self
                 .font_ctx
                 .collection
                 .family_names()
                 .map(str::to_string)
+                .collect();
+            // The system lists faces fontique cannot load — Type 1 fonts on
+            // Linux, for one — and a face the menu offers must not then be
+            // marked missing the moment it is chosen.
+            let mut names: Vec<String> = listed
+                .into_iter()
+                .filter(|n| self.font_ctx.collection.family_by_name(n).is_some())
                 .collect();
             // Case-insensitively, because a font menu that puts "Arial" and
             // "arial" in different halves of the alphabet is a font menu
@@ -4759,8 +4784,17 @@ mod tests {
             g[4].x - g[3].x - natural_space
         };
 
-        // Defaults: letters may not move, so the words take it all.
-        let words_only = justified(COPY, 200.0, None);
+        // Letters may not move, so the words take it all. Spaces may not
+        // shrink either, or a wide face fits one more word on the line and
+        // squeezes it rather than spreading it.
+        let words_only = justified(
+            COPY,
+            200.0,
+            Some(Justification {
+                word_min: 100.0,
+                ..Justification::default()
+            }),
+        );
         let first = &words_only.lines[0];
         assert!(letter_gap(first).abs() < 1e-6, "letters untouched");
         assert!(space_gap(first) > 0.5, "the space grew");
