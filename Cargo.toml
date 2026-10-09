@@ -103,15 +103,12 @@ egui-wgpu = "0.36"
 # Document surface. Must resolve to the same wgpu as egui-wgpu — the shared
 # device in decision D2 depends on it — and it does: both are on wgpu 30.
 #
-# **A git pin, for now, and a written reason.** vello 0.10.0 is the newest
-# release and is on wgpu 29; the move to 30 was merged upstream on
-# 2026-09-15 (linebender/vello#1909) and has not been released. This is that
-# merge commit, on the project's own `main` — not a fork, which the previous
-# note refused and this one still would. **Replace with `vello = "0.11"` the
-# day it is published**; `cargo info vello` says when. The crate has also
-# moved to `research/vello_research` in that repository, with `vello_gpu`
-# named as its intended successor: a signpost, not yet a task.
-vello = { git = "https://github.com/linebender/vello", rev = "539ac99" }
+# 0.11 is the release of the wgpu 30 move this was git-pinned to
+# (linebender/vello#1909) until 2026-10-09: same wgpu, no code changed, no
+# crate added twice. The crate has moved to `research/vello_research` in its
+# repository, with `vello_gpu` named as its intended successor: a signpost,
+# not yet a task.
+vello = "0.11"
 
 # Geometry and text.
 kurbo                = { version = "0.13", features = ["serde"] }
@@ -192,6 +189,11 @@ pdf-writer = "0.15"
 # `pdf-writer` this does, so its objects are ours. Their own copies of the
 # fourteen standard fonts are kept (`embed-fonts`): a PDF that names Helvetica
 # without embedding it must still show text.
+# Held at 0.7. 0.8 (2026-10) stopped wrapping a copied page in an
+# isolated transparency group in the export's own colour space — it copies
+# the page's own group, or none — and offers no way back, so a placed PDF's
+# blend modes would reach through to the page under it and a supplier's
+# group colour space would land in a PDF/X file. Revisit when it can be told.
 hayro       = "0.7"
 hayro-write = "0.7"
 # PNG written directly rather than through `image`, which cannot record the
