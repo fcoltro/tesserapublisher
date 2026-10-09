@@ -11,6 +11,7 @@ use crate::camera;
 use crate::command::{Command, apply};
 use crate::theme::Theme;
 use crate::tools::{Drag, DragKind, Tool};
+use crate::transform_tools::Kind as TransformKind;
 use crate::view::text_edit;
 use crate::view::vello_host::{self, VelloCallback};
 
@@ -1057,7 +1058,12 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
     }
 
     match state.active_tool {
-        Tool::Select => select_gesture(ui, response, rect, state),
+        // The Select tool's handles are Free Transform's: scale by a handle,
+        // turn from outside a corner, move from inside.
+        Tool::Select | Tool::FreeTransform => select_gesture(ui, response, rect, state),
+        Tool::Rotate => transform_tool_gesture(ui, response, rect, state, TransformKind::Rotate),
+        Tool::Scale => transform_tool_gesture(ui, response, rect, state, TransformKind::Scale),
+        Tool::Shear => transform_tool_gesture(ui, response, rect, state, TransformKind::Shear),
         Tool::Hand => {
             if response.dragged() {
                 let d = response.drag_delta();
@@ -2558,6 +2564,13 @@ fn canvas_cursor(
     if let Some(drag) = &state.drag {
         match &drag.kind {
             DragKind::Rotate { .. } => return Cursor::new(Icon::Rotate),
+            DragKind::Transformed { kind, .. } => {
+                return Cursor::new(match kind {
+                    TransformKind::Rotate => Icon::Rotate,
+                    TransformKind::Scale => Icon::ScaleX,
+                    TransformKind::Shear => Icon::Shear,
+                });
+            }
             DragKind::Scale {
                 handle, placement, ..
             } => {
@@ -2633,7 +2646,10 @@ fn canvas_cursor(
         Tool::Select if super::content::grabber_at(state, rect, pos).is_some() => {
             Cursor::new(Icon::Hand)
         }
-        Tool::Select => match grab_at(state, rect, pos) {
+        Tool::Rotate => Cursor::new(Icon::Rotate),
+        Tool::Scale => Cursor::new(Icon::ScaleX),
+        Tool::Shear => Cursor::new(Icon::Shear),
+        Tool::Select | Tool::FreeTransform => match grab_at(state, rect, pos) {
             Some(grabbed) => grip_cursor(&grabbed),
             // A chosen table's boundary can be pulled, before the table
             // itself can be moved.
@@ -3585,6 +3601,7 @@ fn select_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Te
             // Owned by their own gestures, which returned before this.
             DragKind::Scale { .. }
             | DragKind::Rotate { .. }
+            | DragKind::Transformed { .. }
             | DragKind::Draw
             | DragKind::Anchor { .. }
             | DragKind::PathTextEnd { .. }
@@ -3730,6 +3747,138 @@ fn transform_gesture(
     true
 }
 
+/// Where the rotate, scale and shear tools turn about: where a click with
+/// one of them put it, for this selection, or else the proxy's point on the
+/// selection's box — the point the reference mark is drawn at.
+pub(crate) fn reference_point(state: &TesseraApp) -> Option<DocPoint> {
+    let selection: Vec<FrameId> = state.active().selection.iter().collect();
+    if let Some(pivot) = &state.transform_pivot
+        && !selection.is_empty()
+        && pivot.selection == selection
+    {
+        return Some(pivot.at);
+    }
+    let (_, bounds, placement) = grabbable(state)?;
+    Some(placement.apply(state.anchor.in_rect(bounds)))
+}
+
+/// The rotate, scale and shear tools.
+///
+/// A click puts the reference point where it lands — or, with nothing
+/// selected, selects what it lands on, so the tool need not be put down to
+/// choose what it works on. A drag turns, scales or slants the selection
+/// about the reference point, previewed live and committed as one undo step,
+/// each step worked out from where the drag began.
+fn transform_tool_gesture(
+    ui: &Ui,
+    response: &egui::Response,
+    rect: Rect,
+    state: &mut TesseraApp,
+    kind: TransformKind,
+) {
+    if response.clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        if state.active().selection.is_empty() {
+            if let Some(hit) = frame_at(state, rect, pos) {
+                state.active_mut().selection.set(hit);
+            }
+        } else {
+            let at = doc_pos(state, rect, pos);
+            let selection = state.active().selection.iter().collect();
+            state.transform_pivot = Some(crate::transform_tools::Pivot { at, selection });
+        }
+        return;
+    }
+
+    if response.drag_started()
+        && state.drag.is_none()
+        && !state.active().selection.is_empty()
+        && let Some(pos) = press_pos(ui, response)
+        && let Some(pivot) = reference_point(state)
+    {
+        let target = state.active().selection.single();
+        let leaves = match target {
+            Some(id) => origins_of(state, id),
+            None => selection_origins(state),
+        };
+        state.drag = Some(Drag::new(
+            doc_pos(state, rect, pos),
+            DragKind::Transformed {
+                kind,
+                pivot,
+                target,
+                leaves,
+            },
+        ));
+    }
+    if !matches!(
+        state.drag.as_ref().map(|d| &d.kind),
+        Some(DragKind::Transformed { .. })
+    ) {
+        return;
+    }
+
+    if response.dragged()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        let at = doc_pos(state, rect, pos);
+        if let Some(drag) = state.drag.as_mut() {
+            drag.current = at;
+        }
+        if let Some(entries) = state
+            .drag
+            .as_ref()
+            .and_then(|d| transform_tool_result(d, ui))
+        {
+            // undo-bracketed: preview only, restored and reapplied once when
+            // the drag stops, as the Select tool's handles are.
+            for (id, bounds, placement) in entries {
+                if let Some(f) = state.active_mut().document_mut().frame_mut(id) {
+                    f.bounds = bounds;
+                    f.transform = placement;
+                }
+            }
+        }
+    }
+
+    if response.drag_stopped()
+        && let Some(drag) = state.drag.take()
+        && let DragKind::Transformed { ref leaves, .. } = drag.kind
+        && let Some(entries) = transform_tool_result(&drag, ui)
+    {
+        // undo-bracketed: the restore half. The command is what the undo
+        // stack sees.
+        for (id, bounds, placement) in leaves {
+            if let Some(f) = state.active_mut().document_mut().frame_mut(*id) {
+                f.bounds = *bounds;
+                f.transform = *placement;
+            }
+        }
+        if &entries != leaves {
+            apply(state, Command::SetTransforms(entries));
+        }
+    }
+}
+
+/// What a rotate, scale or shear drag currently amounts to: one function
+/// for the preview and the commit, so the two cannot disagree.
+fn transform_tool_result(drag: &Drag, ui: &Ui) -> Option<Vec<crate::transform::Origin>> {
+    let DragKind::Transformed {
+        kind,
+        pivot,
+        target,
+        leaves,
+    } = &drag.kind
+    else {
+        return None;
+    };
+    let constrain = ui.input(|i| i.modifiers.shift);
+    let map =
+        crate::transform_tools::drag_transform(*kind, *pivot, drag.start, drag.current, constrain);
+    Some(crate::transform_tools::applied(leaves, *target, map))
+}
+
 /// What a scale or rotate gesture currently amounts to.
 ///
 /// One function for both the live preview and the commit, so the two can
@@ -3859,6 +4008,10 @@ fn draw_gesture(
             | Tool::Erase
             | Tool::GradientSwatch
             | Tool::GradientFeather
+            | Tool::FreeTransform
+            | Tool::Rotate
+            | Tool::Scale
+            | Tool::Shear
             | Tool::Zoom => {}
         }
     }
@@ -4494,7 +4647,9 @@ fn draw_overlays(
         // is D4: InDesign's proxy sits in a corner of the screen and silently
         // changes what every field and every drag gesture mean, and the only
         // safe place to show a mode is where the user is already looking.
-        let c = to_screen(placement.apply(state.anchor.in_rect(bounds)));
+        let c = to_screen(
+            reference_point(state).unwrap_or_else(|| placement.apply(state.anchor.in_rect(bounds))),
+        );
         let arm = Theme::REFERENCE_MARK;
         let hair = Stroke::new(1.0, edge);
         painter.line_segment([c - egui::vec2(arm, arm), c + egui::vec2(arm, arm)], hair);
@@ -4741,6 +4896,7 @@ fn draw_overlays(
             DragKind::Move { .. }
             | DragKind::Scale { .. }
             | DragKind::Rotate { .. }
+            | DragKind::Transformed { .. }
             | DragKind::PageEdge { .. }
             | DragKind::TableEdge { .. }
             | DragKind::Anchor { .. }
@@ -7407,5 +7563,129 @@ mod tests {
             }),
         );
         assert!(overset_frames(&mut state).is_empty());
+    }
+
+    /// A rectangle on the page, selected, and its centre where it really is.
+    fn one_box() -> (TesseraApp, FrameId, DocPoint) {
+        let mut state = TesseraApp::headless();
+        let page = state.first_page_bounds();
+        apply(
+            &mut state,
+            Command::AddRectangle(DocRect {
+                x: page.x + 40.0,
+                y: page.y + 40.0,
+                width: 100.0,
+                height: 50.0,
+            }),
+        );
+        let id = state.active().selection.single().expect("drawn");
+        let f = state.active().document().frame(id).expect("frame");
+        let centre = f.transform.apply(f.bounds.center());
+        (state, id, centre)
+    }
+
+    /// What a rotate, scale or shear drag from `start` to `current` leaves
+    /// behind once let go: the result, committed as the gesture commits it.
+    fn tool_drag(state: &mut TesseraApp, kind: TransformKind, start: DocPoint, current: DocPoint) {
+        let pivot = reference_point(state).expect("something selected");
+        let target = state.active().selection.single();
+        let leaves = match target {
+            Some(id) => origins_of(state, id),
+            None => selection_origins(state),
+        };
+        let mut drag = Drag::new(
+            start,
+            DragKind::Transformed {
+                kind,
+                pivot,
+                target,
+                leaves,
+            },
+        );
+        drag.current = current;
+        let ctx = egui::Context::default();
+        let mut entries = None;
+        let _ = crate::headless_frame::frame(&ctx, Default::default(), |ui| {
+            entries = transform_tool_result(&drag, ui);
+        });
+        apply(state, Command::SetTransforms(entries.expect("a result")));
+    }
+
+    #[test]
+    fn the_reference_point_is_the_proxy_s_until_a_click_moves_it() {
+        let (mut state, id, centre) = one_box();
+        let at = reference_point(&state).expect("selected");
+        assert!((at.x - centre.x).abs() < 1e-9 && (at.y - centre.y).abs() < 1e-9);
+
+        let corner = DocPoint { x: 0.0, y: 0.0 };
+        state.transform_pivot = Some(crate::transform_tools::Pivot {
+            at: corner,
+            selection: vec![id],
+        });
+        assert_eq!(reference_point(&state), Some(corner));
+
+        // Another selection goes back to the proxy's point.
+        state.active_mut().selection.clear();
+        assert_eq!(reference_point(&state), None, "nothing to turn");
+    }
+
+    #[test]
+    fn the_rotate_tool_turns_about_the_centre_in_one_undo_step() {
+        let (mut state, id, centre) = one_box();
+        let start = DocPoint {
+            x: centre.x + 50.0,
+            y: centre.y,
+        };
+        let current = DocPoint {
+            x: centre.x,
+            y: centre.y + 50.0,
+        };
+        tool_drag(&mut state, TransformKind::Rotate, start, current);
+        let f = state.active().document().frame(id).expect("frame");
+        assert!((f.transform.rotation_degrees() - 90.0).abs() < 1e-6);
+        let still = f.transform.apply(f.bounds.center());
+        assert!((still.x - centre.x).abs() < 1e-6 && (still.y - centre.y).abs() < 1e-6);
+
+        apply(&mut state, Command::Undo);
+        let f = state.active().document().frame(id).expect("frame");
+        assert!(f.transform.rotation_degrees().abs() < 1e-9, "one undo");
+    }
+
+    #[test]
+    fn the_scale_tool_makes_an_upright_frame_a_bigger_box() {
+        let (mut state, id, centre) = one_box();
+        let before = state.active().document().frame(id).expect("frame").bounds;
+        // Twice as far from the centre across, the same distance down.
+        let start = DocPoint {
+            x: centre.x + 20.0,
+            y: centre.y + 10.0,
+        };
+        let current = DocPoint {
+            x: centre.x + 40.0,
+            y: centre.y + 10.0,
+        };
+        tool_drag(&mut state, TransformKind::Scale, start, current);
+        let f = state.active().document().frame(id).expect("frame");
+        assert!((f.bounds.width - before.width * 2.0).abs() < 1e-6);
+        assert!((f.bounds.height - before.height).abs() < 1e-6);
+        let still = f.transform.apply(f.bounds.center());
+        assert!((still.x - centre.x).abs() < 1e-6, "about the centre");
+    }
+
+    #[test]
+    fn the_shear_tool_slants_the_frame_in_its_placement() {
+        let (mut state, id, centre) = one_box();
+        let start = DocPoint {
+            x: centre.x,
+            y: centre.y - 20.0,
+        };
+        let current = DocPoint {
+            x: centre.x + 20.0,
+            y: centre.y - 20.0,
+        };
+        tool_drag(&mut state, TransformKind::Shear, start, current);
+        let f = state.active().document().frame(id).expect("frame");
+        let shear = f.transform.decompose().shear_degrees;
+        assert!((shear - 45.0).abs() < 1e-6, "{shear}");
     }
 }

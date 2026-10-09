@@ -656,6 +656,9 @@ pub struct TesseraApp {
     /// selections the way the active tool is: it is a way of working, not a
     /// property of any one object.
     pub anchor: tessera_geometry::Anchor,
+    /// Where a click with the rotate, scale or shear tool put the reference
+    /// point instead, for the selection it was put down for.
+    pub transform_pivot: Option<crate::transform_tools::Pivot>,
     /// Whether width and height move together.
     ///
     /// Application state, like the anchor: a way of working rather than a
@@ -816,6 +819,7 @@ impl TesseraApp {
             layers_window: LayersWindow::default(),
             screen_mode: ScreenMode::default(),
             anchor: tessera_geometry::Anchor::default(),
+            transform_pivot: None,
             constrain_proportions: false,
             ruler_origin: None,
             zero_drag: false,

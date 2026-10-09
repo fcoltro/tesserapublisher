@@ -3661,6 +3661,9 @@ Asked for by the user once every finding was in, each pushed on its own:
   applies to what is in hand, and every command, with InDesign's prefixes.
   D3's refusal overridden. Step and repeat moved to Object to keep Edit at
   its dozen lines.
+- [x] **The transform tools**: Free transform (E), Rotate (R), Scale (S),
+  Shear (O), about the reference point, which a click moves. D6's refusal
+  overridden; Smooth and Erase gave S and E back, as InDesign has them.
 
 ### Hands-on findings — 2026-10-08
 

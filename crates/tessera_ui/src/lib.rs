@@ -47,6 +47,7 @@ pub mod table_ops;
 pub mod theme;
 pub mod tools;
 pub mod transform;
+pub mod transform_tools;
 pub mod ui_fonts;
 pub mod update;
 pub mod view;

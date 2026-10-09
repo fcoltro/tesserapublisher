@@ -36,8 +36,8 @@ checks are still owed.
 ## ① Tools panel
 
 InDesign shows twenty-six tools in two columns, several behind flyouts.
-Tessera has twelve. The Instrument spec's D6 refuses the modal transform tools
-outright, so the target is not twenty-six.
+The Instrument spec's D6 refused the modal transform tools outright; the user
+asked for them on 2026-10-09, and they are built.
 
 | Element | Tessera today | Kind | Owner |
 |---|---|---|---|
@@ -52,12 +52,12 @@ outright, so the target is not twenty-six.
 | Pen | ✅ `Tool::Pen` | — | done |
 | Add / Delete Anchor Point | ✅ | — | done, M1 |
 | Convert Direction Point | ✅ | — | done, M1 |
-| Pencil / Smooth / Erase | ✅ `Tool::Pencil` N: a freehand stroke thinned (Ramer–Douglas–Peucker) and drawn through as a smooth curve; `Tool::Smooth` S: the stretch under the brush resampled, thinned and refitted, so wobbles lose their anchors and each pass smooths further, rectangles and ellipses included (2026-10-08); `Tool::Erase` E: the segments a brush touches taken out, a closed path opened. Each stroke is one undo step | — | done 2026-09-30 |
+| Pencil / Smooth / Erase | ✅ `Tool::Pencil` N: a freehand stroke thinned (Ramer–Douglas–Peucker) and drawn through as a smooth curve; `Tool::Smooth`, no key, as InDesign's: the stretch under the brush resampled, thinned and refitted, so wobbles lose their anchors and each pass smooths further, rectangles and ellipses included (2026-10-08); `Tool::Erase`, no key: the segments a brush touches taken out, a closed path opened. Each stroke is one undo step | — | done 2026-09-30 |
 | Rectangle, Ellipse | ✅ | — | done |
 | Polygon | ✅ `Tool::Polygon`, Y; Shift draws it regular, the frame taking the polygon's own box | — | done, M1; Shift 2026-10-08 |
 | Rectangle **Frame** (graphic placeholder) | ✅ `Tool::Graphic`, `FrameKind::Graphic` | — | done, M5 |
 | Scissors | ✅ `Tool::Scissors` | — | done, M1 |
-| Free Transform / Rotate / Scale / Shear | ✗ | — | **refused** (D6) |
+| Free Transform / Rotate / Scale / Shear | ✅ `Tool::FreeTransform` E: the Select tool's handles under a tool of their own. `Tool::Rotate` R, `Tool::Scale` S, `Tool::Shear` O: a drag turns, scales or slants the selection about its reference point — the proxy's point on its box, until a click with the tool puts it elsewhere, drawn as the reference mark. Shift holds a turn to 45°, a scale to proportion, a slant to 15° steps. An upright frame scaled takes a new box, as the handles give it; anything else follows in its placement. One undo step each. Smooth and Erase gave up S and E, as InDesign has them. D6's refusal overridden at the user's request | — | done 2026-10-09 |
 | Gradient Swatch | ✅ `Tool::GradientSwatch`, G: drag across an object to say where its gradient fill starts and ends (a `Span` in fractions of its box, so it moves and stretches with it); a solid becomes black to white. D6's refusal overridden at the user's request | — | done 2026-10-08 |
 | Gradient Feather | ✅ `Tool::GradientFeather`, Shift+G, drags the fade as the swatch tool drags a fill; linear at an angle or radial, opacity stops; Properties and object styles; drawn, written to PDF as a soft mask, read from IDML. A gradient fill with transparent stops inside a feathered object paints its own PDF mask through the feather, so both hold | — | done 2026-09-30 |
 | Note | ✅ Type ▸ Notes ▸ New note at the caret, worded in a box and signed with the system's user name; an amber flag where it sits, clicked to read or delete it; read from IDML; never printed or exported. No tool of its own: the Type tool puts the caret where the Note tool would click | — | done 2026-09-30 |
@@ -247,8 +247,6 @@ section ⑩, none of which a screenshot of a workspace can show, and all of
 which a person setting a document notices before they notice a missing tool.
 Milestone 9 exists because this file did not have those rows.
 
-**Two InDesign surfaces are refused rather than deferred.** The control
-panel (D1) and the modal transform tools (D6). Quick Apply was a third,
-superseded by the command palette, until the user asked for it on
-2026-10-09: it is built as a window of its own on Ctrl+Enter, not as a
-button in a strip.
+**One InDesign surface is refused rather than deferred:** the control
+panel (D1). The modal transform tools (D6) and Quick Apply (D3) were
+refused too, until the user asked for them on 2026-10-09; both are built.

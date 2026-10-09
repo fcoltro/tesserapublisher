@@ -1619,13 +1619,22 @@ pub fn all() -> &'static [Action] {
             Group::Tool,
             PickTool(Tool::Pencil),
         ),
+        a("Smooth tool", None, Group::Tool, PickTool(Tool::Smooth)),
+        a("Erase tool", None, Group::Tool, PickTool(Tool::Erase)),
         a(
-            "Smooth tool",
-            Some("S"),
+            "Free transform tool",
+            Some("E"),
             Group::Tool,
-            PickTool(Tool::Smooth),
+            PickTool(Tool::FreeTransform),
         ),
-        a("Erase tool", Some("E"), Group::Tool, PickTool(Tool::Erase)),
+        a(
+            "Rotate tool",
+            Some("R"),
+            Group::Tool,
+            PickTool(Tool::Rotate),
+        ),
+        a("Scale tool", Some("S"), Group::Tool, PickTool(Tool::Scale)),
+        a("Shear tool", Some("O"), Group::Tool, PickTool(Tool::Shear)),
     ];
     LIST
 }

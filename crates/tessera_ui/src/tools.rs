@@ -55,6 +55,17 @@ pub enum Tool {
     GradientSwatch,
     /// Drag across an object to say where it fades.
     GradientFeather,
+    /// The Select tool's handles under a tool of their own, as InDesign's
+    /// Free Transform tool is: scale by a handle, turn from outside a
+    /// corner, move from inside.
+    FreeTransform,
+    /// Turn the selection about its reference point. A click puts the
+    /// reference point somewhere else. See [`crate::transform_tools`].
+    Rotate,
+    /// Scale the selection about its reference point.
+    Scale,
+    /// Slant the selection about its reference point.
+    Shear,
 }
 
 /// A line the measure tool has drawn, in document points. Kept until the
@@ -137,6 +148,10 @@ impl Tool {
             Self::Erase => "Erase",
             Self::GradientSwatch => "Gradient swatch",
             Self::GradientFeather => "Gradient feather",
+            Self::FreeTransform => "Free transform",
+            Self::Rotate => "Rotate",
+            Self::Scale => "Scale",
+            Self::Shear => "Shear",
         }
     }
 
@@ -165,6 +180,10 @@ impl Tool {
             Self::Erase => crate::icons::Icon::Eraser,
             Self::GradientSwatch => crate::icons::Icon::GradientSwatch,
             Self::GradientFeather => crate::icons::Icon::GradientFeather,
+            Self::FreeTransform => crate::icons::Icon::Move,
+            Self::Rotate => crate::icons::Icon::RotateCw,
+            Self::Scale => crate::icons::Icon::ScaleX,
+            Self::Shear => crate::icons::Icon::Shear,
         }
     }
 
@@ -185,9 +204,10 @@ impl Tool {
     }
 
     /// The shortcut, as the action list writes it. These follow InDesign's,
-    /// which is what a layout designer's fingers already know.
-    pub fn shortcut(self) -> &'static str {
-        match self {
+    /// which is what a layout designer's fingers already know — and, as in
+    /// InDesign, the smooth and erase tools have none.
+    pub fn shortcut(self) -> Option<&'static str> {
+        Some(match self {
             Self::Select => "V",
             // A, as InDesign's direct selection tool is.
             Self::DirectSelect => "A",
@@ -214,17 +234,22 @@ impl Tool {
             Self::ColourTheme => "J",
             // B, as InDesign's content collector is; B again places.
             Self::Conveyor => "B",
-            // N, as InDesign's pencil is; S and E, free and what they say.
+            // N, as InDesign's pencil is. Smooth and erase had S and E
+            // until the transform tools came, which InDesign gives them to.
             Self::Pencil => "N",
-            Self::Smooth => "S",
-            Self::Erase => "E",
+            Self::Smooth | Self::Erase => return None,
             // G and Shift+G, as InDesign has them.
             Self::GradientSwatch => "G",
             Self::GradientFeather => "Shift+G",
-        }
+            // InDesign's four.
+            Self::FreeTransform => "E",
+            Self::Rotate => "R",
+            Self::Scale => "S",
+            Self::Shear => "O",
+        })
     }
 
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 26] = [
         Self::Select,
         Self::DirectSelect,
         Self::Rectangle,
@@ -236,6 +261,10 @@ impl Tool {
         Self::Polygon,
         Self::Scissors,
         Self::Eyedropper,
+        Self::FreeTransform,
+        Self::Rotate,
+        Self::Scale,
+        Self::Shear,
         Self::GradientSwatch,
         Self::GradientFeather,
         Self::Measure,
@@ -317,6 +346,15 @@ pub enum DragKind {
     /// Rotating about a pivot.
     Rotate {
         center: DocPoint,
+        leaves: Vec<crate::transform::Origin>,
+    },
+    /// A drag with the rotate, scale or shear tool, about the reference
+    /// point as it was when the drag began. `target` is the one frame
+    /// selected, if only one is, which a stretch may give a new box.
+    Transformed {
+        kind: crate::transform_tools::Kind,
+        pivot: DocPoint,
+        target: Option<FrameId>,
         leaves: Vec<crate::transform::Origin>,
     },
     /// Dragging a page's right or bottom edge, or the corner where they
@@ -714,7 +752,7 @@ mod tests {
 
     #[test]
     fn every_tool_has_a_distinct_shortcut() {
-        let keys: Vec<_> = Tool::ALL.iter().map(|t| t.shortcut()).collect();
+        let keys: Vec<_> = Tool::ALL.iter().filter_map(|t| t.shortcut()).collect();
         let mut unique = keys.clone();
         unique.sort();
         unique.dedup();
