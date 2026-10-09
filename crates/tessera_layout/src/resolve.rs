@@ -1026,6 +1026,43 @@ fn compose_frame(
     } else {
         usize::MAX
     };
+    // A paragraph spanning the columns, or splitting its own, ahead in the
+    // text: the frame is set a stretch at a time. Every other frame takes
+    // the one pass below.
+    if let Some(segments) = column_segments(story, &styles, from) {
+        let notes: Vec<tessera_text::shape::Note> = story
+            .footnote_offsets()
+            .into_iter()
+            .zip(&story.footnotes)
+            .enumerate()
+            .filter(|(_, (at, _))| !at_end && *at >= from)
+            .map(|(n, (at, note))| {
+                let label = labels
+                    .get(n)
+                    .cloned()
+                    .unwrap_or_else(|| (n + 1).to_string());
+                let numbered =
+                    OnPage::new(doc, Variables::for_footnote_labelled(n as u32 + 1, label));
+                tessera_text::shape::Note {
+                    at,
+                    text: shaper.shape(note, &numbered, measure),
+                }
+            })
+            .collect();
+        return flow_segments(
+            shaper,
+            story,
+            &styles,
+            &segments,
+            &boxes,
+            layout.balance && !passes_on,
+            &anchored,
+            &notes,
+            &note_layout,
+            grid,
+        );
+    }
+
     // Balanced only where the story ends, and only across columns: there is
     // nothing to even out in one, and a frame passing text on is full.
     let balance = layout.balance && boxes.len() > 1 && !passes_on;
@@ -1094,6 +1131,250 @@ fn compose_frame(
             return flowed;
         }
         until = from.saturating_add((until - from).saturating_mul(2));
+    }
+}
+
+/// One stretch of a frame set a stretch at a time.
+#[derive(Debug, Clone, PartialEq)]
+struct Segment {
+    range: std::ops::Range<usize>,
+    /// `None` for text in the frame's columns; otherwise the paragraph's
+    /// span or split.
+    span: Option<tessera_text::story::ColumnSpan>,
+}
+
+/// The story from `from`, cut at each paragraph that spans or splits
+/// columns — `None` when there is none ahead, which is nearly always.
+fn column_segments(
+    story: &TextStory,
+    styles: &dyn tessera_text::story::Styles,
+    from: usize,
+) -> Option<Vec<Segment>> {
+    use tessera_text::story::ColumnSpan;
+    let text = &story.text;
+    let mut segments = Vec::new();
+    let mut any = false;
+    let mut columns_from = from;
+    let mut start = 0usize;
+    while start <= text.len() {
+        let end = text[start..]
+            .find('\n')
+            .map_or(text.len(), |i| start + i + 1);
+        if end > from {
+            let span = story
+                .paragraphs
+                .iter()
+                .find(|p| p.range.contains(&start) || (p.range.start == start && start == end))
+                .and_then(|p| story.resolve_paragraph(p, styles).column_span)
+                .filter(|s| *s != ColumnSpan::Single);
+            if span.is_some() {
+                any = true;
+                let begins = start.max(from);
+                if columns_from < begins {
+                    segments.push(Segment {
+                        range: columns_from..begins,
+                        span: None,
+                    });
+                }
+                segments.push(Segment {
+                    range: begins..end,
+                    span,
+                });
+                columns_from = end;
+            }
+        }
+        if end >= text.len() {
+            break;
+        }
+        start = end;
+    }
+    if !any {
+        return None;
+    }
+    if columns_from < text.len() {
+        segments.push(Segment {
+            range: columns_from..text.len(),
+            span: None,
+        });
+    }
+    Some(segments)
+}
+
+/// A frame set a stretch at a time, each below the last: text in the
+/// columns, balanced where a spanning or split paragraph follows it, as
+/// InDesign balances what stands above a span; a spanning paragraph across
+/// the columns it spans; a split one balanced through columns of its own.
+/// Stops at the first stretch that does not fit, which is where the frame's
+/// overset begins.
+#[allow(clippy::too_many_arguments)]
+fn flow_segments(
+    shaper: &mut Shaper,
+    story: &TextStory,
+    styles: &dyn tessera_text::story::Styles,
+    segments: &[Segment],
+    boxes: &[tessera_text::shape::Column],
+    // Whether the last stretch is balanced too: the frame balances its
+    // columns, and the story ends in it.
+    balance_end: bool,
+    anchored: &[tessera_text::shape::InlineObject],
+    notes: &[tessera_text::shape::Note],
+    note_layout: &tessera_text::shape::NoteLayout,
+    grid: Option<tessera_text::shape::Grid>,
+) -> tessera_text::shape::Flowed {
+    use tessera_text::shape::{Column, Flowed, ShapedText, Vertical};
+    use tessera_text::story::ColumnSpan;
+    let Some(first) = boxes.first().copied() else {
+        return Flowed::default();
+    };
+    let across = |n: usize| -> Column {
+        let end = boxes[n.clamp(1, boxes.len()) - 1];
+        Column {
+            width: end.x + end.width - first.x,
+            ..first
+        }
+    };
+    let whole = across(boxes.len());
+
+    let mut out = ShapedText::default();
+    let mut used = 0.0f64; // How far down the frame the stretches have come.
+    let mut overset = 0usize;
+    for (i, segment) in segments.iter().enumerate() {
+        let (before, after) = segment.span.map_or((0.0, 0.0), |s| {
+            let (b, a) = s.spacing();
+            (f64::from(b), f64::from(a))
+        });
+        let top = used + before;
+        let lower = |column: Column| Column {
+            y: column.y + top,
+            height: (column.height - top).max(0.0),
+            ..column
+        };
+        // The boxes this stretch flows through, and the measure it is set to.
+        let (stretch_boxes, measure, balance): (Vec<Column>, f64, bool) = match segment.span {
+            None => (
+                boxes.iter().map(|b| lower(*b)).collect(),
+                first.width,
+                boxes.len() > 1 && (i + 1 < segments.len() || balance_end),
+            ),
+            Some(ColumnSpan::Span { columns, .. }) => {
+                let n = if columns == 0 {
+                    boxes.len()
+                } else {
+                    usize::from(columns)
+                };
+                let area = lower(across(n));
+                (vec![area], area.width, false)
+            }
+            Some(ColumnSpan::Split {
+                columns, gutter, ..
+            }) => {
+                let n = usize::from(columns.max(1));
+                let area = lower(whole);
+                let gutter = f64::from(gutter.max(0.0));
+                let each = ((area.width - gutter * (n - 1) as f64) / n as f64).max(1.0);
+                let split = (0..n)
+                    .map(|k| Column {
+                        x: area.x + k as f64 * (each + gutter),
+                        width: each,
+                        ..area
+                    })
+                    .collect();
+                (split, each, n > 1)
+            }
+            Some(ColumnSpan::Single) => (
+                boxes.iter().map(|b| lower(*b)).collect(),
+                first.width,
+                false,
+            ),
+        };
+        let shaped = shaper.shape_around_with_objects_until(
+            story,
+            styles,
+            measure,
+            segment.range.start,
+            segment.range.end,
+            &[],
+            anchored,
+        );
+        // Only this stretch's lines: the shaper may run on past its end.
+        let mut shaped = shaped;
+        shaped
+            .lines
+            .retain(|l| l.range.start < segment.range.end || l.range.is_empty());
+        let flowed = tessera_text::shape::flow_with_notes(
+            shaped.clone(),
+            &stretch_boxes,
+            Vertical::Top,
+            grid,
+            notes,
+            note_layout,
+        );
+        let flowed = if balance && flowed.overset_lines == 0 {
+            balanced(
+                &shaped,
+                &stretch_boxes,
+                Vertical::Top,
+                grid,
+                notes,
+                note_layout,
+                flowed,
+            )
+        } else {
+            flowed
+        };
+        let bottom = flowed
+            .text
+            .lines
+            .iter()
+            .map(|l| l.baseline + l.descent)
+            .fold(first.y + top, f64::max);
+        append(&mut out, flowed.text);
+        if flowed.overset_lines > 0 {
+            // What did not fit, and every stretch after it, counted as the
+            // columns would set them.
+            overset = flowed.overset_lines;
+            if let Some(rest) = segments.get(i + 1) {
+                overset += shaper
+                    .shape_from(story, styles, first.width, rest.range.start)
+                    .lines
+                    .len();
+            }
+            break;
+        }
+        used = bottom - first.y + after;
+    }
+    out.height = out
+        .lines
+        .iter()
+        .map(|l| l.baseline + l.descent)
+        .fold(0.0, f64::max);
+    let consumed_to = out.lines.last().map(|l| l.range.end);
+    Flowed {
+        text: out,
+        overset_lines: overset,
+        consumed_to,
+    }
+}
+
+/// `more`'s lines added to `out`'s, their fonts found in or added to
+/// `out`'s table.
+fn append(out: &mut tessera_text::shape::ShapedText, more: tessera_text::shape::ShapedText) {
+    let map: Vec<usize> = more
+        .fonts
+        .iter()
+        .map(|font| match out.fonts.iter().position(|f| f == font) {
+            Some(i) => i,
+            None => {
+                out.fonts.push(font.clone());
+                out.fonts.len() - 1
+            }
+        })
+        .collect();
+    for mut line in more.lines {
+        for run in &mut line.runs {
+            run.font_index = map.get(run.font_index).copied().unwrap_or(0);
+        }
+        out.lines.push(line);
     }
 }
 
@@ -3610,6 +3891,183 @@ The body of the chapter.",
         }
         assert_eq!(per_column(&doc), (5, 5), "balanced, half each");
         assert_eq!(overset_of(&doc, id), 0, "and nothing is lost");
+    }
+
+    /// A three-column frame whose story opens with a heading paragraph and
+    /// runs on in twelve short ones, the heading given `span`.
+    fn spanned(span: tessera_text::story::ColumnSpan) -> (Document, FrameId) {
+        use tessera_text::story::ParagraphFormat;
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let body: Vec<String> = (1..=12).map(|n| format!("line {n}")).collect();
+        let mut story =
+            tessera_text::story::Story::new(format!("A heading set wide\n{}", body.join("\n")));
+        story.apply_paragraph_format(
+            0..1,
+            &ParagraphFormat {
+                column_span: Some(span),
+                ..ParagraphFormat::default()
+            },
+        );
+        let story = doc.add_story(story);
+        let mut frame = rect(0.0, 0.0, 450.0, 600.0);
+        frame.kind = FrameKind::text(story);
+        if let FrameKind::Text { layout, .. } = &mut frame.kind {
+            layout.columns = 3;
+            layout.gutter = 15.0;
+        }
+        let id = doc.add_frame(layer, frame);
+        (doc, id)
+    }
+
+    fn lines_of(doc: &Document, id: FrameId) -> Vec<tessera_text::shape::ShapedLine> {
+        let laid = resolve(doc, &mut Shaper::new());
+        let ResolvedKind::Text { shaped, .. } = &item_for(&laid, id).expect("drawn").kind else {
+            panic!("text");
+        };
+        shaped.lines.clone()
+    }
+
+    #[test]
+    fn a_spanning_heading_runs_across_and_the_columns_begin_below_it() {
+        use tessera_text::story::ColumnSpan;
+        let (doc, id) = spanned(ColumnSpan::Span {
+            columns: 0,
+            space_before: 0.0,
+            space_after: 6.0,
+        });
+        let lines = lines_of(&doc, id);
+        let heading = &lines[0];
+        let end = heading
+            .glyphs()
+            .map(|g| g.x + g.advance)
+            .fold(0.0, f64::max);
+        // A column is 140 wide; the heading is set on one line wider than it.
+        assert!(heading.range.end > 15, "the whole heading is on one line");
+        let below = heading.baseline + heading.descent;
+        let body = &lines[1..];
+        assert_eq!(body.len(), 12);
+        assert!(
+            body.iter()
+                .all(|l| l.baseline - l.ascent >= below + 6.0 - 1e-6),
+            "every body line starts under the heading and its space"
+        );
+        // The body is shared four, four and four across the three columns.
+        let in_column = |c: usize| {
+            body.iter()
+                .filter(|l| {
+                    let x = l.glyphs().next().map_or(0.0, |g| g.x);
+                    x >= c as f64 * 155.0 - 1.0 && x < (c + 1) as f64 * 155.0 - 1.0
+                })
+                .count()
+        };
+        // After the heading the columns fill one after another, as they do
+        // in any frame, and all twelve fit in the first.
+        assert_eq!((in_column(0), in_column(1), in_column(2)), (12, 0, 0));
+        assert!(end > 0.0);
+        assert_eq!(overset_of(&doc, id), 0);
+
+        // Balanced, the frame shares them four, four and four.
+        let mut doc = doc;
+        if let Some(FrameKind::Text { layout, .. }) = doc.frame_mut(id).map(|f| &mut f.kind) {
+            layout.balance = true;
+        }
+        let lines = lines_of(&doc, id);
+        let body = &lines[1..];
+        let in_column = |c: usize| {
+            body.iter()
+                .filter(|l| {
+                    let x = l.glyphs().next().map_or(0.0, |g| g.x);
+                    x >= c as f64 * 155.0 - 1.0 && x < (c + 1) as f64 * 155.0 - 1.0
+                })
+                .count()
+        };
+        assert_eq!((in_column(0), in_column(1), in_column(2)), (4, 4, 4));
+    }
+
+    #[test]
+    fn the_text_above_a_span_is_balanced_across_the_columns_over_it() {
+        use tessera_text::story::{ColumnSpan, ParagraphFormat};
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let above: Vec<String> = (1..=6).map(|n| format!("above {n}")).collect();
+        let text = format!("{}\nA heading across\nbelow", above.join("\n"));
+        let heading = text.find("A heading").expect("there");
+        let mut story = tessera_text::story::Story::new(text.clone());
+        story.apply_paragraph_format(
+            heading..heading + 1,
+            &ParagraphFormat {
+                column_span: Some(ColumnSpan::Span {
+                    columns: 0,
+                    space_before: 0.0,
+                    space_after: 0.0,
+                }),
+                ..ParagraphFormat::default()
+            },
+        );
+        let story = doc.add_story(story);
+        let mut frame = rect(0.0, 0.0, 450.0, 600.0);
+        frame.kind = FrameKind::text(story);
+        if let FrameKind::Text { layout, .. } = &mut frame.kind {
+            layout.columns = 3;
+            layout.gutter = 15.0;
+        }
+        let id = doc.add_frame(layer, frame);
+        let lines = lines_of(&doc, id);
+        let first_x = |l: &tessera_text::shape::ShapedLine| l.glyphs().next().map_or(0.0, |g| g.x);
+        let tops: Vec<f64> = lines[..6].iter().map(first_x).collect();
+        let per = |c: f64| tops.iter().filter(|x| **x >= c && **x < c + 150.0).count();
+        assert_eq!((per(0.0), per(155.0), per(310.0)), (2, 2, 2), "{tops:?}");
+        let heading = &lines[6];
+        let lowest_above = lines[..6]
+            .iter()
+            .map(|l| l.baseline + l.descent)
+            .fold(0.0, f64::max);
+        assert!(heading.baseline - heading.ascent >= lowest_above - 1e-6);
+        assert!(
+            lines[7].baseline > heading.baseline,
+            "and the rest under it"
+        );
+    }
+
+    #[test]
+    fn a_split_paragraph_is_balanced_through_columns_of_its_own() {
+        use tessera_text::story::{ColumnSpan, ParagraphFormat};
+        // Six items in one paragraph's lines, split in two inside a frame of
+        // one column.
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let mut story = tessera_text::story::Story::new("one two three four five six");
+        story.apply_paragraph_format(
+            0..1,
+            &ParagraphFormat {
+                column_span: Some(ColumnSpan::Split {
+                    columns: 2,
+                    gutter: 10.0,
+                    space_before: 0.0,
+                    space_after: 0.0,
+                }),
+                ..ParagraphFormat::default()
+            },
+        );
+        let story = doc.add_story(story);
+        let mut frame = rect(0.0, 0.0, 70.0, 600.0);
+        frame.kind = FrameKind::text(story);
+        let id = doc.add_frame(layer, frame);
+        let lines = lines_of(&doc, id);
+        let left = lines
+            .iter()
+            .filter(|l| l.glyphs().next().is_some_and(|g| g.x < 30.0))
+            .count();
+        assert!(
+            left > 0 && left < lines.len(),
+            "both sub-columns hold lines"
+        );
+        assert!(
+            left.abs_diff(lines.len() - left) <= 1,
+            "and evenly: {left} of {}",
+            lines.len()
+        );
     }
 
     #[test]

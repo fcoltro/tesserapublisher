@@ -713,6 +713,51 @@ impl ListFormat {
     }
 }
 
+/// How a paragraph sits in a frame of columns.
+///
+/// Laid out by the flow: the text before a spanning or split paragraph is
+/// balanced across the columns above it, the paragraph is set across or
+/// within them, and the columns begin again below it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum ColumnSpan {
+    /// In one column, as text usually is: what a style says to undo a span
+    /// its parent states.
+    Single,
+    /// Across `columns` of the frame's columns, from the first; 0 is all.
+    Span {
+        columns: u8,
+        space_before: f32,
+        space_after: f32,
+    },
+    /// Divided into `columns` columns of its own, `gutter` apart, across the
+    /// frame's width.
+    Split {
+        columns: u8,
+        gutter: f32,
+        space_before: f32,
+        space_after: f32,
+    },
+}
+
+impl ColumnSpan {
+    /// The space set above and below it, where it is not a single column.
+    pub fn spacing(self) -> (f32, f32) {
+        match self {
+            ColumnSpan::Single => (0.0, 0.0),
+            ColumnSpan::Span {
+                space_before,
+                space_after,
+                ..
+            }
+            | ColumnSpan::Split {
+                space_before,
+                space_after,
+                ..
+            } => (space_before, space_after),
+        }
+    }
+}
+
 /// Paragraph formatting, every field optional, plus the character formatting
 /// a paragraph imposes before any run of its own speaks.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -780,6 +825,10 @@ pub struct ParagraphFormat {
     /// Character styles on the first lines: nested line styles.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_styles: Option<Vec<crate::automatic::LineStyle>>,
+    /// Whether the paragraph runs across a frame's columns, or divides its
+    /// own into several: InDesign's Span Columns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column_span: Option<ColumnSpan>,
     /// What every run in the paragraph inherits before its own style speaks.
     #[serde(default)]
     pub character: CharacterFormat,
@@ -819,6 +868,7 @@ impl ParagraphFormat {
                 .line_styles
                 .clone()
                 .or_else(|| base.line_styles.clone()),
+            column_span: self.column_span.or(base.column_span),
             character: self.character.over(&base.character),
         }
     }

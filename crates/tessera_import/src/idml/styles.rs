@@ -526,6 +526,7 @@ pub(crate) fn paragraph_format(node: Node, colours: &Colours) -> ParagraphFormat
         .map(|n| n as u8)
         .filter(|n| *n > 1);
     f.drop_cap_characters = attr_f32(node, "DropCapCharacters").map(|n| n as u8);
+    f.column_span = column_span(node);
 
     let with_next = attr_f32(node, "KeepWithNext").is_some_and(|n| n > 0.0);
     let together = if attr(node, "KeepLinesTogether") == Some("true") {
@@ -596,6 +597,34 @@ fn tab_stops(node: Node) -> Option<Vec<TabStop>> {
         })
         .collect();
     if stops.is_empty() { None } else { Some(stops) }
+}
+
+/// Span Columns, as InDesign writes it on a paragraph or its style: across
+/// so many columns ("All" or a number) or split into them, with the space
+/// kept around it. Absent is unsaid; `SingleColumn` says one column.
+fn column_span(node: Node) -> Option<tessera_text::story::ColumnSpan> {
+    use tessera_text::story::ColumnSpan;
+    let count = || match attr(node, "SpanSplitColumnCount") {
+        Some("All") | None => 0,
+        Some(n) => n.trim().parse::<u8>().unwrap_or(0),
+    };
+    let before = attr_f32(node, "SpanColumnMinSpaceBefore").unwrap_or(0.0);
+    let after = attr_f32(node, "SpanColumnMinSpaceAfter").unwrap_or(0.0);
+    match attr(node, "SpanColumnType")? {
+        "SingleColumn" => Some(ColumnSpan::Single),
+        "SpanColumns" => Some(ColumnSpan::Span {
+            columns: count(),
+            space_before: before,
+            space_after: after,
+        }),
+        "SplitColumns" => Some(ColumnSpan::Split {
+            columns: count().max(2),
+            gutter: attr_f32(node, "SplitColumnInsideGutter").unwrap_or(12.0),
+            space_before: before,
+            space_after: after,
+        }),
+        _ => None,
+    }
 }
 
 /// A paragraph style's nested, line and GREP styles, as InDesign lists them
@@ -686,6 +715,38 @@ fn automatic_rules(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn span_and_split_columns_are_read_from_a_paragraph() {
+        use tessera_text::story::ColumnSpan;
+        let graphic = roxmltree::Document::parse("<Graphic/>").unwrap();
+        let colours = Colours::read(graphic.root_element());
+        let span = roxmltree::Document::parse(
+            r#"<ParagraphStyleRange SpanColumnType="SpanColumns" SpanSplitColumnCount="All" SpanColumnMinSpaceAfter="9"/>"#,
+        )
+        .unwrap();
+        assert_eq!(
+            paragraph_format(span.root_element(), &colours).column_span,
+            Some(ColumnSpan::Span {
+                columns: 0,
+                space_before: 0.0,
+                space_after: 9.0
+            })
+        );
+        let split = roxmltree::Document::parse(
+            r#"<ParagraphStyleRange SpanColumnType="SplitColumns" SpanSplitColumnCount="3" SplitColumnInsideGutter="6"/>"#,
+        )
+        .unwrap();
+        assert_eq!(
+            paragraph_format(split.root_element(), &colours).column_span,
+            Some(ColumnSpan::Split {
+                columns: 3,
+                gutter: 6.0,
+                space_before: 0.0,
+                space_after: 0.0
+            })
+        );
+    }
 
     #[test]
     fn a_paragraph_style_s_nested_line_and_grep_styles_are_read() {

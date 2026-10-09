@@ -3664,6 +3664,9 @@ setting real work for press reaches for, in the order the user agreed.
   the text is shaped, never stored on it; line styles end in a line
   separator the breaker honours, so the lines they take are exactly theirs.
   An editor page, and IDML import.
+- [x] **Span and split columns** (format 52): a frame holding one is set a
+  stretch at a time, the text above a span balanced; Properties, the style
+  page, IDML. Not yet in such a frame: text wrap and vertical alignment.
 
 ### The last refusals, and faces taller than their leading — 2026-10-09
 

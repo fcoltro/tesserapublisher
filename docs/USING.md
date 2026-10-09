@@ -149,6 +149,13 @@ percentage, and win over the nested ones. All of them sit beneath a character
 style or a format you set by hand, so a word made italic inside a bold head
 stays italic. InDesign files bring theirs with them.
 
+**Headings across columns.** In a frame of columns, a paragraph's **Span
+columns** (in Properties, or on the same page of the style) sets it across all
+of them, or as many as you say, with space above and below; the text before it
+is balanced across the columns above it, and the columns begin again below.
+**Split column** does the reverse: the paragraph divides into columns of its
+own — a list in two, say — balanced, with its own gutter.
+
 General also counts where the style is used. The arrows beside the count
 select each use on the page in turn, and the window stays open. A character
 style is previewed where the document first uses it, among the words around

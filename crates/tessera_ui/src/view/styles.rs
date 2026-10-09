@@ -151,7 +151,7 @@ impl StylePage {
             StylePage::Hyphenation => "Hyphenation",
             StylePage::Justification => "Justification",
             StylePage::DropCapsAndLists => "Drop caps and lists",
-            StylePage::NestedStyles => "Nested and GREP styles",
+            StylePage::NestedStyles => "Span columns, nested and GREP styles",
             StylePage::CharacterColour => "Character colour",
             StylePage::OpenType => "OpenType features",
             StylePage::Decorations => "Underline and strikethrough",
@@ -847,6 +847,7 @@ fn clear_paragraph_page(page: StylePage, f: &mut ParagraphFormat) {
             f.nested = None;
             f.line_styles = None;
             f.grep = None;
+            f.column_span = None;
         }
         _ => {}
     }
@@ -3194,7 +3195,13 @@ fn paragraph_page(
                 super::panels::list_editor(ui, &mut format.list, true);
             });
         }
-        StylePage::NestedStyles => super::nested_styles::page(ui, state, format),
+        StylePage::NestedStyles => {
+            style_ui::card(ui, Some("Span columns"), |ui| {
+                let unit = state.prefs.unit;
+                super::panels::column_span_editor(ui, &mut format.column_span, true, unit);
+            });
+            super::nested_styles::page(ui, state, format);
+        }
         // Listed rather than caught by a wildcard, so a page added to the
         // sidebar has to say what it draws.
         StylePage::General
@@ -4814,6 +4821,7 @@ mod tests {
             nested: Some(Vec::new()),
             grep: Some(Vec::new()),
             line_styles: Some(Vec::new()),
+            column_span: Some(tessera_text::story::ColumnSpan::Single),
             character: every_character_property(),
         };
         let terms = paragraph_terms(&full);
@@ -5114,6 +5122,7 @@ mod tests {
             nested: Some(Vec::new()),
             grep: Some(Vec::new()),
             line_styles: Some(Vec::new()),
+            column_span: Some(tessera_text::story::ColumnSpan::Single),
             character: every_character_property(),
         };
         let mut emptied = full.clone();

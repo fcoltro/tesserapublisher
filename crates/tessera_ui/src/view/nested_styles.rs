@@ -34,21 +34,27 @@ fn style_menu(
         .and_then(|id| styles.iter().find(|(i, _)| *i == id))
         .map_or("[None]".to_owned(), |(_, n)| n.clone());
     let mut changed = false;
-    egui::ComboBox::from_id_salt(salt)
-        .selected_text(shown)
-        .width(140.0)
-        .show_ui(ui, |ui| {
-            if none && ui.selectable_label(chosen.is_none(), "[None]").clicked() {
-                changed |= chosen.is_some();
-                *chosen = None;
-            }
-            for (id, name) in styles {
-                if ui.selectable_label(*chosen == Some(*id), name).clicked() {
-                    changed |= *chosen != Some(*id);
-                    *chosen = Some(*id);
+    crate::icons::reads_as(
+        egui::ComboBox::from_id_salt(salt)
+            .selected_text(shown)
+            .width(140.0)
+            .show_ui(ui, |ui| {
+                if none && ui.selectable_label(chosen.is_none(), "[None]").clicked() {
+                    changed |= chosen.is_some();
+                    *chosen = None;
                 }
-            }
-        });
+                for (id, name) in styles {
+                    if ui.selectable_label(*chosen == Some(*id), name).clicked() {
+                        changed |= *chosen != Some(*id);
+                        *chosen = Some(*id);
+                    }
+                }
+            })
+            .response,
+        "Character style",
+        egui::WidgetType::ComboBox,
+        None,
+    );
     changed
 }
 
@@ -127,13 +133,19 @@ pub fn page(ui: &mut Ui, state: &TesseraApp, format: &mut ParagraphFormat) {
         for (i, rule) in rules.iter_mut().enumerate() {
             ui.horizontal_wrapped(|ui| {
                 style_menu(ui, ("nested-style", i), &styles, &mut rule.style, true);
-                egui::ComboBox::from_id_salt(("nested-through", i))
-                    .selected_text(if rule.through { "through" } else { "up to" })
-                    .width(70.0)
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut rule.through, true, "through");
-                        ui.selectable_value(&mut rule.through, false, "up to");
-                    });
+                crate::icons::reads_as(
+                    egui::ComboBox::from_id_salt(("nested-through", i))
+                        .selected_text(if rule.through { "through" } else { "up to" })
+                        .width(70.0)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut rule.through, true, "through");
+                            ui.selectable_value(&mut rule.through, false, "up to");
+                        })
+                        .response,
+                    "Through or up to",
+                    egui::WidgetType::ComboBox,
+                    None,
+                );
                 let mut count = f64::from(rule.count.max(1));
                 if ui
                     .add(
@@ -146,24 +158,30 @@ pub fn page(ui: &mut Ui, state: &TesseraApp, format: &mut ParagraphFormat) {
                     rule.count = count.round() as u16;
                 }
                 let typed = matches!(rule.delimiter, Delimiter::AnyOf(_));
-                egui::ComboBox::from_id_salt(("nested-delimiter", i))
-                    .selected_text(if typed {
-                        "Characters typed".to_owned()
-                    } else {
-                        rule.delimiter.label()
-                    })
-                    .width(110.0)
-                    .show_ui(ui, |ui| {
-                        for d in DELIMITERS {
-                            let label = d.label();
-                            if ui.selectable_label(rule.delimiter == d, label).clicked() {
-                                rule.delimiter = d;
+                crate::icons::reads_as(
+                    egui::ComboBox::from_id_salt(("nested-delimiter", i))
+                        .selected_text(if typed {
+                            "Characters typed".to_owned()
+                        } else {
+                            rule.delimiter.label()
+                        })
+                        .width(110.0)
+                        .show_ui(ui, |ui| {
+                            for d in DELIMITERS {
+                                let label = d.label();
+                                if ui.selectable_label(rule.delimiter == d, label).clicked() {
+                                    rule.delimiter = d;
+                                }
                             }
-                        }
-                        if ui.selectable_label(typed, "Characters typed").clicked() && !typed {
-                            rule.delimiter = Delimiter::AnyOf(":".to_owned());
-                        }
-                    });
+                            if ui.selectable_label(typed, "Characters typed").clicked() && !typed {
+                                rule.delimiter = Delimiter::AnyOf(":".to_owned());
+                            }
+                        })
+                        .response,
+                    "Delimiter",
+                    egui::WidgetType::ComboBox,
+                    None,
+                );
                 if let Delimiter::AnyOf(chars) = &mut rule.delimiter {
                     ui.add(egui::TextEdit::singleline(chars).desired_width(40.0))
                         .on_hover_text("Any one of these characters ends it");
@@ -288,6 +306,15 @@ pub fn terms(format: &ParagraphFormat) -> Vec<String> {
     }
     if let Some(rules) = &format.grep {
         out.push(plural(rules.len(), "GREP style", "GREP styles"));
+    }
+    if let Some(span) = format.column_span {
+        use tessera_text::story::ColumnSpan;
+        out.push(match span {
+            ColumnSpan::Single => "one column".to_owned(),
+            ColumnSpan::Span { columns: 0, .. } => "spans all columns".to_owned(),
+            ColumnSpan::Span { columns, .. } => format!("spans {columns} columns"),
+            ColumnSpan::Split { columns, .. } => format!("split into {columns} columns"),
+        });
     }
     out
 }

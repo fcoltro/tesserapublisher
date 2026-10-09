@@ -1752,6 +1752,113 @@ pub(crate) fn parse_sets(text: &str) -> Vec<u8> {
 /// because it is three other fields.
 ///
 /// `inheritable` offers "Inherit" — `None` — which only a style can mean.
+/// Span Columns: one column, across the frame's columns, or split into
+/// columns of its own, with the space around it. `None` shows as one column
+/// and, where `inheritable`, offers inheriting. Returns whether it changed.
+pub(crate) fn column_span_editor(
+    ui: &mut Ui,
+    span: &mut Option<tessera_text::story::ColumnSpan>,
+    inheritable: bool,
+    unit: Unit,
+) -> bool {
+    use tessera_text::story::ColumnSpan;
+    let mut changed = false;
+    let kind = match span {
+        None if inheritable => 0,
+        None | Some(ColumnSpan::Single) => 1,
+        Some(ColumnSpan::Span { .. }) => 2,
+        Some(ColumnSpan::Split { .. }) => 3,
+    };
+    let names = ["Inherited", "One column", "Span columns", "Split column"];
+    ui.horizontal(|ui| {
+        ui.label("Columns");
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt(("column-span", inheritable))
+                .selected_text(names[kind])
+                .show_ui(ui, |ui| {
+                    for (i, name) in names.iter().enumerate() {
+                        if i == 0 && !inheritable {
+                            continue;
+                        }
+                        if ui.selectable_label(kind == i, *name).clicked() && kind != i {
+                            *span = match i {
+                                0 => None,
+                                1 => Some(ColumnSpan::Single),
+                                2 => Some(ColumnSpan::Span {
+                                    columns: 0,
+                                    space_before: 6.0,
+                                    space_after: 6.0,
+                                }),
+                                _ => Some(ColumnSpan::Split {
+                                    columns: 2,
+                                    gutter: 12.0,
+                                    space_before: 6.0,
+                                    space_after: 6.0,
+                                }),
+                            };
+                            changed = true;
+                        }
+                    }
+                })
+                .response,
+            "Columns",
+            egui::WidgetType::ComboBox,
+            None,
+        );
+    });
+    let count_field = |ui: &mut Ui, label: &str, value: &mut u8, least: f64| -> bool {
+        ui.horizontal(|ui| {
+            ui.label(label);
+            let mut n = f64::from(*value);
+            let moved = ui
+                .add(egui::DragValue::new(&mut n).range(least..=20.0).speed(0.1))
+                .on_hover_text(if least == 0.0 { "0 is all of them" } else { "" })
+                .changed();
+            if moved {
+                *value = n.round() as u8;
+            }
+            moved
+        })
+        .inner
+    };
+    let space = |ui: &mut Ui, label: &str, value: &mut f32| -> bool {
+        ui.horizontal(|ui| {
+            ui.label(label);
+            let mut v = f64::from(*value);
+            let moved = measure_bare(ui, &mut v, unit);
+            if moved {
+                *value = v as f32;
+            }
+            moved
+        })
+        .inner
+    };
+    match span {
+        Some(ColumnSpan::Span {
+            columns,
+            space_before,
+            space_after,
+        }) => {
+            changed |= count_field(ui, "Across", columns, 0.0);
+            changed |= space(ui, "Space before", space_before);
+            changed |= space(ui, "Space after", space_after);
+        }
+        Some(ColumnSpan::Split {
+            columns,
+            gutter,
+            space_before,
+            space_after,
+        }) => {
+            changed |= count_field(ui, "Into", columns, 2.0);
+            changed |= space(ui, "Gutter", gutter);
+            changed |= space(ui, "Space before", space_before);
+            changed |= space(ui, "Space after", space_after);
+        }
+        _ => {}
+    }
+    changed
+}
+
 pub(crate) fn list_editor(
     ui: &mut Ui,
     list: &mut Option<ListFormat>,
@@ -3269,39 +3376,51 @@ fn auto_size_controls(
         .map_or("Off", |(_, n)| *n);
     ui.horizontal(|ui| {
         ui.label("Auto-size");
-        egui::ComboBox::from_id_salt(("auto-size", &document, id))
-            .selected_text(shown)
-            .show_ui(ui, |ui| {
-                for (mode, name) in modes {
-                    if ui.selectable_label(current == mode, name).clicked() && current != mode {
-                        wanted.auto_size = mode.map(|grow| AutoSize {
-                            grow,
-                            ..wanted.auto_size.unwrap_or_default()
-                        });
-                        changed = true;
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt(("auto-size", &document, id))
+                .selected_text(shown)
+                .show_ui(ui, |ui| {
+                    for (mode, name) in modes {
+                        if ui.selectable_label(current == mode, name).clicked() && current != mode {
+                            wanted.auto_size = mode.map(|grow| AutoSize {
+                                grow,
+                                ..wanted.auto_size.unwrap_or_default()
+                            });
+                            changed = true;
+                        }
                     }
-                }
-            });
+                })
+                .response,
+            "Auto-size",
+            egui::WidgetType::ComboBox,
+            None,
+        );
     });
     let Some(mut auto) = wanted.auto_size else {
         return changed;
     };
     ui.horizontal(|ui| {
         ui.label("Grows from");
-        egui::ComboBox::from_id_salt(("auto-size-from", &document, id))
-            .selected_text(auto.from.label())
-            .show_ui(ui, |ui| {
-                for anchor in tessera_geometry::Anchor::ALL {
-                    if ui
-                        .selectable_label(auto.from == anchor, anchor.label())
-                        .clicked()
-                        && auto.from != anchor
-                    {
-                        auto.from = anchor;
-                        changed = true;
+        crate::icons::reads_as(
+            egui::ComboBox::from_id_salt(("auto-size-from", &document, id))
+                .selected_text(auto.from.label())
+                .show_ui(ui, |ui| {
+                    for anchor in tessera_geometry::Anchor::ALL {
+                        if ui
+                            .selectable_label(auto.from == anchor, anchor.label())
+                            .clicked()
+                            && auto.from != anchor
+                        {
+                            auto.from = anchor;
+                            changed = true;
+                        }
                     }
-                }
-            });
+                })
+                .response,
+            "Grows from",
+            egui::WidgetType::ComboBox,
+            None,
+        );
     });
     // Nought is no minimum: the frame may go as small as its text.
     let mut minimum = |ui: &mut Ui, label: &str, value: &mut Option<f64>| {
@@ -5242,6 +5361,20 @@ fn text_section(
                     indent_left: Some(18.0),
                     indent_first: Some(-18.0),
                     tab_stops: Some(vec![tessera_text::story::TabStop::at(18.0)]),
+                    ..ParagraphFormat::default()
+                },
+            );
+        }
+    }
+    if property_disclosure(ui, state, "Span columns") {
+        let mut span = paragraph.column_span;
+        if column_span_editor(ui, &mut span, false, state.prefs.unit) {
+            set_paragraph(
+                state,
+                story,
+                target.clone(),
+                ParagraphFormat {
+                    column_span: Some(span.unwrap_or(tessera_text::story::ColumnSpan::Single)),
                     ..ParagraphFormat::default()
                 },
             );
