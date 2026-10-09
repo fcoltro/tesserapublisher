@@ -95,6 +95,73 @@ pub fn tint_of(colour: &Color) -> Option<f32> {
     }
 }
 
+/// A mixed ink's inks, as one `/DeviceN` space names them: each ink's name,
+/// and what it is at full strength in process ink, for the stand-in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Mix {
+    pub names: Vec<String>,
+    pub alternates: Vec<[f32; 4]>,
+}
+
+/// The inks of a mixed colour, at full strength, for an export in process
+/// ink. `None` for any other colour, or for an export that is not separated.
+pub fn mix_in(colour: &Color, ink: &crate::Ink) -> Option<Mix> {
+    let Color::Mixed { inks, .. } = colour else {
+        return None;
+    };
+    if !ink.is_cmyk() || inks.is_empty() {
+        return None;
+    }
+    let alternates = inks
+        .iter()
+        .map(|i| match ink.components(&i.colour) {
+            crate::ink::Components::Cmyk(v) => v,
+            crate::ink::Components::Rgb(_) => [0.0; 4],
+        })
+        .collect();
+    Some(Mix {
+        names: inks.iter().map(|i| i.name.clone()).collect(),
+        alternates,
+    })
+}
+
+/// How much of each ink a mixed colour lays down, in its space's order.
+pub fn amounts_of(colour: &Color) -> Option<Vec<f32>> {
+    match colour {
+        Color::Mixed { inks, .. } => Some(inks.iter().map(|i| i.amount.clamp(0.0, 1.0)).collect()),
+        _ => None,
+    }
+}
+
+/// The stand-in as a PostScript calculator: from each ink's share to the
+/// process ink a proofing device shows, each plate covering what the ones
+/// before it left — `1 − Π(1 − tᵢ·cᵢ)` for every one of C, M, Y and K.
+pub fn stand_in_program(alternates: &[[f32; 4]]) -> String {
+    let n = alternates.len();
+    let mut code = String::from("{ ");
+    for k in 0..4 {
+        code.push_str("1 ");
+        for (i, alternate) in alternates.iter().enumerate() {
+            let c = alternate[k];
+            if c <= 0.0 {
+                continue;
+            }
+            // The share's place from the top: the later shares, the outputs
+            // made so far, and the running product.
+            let depth = (n - 1 - i) + k + 1;
+            code.push_str(&format!("{depth} index {c:.4} mul 1 exch sub mul "));
+        }
+        code.push_str("1 exch sub ");
+    }
+    // The four outputs under the shares, and the shares gone.
+    code.push_str(&format!("{} 4 roll ", n + 4));
+    for _ in 0..n {
+        code.push_str("pop ");
+    }
+    code.push('}');
+    code
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,6 +221,15 @@ mod tests {
         // spot print as solid ink, which is the loudest possible failure.
         assert_eq!(Alternate::Rgb([0.5; 3]).none(), vec![1.0, 1.0, 1.0]);
         assert_eq!(Alternate::Cmyk([0.5; 4]).none(), vec![0.0; 4]);
+    }
+
+    #[test]
+    fn the_stand_in_program_leaves_four_numbers_for_two_inks() {
+        // Two inks: the program reads both shares and leaves C, M, Y, K.
+        let code = stand_in_program(&[[0.0, 0.9, 0.8, 0.0], [0.0, 0.0, 0.0, 1.0]]);
+        assert!(code.starts_with('{') && code.ends_with('}'));
+        assert!(code.contains("6 4 roll"), "{code}");
+        assert_eq!(code.matches("pop").count(), 2);
     }
 
     #[test]

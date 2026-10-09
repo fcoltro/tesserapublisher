@@ -163,6 +163,7 @@ fn describe(colour: &tessera_color::Color) -> String {
         Color::Lab { l, a, b, .. } => format!("L {l:.0} a {a:.0} b {b:.0}"),
         Color::Swatch { name, tint } if *tint < 1.0 => format!("{name} {}%", pc(*tint)),
         Color::Swatch { name, .. } => name.clone(),
+        Color::Mixed { .. } => tessera_document::colour_name(colour),
     }
 }
 

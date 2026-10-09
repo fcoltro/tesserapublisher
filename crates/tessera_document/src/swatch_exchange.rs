@@ -233,7 +233,8 @@ fn colour_bytes(swatch: &Swatch) -> Option<Vec<u8>> {
         Color::Cmyk { c, m, y, k, .. } => (b"CMYK", vec![*c, *m, *y, *k]),
         Color::Rgb { r, g, b, .. } => (b"RGB ", vec![*r, *g, *b]),
         Color::Lab { l, a, b, .. } => (b"LAB ", vec![*l / 100.0, *a, *b]),
-        Color::Spot { .. } | Color::Swatch { .. } => return None,
+        // An exchange file has no word for inks over inks.
+        Color::Spot { .. } | Color::Swatch { .. } | Color::Mixed { .. } => return None,
     };
     let mut out = name_bytes(&swatch.name);
     out.extend_from_slice(model);

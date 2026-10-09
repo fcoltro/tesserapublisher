@@ -2295,3 +2295,50 @@ fn an_object_set_to_overprint_does_so_and_only_where_inks_separate() {
     let text = text_of(&doc, &ExportOptions::default());
     assert!(!text.contains("/OPf"), "an RGB export carries no overprint");
 }
+
+// --- mixed inks -------------------------------------------------------------
+
+fn duotone() -> Color {
+    Color::Mixed {
+        inks: vec![
+            tessera_color::MixedInk {
+                name: "PANTONE 185 C".into(),
+                amount: 0.8,
+                colour: Box::new(Color::Cmyk {
+                    c: 0.0,
+                    m: 0.9,
+                    y: 0.8,
+                    k: 0.0,
+                    a: 1.0,
+                }),
+            },
+            tessera_color::MixedInk::process(3, 0.3),
+        ],
+        a: 1.0,
+    }
+}
+
+#[test]
+fn a_mixed_ink_is_one_devicen_space_naming_each_ink_for_a_press() {
+    let bytes = tessera_pdf::export_with(&filled_with(duotone()), &for_press()).expect("export");
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("/DeviceN"), "the inks share one space");
+    assert!(text.contains("/Black"), "black by its plate's name");
+    assert!(text.contains("PANTONE#20185#20C") || text.contains("PANTONE 185 C"));
+    assert!(text.contains("/Mix0 cs"), "the fill is set in it");
+    assert!(text.contains("0.8 0.3 scn"), "at each ink's share");
+    assert!(
+        text.contains("/FunctionType 4"),
+        "with a stand-in for a proof"
+    );
+
+    // Read back, the stand-in prints as a red darkened by black.
+    let shown = printed(&bytes, "mixed");
+    let [r, g, b, _] = pixel(&shown, 30, 30);
+    assert!(r > g + 40 && r > b + 40, "a dark red: {:?}", (r, g, b));
+    assert!(r < 230, "darkened by its black: {r}");
+
+    // A screen PDF has no plates: no DeviceN.
+    let screen = text_of(&filled_with(duotone()), &ExportOptions::default());
+    assert!(!screen.contains("/DeviceN"));
+}

@@ -90,6 +90,21 @@ impl Ink {
                 base.map(|v| v * tint)
             }
 
+            // Inks over inks: each plate covers what the ones under it left
+            // uncovered, at each ink's share — the same sum the DeviceN
+            // space's stand-in computes.
+            Color::Mixed { inks, .. } => {
+                let mut clear = [1.0f32; 4];
+                for ink in inks {
+                    let own = self.to_cmyk(&ink.colour, conversion);
+                    let t = ink.amount.clamp(0.0, 1.0);
+                    for (c, v) in clear.iter_mut().zip(own) {
+                        *c *= 1.0 - t * v;
+                    }
+                }
+                clear.map(|c| 1.0 - c)
+            }
+
             other => {
                 let [r, g, b, _] = other.to_rgb_f32();
                 // **Pure black is one ink.** Through the press profile RGB

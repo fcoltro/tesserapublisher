@@ -63,6 +63,51 @@ pub enum Color {
         /// ink. 1.0 is the swatch itself.
         tint: f32,
     },
+    /// Inks printed one over another, each at its own strength: InDesign's
+    /// mixed ink — a spot and black for a duotone, two spots and a process
+    /// ink for a third colour from a two-ink job. The process inks are named
+    /// as the press names their plates: `Cyan`, `Magenta`, `Yellow`, `Black`.
+    Mixed {
+        inks: Vec<MixedInk>,
+        a: f32,
+    },
+}
+
+/// One ink in a [`Color::Mixed`]: its name, how much of it, and what it looks
+/// like at full strength.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MixedInk {
+    pub name: String,
+    pub amount: f32,
+    pub colour: Box<Color>,
+}
+
+/// The four process plates, as a mixed ink names them.
+pub const PROCESS_INKS: [&str; 4] = ["Cyan", "Magenta", "Yellow", "Black"];
+
+impl MixedInk {
+    /// A process ink at `amount`: the plate alone, at full strength its own
+    /// colour.
+    pub fn process(index: usize, amount: f32) -> Self {
+        let mut cmyk = [0.0; 4];
+        cmyk[index.min(3)] = 1.0;
+        MixedInk {
+            name: PROCESS_INKS[index.min(3)].to_owned(),
+            amount,
+            colour: Box::new(Color::Cmyk {
+                c: cmyk[0],
+                m: cmyk[1],
+                y: cmyk[2],
+                k: cmyk[3],
+                a: 1.0,
+            }),
+        }
+    }
+
+    /// Whether this is one of the four process plates.
+    pub fn is_process(&self) -> bool {
+        PROCESS_INKS.contains(&self.name.as_str())
+    }
 }
 
 impl Color {
@@ -136,6 +181,19 @@ impl Color {
                 [r, g, bl, *alpha]
             }
             Self::Swatch { .. } => [1.0, 0.0, 1.0, 1.0],
+            // Inks over one another darken as overprinted ink does: each
+            // passes on its share of the light, at its strength.
+            Self::Mixed { inks, a } => {
+                let mut light = [1.0f32; 3];
+                for ink in inks {
+                    let [r, g, b, _] = ink.colour.to_rgb_f32();
+                    let t = ink.amount.clamp(0.0, 1.0);
+                    for (l, c) in light.iter_mut().zip([r, g, b]) {
+                        *l *= 1.0 - t * (1.0 - c);
+                    }
+                }
+                [light[0], light[1], light[2], *a]
+            }
         }
     }
 
@@ -189,6 +247,17 @@ impl Color {
                 a: a * by,
                 b: b * by,
                 alpha,
+            },
+            // Every ink at that share, as a tint of any ink is.
+            Self::Mixed { inks, a } => Self::Mixed {
+                inks: inks
+                    .into_iter()
+                    .map(|ink| MixedInk {
+                        amount: ink.amount * by,
+                        ..ink
+                    })
+                    .collect(),
+                a,
             },
         }
     }
@@ -285,6 +354,25 @@ impl Default for Color {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_mixed_ink_darkens_as_inks_over_inks_do_and_tints_every_ink() {
+        let mix = Color::Mixed {
+            inks: vec![MixedInk::process(0, 1.0), MixedInk::process(3, 0.5)],
+            a: 1.0,
+        };
+        // Cyan alone is (0, 1, 1); half black over it halves the light.
+        let [r, g, b, a] = mix.to_rgb_f32();
+        assert!(r.abs() < 1e-6 && (g - 0.5).abs() < 1e-6 && (b - 0.5).abs() < 1e-6);
+        assert_eq!(a, 1.0);
+        let Color::Mixed { inks, .. } = mix.tinted(0.5) else {
+            panic!("still mixed");
+        };
+        let amounts: Vec<f32> = inks.iter().map(|i| i.amount).collect();
+        assert_eq!(amounts, [0.5, 0.25]);
+        assert!(inks[0].is_process());
+    }
+
     use super::*;
 
     #[test]

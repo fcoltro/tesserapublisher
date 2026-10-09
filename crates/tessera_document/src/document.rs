@@ -1821,7 +1821,7 @@ impl Document {
         let mut at = colour.clone();
         for _ in 0..DEPTH {
             let Color::Swatch { name, tint } = &at else {
-                return at;
+                return self.resolve_inks(at);
             };
             let Some(swatch) = self.swatch(name) else {
                 // Deleted, or never defined. The alarming colour, on purpose.
@@ -1842,7 +1842,26 @@ impl Document {
             }
             at = swatch.colour.tinted(*tint);
         }
-        at
+        self.resolve_inks(at)
+    }
+
+    /// A mixed ink's inks, each as the process colour it stands in as: a
+    /// spot ink named by its swatch follows the swatch, so editing the spot
+    /// changes every mix of it.
+    fn resolve_inks(&self, colour: Color) -> Color {
+        let Color::Mixed { inks, a } = colour else {
+            return colour;
+        };
+        Color::Mixed {
+            inks: inks
+                .into_iter()
+                .map(|ink| tessera_color::MixedInk {
+                    colour: Box::new(self.resolve_process(&ink.colour)),
+                    ..ink
+                })
+                .collect(),
+            a,
+        }
     }
 
     /// Swatch references followed to the colour they stand for, without

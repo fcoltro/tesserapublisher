@@ -433,6 +433,18 @@ The ••• menu does to the whole list:
 | *Delete unused swatches* | As above |
 | *Sort by name* | Puts the list in order, *Blue 2* before *Blue 10* |
 
+**Mixed inks.** The Swatches panel's menu has *New mixed ink swatch*: inks
+printed over one another, each at its own share — a spot and black for a
+duotone, two spots for a third colour from a two-ink job. It starts as the
+document's first spot ink at 100% over 20% black; in the Swatch window each ink
+has its slider, *Add ink* brings in a process plate or another spot, and the ✕
+takes one out. A spot ink in a mix follows its swatch, so editing the spot
+changes every mix of it, and a tint of the mixed swatch is a tint of every ink.
+In a PDF for a press it prints on those plates, as one DeviceN colour, with a
+CMYK stand-in for proofs; on screen and in an RGB PDF it is that stand-in.
+Swatch exchange files have no word for one, so it is not saved to `.ase`, and
+IDML writes it as its process colour.
+
 **Colour groups.** Right-click a swatch for *New colour group*, *Move to* a
 group, or *Take out of its group*. A group's swatches stand together under its
 heading in the list: click the heading to fold it shut, right-click it to

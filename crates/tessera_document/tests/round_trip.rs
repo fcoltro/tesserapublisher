@@ -893,8 +893,8 @@ fn the_format_version_is_twenty_six() {
     // balanced columns, filled one after another before; 51 nested, GREP
     // and line styles, none before; 52 a paragraph spanning or splitting
     // columns, in one before; 53 overprinting fills and strokes, knocked
-    // out before; 54 colour groups, none before.
-    assert_eq!(format::FORMAT_VERSION, 54);
+    // out before; 54 colour groups, none before; 55 mixed inks.
+    assert_eq!(format::FORMAT_VERSION, 55);
 }
 
 #[test]

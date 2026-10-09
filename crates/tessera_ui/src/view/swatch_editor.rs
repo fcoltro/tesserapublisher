@@ -67,7 +67,8 @@ impl Mode {
             Color::Rgb { .. } => Some(Self::Rgb),
             Color::Lab { .. } => Some(Self::Lab),
             Color::Spot { fallback, .. } => Self::of(fallback),
-            Color::Swatch { .. } => None,
+            // A mixed ink is its inks, edited as shares of each.
+            Color::Swatch { .. } | Color::Mixed { .. } => None,
         }
     }
 
@@ -1095,6 +1096,114 @@ fn colour_card(ui: &mut Ui, state: &mut TesseraApp, swatch: &Swatch) {
                 });
             }
         });
+    } else if let Color::Mixed { inks, a } = &swatch.colour {
+        // The spot inks the document names, each at full strength, to add.
+        let doc = state.active().document();
+        let spots: Vec<(String, Color)> = doc
+            .swatches
+            .iter()
+            .filter(|s| is_spot(s) && s.name != swatch.name)
+            // By its swatch, so the mix follows an edit of the spot.
+            .map(|s| {
+                (
+                    s.name.clone(),
+                    Color::Swatch {
+                        name: s.name.clone(),
+                        tint: 1.0,
+                    },
+                )
+            })
+            .collect();
+        let mut inks = inks.clone();
+        style_ui::card(ui, Some("Inks"), |ui| {
+            let mut remove = None;
+            for i in 0..inks.len() {
+                style_ui::row(ui, |ui| {
+                    style_ui::name_cell(ui, &inks[i].name, true);
+                    let mut percent = (inks[i].amount * 100.0).round();
+                    // The track from the inks as they print now.
+                    let trial = match doc.resolve_colour(&Color::Mixed {
+                        inks: inks.clone(),
+                        a: *a,
+                    }) {
+                        Color::Mixed { inks, .. } => inks,
+                        _ => inks.clone(),
+                    };
+                    let paint = |v: f32| {
+                        let mut trial = trial.clone();
+                        trial[i].amount = v / 100.0;
+                        Color::Mixed { inks: trial, a: *a }.to_rgb_f32()
+                    };
+                    let (moved, drag) =
+                        channel(ui, &inks[i].name, &mut percent, 0.0..=100.0, "%", paint);
+                    if moved {
+                        inks[i].amount = (percent / 100.0).clamp(0.0, 1.0);
+                        changed = true;
+                        dragging |= drag;
+                    }
+                    if inks.len() > 1
+                        && ui
+                            .small_button("\u{2715}")
+                            .on_hover_text("Take this ink out of the mix")
+                            .clicked()
+                    {
+                        remove = Some(i);
+                    }
+                });
+            }
+            if let Some(i) = remove {
+                inks.remove(i);
+                changed = true;
+            }
+            // Another ink: a process plate or a spot, not in the mix yet.
+            let mut offered: Vec<(String, Option<Color>)> = tessera_color::PROCESS_INKS
+                .iter()
+                .map(|n| (n.to_string(), None))
+                .chain(spots.iter().map(|(n, c)| (n.clone(), Some(c.clone()))))
+                .filter(|(n, _)| !inks.iter().any(|i| &i.name == n))
+                .collect();
+            if !offered.is_empty() {
+                let mut chosen: Option<usize> = None;
+                let response = egui::ComboBox::from_id_salt(("mixed-add", &swatch.name))
+                    .selected_text("Add ink")
+                    .show_ui(ui, |ui| {
+                        for (k, (name, _)) in offered.iter().enumerate() {
+                            if ui.selectable_label(false, name).clicked() {
+                                chosen = Some(k);
+                            }
+                        }
+                    })
+                    .response;
+                crate::icons::reads_as(response, "Add ink", egui::WidgetType::ComboBox, None);
+                if let Some(k) = chosen {
+                    let (name, colour) = offered.swap_remove(k);
+                    let ink = match colour {
+                        Some(colour) => tessera_color::MixedInk {
+                            name,
+                            amount: 1.0,
+                            colour: Box::new(colour),
+                        },
+                        None => {
+                            let index = tessera_color::PROCESS_INKS
+                                .iter()
+                                .position(|p| *p == name)
+                                .unwrap_or(3);
+                            tessera_color::MixedInk::process(index, 0.2)
+                        }
+                    };
+                    inks.push(ink);
+                    changed = true;
+                }
+            }
+        });
+        if changed {
+            edited.colour = Color::Mixed { inks, a: *a };
+        }
+        super::panel_ui::hint(
+            ui,
+            "Inks printed one over another, each at its own share: in a PDF for a \
+             press, each on its own plate.",
+        );
     }
     if changed {
         edit(state, &swatch.name, edited, dragging);

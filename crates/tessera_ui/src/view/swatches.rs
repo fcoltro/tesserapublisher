@@ -467,9 +467,41 @@ fn show_choice(
 enum Whole {
     Load,
     Save,
+    NewMixedInk,
     NameUnnamed,
     DeleteUnused,
     Sort,
+}
+
+/// A new mixed ink: the document's first spot ink at full strength over a
+/// fifth of black, or cyan and black when it has no spot ink yet, under the
+/// first free "Mixed ink" name.
+fn mixed_ink(doc: &tessera_document::document::Document) -> Swatch {
+    use tessera_color::MixedInk;
+    // A spot ink by its swatch, so the mix follows an edit of the spot.
+    let first_spot = doc
+        .swatches
+        .iter()
+        .find(|s| swatch_editor::is_spot(s))
+        .map(|s| MixedInk {
+            name: s.name.clone(),
+            amount: 1.0,
+            colour: Box::new(Color::Swatch {
+                name: s.name.clone(),
+                tint: 1.0,
+            }),
+        });
+    let inks = vec![
+        first_spot.unwrap_or_else(|| MixedInk::process(0, 1.0)),
+        MixedInk::process(3, 0.2),
+    ];
+    let mut n = 1;
+    let mut name = "Mixed ink".to_owned();
+    while doc.swatch(&name).is_some() {
+        n += 1;
+        name = format!("Mixed ink {n}");
+    }
+    Swatch::new(name, Color::Mixed { inks, a: 1.0 })
 }
 
 /// New swatch at the left; at the right, rows or tiles, and the menu of
@@ -506,6 +538,15 @@ fn header(
                             ui.close();
                         }
                     };
+                item(
+                    ui,
+                    true,
+                    "New mixed ink swatch",
+                    "Inks printed over one another, each at its own share: a spot and black, \
+                     or two spots",
+                    Whole::NewMixedInk,
+                );
+                ui.separator();
                 item(
                     ui,
                     true,
@@ -583,6 +624,14 @@ fn unnamed_count(state: &mut TesseraApp) -> usize {
 /// Do something to the whole list, and say what came of it.
 fn whole_list(state: &mut TesseraApp, whole: Whole, unused: &[String]) {
     let note = match whole {
+        Whole::NewMixedInk => {
+            let swatch = mixed_ink(state.active().document());
+            let window = &mut state.swatches_window;
+            window.chosen = Some(swatch.name.clone());
+            window.editing = true;
+            apply(state, Command::SetSwatch(swatch));
+            None
+        }
         Whole::Load => ask_load(state),
         Whole::Save => ask_save(state),
         Whole::NameUnnamed => {

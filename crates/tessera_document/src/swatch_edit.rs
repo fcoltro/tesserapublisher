@@ -429,7 +429,7 @@ fn nameable(colour: &Color) -> bool {
     match colour {
         Color::Rgb { a, .. } | Color::Cmyk { a, .. } => *a > 0.0,
         Color::Lab { alpha, .. } => *alpha > 0.0,
-        Color::Spot { .. } | Color::Swatch { .. } => false,
+        Color::Spot { .. } | Color::Swatch { .. } | Color::Mixed { .. } => false,
     }
 }
 
@@ -454,6 +454,13 @@ pub fn colour_name(colour: &Color) -> String {
             b.round() as i32
         ),
         Color::Spot { name, .. } | Color::Swatch { name, .. } => name.clone(),
+        // InDesign's own: each ink and its share, "PANTONE 185 C 60% + Black 20%".
+        Color::Mixed { inks, .. } => inks
+            .iter()
+            .filter(|i| i.amount > 0.0)
+            .map(|i| format!("{} {}%", i.name, percent(i.amount)))
+            .collect::<Vec<_>>()
+            .join(" + "),
     }
 }
 
@@ -798,6 +805,63 @@ pub fn name_order(a: &str, b: &str) -> std::cmp::Ordering {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_mixed_ink_follows_an_edit_of_its_spot() {
+        use tessera_color::{Color, MixedInk};
+        let mut doc = Document::new();
+        let mut spot = Swatch::new(
+            "PANTONE 185 C",
+            Color::Cmyk {
+                c: 0.0,
+                m: 0.9,
+                y: 0.8,
+                k: 0.0,
+                a: 1.0,
+            },
+        );
+        spot.spot = true;
+        doc.set_swatch(spot.clone());
+        doc.set_swatch(Swatch::new(
+            "Duotone",
+            Color::Mixed {
+                inks: vec![
+                    MixedInk {
+                        name: spot.name.clone(),
+                        amount: 1.0,
+                        colour: Box::new(Color::Swatch {
+                            name: spot.name.clone(),
+                            tint: 1.0,
+                        }),
+                    },
+                    MixedInk::process(3, 0.2),
+                ],
+                a: 1.0,
+            },
+        ));
+        let resolve = |doc: &Document| {
+            let Color::Mixed { inks, .. } = doc.resolve_colour(&Color::Swatch {
+                name: "Duotone".into(),
+                tint: 0.5,
+            }) else {
+                panic!("a mixed ink");
+            };
+            inks
+        };
+        let inks = resolve(&doc);
+        assert_eq!(inks[0].amount, 0.5, "the tint reaches every ink");
+        assert!(matches!(*inks[0].colour, Color::Cmyk { m, .. } if (m - 0.9).abs() < 1e-6));
+        spot.colour = Color::Cmyk {
+            c: 0.0,
+            m: 0.5,
+            y: 0.8,
+            k: 0.0,
+            a: 1.0,
+        };
+        doc.set_swatch(spot);
+        let inks = resolve(&doc);
+        assert!(matches!(*inks[0].colour, Color::Cmyk { m, .. } if (m - 0.5).abs() < 1e-6));
+    }
 
     #[test]
     fn a_group_keeps_its_swatches_together_and_can_be_renamed_or_undone() {

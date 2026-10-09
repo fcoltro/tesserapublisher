@@ -546,6 +546,7 @@ fn write(
     )?;
     let shadows = collect_shadows(resolved, &mut alloc);
     let plates = collect_plates(resolved, &ink, &mut alloc);
+    let mixes = collect_mixes(resolved, &ink, &mut alloc);
     if options.standard == Standard::X1a && pictures.iter().any(Picture::is_transparent) {
         return Err(PdfError::CannotConform(vec![
             "PDF/X-1a does not allow transparent artwork; use PDF/X-4".into(),
@@ -657,6 +658,7 @@ fn write(
                 pictures: &pictures,
                 shadows: &shadows,
                 plates: &plates,
+                mixes: &mixes,
                 ink: &ink,
                 resolved_page,
                 options,
@@ -750,10 +752,13 @@ fn write(
             }
             objects.finish();
         }
-        if !plates.is_empty() {
+        if !plates.is_empty() || !mixes.is_empty() {
             let mut spaces = resources.color_spaces();
             for plate in &plates {
                 spaces.pair(Name(plate.resource.as_bytes()), plate.id);
+            }
+            for mix in &mixes {
+                spaces.pair(Name(mix.resource.as_bytes()), mix.id);
             }
             spaces.finish();
         }
@@ -786,6 +791,7 @@ fn write(
     write_pictures(&mut pdf, &pictures);
     write_shadows(&mut pdf, &shadows);
     write_plates(&mut pdf, &plates);
+    write_mixes(&mut pdf, &mixes);
 
     for font in &fonts {
         write_font(&mut pdf, font);
@@ -1064,6 +1070,79 @@ fn collect_plates(
     }
 
     out
+}
+
+/// One mixed ink's `/DeviceN` space: its inks, and their stand-in.
+struct MixSpace {
+    id: Ref,
+    transform: Ref,
+    resource: String,
+    mix: crate::separation::Mix,
+}
+
+/// Every set of inks a mixed colour names, once each. Keyed on the names in
+/// their order: two mixes of the same inks at other shares are one space at
+/// two settings.
+fn collect_mixes(
+    resolved: &ResolvedDocument,
+    ink: &Ink,
+    alloc: &mut impl FnMut() -> Ref,
+) -> Vec<MixSpace> {
+    let mut out: Vec<MixSpace> = Vec::new();
+    if !ink.is_cmyk() {
+        return out;
+    }
+    for item in &resolved.items {
+        for colour in item_colours(&item.kind) {
+            let Some(mix) = crate::separation::mix_in(&colour, ink) else {
+                continue;
+            };
+            if out.iter().any(|m| m.mix.names == mix.names) {
+                continue;
+            }
+            out.push(MixSpace {
+                id: alloc(),
+                transform: alloc(),
+                resource: format!("Mix{}", out.len()),
+                mix,
+            });
+        }
+    }
+    out
+}
+
+/// Write each mixed ink's space and the calculator that stands in for it.
+fn write_mixes(pdf: &mut Pdf, mixes: &[MixSpace]) {
+    for mix in mixes {
+        let code = crate::separation::stand_in_program(&mix.mix.alternates).into_bytes();
+        let n = mix.mix.names.len();
+        let mut function = pdf.post_script_function(mix.transform, &code);
+        function
+            .domain(std::iter::repeat_n([0.0f32, 1.0], n).flatten())
+            .range(std::iter::repeat_n([0.0f32, 1.0], 4).flatten());
+        function.finish();
+
+        let mut space = pdf.indirect(mix.id).array();
+        space.item(Name(b"DeviceN"));
+        let mut names = space.push().array();
+        for name in &mix.mix.names {
+            names.item(Name(name.as_bytes()));
+        }
+        names.finish();
+        space.item(Name(b"DeviceCMYK"));
+        space.item(mix.transform);
+        space.finish();
+    }
+}
+
+/// The mixed ink space a colour is set in, if it is a mixed ink.
+fn mix_for<'a>(colour: &tessera_color::Color, mixes: &'a [MixSpace]) -> Option<&'a MixSpace> {
+    let tessera_color::Color::Mixed { inks, .. } = colour else {
+        return None;
+    };
+    mixes.iter().find(|m| {
+        m.mix.names.len() == inks.len() && m.mix.names.iter().zip(inks).all(|(n, i)| *n == i.name)
+    })
 }
 
 /// Write each plate: its tint transform, then the space that names it.
@@ -1879,6 +1958,7 @@ struct Written<'a> {
     pictures: &'a [Picture],
     shadows: &'a [Option<CastShadow>],
     plates: &'a [Plate],
+    mixes: &'a [MixSpace],
     ink: &'a Ink,
     resolved_page: &'a tessera_layout::ResolvedPage,
     options: &'a ExportOptions,
@@ -1888,6 +1968,7 @@ struct Written<'a> {
 struct Painting<'a> {
     ink: &'a Ink,
     plates: &'a [Plate],
+    mixes: &'a [MixSpace],
     states: &'a [GraphicsState],
     blend: Blending,
     has_paint_alpha: bool,
@@ -1939,7 +2020,12 @@ impl Painting<'_> {
     fn fill(&self, content: &mut Content, colour: &Color) {
         self.alpha(content, colour_alpha(colour));
         self.overprint(content, colour, true);
-        if let Some(plate) = plate_for(colour, self.plates) {
+        if let Some(mix) = mix_for(colour, self.mixes) {
+            content.set_fill_color_space(pdf_writer::types::ColorSpaceOperand::Named(Name(
+                mix.resource.as_bytes(),
+            )));
+            content.set_fill_color(crate::separation::amounts_of(colour).unwrap_or_default());
+        } else if let Some(plate) = plate_for(colour, self.plates) {
             content.set_fill_color_space(pdf_writer::types::ColorSpaceOperand::Named(Name(
                 plate.resource.as_bytes(),
             )));
@@ -1961,6 +2047,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
         pictures,
         shadows,
         plates,
+        mixes,
         ink,
         resolved_page,
         options,
@@ -1985,6 +2072,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
         let painting = Painting {
             ink,
             plates,
+            mixes,
             states,
             blend: item.blend,
             has_paint_alpha: item_colours(&item.kind).iter().any(|c| {
@@ -2404,15 +2492,22 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
 fn apply_stroke(content: &mut Content, stroke: &Stroke, painting: &Painting<'_>) {
     painting.alpha(content, colour_alpha(&stroke.color));
     painting.overprint(content, &stroke.color, false);
-    match plate_for(&stroke.color, painting.plates) {
-        Some(plate) => {
-            let tint = crate::separation::tint_of(&stroke.color).unwrap_or(1.0);
-            content.set_stroke_color_space(pdf_writer::types::ColorSpaceOperand::Named(Name(
-                plate.resource.as_bytes(),
-            )));
-            content.set_stroke_color([tint]);
+    if let Some(mix) = mix_for(&stroke.color, painting.mixes) {
+        content.set_stroke_color_space(pdf_writer::types::ColorSpaceOperand::Named(Name(
+            mix.resource.as_bytes(),
+        )));
+        content.set_stroke_color(crate::separation::amounts_of(&stroke.color).unwrap_or_default());
+    } else {
+        match plate_for(&stroke.color, painting.plates) {
+            Some(plate) => {
+                let tint = crate::separation::tint_of(&stroke.color).unwrap_or(1.0);
+                content.set_stroke_color_space(pdf_writer::types::ColorSpaceOperand::Named(Name(
+                    plate.resource.as_bytes(),
+                )));
+                content.set_stroke_color([tint]);
+            }
+            None => painting.ink.set_stroke(content, &stroke.color),
         }
-        None => painting.ink.set_stroke(content, &stroke.color),
     }
     content.set_line_width(stroke.width as f32);
     content.set_line_cap(match stroke.cap {

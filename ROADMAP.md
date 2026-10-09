@@ -3690,8 +3690,10 @@ setting real work for press reaches for, in the order the user agreed.
 - [x] **Colour groups** (format 54): a swatch's `group`, its members kept
   together in the list; headings that fold, rename and ungroup; `.ase` group
   blocks read and written; IDML `ColorGroup` both ways.
-- [ ] **Mixed inks**: a swatch of process and spot inks at percentages,
-  written to PDF as DeviceN. Not built.
+- [x] **Mixed inks** (format 55): `Color::Mixed`, inks by name with a share
+  each, spots naming their swatches; drawn as inks over inks; one DeviceN
+  space per set of inks in a CMYK PDF, its stand-in a type 4 function of
+  `1 − Π(1 − tᵢcᵢ)`. Not done: mixed ink groups, and carrying one in IDML.
 - [ ] **Overprint and separations preview** on screen: the canvas composites
   in RGB, and showing plates needs a CMYK compositing path of its own.
 
