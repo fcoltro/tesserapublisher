@@ -1070,6 +1070,10 @@ fn handle_input(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut Tess
         Tool::Measure => measure_gesture(ui, response, rect, state),
         Tool::Gap => gap_gesture(ui, response, rect, state),
         Tool::Pencil | Tool::Smooth | Tool::Erase => freehand_gesture(response, rect, state),
+        Tool::GradientSwatch => gradient_gesture(ui, response, rect, state, GradientKind::Swatch),
+        Tool::GradientFeather => {
+            gradient_gesture(ui, response, rect, state, GradientKind::Feather);
+        }
         Tool::Conveyor => {
             if response.clicked()
                 && let Some(pos) = response.interact_pointer_pos()
@@ -2606,6 +2610,7 @@ fn canvas_cursor(
         Tool::ColourTheme => Cursor::new(Icon::Pipette),
         Tool::Pencil => Cursor::new(Icon::Pen),
         Tool::Smooth | Tool::Erase => Cursor::new(Icon::Crosshair),
+        Tool::GradientSwatch | Tool::GradientFeather => Cursor::new(Icon::Crosshair),
         Tool::Conveyor => Cursor::new(if state.conveyor.placing {
             Icon::Crosshair
         } else {
@@ -3224,6 +3229,65 @@ pub(crate) fn freehand_commit(
     }
 }
 
+use crate::gradient_tool::Kind as GradientKind;
+
+/// A gradient tool's drag: press on an object (or anywhere, with one
+/// selected), drag along where the ramp should run, let go. The line is
+/// drawn while it is dragged, with a square at the start and a diamond at
+/// the end, as InDesign draws it.
+fn gradient_gesture(
+    ui: &Ui,
+    response: &egui::Response,
+    rect: Rect,
+    state: &mut TesseraApp,
+    kind: GradientKind,
+) {
+    let held = egui::Id::new("tessera-gradient-drag");
+    if response.drag_started()
+        && let Some(pos) = press_pos(ui, response)
+    {
+        let target = frame_at(state, rect, pos).or_else(|| state.active().selection.single());
+        if let Some(id) = target {
+            state.active_mut().selection.set(id);
+            ui.ctx().data_mut(|d| d.insert_temp(held, (id, pos)));
+        }
+    }
+    let Some((id, start)) = ui.ctx().data(|d| d.get_temp::<(FrameId, egui::Pos2)>(held)) else {
+        return;
+    };
+    let Some(now) = response.interact_pointer_pos() else {
+        return;
+    };
+    if response.drag_stopped() {
+        ui.ctx()
+            .data_mut(|d| d.remove::<(FrameId, egui::Pos2)>(held));
+        if start.distance(now) > 3.0 {
+            let (from, to) = (doc_pos(state, rect, start), doc_pos(state, rect, now));
+            crate::gradient_tool::apply_drag(state, kind, id, from, to);
+        }
+        return;
+    }
+    let painter = ui.painter_at(rect);
+    let ink = Stroke::new(1.0, Theme::accent());
+    painter.line_segment([start, now], ink);
+    painter.rect_stroke(
+        Rect::from_center_size(start, egui::vec2(6.0, 6.0)),
+        0.0,
+        ink,
+        egui::StrokeKind::Middle,
+    );
+    let d = 4.0;
+    painter.add(egui::Shape::closed_line(
+        vec![
+            now + egui::vec2(0.0, -d),
+            now + egui::vec2(d, 0.0),
+            now + egui::vec2(0.0, d),
+            now + egui::vec2(-d, 0.0),
+        ],
+        ink,
+    ));
+}
+
 /// Drag to measure; a click without a drag clears the line. Shift holds it
 /// to 45 degrees, as it holds every line drawn by dragging.
 fn measure_gesture(ui: &Ui, response: &egui::Response, rect: Rect, state: &mut TesseraApp) {
@@ -3793,6 +3857,8 @@ fn draw_gesture(
             | Tool::Pencil
             | Tool::Smooth
             | Tool::Erase
+            | Tool::GradientSwatch
+            | Tool::GradientFeather
             | Tool::Zoom => {}
         }
     }

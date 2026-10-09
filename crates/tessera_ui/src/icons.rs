@@ -267,6 +267,11 @@ pub enum Icon {
     Collect,
     /// The Info panel: a lower-case i in a ring.
     Info,
+    /// The gradient swatch tool: a box whose lines crowd towards one side,
+    /// as a ramp darkens.
+    GradientSwatch,
+    /// The gradient feather tool: a box fading out in ever shorter dashes.
+    GradientFeather,
 }
 
 impl Icon {
@@ -290,6 +295,23 @@ impl Icon {
                 "M17 22h-1a4 4 0 0 1-4-4V6a4 4 0 0 1 4-4h1",
                 "M7 22h1a4 4 0 0 0 4-4v-1",
                 "M7 2h1a4 4 0 0 1 4 4v1",
+            ],
+            Self::GradientSwatch => &[
+                "M3 5h18v14H3z",
+                "M8 5v14",
+                "M12 5v14",
+                "M15 5v14",
+                "M17.5 5v14",
+                "M19.5 5v14",
+            ],
+            Self::GradientFeather => &[
+                "M3 5h18v14H3z",
+                "M6 9h5",
+                "M6 12h3.5",
+                "M6 15h2",
+                "M13 9h2.5",
+                "M13 12h1.5",
+                "M17.5 9h.5",
             ],
             // lucide: info
             Self::Info => &[
@@ -593,6 +615,8 @@ impl Icon {
             | Self::Eraser
             | Self::Collect
             | Self::Info
+            | Self::GradientSwatch
+            | Self::GradientFeather
             // The toolbar's verbs are never cursors, so their hotspot is only
             // ever the centre. Listed rather than caught by a wildcard, so
             // that adding a cursor icon later still has to answer this.
@@ -888,6 +912,8 @@ impl Icon {
             | Self::Eraser
             | Self::Collect
             | Self::Info
+            | Self::GradientSwatch
+            | Self::GradientFeather
             | Self::TextCursor
             | Self::Crosshair
             | Self::LetterSpacing
@@ -1266,7 +1292,7 @@ fn texture(ctx: &egui::Context, icon: Icon, side: u32, degrees: f32) -> egui::Te
 /// **An icon missing from this list is missing from its own tests.** Seventeen
 /// were once, and three more — `Book`, `Pipette`, `Pi` — until the move to
 /// Spectrum, when a count taken by hand matched a list that was short.
-pub const ALL: [Icon; 163] = [
+pub const ALL: [Icon; 165] = [
     Icon::StrokeWeight,
     Icon::Disclosure,
     Icon::Book,
@@ -1430,6 +1456,8 @@ pub const ALL: [Icon; 163] = [
     Icon::Eraser,
     Icon::Collect,
     Icon::Info,
+    Icon::GradientSwatch,
+    Icon::GradientFeather,
 ];
 
 #[cfg(test)]
@@ -1638,6 +1666,6 @@ mod tests {
         // count is what is checked, and it is the enum's own count.
         let unique: std::collections::HashSet<_> = ALL.iter().collect();
         assert_eq!(unique.len(), ALL.len(), "an icon is listed twice");
-        assert_eq!(ALL.len(), 163);
+        assert_eq!(ALL.len(), 165);
     }
 }

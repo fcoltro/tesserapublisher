@@ -42,10 +42,68 @@ pub enum Ramp {
     Radial,
 }
 
+/// Where a ramp starts and where it ends, as the gradient tools draw it:
+/// each point a fraction of the object's box, `(0, 0)` its top left and
+/// `(1, 1)` its bottom right.
+///
+/// Fractions for the reason [`Ramp`] keeps an angle rather than two points:
+/// the object moves and the span goes with it, it is resized and the span
+/// stretches with it, and nothing has to be rewritten. A radial ramp's span
+/// is its centre and a point on its rim.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Span {
+    pub from: (f64, f64),
+    pub to: (f64, f64),
+}
+
+impl Span {
+    /// The two points on `bounds`.
+    pub fn on(self, bounds: DocRect) -> (DocPoint, DocPoint) {
+        let at = |(u, v): (f64, f64)| DocPoint {
+            x: bounds.x + u * bounds.width,
+            y: bounds.y + v * bounds.height,
+        };
+        (at(self.from), at(self.to))
+    }
+
+    /// The span between two points of `bounds`, in its fractions.
+    pub fn between(from: DocPoint, to: DocPoint, bounds: DocRect) -> Self {
+        let of = |p: DocPoint| {
+            (
+                if bounds.width.abs() > f64::EPSILON {
+                    (p.x - bounds.x) / bounds.width
+                } else {
+                    0.5
+                },
+                if bounds.height.abs() > f64::EPSILON {
+                    (p.y - bounds.y) / bounds.height
+                } else {
+                    0.5
+                },
+            )
+        };
+        Self {
+            from: of(from),
+            to: of(to),
+        }
+    }
+
+    /// The angle the span runs at across `bounds`, in a [`Ramp::Linear`]'s
+    /// degrees: what the Properties panel shows for a dragged gradient.
+    pub fn angle(self, bounds: DocRect) -> f64 {
+        let (a, b) = self.on(bounds);
+        (b.y - a.y).atan2(b.x - a.x).to_degrees()
+    }
+}
+
 /// A ramp of colours across an object.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Gradient {
     pub ramp: Ramp,
+    /// Where the ramp starts and ends, when the gradient tool has said;
+    /// otherwise across the whole object at the ramp's angle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<Span>,
     /// At least two, sorted by position.
     ///
     /// Held sorted so that no consumer has to sort them — a renderer, a PDF
@@ -70,7 +128,17 @@ impl Gradient {
             let at = if stops.is_empty() { 0.0 } else { 1.0 };
             stops.push(Stop { at, colour });
         }
-        Self { ramp, stops }
+        Self {
+            ramp,
+            span: None,
+            stops,
+        }
+    }
+
+    /// The same ramp, between the points a drag gave it.
+    pub fn spanning(mut self, span: Option<Span>) -> Self {
+        self.span = span;
+        self
     }
 
     /// The default a person gets on choosing "gradient": black to white.
@@ -100,7 +168,7 @@ impl Gradient {
 
     /// Replace the stops, keeping the invariant.
     pub fn set_stops(&mut self, stops: Vec<Stop>) {
-        *self = Self::new(self.ramp, stops);
+        *self = Self::new(self.ramp, stops).spanning(self.span);
     }
 
     /// The two ends of the ramp across `bounds`, in the frame's own space.
@@ -111,6 +179,12 @@ impl Gradient {
     /// the box's outline, which is what makes "0 degrees" mean "the first stop
     /// at the left edge" rather than "somewhere near it".
     pub fn axis(&self, bounds: DocRect) -> (DocPoint, DocPoint) {
+        // A dragged span is its own two points, whichever kind of ramp: a
+        // linear one runs between them, a radial one is centred on the first
+        // and reaches the second.
+        if let Some(span) = self.span {
+            return span.on(bounds);
+        }
         let middle = bounds.center();
         match self.ramp {
             Ramp::Linear { angle } => {
@@ -147,6 +221,10 @@ impl Gradient {
     /// everywhere in the object and no corner is left the flat colour of a
     /// gradient that ran out.
     pub fn radius(&self, bounds: DocRect) -> f64 {
+        if let Some(span) = self.span {
+            let (a, b) = span.on(bounds);
+            return (b.x - a.x).hypot(b.y - a.y);
+        }
         let (w, h) = (bounds.width / 2.0, bounds.height / 2.0);
         (w * w + h * h).sqrt()
     }
@@ -402,5 +480,41 @@ mod tests {
             ],
         ));
         assert_eq!(paint.representative(), Color::WHITE);
+    }
+
+    #[test]
+    fn a_dragged_span_is_where_the_ramp_runs_and_stretches_with_the_object() {
+        let bounds = DocRect {
+            x: 10.0,
+            y: 20.0,
+            width: 100.0,
+            height: 50.0,
+        };
+        let span = Span::between(
+            DocPoint { x: 35.0, y: 20.0 },
+            DocPoint { x: 85.0, y: 70.0 },
+            bounds,
+        );
+        assert_eq!(span.from, (0.25, 0.0));
+        assert_eq!(span.to, (0.75, 1.0));
+        let g = Gradient::black_to_white(Ramp::Linear { angle: 0.0 }).spanning(Some(span));
+        let (a, b) = g.axis(bounds);
+        assert_eq!((a.x, a.y, b.x, b.y), (35.0, 20.0, 85.0, 70.0));
+        // Twice as wide: the span goes with it.
+        let wide = DocRect {
+            width: 200.0,
+            ..bounds
+        };
+        let (a, b) = g.axis(wide);
+        assert_eq!((a.x, b.x), (60.0, 160.0));
+        // A radial span reaches from its centre to its rim.
+        let r = Gradient::black_to_white(Ramp::Radial).spanning(Some(span));
+        assert!((r.radius(bounds) - 50.0f64.hypot(50.0)).abs() < 1e-9);
+        // Its stops replaced, it keeps its span.
+        let mut kept = g.clone();
+        kept.set_stops(g.stops().to_vec());
+        assert_eq!(kept.span, Some(span));
+        // And the angle it runs at.
+        assert!((span.angle(bounds) - 45.0).abs() < 1e-9);
     }
 }

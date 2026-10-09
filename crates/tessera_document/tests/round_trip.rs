@@ -880,8 +880,9 @@ fn the_format_version_is_twenty_six() {
     // is cut to, the first page's crop box before; 43 single-word
     // justification, full justify before; 44 a cell style's paragraph
     // style, none before; 45 a gradient feather, none before; 46 editorial
-    // notes in the text, none before; 47 linked content, none before.
-    assert_eq!(format::FORMAT_VERSION, 47);
+    // notes in the text, none before; 47 linked content, none before; 48 a
+    // gradient's dragged span, the whole object before.
+    assert_eq!(format::FORMAT_VERSION, 48);
 }
 
 #[test]
@@ -1393,7 +1394,7 @@ fn a_gradient_feather_survives_save_and_load() {
     let path = std::env::temp_dir().join(format!("tessera-feather-{}.tsrdf", std::process::id()));
     let _ = std::fs::remove_file(&path);
 
-    let feather = GradientFeather::new(
+    let mut feather = GradientFeather::new(
         Ramp::Radial,
         vec![
             FeatherStop {
@@ -1410,6 +1411,11 @@ fn a_gradient_feather_survives_save_and_load() {
             },
         ],
     );
+    // Where the gradient feather tool dragged it.
+    feather.span = Some(tessera_document::paint::Span {
+        from: (0.1, 0.2),
+        to: (0.9, 0.7),
+    });
     let mut doc = Document::new();
     let layer = doc.default_layer().expect("layer");
     let id = doc.add_frame(
@@ -1439,7 +1445,14 @@ fn a_gradient_feather_survives_save_and_load() {
 
     format::save(&doc, &path).expect("save");
     let back = format::load(&path).expect("load");
-    assert_eq!(back.frame(id).expect("frame").feather, Some(feather));
+    assert_eq!(
+        back.frame(id).expect("frame").feather,
+        Some(feather.clone())
+    );
+    assert!(
+        feather.as_gradient().span.is_some(),
+        "the mask takes the span"
+    );
 
     let _ = std::fs::remove_file(&path);
 }

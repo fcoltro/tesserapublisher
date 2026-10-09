@@ -1552,9 +1552,21 @@ pub fn all() -> &'static [Action] {
         a("Zoom tool", Some("Z"), Group::Tool, PickTool(Tool::Zoom)),
         a(
             "Polygon tool",
-            Some("G"),
+            Some("Y"),
             Group::Tool,
             PickTool(Tool::Polygon),
+        ),
+        a(
+            "Gradient swatch tool",
+            Some("G"),
+            Group::Tool,
+            PickTool(Tool::GradientSwatch),
+        ),
+        a(
+            "Gradient feather tool",
+            Some("Shift+G"),
+            Group::Tool,
+            PickTool(Tool::GradientFeather),
         ),
         a(
             "Scissors tool",

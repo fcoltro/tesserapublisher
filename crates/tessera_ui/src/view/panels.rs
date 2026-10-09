@@ -1091,7 +1091,10 @@ fn gradient_controls(
     }
 
     if changed {
-        let paint = Paint::Gradient(Gradient::new(ramp, stops));
+        // A dragged span stays through a change of colours; a typed angle
+        // or a change of kind means across the whole object again.
+        let span = (ramp == gradient.ramp).then_some(gradient.span).flatten();
+        let paint = Paint::Gradient(Gradient::new(ramp, stops).spanning(span));
         apply(state, Command::SetFill { id, paint });
     }
 }
@@ -2888,7 +2891,9 @@ pub(crate) fn feather_editor(
     }
 
     if changed {
+        let span = (ramp == feather.ramp).then_some(feather.span).flatten();
         *feather = GradientFeather::new(ramp, stops);
+        feather.span = span;
     }
     changed
 }

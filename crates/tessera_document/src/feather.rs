@@ -31,6 +31,10 @@ pub struct FeatherStop {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GradientFeather {
     pub ramp: Ramp,
+    /// Where the fade starts and ends, when the gradient feather tool has
+    /// said: see [`crate::paint::Span`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<crate::paint::Span>,
     /// At least two, sorted by position, for the reason a gradient's are:
     /// [`GradientFeather::new`] is the only way to build one.
     stops: Vec<FeatherStop>,
@@ -63,7 +67,11 @@ impl GradientFeather {
                 opacity: 0.0,
             });
         }
-        Self { ramp, stops }
+        Self {
+            ramp,
+            span: None,
+            stops,
+        }
     }
 
     /// The stops, sorted, never fewer than two.
@@ -99,6 +107,7 @@ impl GradientFeather {
                 })
                 .collect(),
         )
+        .spanning(self.span)
     }
 }
 

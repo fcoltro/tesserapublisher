@@ -50,6 +50,11 @@ pub enum Tool {
     Smooth,
     /// Brush over a path to take its segments out.
     Erase,
+    /// Drag across an object to say where its gradient fill runs. See
+    /// [`crate::gradient_tool`].
+    GradientSwatch,
+    /// Drag across an object to say where it fades.
+    GradientFeather,
 }
 
 /// A line the measure tool has drawn, in document points. Kept until the
@@ -130,6 +135,8 @@ impl Tool {
             Self::Pencil => "Pencil",
             Self::Smooth => "Smooth",
             Self::Erase => "Erase",
+            Self::GradientSwatch => "Gradient swatch",
+            Self::GradientFeather => "Gradient feather",
         }
     }
 
@@ -156,6 +163,8 @@ impl Tool {
             Self::Pencil => crate::icons::Icon::Pen,
             Self::Smooth => crate::icons::Icon::Blur,
             Self::Erase => crate::icons::Icon::Eraser,
+            Self::GradientSwatch => crate::icons::Icon::GradientSwatch,
+            Self::GradientFeather => crate::icons::Icon::GradientFeather,
         }
     }
 
@@ -175,44 +184,47 @@ impl Tool {
         )
     }
 
-    /// The single-key shortcut. These follow InDesign's, which is what a
-    /// layout designer's fingers already know.
-    pub fn shortcut(self) -> egui::Key {
+    /// The shortcut, as the action list writes it. These follow InDesign's,
+    /// which is what a layout designer's fingers already know.
+    pub fn shortcut(self) -> &'static str {
         match self {
-            Self::Select => egui::Key::V,
+            Self::Select => "V",
             // A, as InDesign's direct selection tool is.
-            Self::DirectSelect => egui::Key::A,
-            Self::Rectangle => egui::Key::M,
-            Self::Ellipse => egui::Key::L,
-            Self::Line => egui::Key::Backslash,
-            Self::Pen => egui::Key::P,
-            Self::Text => egui::Key::T,
+            Self::DirectSelect => "A",
+            Self::Rectangle => "M",
+            Self::Ellipse => "L",
+            Self::Line => "\\",
+            Self::Pen => "P",
+            Self::Text => "T",
             // F, as InDesign's frame tool is.
-            Self::Graphic => egui::Key::F,
-            Self::Hand => egui::Key::H,
-            // G and C, as InDesign has them.
-            Self::Polygon => egui::Key::G,
-            Self::Scissors => egui::Key::C,
-            Self::Zoom => egui::Key::Z,
+            Self::Graphic => "F",
+            Self::Hand => "H",
+            // InDesign's polygon tool has no key; G is its gradient swatch
+            // tool's. Y is free.
+            Self::Polygon => "Y",
+            Self::Scissors => "C",
+            Self::Zoom => "Z",
             // I, as InDesign's eyedropper is.
-            Self::Eyedropper => egui::Key::I,
+            Self::Eyedropper => "I",
             // K, as InDesign's measure tool is.
-            Self::Measure => egui::Key::K,
+            Self::Measure => "K",
             // U, as InDesign's gap tool is.
-            Self::Gap => egui::Key::U,
-            // InDesign's is Shift+I, beside the eyedropper; a tool here takes
-            // one key, and J is free.
-            Self::ColourTheme => egui::Key::J,
+            Self::Gap => "U",
+            // InDesign's is Shift+I, beside the eyedropper; J is free.
+            Self::ColourTheme => "J",
             // B, as InDesign's content collector is; B again places.
-            Self::Conveyor => egui::Key::B,
+            Self::Conveyor => "B",
             // N, as InDesign's pencil is; S and E, free and what they say.
-            Self::Pencil => egui::Key::N,
-            Self::Smooth => egui::Key::S,
-            Self::Erase => egui::Key::E,
+            Self::Pencil => "N",
+            Self::Smooth => "S",
+            Self::Erase => "E",
+            // G and Shift+G, as InDesign has them.
+            Self::GradientSwatch => "G",
+            Self::GradientFeather => "Shift+G",
         }
     }
 
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 22] = [
         Self::Select,
         Self::DirectSelect,
         Self::Rectangle,
@@ -224,6 +236,8 @@ impl Tool {
         Self::Polygon,
         Self::Scissors,
         Self::Eyedropper,
+        Self::GradientSwatch,
+        Self::GradientFeather,
         Self::Measure,
         Self::Gap,
         Self::ColourTheme,
@@ -702,7 +716,7 @@ mod tests {
     fn every_tool_has_a_distinct_shortcut() {
         let keys: Vec<_> = Tool::ALL.iter().map(|t| t.shortcut()).collect();
         let mut unique = keys.clone();
-        unique.sort_by_key(|k| format!("{k:?}"));
+        unique.sort();
         unique.dedup();
         assert_eq!(unique.len(), keys.len());
     }

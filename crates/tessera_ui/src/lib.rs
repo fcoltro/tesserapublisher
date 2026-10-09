@@ -22,6 +22,7 @@ pub mod find;
 pub mod freehand;
 pub mod gap;
 pub mod glyph_index;
+pub mod gradient_tool;
 #[cfg(test)]
 pub(crate) mod headless_frame;
 pub mod icons;

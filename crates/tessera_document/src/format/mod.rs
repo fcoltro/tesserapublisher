@@ -29,7 +29,7 @@ use crate::document::Document;
 
 /// Bumped whenever the on-disk shape changes. An older version runs
 /// migrations; a newer one is refused rather than guessed at.
-pub const FORMAT_VERSION: u32 = 47;
+pub const FORMAT_VERSION: u32 = 48;
 
 const DOCUMENT_ENTRY: &str = "document.json";
 const META_ENTRY: &str = "meta.json";
@@ -113,6 +113,11 @@ pub fn load(path: &Path) -> Result<Document, FormatError> {
 /// ago follows exactly the path a document written two versions ago does, and
 /// each step only has to know about its own change.
 fn migrate(value: &mut serde_json::Value, from: u32) {
+    // 47 -> 48: a gradient's and a gradient feather's `span`, where the
+    // gradient tools dragged the ramp. **No step**: absent reads as none,
+    // across the whole object at the ramp's angle, as every earlier one was.
+    // The version moves so an older build refuses a document whose dragged
+    // gradients it would draw across the whole object instead.
     // 46 -> 47: copies placed as linked content (`content_links`). **No
     // step**: absent reads as none, which is what every earlier copy was.
     // 45 -> 46: editorial notes in the text (`Marker::Note`, a story's
