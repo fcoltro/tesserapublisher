@@ -24,11 +24,15 @@ use crate::xml::{attr, attr_f32, attr_f64, child, children, numbers, property};
 pub(crate) struct Colours {
     by_name: HashMap<String, Color>,
     gradients: HashMap<String, tessera_document::paint::Gradient>,
+    /// Colours InDesign keeps with no swatch (`Name="$ID/"`): used by an
+    /// object, never listed in the panel.
+    unnamed: std::collections::HashSet<String>,
 }
 
 impl Colours {
     pub(crate) fn read(graphic: Node) -> Self {
         let mut by_name = HashMap::new();
+        let mut unnamed = std::collections::HashSet::new();
         for node in graphic
             .descendants()
             .filter(|n| n.tag_name().name() == "Color")
@@ -62,6 +66,9 @@ impl Colours {
                 },
                 _ => continue,
             };
+            if attr(node, "Name") == Some("$ID/") {
+                unnamed.insert(name.to_owned());
+            }
             by_name.insert(name.to_owned(), colour);
         }
         // Gradients after the colours, since their stops name colours. The
@@ -99,7 +106,11 @@ impl Colours {
                 tessera_document::paint::Gradient::new(ramp, stops),
             );
         }
-        Self { by_name, gradients }
+        Self {
+            by_name,
+            gradients,
+            unnamed,
+        }
     }
 
     /// What a fill reference paints: a colour, tinted as asked, or a
@@ -139,6 +150,9 @@ impl Colours {
     /// The name a swatch panel would show: the part after `Color/`.
     pub(crate) fn swatches(&self) -> impl Iterator<Item = (String, Color)> + '_ {
         self.by_name.iter().filter_map(|(name, colour)| {
+            if self.unnamed.contains(name) {
+                return None;
+            }
             let shown = name.strip_prefix("Color/")?;
             if shown.starts_with("$ID/") {
                 return None; // InDesign's own: Registration, Paper, None
@@ -293,6 +307,26 @@ impl Styles {
             let Some(name) = attr(node, "Self") else {
                 continue;
             };
+            if name == "ParagraphStyle/$ID/NormalParagraphStyle" {
+                // [Basic Paragraph]: what unstyled text is set in, which is
+                // the document's own text here.
+                let f = character_format(node, colours, None);
+                let mut text = doc.text_default.clone();
+                if let Some(family) = f.family {
+                    text.family = family;
+                }
+                if let Some(size) = f.size {
+                    text.size = size;
+                }
+                if let Some(line_height) = f.line_height {
+                    text.line_height = line_height;
+                }
+                if let Some(colour) = f.colour {
+                    text.color = colour;
+                }
+                doc.text_default = text;
+                continue;
+            }
             if is_root(name) {
                 continue;
             }

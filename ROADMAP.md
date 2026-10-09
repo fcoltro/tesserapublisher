@@ -3679,6 +3679,14 @@ setting real work for press reaches for, in the order the user agreed.
   paste use; a `.tlib` holds a named list of them, saved on every change,
   migrated on load like a document; `.tsnip` holds one. Not done: item
   thumbnails, dragging onto the page, InDesign's own `.indl` and `.idms`.
+- [~] **IDML export** (`tessera_import::idml::write`): the package the
+  importer reads, written the other way; spread space centred on the pages
+  as InDesign's is, each item's points in its own space with its turn in
+  its `ItemTransform`. Tested by reading it back. Open: tables, path text,
+  anchored objects, corners, feathers, hyperlinks, and a check in InDesign.
+  The importer now also takes `[Basic Paragraph]` as the document's text,
+  leaves unnamed colours out of the swatches, and sizes a curved path to
+  its curves rather than its anchors.
 - [ ] **Overprint and separations preview** on screen: the canvas composites
   in RGB, and showing plates needs a CMYK compositing path of its own.
 

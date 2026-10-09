@@ -23,6 +23,7 @@
 
 mod story;
 mod styles;
+pub mod write;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -709,7 +710,7 @@ impl Items<'_> {
             return;
         };
         let transform = item_transform(node).then(parent);
-        let local = bbox(&points);
+        let local = curve_bbox(&points, &bbox(&points));
         // Where the item's corners land in spread space, to pick its page.
         let corners: Vec<(f64, f64)> = [
             (local.x, local.y),
@@ -983,6 +984,27 @@ fn bbox(points: &[PathPoint]) -> DocRect {
         y: y0,
         width: x1 - x0,
         height: y1 - y0,
+    }
+}
+
+/// The box the path's curves reach, not only its anchors: a curve bulges
+/// past the points it joins, and a frame cut to the anchors would clip it.
+fn curve_bbox(points: &[PathPoint], anchors: &DocRect) -> DocRect {
+    use kurbo::Shape;
+    let at_origin = DocRect {
+        x: 0.0,
+        y: 0.0,
+        ..*anchors
+    };
+    let r = bez_path(points, at_origin, true).bounding_box();
+    if !(r.width().is_finite() && r.height().is_finite()) {
+        return *anchors;
+    }
+    DocRect {
+        x: r.x0,
+        y: r.y0,
+        width: r.width(),
+        height: r.height(),
     }
 }
 

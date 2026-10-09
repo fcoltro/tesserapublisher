@@ -156,6 +156,15 @@ is balanced across the columns above it, and the columns begin again below.
 **Split column** does the reverse: the paragraph divides into columns of its
 own — a list in two, say — balanced, with its own gutter.
 
+**IDML for InDesign.** File ▸ Export ▸ *Export IDML…* writes the document as
+an InDesign Markup package: its pages and parents, layers, frames (turned as
+they are), threaded stories with their paragraph and character styles, nested
+and GREP styles, swatches and gradients, placed pictures as links, opacity and
+drop shadows, text wrap, and sections. What it cannot carry yet — tables, text
+on a path, objects anchored in text, rounded corners, gradient feathers,
+hyperlinks — is listed in the status line when it is done. The file reads back
+into Tessera as it was written; it has not yet been opened in InDesign itself.
+
 **Libraries and snippets.** File ▸ Libraries and snippets ▸ *New library…*
 makes a library file and opens it in the **Library** panel (Window ▸ Library).
 **Add selection** keeps a copy of the chosen objects — their text, styles,

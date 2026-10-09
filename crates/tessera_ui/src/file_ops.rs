@@ -773,6 +773,48 @@ pub fn export_html(state: &mut TesseraApp) {
     });
 }
 
+/// File ▸ Export ▸ IDML…: the document as an InDesign package, written on
+/// another thread; what it could not carry is said when it is done.
+pub fn export_idml(state: &mut TesseraApp) {
+    let suggested = state
+        .active()
+        .current_path
+        .as_ref()
+        .and_then(|p| p.file_stem())
+        .map_or_else(
+            || "Untitled".to_string(),
+            |s| s.to_string_lossy().into_owned(),
+        );
+    let Some(mut path) = rfd::FileDialog::new()
+        .add_filter("InDesign Markup", &["idml"])
+        .set_file_name(format!("{suggested}.idml"))
+        .save_file()
+    else {
+        return; // cancelled
+    };
+    if path.extension().is_none() {
+        path.set_extension("idml");
+    }
+    let document = state.active().document().clone();
+    state.start_job("Exporting IDML", move |_| {
+        let written = tessera_import::idml::write::write(&document)?;
+        tessera_io::atomic::write_atomic(&path, &written.bytes).map_err(|e| e.to_string())?;
+        let said = if written.dropped.is_empty() {
+            format!("Exported {}", path.display())
+        } else {
+            format!(
+                "Exported {}; not carried: {}",
+                path.display(),
+                written.dropped.0.join("; ")
+            )
+        };
+        Ok(crate::background::Finished {
+            said,
+            open: Vec::new(),
+        })
+    });
+}
+
 /// Write the active document as a web page at `path`: the page, its
 /// stylesheet beside it and its pictures in a folder beside it. Says why
 /// when it could not.

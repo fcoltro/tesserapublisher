@@ -22,6 +22,9 @@ pub enum Group {
     /// Libraries and snippets, a submenu of File: InDesign keeps New ▸
     /// Library under File too.
     Libraries,
+    /// The exports other than PDF, a submenu of File: PDF is the one sent
+    /// every day and keeps its place; the rest are a level down.
+    Export,
     Edit,
     /// Checking and marking words, a submenu of Edit — where InDesign keeps
     /// it, and what kept Edit within its dozen lines.
@@ -61,9 +64,10 @@ pub enum Group {
 }
 
 impl Group {
-    pub const ALL: [Group; 23] = [
+    pub const ALL: [Group; 24] = [
         Group::File,
         Group::Libraries,
+        Group::Export,
         Group::Edit,
         Group::Spelling,
         Group::Object,
@@ -112,6 +116,7 @@ impl Group {
             Group::Notes => Some("Notes"),
             Group::Spelling => Some("Spelling"),
             Group::Libraries => Some("Libraries and snippets"),
+            Group::Export => Some("Export"),
             _ => None,
         }
     }
@@ -134,7 +139,7 @@ impl Group {
     /// all the same, so they can be remapped and the palette can find them.
     pub fn menu(self) -> Option<&'static str> {
         match self {
-            Group::File | Group::Libraries => Some("File"),
+            Group::File | Group::Libraries | Group::Export => Some("File"),
             Group::Edit | Group::Spelling => Some("Edit"),
             Group::Object
             | Group::Visibility
@@ -304,6 +309,8 @@ pub enum Run {
     QuickApply,
     /// Type ▸ Find font: every font named, any replaced everywhere.
     FindFont,
+    /// File ▸ Export ▸ IDML: the document as InDesign opens it.
+    ExportIdml,
     /// The Library panel, and a library to put in it.
     ToggleLibrary,
     NewLibrary,
@@ -476,6 +483,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::ShowAbout
         | Run::QuickApply
         | Run::FindFont
+        | Run::ExportIdml
         | Run::ToggleLibrary
         | Run::NewLibrary
         | Run::OpenLibrary
@@ -755,9 +763,10 @@ pub fn all() -> &'static [Action] {
         a("Save", Some("Ctrl+S"), Group::File, Save),
         a("Save as…", Some("Ctrl+Shift+S"), Group::File, SaveAs),
         a("Export PDF…", Some("Ctrl+Shift+E"), Group::File, ExportPdf),
-        a("Export image…", None, Group::File, ExportImages),
-        a("Export HTML…", None, Group::File, ExportHtml),
-        a("Export EPUB…", None, Group::File, ExportEpub),
+        a("Export image…", None, Group::Export, ExportImages),
+        a("Export HTML…", None, Group::Export, ExportHtml),
+        a("Export EPUB…", None, Group::Export, ExportEpub),
+        a("Export IDML\u{2026}", None, Group::Export, ExportIdml),
         a("Print…", Some("Ctrl+P"), Group::File, Print),
         // Beside Export, because packaging is the other way a job leaves the
         // studio and somebody looking for one will look where the other is.
@@ -1764,6 +1773,7 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
             }
         }
         Run::NewLibrary => crate::view::library::new_library(state),
+        Run::ExportIdml => crate::file_ops::export_idml(state),
         Run::OpenLibrary => crate::view::library::open_library(state),
         Run::ExportSnippet => crate::view::library::export_snippet(state),
         Run::PlaceSnippet => crate::view::library::place_snippet(state),
