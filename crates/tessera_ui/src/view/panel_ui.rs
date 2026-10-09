@@ -181,6 +181,7 @@ mod tests {
                                 name: "A long brand colour name that must fit in the panel".into(),
                                 colour: tessera_color::Color::BLACK,
                                 spot: false,
+                                group: None,
                             }),
                         );
                         state.swatches_window.chosen = state

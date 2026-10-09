@@ -893,8 +893,8 @@ fn the_format_version_is_twenty_six() {
     // balanced columns, filled one after another before; 51 nested, GREP
     // and line styles, none before; 52 a paragraph spanning or splitting
     // columns, in one before; 53 overprinting fills and strokes, knocked
-    // out before.
-    assert_eq!(format::FORMAT_VERSION, 53);
+    // out before; 54 colour groups, none before.
+    assert_eq!(format::FORMAT_VERSION, 54);
 }
 
 #[test]
@@ -1761,6 +1761,7 @@ fn swatches_and_the_objects_naming_them_round_trip() {
             a: 1.0,
         },
         spot: true,
+        group: None,
     });
 
     let layer = doc.default_layer().expect("layer");

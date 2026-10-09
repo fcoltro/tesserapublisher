@@ -3687,6 +3687,11 @@ setting real work for press reaches for, in the order the user agreed.
   The importer now also takes `[Basic Paragraph]` as the document's text,
   leaves unnamed colours out of the swatches, and sizes a curved path to
   its curves rather than its anchors.
+- [x] **Colour groups** (format 54): a swatch's `group`, its members kept
+  together in the list; headings that fold, rename and ungroup; `.ase` group
+  blocks read and written; IDML `ColorGroup` both ways.
+- [ ] **Mixed inks**: a swatch of process and spot inks at percentages,
+  written to PDF as DeviceN. Not built.
 - [ ] **Overprint and separations preview** on screen: the canvas composites
   in RGB, and showing plates needs a CMYK compositing path of its own.
 

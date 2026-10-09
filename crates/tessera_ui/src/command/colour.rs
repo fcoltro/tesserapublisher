@@ -94,6 +94,20 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
                 .replace_swatch(&name, with.as_deref());
         }
 
+        Command::SetSwatchGroup { name, group } => {
+            state
+                .active_mut()
+                .document_mut()
+                .set_swatch_group(&name, group);
+        }
+
+        Command::RenameSwatchGroup { from, to } => {
+            state
+                .active_mut()
+                .document_mut()
+                .rename_swatch_group(&from, to);
+        }
+
         Command::MoveSwatch { name, before } => {
             state
                 .active_mut()

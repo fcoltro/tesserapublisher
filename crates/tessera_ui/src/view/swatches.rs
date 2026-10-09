@@ -364,6 +364,9 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) {
     if let Some((name, before)) = picked.moved {
         apply(state, Command::MoveSwatch { name, before });
     }
+    if let Some((name, group)) = picked.group {
+        apply(state, Command::SetSwatchGroup { name, group });
+    }
     if let Some(whole) = asked {
         whole_list(state, whole, &unused);
     }
@@ -792,6 +795,8 @@ struct Picked {
     open: Option<String>,
     menu: Option<(String, MenuAction)>,
     moved: Option<(String, Option<String>)>,
+    /// A swatch filed in a group, or taken out of one.
+    group: Option<(String, Option<String>)>,
 }
 
 impl Picked {
@@ -822,6 +827,35 @@ impl Picked {
                     self.menu = Some((swatch.name.clone(), action));
                     ui.close();
                 }
+            }
+            // Colour groups: a new one, another, or none.
+            ui.separator();
+            let mut groups: Vec<&str> = Vec::new();
+            for g in all.iter().filter_map(|s| s.group.as_deref()) {
+                if !groups.contains(&g) {
+                    groups.push(g);
+                }
+            }
+            if ui.button("New colour group").clicked() {
+                let mut n = groups.len() + 1;
+                let mut name = format!("Group {n}");
+                while groups.contains(&name.as_str()) {
+                    n += 1;
+                    name = format!("Group {n}");
+                }
+                self.group = Some((swatch.name.clone(), Some(name)));
+                ui.close();
+            }
+            for g in groups {
+                if swatch.group.as_deref() != Some(g) && ui.button(format!("Move to {g}")).clicked()
+                {
+                    self.group = Some((swatch.name.clone(), Some(g.to_owned())));
+                    ui.close();
+                }
+            }
+            if swatch.group.is_some() && ui.button("Take out of its group").clicked() {
+                self.group = Some((swatch.name.clone(), None));
+                ui.close();
             }
         });
     }
@@ -854,6 +888,95 @@ fn follow_drag(
     if response.drag_stopped() {
         *released = true;
     }
+}
+
+/// How far a grouped swatch's row stands in from its group's heading.
+const GROUP_INDENT: f32 = 12.0;
+
+/// A colour group's heading: a click folds it, its menu renames or
+/// ungroups it, and while it is renamed it is a field.
+fn group_heading(ui: &mut Ui, state: &mut TesseraApp, list: &List<'_>, group: &str) {
+    let count = list
+        .all
+        .iter()
+        .filter(|s| s.group.as_deref() == Some(group))
+        .count();
+    if let Some((from, draft)) = state.swatches_window.renaming_group.as_mut()
+        && from == group
+    {
+        let response = ui.add(egui::TextEdit::singleline(draft).desired_width(f32::INFINITY));
+        crate::icons::speak_as(response.clone(), "Colour group name");
+        response.request_focus();
+        if response.lost_focus() {
+            let (from, to) = state
+                .swatches_window
+                .renaming_group
+                .take()
+                .expect("renaming");
+            let cancelled = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            if !cancelled && !to.trim().is_empty() {
+                apply(state, Command::RenameSwatchGroup { from, to: Some(to) });
+            }
+        }
+        return;
+    }
+    let folded = state.swatches_window.collapsed.iter().any(|c| c == group);
+    let (rect, menu) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), Theme::control_height()),
+        Sense::click(),
+    );
+    let painter = ui.painter_at(rect);
+    if menu.hovered() {
+        painter.rect_filled(rect, Theme::RADIUS, Theme::hover_bg());
+    }
+    let caret = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + 2.0, rect.center().y - 5.0),
+        egui::Vec2::splat(10.0),
+    );
+    crate::icons::paint_rotated(
+        &painter,
+        caret,
+        Icon::Disclosure,
+        Theme::text_muted(),
+        if folded { 0.0 } else { 90.0 },
+    );
+    painter.text(
+        egui::pos2(caret.right() + 6.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        format!("{group}  {count}"),
+        egui::FontId::proportional(Theme::TYPE_SM),
+        Theme::text_primary(),
+    );
+    let menu = crate::icons::reads_as(
+        menu,
+        format!("Colour group {group}"),
+        egui::WidgetType::CollapsingHeader,
+        Some(!folded),
+    )
+    .on_hover_text("Click to fold or open; right-click to rename or ungroup");
+    if menu.clicked() {
+        if folded {
+            state.swatches_window.collapsed.retain(|c| c != group);
+        } else {
+            state.swatches_window.collapsed.push(group.to_owned());
+        }
+    }
+    menu.context_menu(|ui| {
+        if ui.button("Rename colour group").clicked() {
+            state.swatches_window.renaming_group = Some((group.to_owned(), group.to_owned()));
+            ui.close();
+        }
+        if ui.button("Ungroup").clicked() {
+            apply(
+                state,
+                Command::RenameSwatchGroup {
+                    from: group.to_owned(),
+                    to: None,
+                },
+            );
+            ui.close();
+        }
+    });
 }
 
 /// The colours as rows: chip, name, the space it is written in, and how
@@ -898,26 +1021,42 @@ fn rows(ui: &mut Ui, state: &mut TesseraApp, list: &List<'_>) -> Picked {
         let mut rects: Vec<Rect> = Vec::new();
         let mut pointer = None;
         let mut released = false;
+        let mut heading: Option<&str> = None;
         for swatch in list.shown {
+            // A colour group's heading above its first swatch; a folded
+            // group shows its heading alone.
+            let group = swatch.group.as_deref();
+            if group != heading {
+                heading = group;
+                if let Some(g) = group {
+                    group_heading(ui, state, list, g);
+                }
+            }
+            if group.is_some_and(|g| state.swatches_window.collapsed.iter().any(|c| c == g)) {
+                continue;
+            }
             let places = (list.places)(&swatch.name);
             let shown = list.colour_of(state.active().document(), swatch);
             let is_chosen = list.chosen.as_deref() == Some(swatch.name.as_str());
             let moving = state.swatches_window.moving.as_deref() == Some(swatch.name.as_str());
             let response = ui
                 .push_id(&swatch.name, |ui| {
-                    row(
-                        ui,
-                        &Row {
-                            name: &swatch.name,
-                            shown: Some(shown),
-                            spot: swatch_editor::is_spot(swatch),
-                            badge: Some(badge(swatch)),
-                            count: Some(places),
-                            chosen: is_chosen || moving,
-                            current: list.current == Some(&Entry::Named(swatch.name.clone())),
-                        },
-                        Sense::click_and_drag(),
-                    )
+                    let said = Row {
+                        name: &swatch.name,
+                        shown: Some(shown),
+                        spot: swatch_editor::is_spot(swatch),
+                        badge: Some(badge(swatch)),
+                        count: Some(places),
+                        chosen: is_chosen || moving,
+                        current: list.current == Some(&Entry::Named(swatch.name.clone())),
+                    };
+                    if group.is_some() {
+                        ui.spacing_mut().indent = GROUP_INDENT;
+                        ui.indent("grouped", |ui| row(ui, &said, Sense::click_and_drag()))
+                            .inner
+                    } else {
+                        row(ui, &said, Sense::click_and_drag())
+                    }
                 })
                 .inner
                 .on_hover_text(format!(
@@ -1541,6 +1680,7 @@ fn fresh(state: &TesseraApp) -> Swatch {
         name,
         colour,
         spot: false,
+        group: None,
     }
 }
 
@@ -1894,6 +2034,51 @@ mod tests {
         assert_eq!(fresh(&state).colour, red);
     }
 
+    #[test]
+    fn a_colour_group_heads_its_swatches_folds_shut_and_is_one_step_to_undo() {
+        let ctx = a_panel();
+        let mut state = TesseraApp::headless();
+        state.swatches_window.open = true;
+        for name in ["Leaf", "Stone"] {
+            apply(
+                &mut state,
+                Command::SetSwatch(Swatch::new(name, Color::BLACK_INK)),
+            );
+        }
+        apply(
+            &mut state,
+            Command::SetSwatchGroup {
+                name: "Leaf".into(),
+                group: Some("Spring".into()),
+            },
+        );
+        let said = |ctx: &egui::Context, state: &mut TesseraApp| -> Vec<String> {
+            panel(ctx, state, Vec::new())
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect()
+        };
+        let names = said(&ctx, &mut state);
+        assert!(
+            names.iter().any(|n| n == "Colour group Spring"),
+            "{names:#?}"
+        );
+        assert!(names.iter().any(|n| n.contains("Leaf")), "{names:#?}");
+
+        press_on(&ctx, &mut state, "Colour group Spring", 1);
+        let names = said(&ctx, &mut state);
+        assert!(
+            !names.iter().any(|n| n.contains("Leaf")),
+            "folded: {names:#?}"
+        );
+        assert!(names.iter().any(|n| n.contains("Stone")), "{names:#?}");
+
+        apply(&mut state, Command::Undo);
+        let names = said(&ctx, &mut state);
+        assert!(!names.iter().any(|n| n == "Colour group Spring"));
+        assert!(names.iter().any(|n| n.contains("Leaf")));
+    }
+
     /// One frame of the panel, answering with what a screen reader would be
     /// told.
     fn panel(
@@ -2045,6 +2230,7 @@ mod tests {
                 name: "Ink".into(),
                 colour: cmyk(1.0, 0.75, 0.0, 0.02),
                 spot: true,
+                group: None,
             },
             Swatch::new(
                 "Brand 40%",

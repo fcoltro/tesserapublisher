@@ -27,6 +27,8 @@ pub(crate) struct Colours {
     /// Colours InDesign keeps with no swatch (`Name="$ID/"`): used by an
     /// object, never listed in the panel.
     unnamed: std::collections::HashSet<String>,
+    /// The colour group each swatch is filed in, by the swatch's `Self`.
+    groups: HashMap<String, String>,
 }
 
 impl Colours {
@@ -106,10 +108,33 @@ impl Colours {
                 tessera_document::paint::Gradient::new(ramp, stops),
             );
         }
+        // Colour groups: InDesign's own `[Root Color Group]` holds every
+        // swatch not filed elsewhere, and is no group here.
+        let mut groups = HashMap::new();
+        for group in graphic
+            .descendants()
+            .filter(|n| n.tag_name().name() == "ColorGroup")
+        {
+            let Some(name) = attr(group, "Name").filter(|n| !n.starts_with("[Root")) else {
+                continue;
+            };
+            if attr(group, "IsStandard") == Some("true") {
+                continue;
+            }
+            for member in group
+                .children()
+                .filter(|n| n.is_element() && n.tag_name().name() == "ColorGroupSwatch")
+            {
+                if let Some(swatch) = attr(member, "SwatchItemRef") {
+                    groups.insert(swatch.to_owned(), name.to_owned());
+                }
+            }
+        }
         Self {
             by_name,
             gradients,
             unnamed,
+            groups,
         }
     }
 
@@ -145,6 +170,11 @@ impl Colours {
     pub(crate) fn get(&self, reference: Option<&str>) -> Option<Color> {
         let reference = reference?;
         self.by_name.get(reference).cloned()
+    }
+
+    /// The colour group a swatch, by the name the panel shows, is filed in.
+    pub(crate) fn group_of(&self, shown: &str) -> Option<String> {
+        self.groups.get(&format!("Color/{shown}")).cloned()
     }
 
     /// The name a swatch panel would show: the part after `Color/`.

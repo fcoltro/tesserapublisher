@@ -94,11 +94,17 @@ fn import_package(mut package: Package) -> Result<Imported, ImportError> {
         _ => Colours::default(),
     };
     for (name, colour) in colours.swatches() {
+        let group = colours.group_of(&name);
         doc.set_swatch(Swatch {
-            name,
+            name: name.clone(),
             colour,
             spot: false,
+            group: None,
         });
+        // Filed one by one, so each group's swatches stand together.
+        if group.is_some() {
+            doc.set_swatch_group(&name, group);
+        }
     }
 
     // Page size and the like, before any page is added.

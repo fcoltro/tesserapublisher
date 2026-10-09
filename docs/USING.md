@@ -428,10 +428,16 @@ The ••• menu does to the whole list:
 | | |
 | --- | --- |
 | *Load swatches…* | Brings in the swatches of an Adobe Swatch Exchange file (`.ase`, from InDesign, Illustrator or Photoshop) or of another Tessera document. One already here is left as it is; one whose name this document gives another colour comes in as *Name 2*, and loading the same file again brings nothing new |
-| *Save swatches…* | Writes them as an `.ase` file for those programs: a tint as the colour it makes, a spot still a spot |
+| *Save swatches…* | Writes them as an `.ase` file for those programs: a tint as the colour it makes, a spot still a spot, each in its colour group |
 | *Add unnamed colours* | Makes a swatch of every colour used without one — named by its numbers, as *C=0 M=91 Y=76 K=0* — and points what used it at the swatch, so editing the swatch recolours them |
 | *Delete unused swatches* | As above |
 | *Sort by name* | Puts the list in order, *Blue 2* before *Blue 10* |
+
+**Colour groups.** Right-click a swatch for *New colour group*, *Move to* a
+group, or *Take out of its group*. A group's swatches stand together under its
+heading in the list: click the heading to fold it shut, right-click it to
+rename it or ungroup. Groups travel in `.ase` files and in IDML, both ways. The
+tile view shows the swatches without their headings.
 
 A line under the list says what the last of these did.
 

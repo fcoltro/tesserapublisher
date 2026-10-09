@@ -494,6 +494,11 @@ pub struct Swatch {
     /// and the PDF's separation list can report it in milestone 6.
     #[serde(default)]
     pub spot: bool,
+    /// The colour group it is filed in, InDesign's folder in the Swatches
+    /// panel: a brand's colours, a season's. A group's swatches stand
+    /// together in the list. Left out of the file when it is in none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 impl Swatch {
@@ -502,6 +507,7 @@ impl Swatch {
             name: name.into(),
             colour,
             spot: false,
+            group: None,
         }
     }
 }

@@ -720,6 +720,16 @@ pub enum Command {
         name: String,
         before: Option<String>,
     },
+    /// File a swatch in a colour group, or take it out of one.
+    SetSwatchGroup {
+        name: String,
+        group: Option<String>,
+    },
+    /// Rename a colour group, or with `None` ungroup its swatches.
+    RenameSwatchGroup {
+        from: String,
+        to: Option<String>,
+    },
     /// Put the swatches in order of their names.
     SortSwatches,
     /// Make a swatch of every colour used as itself rather than through
@@ -1541,6 +1551,8 @@ impl Command {
             | Command::RemoveSwatch { .. }
             | Command::ReplaceSwatch { .. }
             | Command::MoveSwatch { .. }
+            | Command::SetSwatchGroup { .. }
+            | Command::RenameSwatchGroup { .. }
             | Command::SortSwatches
             | Command::NameUnnamedColours
             | Command::AddSwatches { .. }

@@ -1586,6 +1586,28 @@ pub fn write(doc: &Document) -> Result<Written, String> {
         }
         w.palette.swatch(&swatch.name, &colour, swatch.spot);
     }
+    // Colour groups, each naming its swatches.
+    let mut colour_groups = String::new();
+    for (i, group) in doc.swatch_groups().iter().enumerate() {
+        let _ = write!(
+            colour_groups,
+            "<ColorGroup Self=\"ColorGroup/u{i}\" Name=\"{}\" IsStandard=\"false\">",
+            esc(group)
+        );
+        for (j, swatch) in doc
+            .swatches
+            .iter()
+            .filter(|s| s.group.as_ref() == Some(group))
+            .enumerate()
+        {
+            let _ = write!(
+                colour_groups,
+                "<ColorGroupSwatch Self=\"ColorGroup/u{i}Swatch{j}\" SwatchItemRef=\"Color/{}\"/>",
+                esc(&swatch.name)
+            );
+        }
+        colour_groups.push_str("</ColorGroup>\n");
+    }
 
     let styles = w.styles();
     let mut stories = Vec::new();
@@ -1630,7 +1652,7 @@ pub fn write(doc: &Document) -> Result<Written, String> {
          NeutralDensity=\"1.7\" PrintInk=\"true\" TrapOrder=\"4\" InkType=\"Normal\"/>\n\
          <Swatch Self=\"Swatch/None\" Name=\"None\" ColorEditable=\"false\" ColorRemovable=\"false\" Visible=\"true\" SwatchCreatorID=\"7937\"/>\n\
          <StrokeStyle Self=\"StrokeStyle/$ID/Solid\" Name=\"$ID/Solid\"/>\n\
-         </idPkg:Graphic>\n",
+         {colour_groups}</idPkg:Graphic>\n",
         w.palette.elements
     );
 
@@ -1915,6 +1937,7 @@ mod tests {
         let p1 = doc.pages[pages[1]].bounds;
 
         doc.set_swatch(Swatch {
+            group: Some("Brand".into()),
             name: "Brand red".into(),
             colour: Color::Cmyk {
                 c: 0.0,
@@ -2152,6 +2175,11 @@ mod tests {
         // The swatch, named, and the unnamed colour not made one.
         let swatches: Vec<&str> = back.swatches.iter().map(|s| s.name.as_str()).collect();
         assert!(swatches.contains(&"Brand red"), "{swatches:?}");
+        assert_eq!(
+            back.swatch("Brand red").and_then(|s| s.group.as_deref()),
+            Some("Brand"),
+            "its colour group came with it"
+        );
         assert!(
             !swatches.iter().any(|s| s.starts_with('u')),
             "an object's own colour is not a swatch: {swatches:?}"

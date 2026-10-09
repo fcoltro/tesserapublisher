@@ -579,7 +579,19 @@ impl Document {
     /// changed.
     pub fn sort_swatches(&mut self) -> bool {
         let before: Vec<String> = self.swatches.iter().map(|s| s.name.clone()).collect();
-        self.swatches.sort_by(|a, b| name_order(&a.name, &b.name));
+        // Within their groups, which keep the order they stood in.
+        let groups = self.swatch_groups();
+        let rank = |s: &Swatch| {
+            s.group
+                .as_ref()
+                .and_then(|g| groups.iter().position(|x| x == g))
+                .map_or(0, |i| i + 1)
+        };
+        self.swatches.sort_by(|a, b| {
+            rank(a)
+                .cmp(&rank(b))
+                .then_with(|| name_order(&a.name, &b.name))
+        });
         let changed = self
             .swatches
             .iter()
@@ -589,6 +601,81 @@ impl Document {
             self.touch();
         }
         changed
+    }
+
+    /// The colour groups, in the order their first swatch stands.
+    pub fn swatch_groups(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for group in self.swatches.iter().filter_map(|s| s.group.as_ref()) {
+            if !out.contains(group) {
+                out.push(group.clone());
+            }
+        }
+        out
+    }
+
+    /// File a swatch in `group`, or in none. It moves to stand after the
+    /// group's last swatch, so a group's swatches stay together; starting a
+    /// group or leaving one, it stays where it is. Whether anything changed.
+    pub fn set_swatch_group(&mut self, name: &str, group: Option<String>) -> bool {
+        let Some(from) = self.swatches.iter().position(|s| s.name == name) else {
+            return false;
+        };
+        let group = group.map(|g| g.trim().to_owned()).filter(|g| !g.is_empty());
+        if self.swatches[from].group == group {
+            return false;
+        }
+        let mut swatch = self.swatches.remove(from);
+        swatch.group = group.clone();
+        let at = match &group {
+            Some(g) => self
+                .swatches
+                .iter()
+                .rposition(|s| s.group.as_ref() == Some(g))
+                .map_or(from, |last| last + 1),
+            None => from,
+        };
+        self.swatches.insert(at.min(self.swatches.len()), swatch);
+        self.touch();
+        true
+    }
+
+    /// Rename a colour group, or with `None` ungroup its swatches, which
+    /// stay where they stand. A name another group has merges the two, the
+    /// renamed one's swatches following the other's. Whether anything
+    /// changed.
+    pub fn rename_swatch_group(&mut self, from: &str, to: Option<String>) -> bool {
+        let to = to.map(|g| g.trim().to_owned()).filter(|g| !g.is_empty());
+        if to.as_deref() == Some(from) {
+            return false;
+        }
+        let members: Vec<String> = self
+            .swatches
+            .iter()
+            .filter(|s| s.group.as_deref() == Some(from))
+            .map(|s| s.name.clone())
+            .collect();
+        if members.is_empty() {
+            return false;
+        }
+        match to {
+            None => {
+                for s in self
+                    .swatches
+                    .iter_mut()
+                    .filter(|s| s.group.as_deref() == Some(from))
+                {
+                    s.group = None;
+                }
+                self.touch();
+            }
+            Some(to) => {
+                for name in members {
+                    self.set_swatch_group(&name, Some(to.clone()));
+                }
+            }
+        }
+        true
     }
 
     /// Bring swatches in from elsewhere — another document, a swatch
@@ -670,6 +757,7 @@ impl Document {
                         name: swatch.name.clone(),
                         colour: fallback.tinted(tint),
                         spot: tint >= 1.0,
+                        group: None,
                     }),
                     colour => Some(Swatch::new(swatch.name.clone(), colour)),
                 }
@@ -710,6 +798,34 @@ pub fn name_order(a: &str, b: &str) -> std::cmp::Ordering {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_group_keeps_its_swatches_together_and_can_be_renamed_or_undone() {
+        let mut doc = Document::new();
+        for name in ["A", "B", "C", "D"] {
+            doc.set_swatch(Swatch::new(name, tessera_color::Color::BLACK_INK));
+        }
+        assert!(doc.set_swatch_group("A", Some("Brand".into())));
+        assert!(doc.set_swatch_group("C", Some("Brand".into())));
+        let order: Vec<&str> = doc.swatches.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(order, ["A", "C", "B", "D"], "C joins A");
+        assert_eq!(doc.swatch_groups(), ["Brand"]);
+
+        // An edit of its colour leaves it in its group.
+        doc.set_swatch(Swatch::new("C", tessera_color::Color::BLACK));
+        assert_eq!(
+            doc.swatch("C").and_then(|s| s.group.as_deref()),
+            Some("Brand")
+        );
+
+        assert!(doc.rename_swatch_group("Brand", Some("House".into())));
+        assert_eq!(doc.swatch_groups(), ["House"]);
+        assert!(doc.rename_swatch_group("House", None));
+        assert!(doc.swatch_groups().is_empty());
+        let order: Vec<&str> = doc.swatches.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(order, ["A", "C", "B", "D"], "ungrouped where they stood");
+    }
+
     use super::*;
 
     fn reference(name: &str) -> Color {
@@ -979,6 +1095,7 @@ mod tests {
             name: "Ink".into(),
             colour: cmyk(1.0, 0.5, 0.0, 0.0),
             spot: true,
+            group: None,
         });
         doc.set_swatch(Swatch::new(
             "Ink 50%",
@@ -1305,6 +1422,7 @@ mod tests {
                 a: 1.0,
             },
             spot: true,
+            group: None,
         });
         let frame = frame_filled(&mut doc, reference("PANTONE 185 C"));
         assert!(doc.replace_swatch("PANTONE 185 C", None));

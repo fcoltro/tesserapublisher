@@ -15,9 +15,11 @@
 //! (lightness 0 to 1, the two axes as they are) and `Gray` (one number, a
 //! level, 1 being white).
 //!
-//! Groups are read through and not kept: a document's swatches are one
-//! list. What is written is every swatch that has a colour of its own to
-//! give, which [`crate::document::Document::swatches_for_exchange`] makes.
+//! A group's start block carries its name, and the colours up to its end are
+//! filed in it, as InDesign's colour groups are; a swatch's group is written
+//! back the same way. What is written is every swatch that has a colour of
+//! its own to give, which
+//! [`crate::document::Document::swatches_for_exchange`] makes.
 
 use tessera_color::Color;
 
@@ -64,15 +66,29 @@ pub fn read(bytes: &[u8]) -> Result<Vec<Swatch>, ExchangeError> {
     // read until the bytes run out.
     at.take(8)?;
     let mut swatches = Vec::new();
+    let mut group: Option<String> = None;
     while at.remaining() > 0 {
         let kind = at.u16()?;
         let length = at.u32()? as usize;
         let block = at.take(length)?;
         match kind {
-            COLOUR => swatches.extend(colour_block(block)?),
-            // A group's start and end carry its name and nothing else: the
-            // colours inside it are read as any others are.
-            GROUP_START | GROUP_END => {}
+            COLOUR => {
+                if let Some(mut swatch) = colour_block(block)? {
+                    swatch.group = group.clone();
+                    swatches.push(swatch);
+                }
+            }
+            // A group's start carries its name and nothing else; the colours
+            // up to its end are filed in it.
+            GROUP_START => {
+                group = name_of(&mut Reader {
+                    bytes: block,
+                    at: 0,
+                })
+                .ok()
+                .filter(|n| !n.is_empty());
+            }
+            GROUP_END => group = None,
             // Anything newer carries no colour this knows.
             _ => {}
         }
@@ -86,15 +102,7 @@ fn colour_block(block: &[u8]) -> Result<Option<Swatch>, ExchangeError> {
         bytes: block,
         at: 0,
     };
-    let units = at.u16()? as usize;
-    let mut name = Vec::with_capacity(units);
-    for _ in 0..units {
-        name.push(at.u16()?);
-    }
-    let name = String::from_utf16_lossy(&name)
-        .trim_end_matches('\0')
-        .trim()
-        .to_owned();
+    let name = name_of(&mut at)?;
     let model = at.take(4)?;
     let mut numbers =
         |n: usize| -> Result<Vec<f32>, ExchangeError> { (0..n).map(|_| at.f32()).collect() };
@@ -152,7 +160,31 @@ fn colour_block(block: &[u8]) -> Result<Option<Swatch>, ExchangeError> {
         },
         colour,
         spot,
+        group: None,
     }))
+}
+
+/// A block's name: a count of UTF-16 units, its nul included, and the units.
+fn name_of(at: &mut Reader<'_>) -> Result<String, ExchangeError> {
+    let units = at.u16()? as usize;
+    let mut name = Vec::with_capacity(units);
+    for _ in 0..units {
+        name.push(at.u16()?);
+    }
+    Ok(String::from_utf16_lossy(&name)
+        .trim_end_matches('\0')
+        .trim()
+        .to_owned())
+}
+
+fn name_bytes(name: &str) -> Vec<u8> {
+    let units: Vec<u16> = name.encode_utf16().chain([0]).collect();
+    let mut out = Vec::new();
+    out.extend_from_slice(&(units.len() as u16).to_be_bytes());
+    for unit in units {
+        out.extend_from_slice(&unit.to_be_bytes());
+    }
+    out
 }
 
 /// `swatches` as an `.ase` file. A swatch whose colour is not a mix of
@@ -160,14 +192,36 @@ fn colour_block(block: &[u8]) -> Result<Option<Swatch>, ExchangeError> {
 /// left out; hand this what
 /// [`crate::document::Document::swatches_for_exchange`] gives.
 pub fn write(swatches: &[Swatch]) -> Vec<u8> {
-    let blocks: Vec<Vec<u8>> = swatches.iter().filter_map(colour_bytes).collect();
+    // Each colour, with a group's start before its first swatch and its end
+    // after its last.
+    let mut blocks: Vec<(u16, Vec<u8>)> = Vec::new();
+    let mut open: Option<&str> = None;
+    for swatch in swatches {
+        let Some(colour) = colour_bytes(swatch) else {
+            continue;
+        };
+        let group = swatch.group.as_deref();
+        if group != open {
+            if open.is_some() {
+                blocks.push((GROUP_END, Vec::new()));
+            }
+            if let Some(name) = group {
+                blocks.push((GROUP_START, name_bytes(name)));
+            }
+            open = group;
+        }
+        blocks.push((COLOUR, colour));
+    }
+    if open.is_some() {
+        blocks.push((GROUP_END, Vec::new()));
+    }
     let mut out = Vec::new();
     out.extend_from_slice(SIGNATURE);
     out.extend_from_slice(&1u16.to_be_bytes());
     out.extend_from_slice(&0u16.to_be_bytes());
     out.extend_from_slice(&(blocks.len() as u32).to_be_bytes());
-    for block in blocks {
-        out.extend_from_slice(&COLOUR.to_be_bytes());
+    for (kind, block) in blocks {
+        out.extend_from_slice(&kind.to_be_bytes());
         out.extend_from_slice(&(block.len() as u32).to_be_bytes());
         out.extend_from_slice(&block);
     }
@@ -181,12 +235,7 @@ fn colour_bytes(swatch: &Swatch) -> Option<Vec<u8>> {
         Color::Lab { l, a, b, .. } => (b"LAB ", vec![*l / 100.0, *a, *b]),
         Color::Spot { .. } | Color::Swatch { .. } => return None,
     };
-    let name: Vec<u16> = swatch.name.encode_utf16().chain([0]).collect();
-    let mut out = Vec::new();
-    out.extend_from_slice(&(name.len() as u16).to_be_bytes());
-    for unit in name {
-        out.extend_from_slice(&unit.to_be_bytes());
-    }
+    let mut out = name_bytes(&swatch.name);
     out.extend_from_slice(model);
     for n in numbers {
         out.extend_from_slice(&n.to_be_bytes());
@@ -278,6 +327,7 @@ mod tests {
                 name: "PANTONE 286 C".into(),
                 colour: cmyk(1.0, 0.75, 0.0, 0.02),
                 spot: true,
+                group: None,
             },
             Swatch::new(
                 "Électric sky ☀",
@@ -339,10 +389,32 @@ mod tests {
         let names: Vec<&str> = swatches.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["Leaf", "Ink", "Grey 30"]);
         assert!(!swatches[0].spot && swatches[1].spot);
+        let groups: Vec<Option<&str>> = swatches.iter().map(|s| s.group.as_deref()).collect();
+        assert_eq!(groups, [Some("Spring"), Some("Spring"), None]);
         let Color::Cmyk { k, .. } = swatches[2].colour else {
             panic!()
         };
         assert!((k - 0.3).abs() < 1e-6, "a level of 0.7 is 30% black");
+    }
+
+    #[test]
+    fn colour_groups_are_written_and_read_back() {
+        let mut leaf = Swatch::new(
+            "Leaf",
+            Color::Rgb {
+                r: 0.2,
+                g: 0.6,
+                b: 0.1,
+                a: 1.0,
+            },
+        );
+        leaf.group = Some("Spring".into());
+        let mut moss = leaf.clone();
+        moss.name = "Moss".into();
+        let plain = Swatch::new("Plain", Color::BLACK_INK);
+        let back = read(&write(&[leaf, moss, plain])).unwrap();
+        let groups: Vec<Option<&str>> = back.iter().map(|s| s.group.as_deref()).collect();
+        assert_eq!(groups, [Some("Spring"), Some("Spring"), None]);
     }
 
     #[test]

@@ -1762,9 +1762,16 @@ impl Document {
     /// Replacing rather than adding a second is what makes a swatch global:
     /// two entries called "Brand red" would be two colours, and objects would
     /// silently take whichever came first.
-    pub fn set_swatch(&mut self, swatch: Swatch) {
+    pub fn set_swatch(&mut self, mut swatch: Swatch) {
         match self.swatches.iter_mut().find(|s| s.name == swatch.name) {
-            Some(existing) => *existing = swatch,
+            Some(existing) => {
+                // An edit of its colour keeps it in its group; leaving a
+                // group is `set_swatch_group`'s to say.
+                if swatch.group.is_none() {
+                    swatch.group = existing.group.take();
+                }
+                *existing = swatch;
+            }
             None => self.swatches.push(swatch),
         }
         self.revision += 1;

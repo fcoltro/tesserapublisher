@@ -397,6 +397,10 @@ pub struct SwatchesWindow {
     pub note: Option<String>,
     /// The swatch being dragged to a new place in the list, while it is.
     pub moving: Option<String>,
+    /// Colour groups folded shut in the list, by name.
+    pub collapsed: Vec<String>,
+    /// A colour group being renamed: its name, and the name as typed.
+    pub renaming_group: Option<(String, String)>,
     /// How many colours the document uses without a swatch, and the
     /// document and revision that was counted at: every colour in it is
     /// read to say so.
