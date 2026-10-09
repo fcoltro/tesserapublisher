@@ -103,7 +103,7 @@ geometry, from the interface work) and the canvas toolbar (spatial verbs).
 | Text wrap | ✅ box, shape, jump; wrap to largest area, both sides, left, right | — | done, M4; sides 2026-09-15 |
 | Frame fitting options | ✅ fit and fill modes, inner transform | — | done, M5 |
 | Select container / content / prev / next | ✅ Object ▸ Select ▸ Container, Content, Next object, Previous object; next and previous are also Tab and Shift-Tab on the canvas | — | done 2026-10-01 |
-| Quick Apply | ✗ | — | **superseded** by the command palette (D3) |
+| Quick Apply | ✅ Edit ▸ Quick apply, Ctrl+Enter, also while typing: paragraph, character, object, table and cell styles that apply to what is in hand, and every command; InDesign's `p:` `c:` `o:` `t:` `ce:` `m:` prefixes; Enter applies, Alt+Enter clears overrides too, Shift+Enter keeps it open. D3's refusal overridden at the user's request | — | done 2026-10-09 |
 
 ## ③ Rulers and guides
 
@@ -247,7 +247,8 @@ section ⑩, none of which a screenshot of a workspace can show, and all of
 which a person setting a document notices before they notice a missing tool.
 Milestone 9 exists because this file did not have those rows.
 
-**Three InDesign surfaces are refused rather than deferred.** The control
-panel (D1), the modal transform tools (D6), and Quick Apply — the last
-superseded by a command palette that does the same job without being hidden
-inside the surface that created the problem.
+**Two InDesign surfaces are refused rather than deferred.** The control
+panel (D1) and the modal transform tools (D6). Quick Apply was a third,
+superseded by the command palette, until the user asked for it on
+2026-10-09: it is built as a window of its own on Ctrl+Enter, not as a
+button in a strip.

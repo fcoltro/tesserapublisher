@@ -295,6 +295,8 @@ pub enum Run {
     ShowShortcuts,
     ShowAbout,
     FlexLayout,
+    /// Quick Apply: a style or a command, typed at.
+    QuickApply,
     Package,
     TogglePreflight,
     ToggleConsole,
@@ -458,6 +460,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::OpenSettings
         | Run::ShowShortcuts
         | Run::ShowAbout
+        | Run::QuickApply
         | Run::ChooseOutputIntent
         | Run::TogglePreflight
         | Run::ToggleConsole
@@ -755,13 +758,21 @@ pub fn all() -> &'static [Action] {
             Group::Edit,
             Command(Duplicate),
         ),
-        // Beside Duplicate, because somebody who wanted one copy and then finds
-        // they want forty looks where they got the one.
+        // Under Object, beside Group: it makes objects out of the selected
+        // ones, and Edit gave its line to Quick apply.
         a(
             "Step and repeat\u{2026}",
             Some("Ctrl+Alt+U"),
-            Group::Edit,
+            Group::Object,
             Run::StepAndRepeat,
+        ),
+        // Ctrl+Enter, InDesign's key for it, and under Edit where InDesign
+        // keeps it.
+        a(
+            "Quick apply\u{2026}",
+            Some("Ctrl+Enter"),
+            Group::Edit,
+            Run::QuickApply,
         ),
         // Ctrl+F, which is the shortcut this does in every application a
         // person has ever used; there is nothing to be gained by differing.
@@ -1696,6 +1707,11 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         Run::Place => crate::file_ops::place(state),
         Run::OpenSettings => state.settings.open = true,
         Run::ShowAbout => state.about_open = true,
+        Run::QuickApply => {
+            state.palette.close();
+            state.quick_apply.close();
+            state.quick_apply.open = true;
+        }
         Run::ShowShortcuts => {
             state.settings.page = crate::view::settings::Page::Shortcuts;
             state.settings.open = true;
@@ -2503,7 +2519,8 @@ mod tests {
                 | "Em dash"
                 | "En dash"
                 | "Discretionary hyphen"
-                | "Non-breaking space" => Guard::Always,
+                | "Non-breaking space"
+                | "Quick apply\u{2026}" => Guard::Always,
                 "Cut"
                 | "Copy"
                 | "Duplicate"

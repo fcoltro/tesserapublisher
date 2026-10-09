@@ -706,6 +706,8 @@ pub struct TesseraApp {
 
     /// The command palette's own state.
     pub palette: crate::view::palette::Palette,
+    /// Quick Apply's: the styles and commands, on Ctrl+Enter.
+    pub quick_apply: crate::view::quick_apply::QuickApply,
 
     /// The version check, and the notice it produced.
     ///
@@ -827,6 +829,7 @@ impl TesseraApp {
             freehand: Vec::new(),
             freehand_target: None,
             palette: crate::view::palette::Palette::default(),
+            quick_apply: crate::view::quick_apply::QuickApply::default(),
             prefs: crate::prefs::Preferences::default(),
             update_check: crate::update::Check::default(),
             recent_fonts: Vec::new(),

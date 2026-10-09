@@ -3648,6 +3648,20 @@ below are its items 1 to 3.
   GPL-3.0, run as a program of its own, never linked), caching the PDF it makes; every reader of placed
   files takes that PDF when there is one and the preview when not.
 
+### The last refusals, and faces taller than their leading — 2026-10-09
+
+Asked for by the user once every finding was in, each pushed on its own:
+
+- [x] **Faces taller than their leading.** A table row was sized by the
+  leading while the flow sets by ascent and descent, so a cell in Inter, or
+  any face set solid, lost its last line. The font menu no longer offers
+  Type 1 faces it cannot load. Found by three tests that failed on a
+  machine with other fonts than CI's.
+- [x] **Quick Apply** (Ctrl+Enter, Edit ▸ Quick apply): every style that
+  applies to what is in hand, and every command, with InDesign's prefixes.
+  D3's refusal overridden. Step and repeat moved to Object to keep Edit at
+  its dozen lines.
+
 ### Hands-on findings — 2026-10-08
 
 The user's first round of findings from the installed build, all 27 done and

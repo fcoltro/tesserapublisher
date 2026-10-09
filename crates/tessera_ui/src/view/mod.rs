@@ -44,6 +44,7 @@ pub mod path_text_handles;
 pub mod ports;
 pub mod preflight_panel;
 pub mod print_dialog;
+pub mod quick_apply;
 pub mod quit;
 pub mod rail;
 pub mod rulers;
@@ -131,6 +132,7 @@ const PILL: u8 = 255;
 pub(crate) fn modal_open(state: &TesseraApp) -> bool {
     state.new_document.open
         || state.palette.open
+        || state.quick_apply.open
         || state.quit.pending
         || state.closing.is_some()
         || state.export.open
@@ -186,6 +188,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
 
     // Above everything, so it can be reached from anywhere.
     palette::show(ui, state);
+    quick_apply::show(ui, state);
 
     // A window rather than a panel: preferences are visited, decided and left,
     // and everything in them is judged against the document behind.
