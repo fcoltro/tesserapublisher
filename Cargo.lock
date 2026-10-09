@@ -4506,6 +4506,7 @@ dependencies = [
  "hypher",
  "parley",
  "proptest",
+ "regex",
  "serde",
  "skrifa 0.44.0",
  "slotmap",

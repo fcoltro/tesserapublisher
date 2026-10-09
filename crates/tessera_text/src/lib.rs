@@ -9,6 +9,7 @@
 //! `tessera_render` and `tessera_pdf` consume exactly this type, which is what
 //! guarantees a PDF export matches what was on screen.
 
+pub mod automatic;
 pub mod caret;
 pub mod edit;
 pub mod optical;

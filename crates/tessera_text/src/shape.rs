@@ -641,6 +641,9 @@ fn tabs_settled(a: &[TabRun], b: &[TabRun]) -> bool {
 }
 
 /// The invisible break opportunity a hyphenated word carries.
+/// U+2028, which ends a line wherever it stands and draws nothing.
+const LINE_SEPARATOR: char = '\u{2028}';
+
 const SOFT_HYPHEN: char = '\u{00AD}';
 
 /// Byte offsets within `text` where a word may be broken.
@@ -751,6 +754,9 @@ fn shaping_text(
     stored: std::ops::Range<usize>,
     hyphenate: Option<&crate::story::Hyphenation>,
     prefix: Option<(&str, &crate::story::CharacterFormat)>,
+    // Stored offsets a line must break before: where a line style ends, so
+    // the lines it takes hold exactly its text.
+    forced: &[usize],
 ) -> (String, Vec<Piece>, Vec<(usize, usize)>) {
     use crate::story::Case;
 
@@ -799,6 +805,13 @@ fn shaping_text(
 
         for (offset, character) in story.text[from..to].char_indices() {
             let at = from + offset;
+            if forced.contains(&at) {
+                // A line separator, which ends a line and is drawn as
+                // nothing; like the soft hyphen it belongs to the character
+                // it precedes.
+                text.push(LINE_SEPARATOR);
+                transformed = true;
+            }
             if breaks.contains(&offset) {
                 // The soft hyphen belongs to the character it precedes, so a
                 // caret asking about that character is answered with it.
@@ -1031,45 +1044,51 @@ enum UnitKind {
     Text,
     Space,
     SoftHyphen,
+    /// A line separator: the line ends after it, whatever room is left.
+    Hard,
 }
 
 /// The paragraph as the breaker sees it: every cluster and box in logical
-/// order, with its width. Read off one provisional line holding everything.
+/// order, with its width. Read off provisional lines of unlimited measure —
+/// one, unless a line separator ends one early.
 fn units_of(layout: &mut parley::Layout<Brush>, shaped_text: &str) -> Vec<Unit> {
     layout.break_all_lines(None);
     let mut units = Vec::new();
-    let Some(line) = layout.lines().next() else {
-        return units;
-    };
-    for item in line.items() {
-        match item {
-            parley::PositionedLayoutItem::InlineBox(b) => units.push(Unit {
-                kind: UnitKind::Text,
-                width: f64::from(b.width),
-                hyphen: 0.0,
-            }),
-            parley::PositionedLayoutItem::GlyphRun(run) => {
-                let inner = run.run();
-                let font = inner.font();
-                let size = inner.font_size();
-                for cluster in inner.clusters() {
-                    let text = shaped_text.get(cluster.text_range()).unwrap_or("");
-                    let kind = if cluster.is_space_or_nbsp() {
-                        UnitKind::Space
-                    } else if text.starts_with(SOFT_HYPHEN) {
-                        UnitKind::SoftHyphen
-                    } else {
-                        UnitKind::Text
-                    };
-                    let hyphen = match kind {
-                        UnitKind::SoftHyphen => glyph_of(font, size, '-').map_or(0.0, |(_, w)| w),
-                        _ => 0.0,
-                    };
-                    units.push(Unit {
-                        kind,
-                        width: f64::from(cluster.advance()),
-                        hyphen,
-                    });
+    for line in layout.lines() {
+        for item in line.items() {
+            match item {
+                parley::PositionedLayoutItem::InlineBox(b) => units.push(Unit {
+                    kind: UnitKind::Text,
+                    width: f64::from(b.width),
+                    hyphen: 0.0,
+                }),
+                parley::PositionedLayoutItem::GlyphRun(run) => {
+                    let inner = run.run();
+                    let font = inner.font();
+                    let size = inner.font_size();
+                    for cluster in inner.clusters() {
+                        let text = shaped_text.get(cluster.text_range()).unwrap_or("");
+                        let kind = if text.starts_with(LINE_SEPARATOR) {
+                            UnitKind::Hard
+                        } else if cluster.is_space_or_nbsp() {
+                            UnitKind::Space
+                        } else if text.starts_with(SOFT_HYPHEN) {
+                            UnitKind::SoftHyphen
+                        } else {
+                            UnitKind::Text
+                        };
+                        let hyphen = match kind {
+                            UnitKind::SoftHyphen => {
+                                glyph_of(font, size, '-').map_or(0.0, |(_, w)| w)
+                            }
+                            _ => 0.0,
+                        };
+                        units.push(Unit {
+                            kind,
+                            width: f64::from(cluster.advance()),
+                            hyphen,
+                        });
+                    }
                 }
             }
         }
@@ -1167,7 +1186,7 @@ fn plan_total_fit(
             let unit = &units[j];
             // A candidate end after unit j.
             let candidate: Option<(f64, bool)> = match unit.kind {
-                UnitKind::Space => Some((width, false)),
+                UnitKind::Space | UnitKind::Hard => Some((width, false)),
                 UnitKind::SoftHyphen => Some((width + unit.hyphen, true)),
                 UnitKind::Text => None,
             };
@@ -1257,7 +1276,7 @@ fn plan_total_fit(
                     space_width = unit.width;
                 }
                 UnitKind::Text => width += unit.width,
-                UnitKind::SoftHyphen => {}
+                UnitKind::SoftHyphen | UnitKind::Hard => {}
             }
             j += 1;
         }
@@ -1408,8 +1427,11 @@ fn break_lines_with_room(
         }
         lines[n]
     };
-    let plan: Option<Vec<Chosen>> = composition
-        .total_fit
+    // The paragraph composer plans lines as room alone decides; a line that
+    // must end at a separator is not one it can plan, so such a paragraph is
+    // set a line at a time.
+    let hard_breaks = units.iter().any(|u| u.kind == UnitKind::Hard);
+    let plan: Option<Vec<Chosen>> = (composition.total_fit && !hard_breaks)
         .then(|| plan_total_fit(&units, &|n| line_of(n).2, composition, desired, squeeze));
 
     let mut rows = Vec::new();
@@ -1431,11 +1453,24 @@ fn break_lines_with_room(
         // (units on the line, ink width, spaces, hyphenated)
         let mut best: Option<(usize, f64, usize, bool)> = None;
         let mut j = i;
+        let mut hard = false;
         let may_hyphenate =
             composition.hyphen_limit == 0 || hyphens_in_a_row < composition.hyphen_limit;
         while j < units.len() {
             let unit = &units[j];
             match unit.kind {
+                UnitKind::Hard => {
+                    // The line ends here, separator and all, if what came
+                    // before it fits; otherwise at the last break that did.
+                    let fits =
+                        width - spaces as f64 * space_width * squeeze - width * glyph_squeeze
+                            <= room + 1e-6;
+                    if fits || best.is_none() {
+                        best = Some((j + 1 - i, width, spaces, false));
+                        hard = true;
+                    }
+                    break;
+                }
                 UnitKind::Space => {
                     // A break after this space: the space itself hangs.
                     let fits =
@@ -1481,6 +1516,7 @@ fn break_lines_with_room(
             j += 1;
         }
         let greedy = match best {
+            Some(best) if hard => best,
             // Everything left fits: the last line.
             _ if j >= units.len() => (units.len() - i, width, spaces, false),
             Some(best) => best,
@@ -2761,12 +2797,14 @@ impl ShapeKey {
             let _ = write!(runs, "{:?}{:?}", run.range, story.resolve_run(run, styles));
         }
         for para in &story.paragraphs {
-            let _ = write!(
-                runs,
-                "{:?}{:?}",
-                para.range,
-                story.resolve_paragraph(para, styles)
-            );
+            let format = story.resolve_paragraph(para, styles);
+            let _ = write!(runs, "{:?}{:?}", para.range, format);
+            // A nested, GREP or line style names a character style by id, and
+            // editing that style changes the paragraph without changing a
+            // byte of what it states: so what each draws as is in the key too.
+            for id in crate::automatic::named(&format) {
+                let _ = write!(runs, "{:?}", styles.character_chain(id));
+            }
         }
         // A page number is part of what the text says, so two pages showing
         // the same master story must not share a layout. Written only when
@@ -2986,6 +3024,13 @@ impl Shaper {
         obstacles: &[crate::wrap::Obstacle],
         objects: &[InlineObject],
     ) -> Vec<Placed> {
+        // The character styles the paragraph styles lay on by themselves —
+        // nested and GREP — laid over the runs before anything is shaped.
+        // Borrowed unchanged when there are none.
+        let automatic = crate::automatic::spans(story, styles);
+        let laid_source: &Story = story;
+        let laid = crate::automatic::laid_over(story, styles, &automatic);
+        let story: &Story = &laid;
         let floor = styles.document_default();
         let mut placed = Vec::new();
         let mut y = 0.0;
@@ -3093,7 +3138,7 @@ impl Shaper {
 
             if cap_end > start {
                 let (cap_text, cap_pieces, cap_map) =
-                    shaping_text(story, styles, start..cap_end, None, None);
+                    shaping_text(story, styles, start..cap_end, None, None, &[]);
 
                 // Measured once at a nominal size to learn the font's cap
                 // height, then again at the size that makes it span the lines.
@@ -3170,221 +3215,281 @@ impl Shaper {
                 .filter(|_| begins_here)
                 .map(|m| format!("{m}\t"))
                 .unwrap_or_default();
-            let (shaped_text, pieces, map) = shaping_text(
-                story,
-                styles,
-                cap_end.max(start)..content_end,
-                hyphenate.then_some(&hyphenation),
-                Some((generated.as_str(), &format.character)),
-            );
-
-            let build = |tabs: &[TabRun],
-                         ctx: &mut parley::LayoutContext<Brush>,
-                         fonts: &mut parley::FontContext| {
-                let mut builder = ctx.ranged_builder(fonts, &shaped_text, 1.0, true);
-
-                // Anchored objects belonging to this paragraph, as boxes parley
-                // breaks the line around. The id carries the stored offset so the
-                // caller can match a placed box back to the frame it is for.
-                for object in objects
-                    .iter()
-                    .filter(|o| o.at >= cap_end.max(start) && o.at < content_end)
-                {
-                    builder.push_inline_box(parley::InlineBox {
-                        id: object.at as u64,
-                        kind: parley::InlineBoxKind::InFlow,
-                        index: shaped_offset(&map, cap_end.max(start), object.at),
-                        width: object.width as f32,
-                        height: object.height as f32,
-                    });
+            // Line styles are laid on once the lines are known: the paragraph
+            // is set, the first lines' ends read off, and set again with the
+            // styles on them — once, as a style that changes the breaks it
+            // was placed by would otherwise chase itself.
+            let line_rules = format.line_styles.clone().unwrap_or_default();
+            let body = cap_end.max(start);
+            // `story` with the line styles laid under the nested and GREP ones,
+            // the rules from `found.len()` on spread over the rest.
+            let lay_lines = |found: &[usize]| -> Option<Story> {
+                let mut spans =
+                    crate::automatic::line_spans_settling(body..content_end, &line_rules, found);
+                if spans.is_empty() {
+                    return None;
                 }
-
-                // The cascade's floor. `FontFamily::Source` takes the family name
-                // as written and resolves generic names ("sans-serif") the way CSS
-                // does, which is what parley's own default uses.
-                if let Some(family) = &floor.family {
-                    builder.push_default(parley::StyleProperty::FontFamily(
-                        parley::FontFamily::Source(std::borrow::Cow::Owned(family.clone())),
-                    ));
-                }
-                if let Some(size) = floor.size {
-                    builder.push_default(parley::StyleProperty::FontSize(size));
-                }
-                if let Some(line_height) = floor.line_height {
-                    builder.push_default(parley::StyleProperty::LineHeight(
-                        parley::LineHeight::FontSizeRelative(line_height),
-                    ));
-                }
-
-                // One span per piece. A piece is a stretch of the *shaped* text
-                // that formats as a unit — usually a whole run, but small caps
-                // splits a run wherever the original letters changed case, because
-                // a synthesised small capital is set at a smaller size than a real
-                // one beside it.
-                for piece in &pieces {
-                    let format = &piece.format;
-                    let local = piece.shaped.clone();
-
-                    if let Some(family) = &format.family {
-                        builder.push(
-                            parley::StyleProperty::FontFamily(parley::FontFamily::Source(
-                                std::borrow::Cow::Owned(family.clone()),
-                            )),
-                            local.clone(),
-                        );
-                    }
-                    if let Some(size) = format.size {
-                        builder.push(parley::StyleProperty::FontSize(size), local.clone());
-                    }
-                    if let Some(line_height) = format.line_height {
-                        builder.push(
-                            parley::StyleProperty::LineHeight(
-                                parley::LineHeight::FontSizeRelative(line_height),
-                            ),
-                            local.clone(),
-                        );
-                    }
-                    if let Some(weight) = format.weight {
-                        builder.push(
-                            parley::StyleProperty::FontWeight(parley::FontWeight::new(f32::from(
-                                weight,
-                            ))),
-                            local.clone(),
-                        );
-                    }
-                    if let Some(italic) = format.italic {
-                        builder.push(
-                            parley::StyleProperty::FontStyle(if italic {
-                                parley::FontStyle::Italic
-                            } else {
-                                parley::FontStyle::Normal
-                            }),
-                            local.clone(),
-                        );
-                    }
-                    // Still asked of the font, and still right where the font has
-                    // the table. `shaping_text` has already synthesised for the
-                    // fonts that have not — 191 of 191 on the machine this was
-                    // written on — so this is the better answer where it exists
-                    // and harmless where it does not.
-                    //
-                    // The other features ride in the same list: ligatures on
-                    // or off, figure style, fractions, stylistic sets. Pushed
-                    // as a list of tags rather than parsed from a string, so a
-                    // feature that does not reach the font is a bug here and
-                    // not a quiet parse failure.
-                    let features: Vec<parley::FontFeature> = format
-                        .features()
-                        .into_iter()
-                        .map(|(tag, value)| {
-                            parley::FontFeature::new(parley::setting::Tag::new(&tag), value)
-                        })
-                        .collect();
-                    if !features.is_empty() {
-                        builder.push(
-                            parley::StyleProperty::FontFeatures(parley::FontFeatures::List(
-                                std::borrow::Cow::Owned(features),
-                            )),
-                            local.clone(),
-                        );
-                    }
-                    // The language, for the font: Turkish dotted i, Serbian
-                    // italics, Polish kreska — the `locl` forms a font keeps
-                    // for a script it sets differently by country.
-                    if let Some(locale) = format
-                        .language
-                        .as_deref()
-                        .and_then(|code| parley::Language::parse(code).ok())
-                    {
-                        builder.push(parley::StyleProperty::Locale(Some(locale)), local.clone());
-                    }
-                    if let Some(tracking) = format.tracking {
-                        // Thousandths of an em, which is the unit a typographer
-                        // uses; parley wants points at the shaped size.
-                        let size = format.size.or(floor.size).unwrap_or(12.0);
-                        builder.push(
-                            parley::StyleProperty::LetterSpacing(tracking / 1000.0 * size),
-                            local.clone(),
-                        );
-                    }
-                    // Pushed even when the piece states no colour, because a
-                    // *change* is what splits a glyph run: leaving the default in
-                    // place for one piece and setting it for the next is exactly
-                    // the boundary needed.
-                    builder.push(
-                        parley::StyleProperty::Brush(Brush {
-                            colour: format.colour.clone(),
-                            baseline_shift: format.baseline_shift.unwrap_or(0.0),
-                            kern: format.kern.map_or(0.0, |kern| {
-                                kern / 1000.0 * format.size.or(floor.size).unwrap_or(12.0)
-                            }),
-                            optical: format.kerning == Some(crate::story::Kerning::Optical),
-                            underline: format.underline.clone().filter(|d| d.on),
-                            strikethrough: format.strikethrough.clone().filter(|d| d.on),
-                        }),
-                        local.clone(),
-                    );
-                }
-
-                // Each tab's width, as letter spacing on the tab alone. Pushed
-                // last so it wins over any tracking the run carries: a tab's
-                // advance is the distance to its stop and nothing else.
-                for tab in tabs {
-                    builder.push(
-                        parley::StyleProperty::LetterSpacing(tab.spacing),
-                        tab.range.clone(),
-                    );
-                }
-
-                let mut layout: parley::Layout<Brush> = builder.build(&shaped_text);
-                let (spacings, rows) = break_lines_with_room(
-                    &mut layout,
-                    &shaped_text,
-                    measure,
-                    Room {
-                        first: indent_first,
-                        cap: cap_width,
-                        cap_lines,
-                        obstacles,
-                        // The paragraph's own origin, so an obstacle given in the
-                        // text's space lands on the right lines of it.
-                        from_y: y,
-                        // The leading, as the first line's height until a real one
-                        // is known.
-                        line_hint: f64::from(
-                            floor.size.unwrap_or(12.0) * floor.line_height.unwrap_or(1.2),
-                        ),
-                    },
-                    &Composition {
-                        justify: format.alignment == Some(crate::story::Alignment::Justify),
-                        rules: &justification,
-                        hyphen_limit: hyphenation.limit,
-                        total_fit: format.composer == Some(crate::story::Composer::Paragraph),
+                spans.extend(automatic.iter().cloned());
+                Some(crate::automatic::laid_over(laid_source, styles, &spans).into_owned())
+            };
+            // Each rule's end, found one pass at a time; the last pass sets
+            // the paragraph with every one of them known.
+            let mut found: Vec<usize> = Vec::new();
+            let mut lined: Option<Story> = if line_rules.is_empty() {
+                None
+            } else {
+                lay_lines(&found)
+            };
+            let (shaped_text, map, mut layout, spacings, rows, tabs) = loop {
+                let source: &Story = lined.as_ref().unwrap_or(story);
+                let (shaped_text, pieces, map) = shaping_text(
+                    source,
+                    styles,
+                    cap_end.max(start)..content_end,
+                    hyphenate.then_some(&hyphenation),
+                    Some((generated.as_str(), &format.character)),
+                    // Only once every rule's end is known: before that, the
+                    // pass is measuring where a line falls on its own.
+                    if found.len() == line_rules.len() {
+                        &found
+                    } else {
+                        &[]
                     },
                 );
-                (layout, spacings, rows)
-            };
 
-            // Laid out once, and again for every tab that has not yet reached
-            // its stop. See `TabRun` for why this is a loop.
-            let stops = format.tab_stops.clone().unwrap_or_default();
-            let mut tabs = tabs_in(&shaped_text);
-            let (mut layout, mut spacings, mut rows) =
-                build(&tabs, &mut self.layout_ctx, &mut self.font_ctx);
-            for _ in 0..4 {
-                if tabs.is_empty() {
-                    break;
+                let build = |tabs: &[TabRun],
+                             ctx: &mut parley::LayoutContext<Brush>,
+                             fonts: &mut parley::FontContext| {
+                    let mut builder = ctx.ranged_builder(fonts, &shaped_text, 1.0, true);
+
+                    // Anchored objects belonging to this paragraph, as boxes parley
+                    // breaks the line around. The id carries the stored offset so the
+                    // caller can match a placed box back to the frame it is for.
+                    for object in objects
+                        .iter()
+                        .filter(|o| o.at >= cap_end.max(start) && o.at < content_end)
+                    {
+                        builder.push_inline_box(parley::InlineBox {
+                            id: object.at as u64,
+                            kind: parley::InlineBoxKind::InFlow,
+                            index: shaped_offset(&map, cap_end.max(start), object.at),
+                            width: object.width as f32,
+                            height: object.height as f32,
+                        });
+                    }
+
+                    // The cascade's floor. `FontFamily::Source` takes the family name
+                    // as written and resolves generic names ("sans-serif") the way CSS
+                    // does, which is what parley's own default uses.
+                    if let Some(family) = &floor.family {
+                        builder.push_default(parley::StyleProperty::FontFamily(
+                            parley::FontFamily::Source(std::borrow::Cow::Owned(family.clone())),
+                        ));
+                    }
+                    if let Some(size) = floor.size {
+                        builder.push_default(parley::StyleProperty::FontSize(size));
+                    }
+                    if let Some(line_height) = floor.line_height {
+                        builder.push_default(parley::StyleProperty::LineHeight(
+                            parley::LineHeight::FontSizeRelative(line_height),
+                        ));
+                    }
+
+                    // One span per piece. A piece is a stretch of the *shaped* text
+                    // that formats as a unit — usually a whole run, but small caps
+                    // splits a run wherever the original letters changed case, because
+                    // a synthesised small capital is set at a smaller size than a real
+                    // one beside it.
+                    for piece in &pieces {
+                        let format = &piece.format;
+                        let local = piece.shaped.clone();
+
+                        if let Some(family) = &format.family {
+                            builder.push(
+                                parley::StyleProperty::FontFamily(parley::FontFamily::Source(
+                                    std::borrow::Cow::Owned(family.clone()),
+                                )),
+                                local.clone(),
+                            );
+                        }
+                        if let Some(size) = format.size {
+                            builder.push(parley::StyleProperty::FontSize(size), local.clone());
+                        }
+                        if let Some(line_height) = format.line_height {
+                            builder.push(
+                                parley::StyleProperty::LineHeight(
+                                    parley::LineHeight::FontSizeRelative(line_height),
+                                ),
+                                local.clone(),
+                            );
+                        }
+                        if let Some(weight) = format.weight {
+                            builder.push(
+                                parley::StyleProperty::FontWeight(parley::FontWeight::new(
+                                    f32::from(weight),
+                                )),
+                                local.clone(),
+                            );
+                        }
+                        if let Some(italic) = format.italic {
+                            builder.push(
+                                parley::StyleProperty::FontStyle(if italic {
+                                    parley::FontStyle::Italic
+                                } else {
+                                    parley::FontStyle::Normal
+                                }),
+                                local.clone(),
+                            );
+                        }
+                        // Still asked of the font, and still right where the font has
+                        // the table. `shaping_text` has already synthesised for the
+                        // fonts that have not — 191 of 191 on the machine this was
+                        // written on — so this is the better answer where it exists
+                        // and harmless where it does not.
+                        //
+                        // The other features ride in the same list: ligatures on
+                        // or off, figure style, fractions, stylistic sets. Pushed
+                        // as a list of tags rather than parsed from a string, so a
+                        // feature that does not reach the font is a bug here and
+                        // not a quiet parse failure.
+                        let features: Vec<parley::FontFeature> = format
+                            .features()
+                            .into_iter()
+                            .map(|(tag, value)| {
+                                parley::FontFeature::new(parley::setting::Tag::new(&tag), value)
+                            })
+                            .collect();
+                        if !features.is_empty() {
+                            builder.push(
+                                parley::StyleProperty::FontFeatures(parley::FontFeatures::List(
+                                    std::borrow::Cow::Owned(features),
+                                )),
+                                local.clone(),
+                            );
+                        }
+                        // The language, for the font: Turkish dotted i, Serbian
+                        // italics, Polish kreska — the `locl` forms a font keeps
+                        // for a script it sets differently by country.
+                        if let Some(locale) = format
+                            .language
+                            .as_deref()
+                            .and_then(|code| parley::Language::parse(code).ok())
+                        {
+                            builder
+                                .push(parley::StyleProperty::Locale(Some(locale)), local.clone());
+                        }
+                        if let Some(tracking) = format.tracking {
+                            // Thousandths of an em, which is the unit a typographer
+                            // uses; parley wants points at the shaped size.
+                            let size = format.size.or(floor.size).unwrap_or(12.0);
+                            builder.push(
+                                parley::StyleProperty::LetterSpacing(tracking / 1000.0 * size),
+                                local.clone(),
+                            );
+                        }
+                        // Pushed even when the piece states no colour, because a
+                        // *change* is what splits a glyph run: leaving the default in
+                        // place for one piece and setting it for the next is exactly
+                        // the boundary needed.
+                        builder.push(
+                            parley::StyleProperty::Brush(Brush {
+                                colour: format.colour.clone(),
+                                baseline_shift: format.baseline_shift.unwrap_or(0.0),
+                                kern: format.kern.map_or(0.0, |kern| {
+                                    kern / 1000.0 * format.size.or(floor.size).unwrap_or(12.0)
+                                }),
+                                optical: format.kerning == Some(crate::story::Kerning::Optical),
+                                underline: format.underline.clone().filter(|d| d.on),
+                                strikethrough: format.strikethrough.clone().filter(|d| d.on),
+                            }),
+                            local.clone(),
+                        );
+                    }
+
+                    // Each tab's width, as letter spacing on the tab alone. Pushed
+                    // last so it wins over any tracking the run carries: a tab's
+                    // advance is the distance to its stop and nothing else.
+                    for tab in tabs {
+                        builder.push(
+                            parley::StyleProperty::LetterSpacing(tab.spacing),
+                            tab.range.clone(),
+                        );
+                    }
+
+                    let mut layout: parley::Layout<Brush> = builder.build(&shaped_text);
+                    let (spacings, rows) = break_lines_with_room(
+                        &mut layout,
+                        &shaped_text,
+                        measure,
+                        Room {
+                            first: indent_first,
+                            cap: cap_width,
+                            cap_lines,
+                            obstacles,
+                            // The paragraph's own origin, so an obstacle given in the
+                            // text's space lands on the right lines of it.
+                            from_y: y,
+                            // The leading, as the first line's height until a real one
+                            // is known.
+                            line_hint: f64::from(
+                                floor.size.unwrap_or(12.0) * floor.line_height.unwrap_or(1.2),
+                            ),
+                        },
+                        &Composition {
+                            justify: format.alignment == Some(crate::story::Alignment::Justify),
+                            rules: &justification,
+                            hyphen_limit: hyphenation.limit,
+                            total_fit: format.composer == Some(crate::story::Composer::Paragraph),
+                        },
+                    );
+                    (layout, spacings, rows)
+                };
+
+                // Laid out once, and again for every tab that has not yet reached
+                // its stop. See `TabRun` for why this is a loop.
+                let stops = format.tab_stops.clone().unwrap_or_default();
+                let mut tabs = tabs_in(&shaped_text);
+                let (mut layout, mut spacings, mut rows) =
+                    build(&tabs, &mut self.layout_ctx, &mut self.font_ctx);
+                for _ in 0..4 {
+                    if tabs.is_empty() {
+                        break;
+                    }
+                    let wanted = resolve_tabs(&layout, &shaped_text, &tabs, &stops, indent_left);
+                    let settled = tabs_settled(&wanted, &tabs);
+                    // The leaders are only known once a tab has been resolved, so
+                    // the last pass's answer is kept even when nothing moved.
+                    tabs = wanted;
+                    if settled {
+                        break;
+                    }
+                    (layout, spacings, rows) =
+                        build(&tabs, &mut self.layout_ctx, &mut self.font_ctx);
                 }
-                let wanted = resolve_tabs(&layout, &shaped_text, &tabs, &stops, indent_left);
-                let settled = tabs_settled(&wanted, &tabs);
-                // The leaders are only known once a tab has been resolved, so
-                // the last pass's answer is kept even when nothing moved.
-                tabs = wanted;
-                if settled {
-                    break;
+                if found.len() < line_rules.len() {
+                    // Where each line ends in the stored text: the character the
+                    // next line begins with, or the paragraph's end for the last.
+                    let stored = |shaped: usize| {
+                        if shaped >= shaped_text.len() {
+                            return content_end;
+                        }
+                        if map.is_empty() {
+                            return (body + shaped).min(content_end);
+                        }
+                        let i = map.partition_point(|(at, _)| *at <= shaped);
+                        map[i.saturating_sub(1)].1
+                    };
+                    let through = crate::automatic::lines_through(&line_rules, found.len());
+                    let end = layout
+                        .lines()
+                        .nth(through - 1)
+                        .map_or(content_end, |line| stored(line.text_range().end));
+                    found.push(end);
+                    lined = lay_lines(&found);
+                    continue;
                 }
-                (layout, spacings, rows) = build(&tabs, &mut self.layout_ctx, &mut self.font_ctx);
-            }
+                break (shaped_text, map, layout, spacings, rows, tabs);
+            };
 
             // Alignment is per layout, which is now per paragraph — so two
             // paragraphs can finally disagree about it.
@@ -4763,6 +4868,119 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// One character style, `Big`, set at 30 points: what the automatic
+    /// styles below lay on, told apart by how wide it makes the letters.
+    struct Big(
+        crate::story::CharacterStyleId,
+        crate::story::CharacterFormat,
+    );
+
+    impl Big {
+        fn new() -> Self {
+            use slotmap::KeyData;
+            Big(
+                crate::story::CharacterStyleId::from(KeyData::from_ffi(1 | 1 << 32)),
+                crate::story::CharacterFormat {
+                    size: Some(30.0),
+                    ..Default::default()
+                },
+            )
+        }
+    }
+
+    impl Styles for Big {
+        fn character(
+            &self,
+            id: crate::story::CharacterStyleId,
+        ) -> Option<&crate::story::CharacterFormat> {
+            (id == self.0).then_some(&self.1)
+        }
+        fn paragraph(
+            &self,
+            _: crate::story::ParagraphStyleId,
+        ) -> Option<&crate::story::ParagraphFormat> {
+            None
+        }
+        fn document_default(&self) -> crate::story::CharacterFormat {
+            NoStyles::default().default
+        }
+    }
+
+    #[test]
+    fn a_nested_style_sets_the_run_in_head_and_leaves_the_rest() {
+        use crate::automatic::{Delimiter, NestedStyle};
+        use crate::story::ParagraphFormat;
+        let big = Big::new();
+        let mut story = Story::new("Head: body copy");
+        story.apply_paragraph_format(
+            0..1,
+            &ParagraphFormat {
+                nested: Some(vec![NestedStyle {
+                    style: Some(big.0),
+                    through: true,
+                    count: 1,
+                    delimiter: Delimiter::AnyOf(":".into()),
+                }]),
+                ..ParagraphFormat::default()
+            },
+        );
+        let shaped = Shaper::new().shape(&story, &big, 1000.0);
+        let glyphs: Vec<_> = shaped.lines[0].glyphs().collect();
+        // "H" in the head, "b" of "body": the head is set three times larger.
+        let (head, body) = (glyphs[0].advance, glyphs[6].advance);
+        assert!(head > body * 1.8, "head {head}, body {body}");
+    }
+
+    #[test]
+    fn a_line_style_takes_the_first_line_once_it_is_known() {
+        use crate::automatic::LineStyle;
+        use crate::story::ParagraphFormat;
+        let big = Big::new();
+        let mut story = Story::new("word ".repeat(60));
+        story.apply_paragraph_format(
+            0..1,
+            &ParagraphFormat {
+                line_styles: Some(vec![LineStyle {
+                    style: Some(big.0),
+                    lines: 1,
+                }]),
+                ..ParagraphFormat::default()
+            },
+        );
+        let shaped = Shaper::new().shape(&story, &big, 200.0);
+        for l in &shaped.lines {
+            eprintln!(
+                "DBG {:?} n={} first={:?}",
+                l.range,
+                l.glyph_count(),
+                l.glyphs().next().map(|g| g.advance)
+            );
+        }
+        assert!(shaped.lines.len() > 3);
+        let first = shaped.lines[0].glyphs().next().expect("a glyph").advance;
+        let second = shaped.lines[1].glyphs().next().expect("a glyph").advance;
+        assert!(first > second * 1.8, "first {first}, second {second}");
+        // And the whole of the first line, not part of it: it fills the
+        // measure in the large size.
+        let last = shaped.lines[0]
+            .glyphs()
+            .filter(|g| g.advance > 0.0)
+            .last()
+            .expect("a glyph")
+            .advance;
+        assert!(last > second * 1.8, "the line's end is large too");
+        // The separator that ends the styled line draws nothing: no missing
+        // glyph's box where it stands.
+        assert!(
+            shaped
+                .lines
+                .iter()
+                .flat_map(|l| l.glyphs())
+                .all(|g| g.glyph_id != 0),
+            "no .notdef drawn"
+        );
     }
 
     #[test]

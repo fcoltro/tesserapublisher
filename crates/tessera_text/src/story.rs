@@ -769,6 +769,17 @@ pub struct ParagraphFormat {
     /// How the lines are chosen. `None` is the single-line composer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub composer: Option<Composer>,
+    /// Character styles from the paragraph's start, each up to or through
+    /// so many of something: InDesign's nested styles. See
+    /// [`crate::automatic`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nested: Option<Vec<crate::automatic::NestedStyle>>,
+    /// Character styles wherever a pattern matches: GREP styles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grep: Option<Vec<crate::automatic::GrepStyle>>,
+    /// Character styles on the first lines: nested line styles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_styles: Option<Vec<crate::automatic::LineStyle>>,
     /// What every run in the paragraph inherits before its own style speaks.
     #[serde(default)]
     pub character: CharacterFormat,
@@ -802,6 +813,12 @@ impl ParagraphFormat {
             justification: self.justification.or(base.justification),
             hyphenation: self.hyphenation.or(base.hyphenation),
             composer: self.composer.or(base.composer),
+            nested: self.nested.clone().or_else(|| base.nested.clone()),
+            grep: self.grep.clone().or_else(|| base.grep.clone()),
+            line_styles: self
+                .line_styles
+                .clone()
+                .or_else(|| base.line_styles.clone()),
             character: self.character.over(&base.character),
         }
     }

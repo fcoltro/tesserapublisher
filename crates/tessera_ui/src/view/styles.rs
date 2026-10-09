@@ -79,6 +79,8 @@ pub enum StylePage {
     Hyphenation,
     Justification,
     DropCapsAndLists,
+    /// Nested, line and GREP styles.
+    NestedStyles,
     CharacterColour,
     OpenType,
     Decorations,
@@ -115,6 +117,7 @@ impl StylePage {
                 StylePage::Hyphenation,
                 StylePage::Justification,
                 StylePage::DropCapsAndLists,
+                StylePage::NestedStyles,
             ],
             StyleKind::Character => &[
                 StylePage::General,
@@ -148,6 +151,7 @@ impl StylePage {
             StylePage::Hyphenation => "Hyphenation",
             StylePage::Justification => "Justification",
             StylePage::DropCapsAndLists => "Drop caps and lists",
+            StylePage::NestedStyles => "Nested and GREP styles",
             StylePage::CharacterColour => "Character colour",
             StylePage::OpenType => "OpenType features",
             StylePage::Decorations => "Underline and strikethrough",
@@ -175,7 +179,8 @@ impl StylePage {
             | StylePage::KeepOptions
             | StylePage::Hyphenation
             | StylePage::Justification
-            | StylePage::DropCapsAndLists => Some("Paragraph"),
+            | StylePage::DropCapsAndLists
+            | StylePage::NestedStyles => Some("Paragraph"),
             StylePage::Fill
             | StylePage::Stroke
             | StylePage::Transparency
@@ -202,6 +207,7 @@ impl StylePage {
             StylePage::Hyphenation => Icon::Scissors,
             StylePage::Justification => Icon::TextAlignJustify,
             StylePage::DropCapsAndLists => Icon::DropCap,
+            StylePage::NestedStyles => Icon::Styles,
             StylePage::Fill => Icon::Swatches,
             StylePage::Stroke => Icon::StrokeSolid,
             StylePage::Transparency => Icon::Opacity,
@@ -231,6 +237,9 @@ impl StylePage {
                 "Which breaker chooses the lines, and how far spacing may give."
             }
             StylePage::DropCapsAndLists => "A large first letter, and bullets or numbers.",
+            StylePage::NestedStyles => {
+                "Character styles the paragraph lays on by itself: from its start, on its first lines, or wherever a pattern matches."
+            }
             StylePage::Fill => "What the object is filled with.",
             StylePage::Stroke => "The line round its edge.",
             StylePage::Transparency => "How much of what is behind shows through.",
@@ -792,6 +801,7 @@ fn clear_character_page(page: StylePage, f: &mut CharacterFormat) {
         | StylePage::Hyphenation
         | StylePage::Justification
         | StylePage::DropCapsAndLists
+        | StylePage::NestedStyles
         | StylePage::Fill
         | StylePage::Stroke
         | StylePage::Transparency
@@ -832,6 +842,11 @@ fn clear_paragraph_page(page: StylePage, f: &mut ParagraphFormat) {
             f.drop_cap_lines = None;
             f.drop_cap_characters = None;
             f.list = None;
+        }
+        StylePage::NestedStyles => {
+            f.nested = None;
+            f.line_styles = None;
+            f.grep = None;
         }
         _ => {}
     }
@@ -1162,6 +1177,7 @@ fn object_page(
         | StylePage::Hyphenation
         | StylePage::Justification
         | StylePage::DropCapsAndLists
+        | StylePage::NestedStyles
         | StylePage::CharacterColour
         | StylePage::OpenType
         | StylePage::Decorations => {}
@@ -2192,6 +2208,9 @@ fn paragraph_terms(f: &ParagraphFormat) -> Vec<(StylePage, String)> {
     use StylePage as P;
     let mut out = character_terms(&f.character);
     let mut put = |page: StylePage, text: String| out.push((page, text));
+    for term in super::nested_styles::terms(f) {
+        put(P::NestedStyles, term);
+    }
 
     if let Some(a) = f.alignment {
         let said = match a {
@@ -3175,6 +3194,7 @@ fn paragraph_page(
                 super::panels::list_editor(ui, &mut format.list, true);
             });
         }
+        StylePage::NestedStyles => super::nested_styles::page(ui, state, format),
         // Listed rather than caught by a wildcard, so a page added to the
         // sidebar has to say what it draws.
         StylePage::General
@@ -4791,6 +4811,9 @@ mod tests {
             justification: Some(Default::default()),
             hyphenation: Some(Default::default()),
             composer: Some(Composer::Paragraph),
+            nested: Some(Vec::new()),
+            grep: Some(Vec::new()),
+            line_styles: Some(Vec::new()),
             character: every_character_property(),
         };
         let terms = paragraph_terms(&full);
@@ -5088,6 +5111,9 @@ mod tests {
             justification: Some(Default::default()),
             hyphenation: Some(Default::default()),
             composer: Some(Composer::Paragraph),
+            nested: Some(Vec::new()),
+            grep: Some(Vec::new()),
+            line_styles: Some(Vec::new()),
             character: every_character_property(),
         };
         let mut emptied = full.clone();

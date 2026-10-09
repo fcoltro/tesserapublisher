@@ -296,10 +296,12 @@ impl Styles {
             if is_root(name) {
                 continue;
             }
+            let mut format = paragraph_format(node, colours);
+            automatic_rules(node, &out.character, &mut format);
             let id = doc.add_paragraph_style(ParagraphStyle {
                 name: shown_name(attr(node, "Name").unwrap_or(name)),
                 based_on: None,
-                format: paragraph_format(node, colours),
+                format,
             });
             out.paragraph.insert(name.to_owned(), id);
             if let Some(parent) = property(node, "BasedOn") {
@@ -596,9 +598,157 @@ fn tab_stops(node: Node) -> Option<Vec<TabStop>> {
     if stops.is_empty() { None } else { Some(stops) }
 }
 
+/// A paragraph style's nested, line and GREP styles, as InDesign lists them
+/// in its properties, each naming its character style by `Self`. A rule
+/// naming a style that was not read, or a delimiter this has no word for, is
+/// left out rather than guessed.
+fn automatic_rules(
+    node: Node,
+    characters: &HashMap<String, CharacterStyleId>,
+    format: &mut ParagraphFormat,
+) {
+    use tessera_text::automatic::{Delimiter, GrepStyle, LineStyle, NestedStyle};
+    let Some(properties) = child(node, "Properties") else {
+        return;
+    };
+    let records = |list: &str| -> Vec<Node> {
+        child(properties, list)
+            .map(|l| children(l, "ListItem").collect())
+            .unwrap_or_default()
+    };
+    let text = |item: Node, name: &str| -> Option<String> {
+        child(item, name).and_then(|n| n.text()).map(str::to_owned)
+    };
+    // `[No character style]` is InDesign's [None].
+    let style = |item: Node| -> Result<Option<CharacterStyleId>, ()> {
+        match text(item, "AppliedCharacterStyle") {
+            None => Ok(None),
+            Some(name) if name.ends_with("[No character style]") => Ok(None),
+            Some(name) => characters.get(&name).copied().map(Some).ok_or(()),
+        }
+    };
+    let count = |item: Node, name: &str| -> u16 {
+        text(item, name)
+            .and_then(|t| t.trim().parse::<u16>().ok())
+            .unwrap_or(1)
+            .max(1)
+    };
+
+    let nested: Vec<NestedStyle> = records("AllNestedStyles")
+        .into_iter()
+        .filter_map(|item| {
+            let delimiter = match text(item, "Delimiter")?.as_str() {
+                "Sentence" => Delimiter::Sentences,
+                "AnyWord" => Delimiter::Words,
+                "AnyCharacter" => Delimiter::Characters,
+                "Letters" => Delimiter::Letters,
+                "Digits" => Delimiter::Digits,
+                "Tabs" => Delimiter::Tabs,
+                "EmSpace" => Delimiter::AnyOf("\u{2003}".to_owned()),
+                "EnSpace" => Delimiter::AnyOf("\u{2002}".to_owned()),
+                "NonbreakingSpace" => Delimiter::AnyOf("\u{00A0}".to_owned()),
+                // A typed delimiter is the characters themselves; InDesign's
+                // own names are longer than one character and begin capital.
+                typed if typed.chars().count() <= 4 => Delimiter::AnyOf(typed.to_owned()),
+                _ => return None,
+            };
+            Some(NestedStyle {
+                style: style(item).ok()?,
+                through: text(item, "Inclusive").as_deref() != Some("false"),
+                count: count(item, "Repetition"),
+                delimiter,
+            })
+        })
+        .collect();
+    let lines: Vec<LineStyle> = records("AllLineStyles")
+        .into_iter()
+        .filter_map(|item| {
+            Some(LineStyle {
+                style: style(item).ok()?,
+                lines: count(item, "LineCount"),
+            })
+        })
+        .collect();
+    let grep: Vec<GrepStyle> = records("AllGREPStyles")
+        .into_iter()
+        .filter_map(|item| {
+            Some(GrepStyle {
+                style: style(item).ok()??,
+                pattern: text(item, "GrepExpression")?,
+            })
+        })
+        .collect();
+    format.nested = (!nested.is_empty()).then_some(nested);
+    format.line_styles = (!lines.is_empty()).then_some(lines);
+    format.grep = (!grep.is_empty()).then_some(grep);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_paragraph_style_s_nested_line_and_grep_styles_are_read() {
+        use tessera_text::automatic::Delimiter;
+        let mut doc = Document::new();
+        let graphic = roxmltree::Document::parse("<Graphic/>").unwrap();
+        let colours = Colours::read(graphic.root_element());
+        let xml = r#"<Styles>
+          <RootCharacterStyleGroup>
+            <CharacterStyle Self="CharacterStyle/Bold" Name="Bold" FontStyle="Bold"/>
+            <CharacterStyle Self="CharacterStyle/Caps" Name="Caps"/>
+          </RootCharacterStyleGroup>
+          <RootParagraphStyleGroup>
+            <ParagraphStyle Self="ParagraphStyle/Body" Name="Body"><Properties>
+              <AllNestedStyles type="list">
+                <ListItem type="record">
+                  <AppliedCharacterStyle type="object">CharacterStyle/Bold</AppliedCharacterStyle>
+                  <Delimiter type="string">:</Delimiter>
+                  <Repetition type="long">1</Repetition>
+                  <Inclusive type="boolean">true</Inclusive>
+                </ListItem>
+                <ListItem type="record">
+                  <AppliedCharacterStyle type="object">CharacterStyle/$ID/[No character style]</AppliedCharacterStyle>
+                  <Delimiter type="enumeration">AnyWord</Delimiter>
+                  <Repetition type="long">2</Repetition>
+                  <Inclusive type="boolean">false</Inclusive>
+                </ListItem>
+              </AllNestedStyles>
+              <AllLineStyles type="list">
+                <ListItem type="record">
+                  <AppliedCharacterStyle type="object">CharacterStyle/Caps</AppliedCharacterStyle>
+                  <LineCount type="long">1</LineCount>
+                </ListItem>
+              </AllLineStyles>
+              <AllGREPStyles type="list">
+                <ListItem type="record">
+                  <AppliedCharacterStyle type="object">CharacterStyle/Bold</AppliedCharacterStyle>
+                  <GrepExpression type="string">\d+%</GrepExpression>
+                </ListItem>
+              </AllGREPStyles>
+            </Properties></ParagraphStyle>
+          </RootParagraphStyleGroup>
+        </Styles>"#;
+        let parsed = roxmltree::Document::parse(xml).unwrap();
+        let styles = Styles::read(parsed.root_element(), &mut doc, &colours);
+        let bold = styles.character["CharacterStyle/Bold"];
+        let caps = styles.character["CharacterStyle/Caps"];
+        let body = &doc.paragraph_styles[styles.paragraph["ParagraphStyle/Body"]].format;
+
+        let nested = body.nested.as_ref().expect("nested");
+        assert_eq!(nested.len(), 2);
+        assert_eq!(nested[0].style, Some(bold));
+        assert_eq!(nested[0].delimiter, Delimiter::AnyOf(":".into()));
+        assert!(nested[0].through);
+        assert_eq!(nested[1].style, None, "[No character style] is none");
+        assert_eq!((nested[1].count, nested[1].through), (2, false));
+        assert_eq!(nested[1].delimiter, Delimiter::Words);
+
+        let lines = body.line_styles.as_ref().expect("lines");
+        assert_eq!((lines[0].style, lines[0].lines), (Some(caps), 1));
+        let grep = body.grep.as_ref().expect("grep");
+        assert_eq!((grep[0].style, grep[0].pattern.as_str()), (bold, r"\d+%"));
+    }
 
     #[test]
     fn an_applied_gradient_feather_is_read_with_its_stops() {

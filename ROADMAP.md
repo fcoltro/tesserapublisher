@@ -3660,6 +3660,10 @@ setting real work for press reaches for, in the order the user agreed.
   missing first; any replaced everywhere in one step.
 - [x] **Balanced columns** (format 50), in the frame a story ends in; read
   from IDML.
+- [x] **Nested, line and GREP styles** (format 51), laid over the runs when
+  the text is shaped, never stored on it; line styles end in a line
+  separator the breaker honours, so the lines they take are exactly theirs.
+  An editor page, and IDML import.
 
 ### The last refusals, and faces taller than their leading — 2026-10-09
 

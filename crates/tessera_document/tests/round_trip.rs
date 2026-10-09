@@ -883,8 +883,9 @@ fn the_format_version_is_twenty_six() {
     // notes in the text, none before; 47 linked content, none before; 48 a
     // gradient's dragged span, the whole object before; 49 a text frame
     // that sizes itself to its text, the size it was drawn before; 50
-    // balanced columns, filled one after another before.
-    assert_eq!(format::FORMAT_VERSION, 50);
+    // balanced columns, filled one after another before; 51 nested, GREP
+    // and line styles, none before.
+    assert_eq!(format::FORMAT_VERSION, 51);
 }
 
 #[test]

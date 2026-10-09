@@ -137,6 +137,18 @@ page, and General lists everything, with **Reset to base**. Character colour
 can name one of the document's swatches, so editing the swatch recolours every
 style that uses it.
 
+**Styles that apply themselves.** A paragraph style's **Nested and GREP
+styles** page lays character styles on by itself. *Nested styles* run from the
+paragraph's start, one after another: *Bold through 1 ":"* sets a run-in head
+up to and including its colon; *[None]* passes a stretch over. Each counts
+sentences, words, characters, letters, digits, tabs, or any characters you
+type. *Line styles* take the first lines — *Small caps for 1 line* — and
+follow the lines as they rebreak. *GREP styles* take whatever a regular
+expression matches anywhere in the paragraph, such as `\d+%` for every
+percentage, and win over the nested ones. All of them sit beneath a character
+style or a format you set by hand, so a word made italic inside a bold head
+stays italic. InDesign files bring theirs with them.
+
 General also counts where the style is used. The arrows beside the count
 select each use on the page in turn, and the window stays open. A character
 style is previewed where the document first uses it, among the words around
