@@ -3224,9 +3224,94 @@ fn text_frame_controls(
         changed = true;
     }
 
+    changed |= auto_size_controls(ui, &mut wanted, id, state.active, unit);
+
     if changed {
         apply(state, Command::SetTextLayout { id, layout: wanted });
     }
+}
+
+/// Text Frame Options ▸ Auto-Size: which sides follow the text, the point
+/// the frame grows from, and the smallest it may become. Returns whether
+/// anything changed.
+fn auto_size_controls(
+    ui: &mut Ui,
+    wanted: &mut tessera_document::nodes::TextLayout,
+    id: tessera_document::ids::FrameId,
+    document: impl std::hash::Hash + std::fmt::Debug,
+    unit: Unit,
+) -> bool {
+    use tessera_document::nodes::{AutoGrow, AutoSize};
+    let mut changed = false;
+    let modes = [
+        (None, "Off"),
+        (Some(AutoGrow::Height), "Height only"),
+        (Some(AutoGrow::Width), "Width only"),
+        (Some(AutoGrow::Both), "Height and width"),
+    ];
+    let current = wanted.auto_size.map(|a| a.grow);
+    let shown = modes
+        .iter()
+        .find(|(m, _)| *m == current)
+        .map_or("Off", |(_, n)| *n);
+    ui.horizontal(|ui| {
+        ui.label("Auto-size");
+        egui::ComboBox::from_id_salt(("auto-size", &document, id))
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                for (mode, name) in modes {
+                    if ui.selectable_label(current == mode, name).clicked() && current != mode {
+                        wanted.auto_size = mode.map(|grow| AutoSize {
+                            grow,
+                            ..wanted.auto_size.unwrap_or_default()
+                        });
+                        changed = true;
+                    }
+                }
+            });
+    });
+    let Some(mut auto) = wanted.auto_size else {
+        return changed;
+    };
+    ui.horizontal(|ui| {
+        ui.label("Grows from");
+        egui::ComboBox::from_id_salt(("auto-size-from", &document, id))
+            .selected_text(auto.from.label())
+            .show_ui(ui, |ui| {
+                for anchor in tessera_geometry::Anchor::ALL {
+                    if ui
+                        .selectable_label(auto.from == anchor, anchor.label())
+                        .clicked()
+                        && auto.from != anchor
+                    {
+                        auto.from = anchor;
+                        changed = true;
+                    }
+                }
+            });
+    });
+    // Nought is no minimum: the frame may go as small as its text.
+    let mut minimum = |ui: &mut Ui, label: &str, value: &mut Option<f64>| {
+        let mut points = value.unwrap_or(0.0);
+        let moved = ui
+            .horizontal(|ui| {
+                ui.label(label);
+                measure_bare(ui, &mut points, unit)
+            })
+            .inner;
+        if moved {
+            *value = (points > 0.0).then_some(points);
+            changed = true;
+        }
+    };
+    if matches!(auto.grow, AutoGrow::Height | AutoGrow::Both) {
+        minimum(ui, "Minimum height", &mut auto.min_height);
+    }
+    if matches!(auto.grow, AutoGrow::Width | AutoGrow::Both) {
+        minimum(ui, "Minimum width", &mut auto.min_width);
+    }
+    wanted.auto_size = Some(auto);
+    changed
 }
 
 /// A quiet label naming a group of fields inside a section.

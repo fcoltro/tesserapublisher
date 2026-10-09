@@ -91,6 +91,13 @@ of a frame, because overset text is invisible by definition.
 
 To break a thread: select the frames and **Object ▸ Unthread**.
 
+**Frames that fit their text.** In Properties, a text frame's **Auto-size**
+makes it follow its copy as you type: *Height only* grows and shrinks it
+downwards, *Width only* makes it as wide as its longest line, *Height and
+width* both. *Grows from* is the point that holds still — the top centre by
+default — and a minimum height or width keeps it from shrinking below that
+(0 is none). A threaded frame is not sized; its text belongs to the thread.
+
 **Flowing onto new pages.** **Object ▸ Flow onto new pages** carries the
 selected frame's thread on until its text fits: a page after the one the text
 ends on, with a frame in its margins threaded on from the last, and as many

@@ -1096,7 +1096,48 @@ fn text_layout(node: Node) -> TextLayout {
         },
         _ => layout.inset,
     };
+    layout.auto_size = auto_size(pref);
     layout
+}
+
+/// Text Frame Options ▸ Auto-Size, as InDesign writes it on the frame's
+/// preferences. Sized proportionally reads as both sides, which is what it
+/// does to a frame that holds one line.
+fn auto_size(pref: Node) -> Option<tessera_document::nodes::AutoSize> {
+    use tessera_document::nodes::{AutoGrow, AutoSize};
+    use tessera_geometry::Anchor;
+    let grow = match attr(pref, "AutoSizingType")? {
+        "HeightOnly" => AutoGrow::Height,
+        "WidthOnly" => AutoGrow::Width,
+        "HeightAndWidth" | "HeightAndWidthProportionally" => AutoGrow::Both,
+        _ => return None,
+    };
+    let from = match attr(pref, "AutoSizingReferencePoint") {
+        Some("TopLeftPoint") => Anchor::TopLeft,
+        Some("TopRightPoint") => Anchor::TopRight,
+        Some("LeftCenterPoint") => Anchor::MiddleLeft,
+        Some("CenterPoint") => Anchor::Centre,
+        Some("RightCenterPoint") => Anchor::MiddleRight,
+        Some("BottomLeftPoint") => Anchor::BottomLeft,
+        Some("BottomCenterPoint") => Anchor::BottomCentre,
+        Some("BottomRightPoint") => Anchor::BottomRight,
+        _ => Anchor::TopCentre,
+    };
+    let minimum = |used: &str, value: &str| {
+        (attr(pref, used) == Some("true"))
+            .then(|| attr_f64(pref, value))
+            .flatten()
+            .filter(|v| *v > 0.0)
+    };
+    Some(AutoSize {
+        grow,
+        from,
+        min_height: minimum(
+            "UseMinimumHeightForAutoSizing",
+            "MinimumHeightForAutoSizing",
+        ),
+        min_width: minimum("UseMinimumWidthForAutoSizing", "MinimumWidthForAutoSizing"),
+    })
 }
 
 /// A placed file: its path, its natural size when the package says, and for
@@ -1201,6 +1242,26 @@ mod tests {
         let parsed = roxmltree::Document::parse(bare).expect("parses");
         let (_, _, pdf) = placed_image(parsed.root_element()).expect("placed");
         assert!(pdf.is_first_cropped());
+    }
+
+    #[test]
+    fn a_frame_s_auto_sizing_is_read_with_its_point_and_minimum() {
+        use tessera_document::nodes::AutoGrow;
+        let xml = r#"<TextFrame><TextFramePreference AutoSizingType="HeightOnly"
+            AutoSizingReferencePoint="BottomCenterPoint"
+            UseMinimumHeightForAutoSizing="true" MinimumHeightForAutoSizing="36"/></TextFrame>"#;
+        let parsed = roxmltree::Document::parse(xml).expect("parses");
+        let auto = text_layout(parsed.root_element())
+            .auto_size
+            .expect("auto-sized");
+        assert_eq!(auto.grow, AutoGrow::Height);
+        assert_eq!(auto.from, tessera_geometry::Anchor::BottomCentre);
+        assert_eq!(auto.min_height, Some(36.0));
+        assert_eq!(auto.min_width, None);
+
+        let off = r#"<TextFrame><TextFramePreference AutoSizingType="Off"/></TextFrame>"#;
+        let parsed = roxmltree::Document::parse(off).expect("parses");
+        assert!(text_layout(parsed.root_element()).auto_size.is_none());
     }
 
     #[test]

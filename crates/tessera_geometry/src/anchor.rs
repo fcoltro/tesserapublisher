@@ -68,6 +68,19 @@ impl Anchor {
         }
     }
 
+    /// `rect` made `width` by `height`, with this anchor held where it was:
+    /// what a frame growing from its reference point becomes.
+    pub fn resized(self, rect: DocRect, width: f64, height: f64) -> DocRect {
+        let (fx, fy) = self.fractions();
+        let held = self.in_rect(rect);
+        DocRect {
+            x: held.x - width * fx,
+            y: held.y - height * fy,
+            width,
+            height,
+        }
+    }
+
     /// How far along each axis this anchor sits, from 0 to 1.
     fn fractions(self) -> (f64, f64) {
         match self {

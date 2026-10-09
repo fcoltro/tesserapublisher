@@ -3648,6 +3648,15 @@ below are its items 1 to 3.
   GPL-3.0, run as a program of its own, never linked), caching the PDF it makes; every reader of placed
   files takes that PDF when there is one and the preview when not.
 
+### What professional work reaches for — 2026-10-09
+
+Features the parity table never listed, found by asking what a person
+setting real work for press reaches for, in the order the user agreed.
+
+- [x] **Text frames that size themselves** (format 49): height only, width
+  only, or both, from a reference point, with minimums; after every change,
+  inside its undo step; read from IDML.
+
 ### The last refusals, and faces taller than their leading — 2026-10-09
 
 Asked for by the user once every finding was in, each pushed on its own:

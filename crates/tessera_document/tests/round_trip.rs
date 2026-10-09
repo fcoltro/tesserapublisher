@@ -881,8 +881,9 @@ fn the_format_version_is_twenty_six() {
     // justification, full justify before; 44 a cell style's paragraph
     // style, none before; 45 a gradient feather, none before; 46 editorial
     // notes in the text, none before; 47 linked content, none before; 48 a
-    // gradient's dragged span, the whole object before.
-    assert_eq!(format::FORMAT_VERSION, 48);
+    // gradient's dragged span, the whole object before; 49 a text frame
+    // that sizes itself to its text, the size it was drawn before.
+    assert_eq!(format::FORMAT_VERSION, 49);
 }
 
 #[test]
@@ -1921,6 +1922,12 @@ fn a_columned_text_frame_round_trips() {
         vertical: VerticalJustify::Justify,
         lock_to_grid: true,
         next: None,
+        auto_size: Some(tessera_document::nodes::AutoSize {
+            grow: tessera_document::nodes::AutoGrow::Both,
+            from: tessera_geometry::Anchor::BottomRight,
+            min_width: Some(72.0),
+            min_height: None,
+        }),
     };
     let id = doc.add_frame(
         layer,

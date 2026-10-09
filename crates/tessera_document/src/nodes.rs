@@ -590,6 +590,52 @@ pub struct TextLayout {
     /// codebase has already paid for twice.
     #[serde(default)]
     pub next: Option<FrameId>,
+    /// Whether the frame grows and shrinks to its text, and how: InDesign's
+    /// Text Frame Options ▸ Auto-Size. `None` is a frame of the size it was
+    /// drawn, which is what every frame written before format 49 was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_size: Option<AutoSize>,
+}
+
+/// A text frame that fits itself to its text after every change.
+///
+/// Only a frame that holds its whole story — neither threaded on from
+/// another nor passing text to one — is sized; in a thread the text's length
+/// is the thread's business, not one frame's.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AutoSize {
+    pub grow: AutoGrow,
+    /// The point that holds still while the frame changes size: the top
+    /// centre, by default, so a frame grows downwards as copy is typed.
+    pub from: tessera_geometry::Anchor,
+    /// Never smaller than these, when given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_width: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_height: Option<f64>,
+}
+
+impl Default for AutoSize {
+    fn default() -> Self {
+        Self {
+            grow: AutoGrow::Height,
+            from: tessera_geometry::Anchor::TopCentre,
+            min_width: None,
+            min_height: None,
+        }
+    }
+}
+
+/// Which sides of an auto-sized frame follow its text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AutoGrow {
+    /// As tall as its lines, at the width it has.
+    Height,
+    /// As wide as its longest line, which is then never broken, at the
+    /// height it has.
+    Width,
+    /// As wide as its longest line and as tall as its lines.
+    Both,
 }
 
 impl Default for TextLayout {
@@ -604,6 +650,7 @@ impl Default for TextLayout {
             vertical: VerticalJustify::Top,
             lock_to_grid: false,
             next: None,
+            auto_size: None,
         }
     }
 }

@@ -1272,11 +1272,65 @@ mod text;
 mod text_styles;
 
 pub fn apply(state: &mut TesseraApp, command: Command) {
+    // Undo and redo put back a size the frames already had.
+    let settle = command.mutates() && !matches!(command, Command::Undo | Command::Redo);
     if command.mutates() {
         state.active_mut().record_history();
         state.active_mut().dirty = true;
     }
+    apply_one(state, command);
+    // Once, after the outermost command: a frame that sizes itself to its
+    // text does so in the same undo step as the change that moved the text.
+    if settle && state.active().holding == 0 {
+        settle_auto_sized(state);
+    }
+}
 
+/// Give every auto-sized text frame in the active document the box its
+/// text now asks for. Written straight to the frame: the change that made
+/// it necessary has already opened the undo entry.
+fn settle_auto_sized(state: &mut TesseraApp) {
+    let auto: Vec<FrameId> = state
+        .active()
+        .document()
+        .frames
+        .iter()
+        .filter(|(_, f)| {
+            matches!(
+                &f.kind,
+                tessera_document::nodes::FrameKind::Text { layout, .. } if layout.auto_size.is_some()
+            )
+        })
+        .map(|(id, _)| id)
+        .collect();
+    for id in auto {
+        let key = state.active;
+        let Some(sized) = tessera_layout::resolve::auto_sized(
+            state.documents[key].document(),
+            &mut state.shaper,
+            id,
+        ) else {
+            continue;
+        };
+        let same = |a: DocRect, b: DocRect| {
+            (a.x - b.x).abs() < 1e-6
+                && (a.y - b.y).abs() < 1e-6
+                && (a.width - b.width).abs() < 1e-6
+                && (a.height - b.height).abs() < 1e-6
+        };
+        if state
+            .active()
+            .document()
+            .frame(id)
+            .is_some_and(|f| !same(f.bounds, sized))
+            && let Some(f) = state.active_mut().document_mut().frame_mut(id)
+        {
+            f.bounds = sized;
+        }
+    }
+}
+
+fn apply_one(state: &mut TesseraApp, command: Command) {
     match command {
         Command::Together(commands) => {
             // Held, not recorded: the entry recorded above holds them all.
@@ -3910,6 +3964,33 @@ mod tests {
             panic!("a text frame shows a story");
         };
         (state, id, story)
+    }
+
+    #[test]
+    fn an_auto_height_frame_grows_with_its_text_in_the_same_undo_step() {
+        let (mut state, id, _) = a_text_frame("short");
+        let FrameKind::Text { mut layout, .. } =
+            state.active().document().frame(id).expect("frame").kind
+        else {
+            panic!("text");
+        };
+        layout.auto_size = Some(tessera_document::nodes::AutoSize::default());
+        apply(&mut state, Command::SetTextLayout { id, layout });
+        let short = state.active().document().frame(id).expect("frame").bounds;
+        assert!(short.height < bounds().height, "it shrank to one line");
+
+        let long = "a line of copy long enough to wrap ".repeat(20);
+        apply(&mut state, Command::SetText { id, text: long });
+        let grown = state.active().document().frame(id).expect("frame").bounds;
+        assert!(grown.height > short.height * 4.0, "it grew with the copy");
+        assert_eq!(grown.y, short.y, "downwards, from its top");
+
+        apply(&mut state, Command::Undo);
+        let back = state.active().document().frame(id).expect("frame").bounds;
+        assert_eq!(
+            back, short,
+            "one undo takes the text and the growth together"
+        );
     }
 
     #[test]

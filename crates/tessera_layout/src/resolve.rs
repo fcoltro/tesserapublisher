@@ -250,6 +250,106 @@ pub fn resolve_scope(doc: &Document, shaper: &mut Shaper, scope: Scope) -> Resol
 /// be taller than a sheet of plan paper is a mistake, not a fit.
 pub const FIT_LIMIT: f64 = 3_000.0;
 
+/// The box an auto-sized text frame should have now, in its own space, or
+/// `None` when it is not one: no auto-size set, threaded, or on no page.
+///
+/// Width is the longest line set unbroken, with the insets, the columns and
+/// their gutters; height is found by the flow pass, as [`height_to_fit`]
+/// finds it, and shrinks as readily as it grows. Each holds the frame's
+/// reference point still, and neither goes under its minimum.
+pub fn auto_sized(doc: &Document, shaper: &mut Shaper, frame: FrameId) -> Option<DocRect> {
+    use tessera_document::nodes::AutoGrow;
+    let start = doc.frame(frame)?;
+    let FrameKind::Text { story, layout } = &start.kind else {
+        return None;
+    };
+    let auto = layout.auto_size?;
+    if doc.thread_of(frame).len() != 1 {
+        return None;
+    }
+    let story = doc.stories.get(*story)?;
+    let inset = layout.inset;
+    let columns = f64::from(layout.columns.max(1));
+    let gutters = layout.gutter * (columns - 1.0);
+    // Never so small that it cannot be taken hold of again.
+    const SMALLEST: f64 = 6.0;
+
+    let mut width = start.bounds.width;
+    if matches!(auto.grow, AutoGrow::Width | AutoGrow::Both) {
+        let unbroken = shaper.shape(story, doc, 1.0e6);
+        let longest = unbroken
+            .lines
+            .iter()
+            .filter_map(|line| line.glyphs().map(|g| g.x + g.advance).reduce(f64::max))
+            .fold(0.0, f64::max);
+        // A hair over, so the measure does not break the line it was taken from.
+        width = longest * columns + gutters + inset.left + inset.right + 0.01;
+        width = width.max(auto.min_width.unwrap_or(SMALLEST));
+    }
+
+    let mut height = start.bounds.height;
+    if matches!(auto.grow, AutoGrow::Height | AutoGrow::Both) {
+        let floor = auto
+            .min_height
+            .unwrap_or(SMALLEST)
+            .max(inset.top + inset.bottom);
+        // The shaped text's own height is exact for one column with nothing
+        // wrapped round: tried first, it is usually the answer in one layout.
+        let column = ((width - inset.left - inset.right - gutters) / columns).max(0.0);
+        let guess =
+            (shaper.shape(story, doc, column).height_to_set() / columns + inset.top + inset.bottom)
+                .max(floor);
+        let mut probe = doc.clone();
+        let mut overset = |height: f64| -> Option<usize> {
+            let f = probe.frame_mut(frame)?;
+            f.bounds = auto.from.resized(start.bounds, width, height);
+            let page = probe.page_of_frame(frame)?;
+            let laid = resolve_pages(&probe, shaper, &[page], None);
+            laid.items
+                .iter()
+                .find(|item| item.frame == frame)
+                .and_then(|item| match &item.kind {
+                    ResolvedKind::Text { overset_lines, .. } => Some(*overset_lines),
+                    _ => None,
+                })
+        };
+        height = if overset(guess)? == 0 && (guess <= floor || overset(guess - 0.25)? > 0) {
+            guess
+        } else {
+            // Out in doubling steps until it fits, then halved back.
+            let (mut short, mut fits) = if overset(guess)? == 0 {
+                (floor, guess)
+            } else {
+                let mut step = guess.max(36.0);
+                let mut short = guess;
+                let mut fits = guess + step;
+                while overset(fits)? > 0 {
+                    short = fits;
+                    step *= 2.0;
+                    fits = guess + step;
+                    if fits > FIT_LIMIT {
+                        return None;
+                    }
+                }
+                (short, fits)
+            };
+            if overset(short)? == 0 {
+                fits = short;
+            }
+            while fits - short > 0.25 {
+                let middle = (short + fits) / 2.0;
+                if overset(middle)? == 0 {
+                    fits = middle;
+                } else {
+                    short = middle;
+                }
+            }
+            fits
+        };
+    }
+    Some(auto.from.resized(start.bounds, width, height))
+}
+
 /// How tall a text frame must be to hold the rest of its story — what
 /// "Fit frame to text" makes it — found by laying out the page it is on at
 /// trial heights.
@@ -3339,6 +3439,82 @@ The body of the chapter.",
         assert_eq!(overset_of(&doc, a), 0, "it all fits");
         doc.frame_mut(a).expect("frame").bounds.height = height - 1.0;
         assert!(overset_of(&doc, a) > 0, "and a point less does not");
+    }
+
+    /// The first frame of `a_thread`, unthreaded and set to auto-size.
+    fn auto_framed(grow: tessera_document::nodes::AutoGrow) -> (Document, FrameId) {
+        let (mut doc, a, _) = a_thread(40.0);
+        doc.unthread(a);
+        if let Some(FrameKind::Text { layout, .. }) = doc.frame_mut(a).map(|f| &mut f.kind) {
+            layout.auto_size = Some(tessera_document::nodes::AutoSize {
+                grow,
+                ..Default::default()
+            });
+        }
+        (doc, a)
+    }
+
+    #[test]
+    fn an_auto_sized_frame_grows_to_hold_its_text_and_shrinks_back() {
+        use tessera_document::nodes::AutoGrow;
+        let (mut doc, a) = auto_framed(AutoGrow::Height);
+        let was = doc.frame(a).expect("frame").bounds;
+        let sized = auto_sized(&doc, &mut Shaper::new(), a).expect("sized");
+        assert!(sized.height > 40.0, "it grew");
+        assert_eq!(sized.width, was.width, "and only downwards");
+        assert_eq!(sized.y, was.y, "from its top");
+        doc.frame_mut(a).expect("frame").bounds = sized;
+        assert_eq!(overset_of(&doc, a), 0, "all of it fits");
+        doc.frame_mut(a).expect("frame").bounds.height = sized.height - 1.0;
+        assert!(overset_of(&doc, a) > 0, "and a point less does not");
+
+        // Most of the copy taken out: the frame comes back up.
+        doc.frame_mut(a).expect("frame").bounds = sized;
+        let story = match doc.frame(a).expect("frame").kind {
+            FrameKind::Text { story, .. } => story,
+            _ => unreachable!(),
+        };
+        doc.stories[story] = tessera_text::story::Story::new("one");
+        let shrunk = auto_sized(&doc, &mut Shaper::new(), a).expect("sized");
+        assert!(shrunk.height < 40.0, "{}", shrunk.height);
+    }
+
+    #[test]
+    fn an_auto_width_frame_is_as_wide_as_its_longest_line() {
+        use tessera_document::nodes::AutoGrow;
+        let (mut doc, a) = auto_framed(AutoGrow::Both);
+        let story = match doc.frame(a).expect("frame").kind {
+            FrameKind::Text { story, .. } => story,
+            _ => unreachable!(),
+        };
+        doc.stories[story] = tessera_text::story::Story::new("short\na longer line");
+        let sized = auto_sized(&doc, &mut Shaper::new(), a).expect("sized");
+        doc.frame_mut(a).expect("frame").bounds = sized;
+        assert_eq!(overset_of(&doc, a), 0);
+        let laid = resolve(&doc, &mut Shaper::new());
+        let ResolvedKind::Text { shaped, .. } = &item_for(&laid, a).expect("drawn").kind else {
+            panic!("text");
+        };
+        assert_eq!(shaped.lines.len(), 2, "neither line was broken");
+        // A minimum is kept even for one letter.
+        if let Some(FrameKind::Text { layout, .. }) = doc.frame_mut(a).map(|f| &mut f.kind) {
+            layout.auto_size.as_mut().expect("set").min_width = Some(200.0);
+        }
+        assert_eq!(
+            auto_sized(&doc, &mut Shaper::new(), a)
+                .expect("sized")
+                .width,
+            200.0
+        );
+    }
+
+    #[test]
+    fn a_threaded_frame_is_not_auto_sized() {
+        let (mut doc, a, _) = a_thread(40.0);
+        if let Some(FrameKind::Text { layout, .. }) = doc.frame_mut(a).map(|f| &mut f.kind) {
+            layout.auto_size = Some(Default::default());
+        }
+        assert_eq!(auto_sized(&doc, &mut Shaper::new(), a), None);
     }
 
     #[test]
