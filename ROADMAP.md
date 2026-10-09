@@ -3648,6 +3648,44 @@ below are its items 1 to 3.
   GPL-3.0, run as a program of its own, never linked), caching the PDF it makes; every reader of placed
   files takes that PDF when there is one and the preview when not.
 
+### Hands-on findings — 2026-10-08
+
+The user's first round of findings from the installed build, all 27 done and
+each pushed on its own (9f44e0e … 0c7789d):
+
+- Pointers: Select is a solid black arrow and Direct Select a white one,
+  painted rather than inverted; the zoom tool shows a minus with Alt; Alt-drag
+  shows the duplicate picture. Erase and the content collector have icons of
+  their own.
+- Zoom scrubs (drag right in, left out); Shift-drag is the marquee.
+- The rail's default order is Properties, Pages, Layers, Links, Book,
+  Swatches, Styles, Glyphs, Preflight, AI Console, Info; a rail still in the
+  old default takes it.
+- A Shift-drawn polygon stays regular; double-click on a shape opens it in
+  Direct Select, which shows its anchors (rectangles and ellipses become
+  paths when an anchor moves) instead of scale handles.
+- The picture in a frame: the content grabber, Direct Select, or a
+  double-click takes it; it moves and scales inside the frame, its own bounds
+  drawn. Picture frame edges always show in Normal mode.
+- Smooth simplifies and works on shapes; resizing snaps like moving; Alt-drag
+  copies, snapped as a move.
+- Dialog buttons are pills in the Tessera blue; floating windows do not fold;
+  chevrons, not triangles.
+- Every measurement field has stepper arrows; margins, bleed and slug link
+  with a bracketed chain at their right.
+- Units: centimetres, ciceros and agates join the others, and fields read
+  back their own text; the rulers have InDesign's right-click menu (units,
+  ruler per page / spread / on spine, Hide rulers Ctrl+R, delete the spread's
+  guides).
+- Properties reads in three levels: section, a section's section, group.
+- New: the Info panel; Type ▸ Fill with placeholder text; Type ▸ Show hidden
+  characters (Ctrl+Alt+I); Help ▸ About Tessera; Find and Change with GREP,
+  ^ tokens, find and change formats, and saved queries; the Gradient Swatch
+  (G) and Gradient Feather (Shift+G) tools, with a span in the model
+  (format 48); Flex layout, a one-off arrangement of the selection.
+
+Still owed: the hand checks of all of these on the installed build.
+
 ### The parity table's last gaps — 2026-09-30
 
 Every row of `docs/INDESIGN-PARITY.md` still marked ✗ that InDesign has

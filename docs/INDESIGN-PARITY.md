@@ -52,20 +52,20 @@ outright, so the target is not twenty-six.
 | Pen | ✅ `Tool::Pen` | — | done |
 | Add / Delete Anchor Point | ✅ | — | done, M1 |
 | Convert Direction Point | ✅ | — | done, M1 |
-| Pencil / Smooth / Erase | ✅ `Tool::Pencil` N: a freehand stroke thinned (Ramer–Douglas–Peucker) and drawn through as a smooth curve; `Tool::Smooth` S: the anchors a brush passes over made smooth, the rest untouched; `Tool::Erase` E: the segments a brush touches taken out, a closed path opened. Each stroke is one undo step | — | done 2026-09-30 |
+| Pencil / Smooth / Erase | ✅ `Tool::Pencil` N: a freehand stroke thinned (Ramer–Douglas–Peucker) and drawn through as a smooth curve; `Tool::Smooth` S: the stretch under the brush resampled, thinned and refitted, so wobbles lose their anchors and each pass smooths further, rectangles and ellipses included (2026-10-08); `Tool::Erase` E: the segments a brush touches taken out, a closed path opened. Each stroke is one undo step | — | done 2026-09-30 |
 | Rectangle, Ellipse | ✅ | — | done |
-| Polygon | ✅ `Tool::Polygon` | — | done, M1 |
+| Polygon | ✅ `Tool::Polygon`, Y; Shift draws it regular, the frame taking the polygon's own box | — | done, M1; Shift 2026-10-08 |
 | Rectangle **Frame** (graphic placeholder) | ✅ `Tool::Graphic`, `FrameKind::Graphic` | — | done, M5 |
 | Scissors | ✅ `Tool::Scissors` | — | done, M1 |
 | Free Transform / Rotate / Scale / Shear | ✗ | — | **refused** (D6) |
-| Gradient Swatch | gradients are set in the inspector; there is no drag-to-angle tool, by D6's argument | — | done, M5 |
-| Gradient Feather | ✅ linear at an angle or radial, opacity stops; Properties and object styles; drawn, written to PDF as a soft mask, read from IDML. A gradient fill with transparent stops inside a feathered object paints its own PDF mask through the feather, so both hold | — | done 2026-09-30 |
+| Gradient Swatch | ✅ `Tool::GradientSwatch`, G: drag across an object to say where its gradient fill starts and ends (a `Span` in fractions of its box, so it moves and stretches with it); a solid becomes black to white. D6's refusal overridden at the user's request | — | done 2026-10-08 |
+| Gradient Feather | ✅ `Tool::GradientFeather`, Shift+G, drags the fade as the swatch tool drags a fill; linear at an angle or radial, opacity stops; Properties and object styles; drawn, written to PDF as a soft mask, read from IDML. A gradient fill with transparent stops inside a feathered object paints its own PDF mask through the feather, so both hold | — | done 2026-09-30 |
 | Note | ✅ Type ▸ Notes ▸ New note at the caret, worded in a box and signed with the system's user name; an amber flag where it sits, clicked to read or delete it; read from IDML; never printed or exported. No tool of its own: the Type tool puts the caret where the Note tool would click | — | done 2026-09-30 |
 | Eyedropper | ✅ `Tool::Eyedropper`, I: picks up fill, stroke, blend, shadow, corners and a text frame's type; puts them down as one undo; Alt-click picks up afresh | — | done 2026-09-17 |
 | Color Theme | ✅ `Tool::ColourTheme`, J: a click on a picture takes its five most common, distinct colours (k-means, seeded from a histogram, the same theme every time); on a drawn or text object, the colours it is painted in. A window shows them: a chip fills the selection, Add to swatches keeps the theme as one undo step | — | done 2026-09-30 |
 | Measure | ✅ `Tool::Measure`, K: drag a line to read its distance, angle (counter-clockwise, as InDesign) and run and rise in the chosen unit; Shift holds it to 45°; a click clears it | — | done 2026-09-30 |
 | Hand | ✅ `Tool::Hand` | — | done |
-| Zoom | ✅ `Tool::Zoom` | — | done, M1 |
+| Zoom | ✅ `Tool::Zoom`: a drag scrubs, as Illustrator's (right in, left out); Shift-drag zooms to a marquee; Alt shows the minus | — | done, M1; scrub 2026-10-08 |
 | Fill / stroke proxy, swap, default, none | ✅ | — | done, M1.5 C5 |
 | Formatting affects container vs text | by structure: the inspector's Fill section is the container, the Type section's colour is the text | — | done |
 | Apply colour / gradient / none | ✅ | — | done, M5 |
