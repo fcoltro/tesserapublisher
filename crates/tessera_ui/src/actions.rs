@@ -294,6 +294,7 @@ pub enum Run {
     OpenSettings,
     ShowShortcuts,
     ShowAbout,
+    FlexLayout,
     Package,
     TogglePreflight,
     ToggleConsole,
@@ -484,7 +485,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::Command(Undo | Redo) => Guard::Always,
 
         // Something has to be selected for these to mean anything.
-        Run::StepAndRepeat => Guard::NeedsSelection,
+        Run::StepAndRepeat | Run::FlexLayout => Guard::NeedsSelection,
         // Dialogs over the document, not over the text.
         Run::SectionOptions | Run::TextVariables | Run::DataMerge => Guard::Always,
         Run::TableOfContents | Run::GenerateIndex | Run::Endnotes | Run::InsertGlyph => {
@@ -1306,6 +1307,8 @@ pub fn all() -> &'static [Action] {
             Group::Align,
             Command(Distribute(Axis::Vertical)),
         ),
+        // A row or a column, a gap apart: CSS's flexbox, Figma's auto layout.
+        a("Flex layout\u{2026}", None, Group::Align, Run::FlexLayout),
         //
         // **W is Preview's, not Normal's.** Both claimed it until the shortcut
         // table became the thing the handler reads, and two actions on one
@@ -1859,6 +1862,7 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         // Opens the box rather than doing anything: how many and how far are
         // the whole question, and guessing them would make a mess to undo.
         Run::StepAndRepeat => state.step.open = true,
+        Run::FlexLayout => state.flex.open = true,
         Run::SectionOptions => {
             let page = state.current_page();
             let mut window = std::mem::take(&mut state.numbering);

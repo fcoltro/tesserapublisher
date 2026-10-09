@@ -426,6 +426,12 @@ pub enum Command {
         style: Option<ParagraphStyleId>,
     },
 
+    /// Move each of these frames by its own offset, in one step: what Flex
+    /// layout does, where every object goes somewhere different.
+    TranslateFrames {
+        moves: Vec<(FrameId, f64, f64)>,
+    },
+
     /// Move every selected frame by the same offset.
     TranslateSelection {
         dx: f64,
@@ -1341,6 +1347,7 @@ impl Command {
             | Command::SetBounds { .. }
             | Command::SetRotation { .. }
             | Command::TranslateSelection { .. }
+            | Command::TranslateFrames { .. }
             | Command::SetTransforms { .. }
             | Command::GroupSelection
             | Command::UngroupSelection

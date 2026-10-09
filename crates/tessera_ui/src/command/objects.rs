@@ -68,6 +68,17 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
             // Dragging an object to another page moves it to that page.
         }
 
+        Command::TranslateFrames { moves } => {
+            for (id, dx, dy) in moves {
+                // Through the document, as a selection's move goes, so a
+                // group carries its children.
+                state
+                    .active_mut()
+                    .document_mut()
+                    .translate_frame(id, dx, dy);
+            }
+        }
+
         Command::SetTransforms(entries) => {
             for (id, bounds, placement) in entries {
                 if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {

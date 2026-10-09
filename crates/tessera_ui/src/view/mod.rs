@@ -21,6 +21,7 @@ pub mod document_tabs;
 pub mod epub_export;
 pub mod export_dialog;
 pub mod find;
+pub mod flex;
 pub mod footnote_options;
 pub mod glyph;
 pub mod glyphs;
@@ -134,6 +135,8 @@ pub(crate) fn modal_open(state: &TesseraApp) -> bool {
         || state.closing.is_some()
         || state.export.open
         || state.step.open
+        || state.flex.open
+        || state.about_open
         || state.print.open
         || state.numbering.open
         || state.variables.open
@@ -195,6 +198,7 @@ pub fn show(ui: &mut Ui, frame: &mut eframe::Frame, state: &mut TesseraApp) {
     new_document::show(ui.ctx(), state);
     step_repeat::show(ui.ctx(), state);
     about::show(ui.ctx(), state);
+    flex::show(ui.ctx(), state);
     sections::show(ui.ctx(), state);
     variables::show(ui.ctx(), state);
     table_options::show(ui.ctx(), state);
