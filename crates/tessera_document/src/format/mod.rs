@@ -16,6 +16,7 @@
 //! so a thumbnail can be read without parsing the document, and so recovery
 //! tooling can pull `document.json` straight out of a damaged file.
 
+pub mod library;
 pub mod meta;
 
 use std::io::{Cursor, Write};

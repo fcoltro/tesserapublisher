@@ -156,6 +156,17 @@ is balanced across the columns above it, and the columns begin again below.
 **Split column** does the reverse: the paragraph divides into columns of its
 own — a list in two, say — balanced, with its own gutter.
 
+**Libraries and snippets.** File ▸ Libraries and snippets ▸ *New library…*
+makes a library file and opens it in the **Library** panel (Window ▸ Library).
+**Add selection** keeps a copy of the chosen objects — their text, styles,
+swatches and links with them — and names it after the first words or what it
+is; rename it under the list. Double-click an item, or choose it and **Place**,
+to put it in the middle of the current page, chosen, in one undo step. The
+library saves itself on every change, and opens in any document. *Export
+selection as snippet…* and *Place snippet…* do the same with a single file
+(`.tsnip`) to hand to somebody else. A placed style that the document already
+has is the document's; one it lacks comes with the objects.
+
 **Overprint.** Properties ▸ Effects has **Overprint fill** and **Overprint
 stroke**: the paint prints over the inks beneath instead of knocking them out.
 The PDF export's **Overprint solid black**, on by default as in InDesign, does

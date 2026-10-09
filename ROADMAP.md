@@ -3674,6 +3674,11 @@ setting real work for press reaches for, in the order the user agreed.
   picture drawn in that object's place; the rest stays vector. At the export
   dialog's Flatten at resolution. Not done: keeping text vector inside a
   flattened area, as InDesign's text-to-outlines option does.
+- [x] **Libraries and snippets**: a snippet is a small document of the
+  objects and what they need, copied out and back by the transfer copy and
+  paste use; a `.tlib` holds a named list of them, saved on every change,
+  migrated on load like a document; `.tsnip` holds one. Not done: item
+  thumbnails, dragging onto the page, InDesign's own `.indl` and `.idms`.
 - [ ] **Overprint and separations preview** on screen: the canvas composites
   in RGB, and showing plates needs a CMYK compositing path of its own.
 

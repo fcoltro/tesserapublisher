@@ -212,6 +212,7 @@ mod tests {
                                     Dock::Book => super::super::book::docked(ui, &mut state),
                                     Dock::Links => super::super::links::docked(ui, &mut state),
                                     Dock::Info => super::super::info::docked(ui, &mut state),
+                                    Dock::Library => super::super::library::docked(ui, &mut state),
                                     Dock::Preflight => {
                                         super::super::preflight_panel::docked(ui, &mut state)
                                     }

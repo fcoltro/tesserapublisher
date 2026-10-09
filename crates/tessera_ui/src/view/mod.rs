@@ -34,6 +34,7 @@ pub mod image_export;
 pub mod info;
 pub mod invert_host;
 pub mod layers;
+pub mod library;
 pub mod links;
 pub mod long_document;
 pub mod nested_styles;

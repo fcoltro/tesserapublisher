@@ -711,6 +711,8 @@ pub struct TesseraApp {
     pub palette: crate::view::palette::Palette,
     /// Type ▸ Find font.
     pub find_font: crate::view::find_font::FindFontWindow,
+    /// The Library panel and the library open in it.
+    pub library: crate::view::library::LibraryWindow,
     /// Quick Apply's: the styles and commands, on Ctrl+Enter.
     pub quick_apply: crate::view::quick_apply::QuickApply,
 
@@ -837,6 +839,7 @@ impl TesseraApp {
             palette: crate::view::palette::Palette::default(),
             quick_apply: crate::view::quick_apply::QuickApply::default(),
             find_font: crate::view::find_font::FindFontWindow::default(),
+            library: crate::view::library::LibraryWindow::default(),
             prefs: crate::prefs::Preferences::default(),
             update_check: crate::update::Check::default(),
             recent_fonts: Vec::new(),

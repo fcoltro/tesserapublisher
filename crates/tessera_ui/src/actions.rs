@@ -19,6 +19,9 @@ use tessera_text::variables::Marker;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
     File,
+    /// Libraries and snippets, a submenu of File: InDesign keeps New ▸
+    /// Library under File too.
+    Libraries,
     Edit,
     /// Checking and marking words, a submenu of Edit — where InDesign keeps
     /// it, and what kept Edit within its dozen lines.
@@ -58,8 +61,9 @@ pub enum Group {
 }
 
 impl Group {
-    pub const ALL: [Group; 22] = [
+    pub const ALL: [Group; 23] = [
         Group::File,
+        Group::Libraries,
         Group::Edit,
         Group::Spelling,
         Group::Object,
@@ -107,6 +111,7 @@ impl Group {
             Group::Footnotes => Some("Footnotes"),
             Group::Notes => Some("Notes"),
             Group::Spelling => Some("Spelling"),
+            Group::Libraries => Some("Libraries and snippets"),
             _ => None,
         }
     }
@@ -129,7 +134,7 @@ impl Group {
     /// all the same, so they can be remapped and the palette can find them.
     pub fn menu(self) -> Option<&'static str> {
         match self {
-            Group::File => Some("File"),
+            Group::File | Group::Libraries => Some("File"),
             Group::Edit | Group::Spelling => Some("Edit"),
             Group::Object
             | Group::Visibility
@@ -299,6 +304,13 @@ pub enum Run {
     QuickApply,
     /// Type ▸ Find font: every font named, any replaced everywhere.
     FindFont,
+    /// The Library panel, and a library to put in it.
+    ToggleLibrary,
+    NewLibrary,
+    OpenLibrary,
+    /// The selection as a snippet file, and one placed.
+    ExportSnippet,
+    PlaceSnippet,
     Package,
     TogglePreflight,
     ToggleConsole,
@@ -464,6 +476,11 @@ pub fn guard(run: Run) -> Guard {
         | Run::ShowAbout
         | Run::QuickApply
         | Run::FindFont
+        | Run::ToggleLibrary
+        | Run::NewLibrary
+        | Run::OpenLibrary
+        | Run::ExportSnippet
+        | Run::PlaceSnippet
         | Run::ChooseOutputIntent
         | Run::TogglePreflight
         | Run::ToggleConsole
@@ -584,6 +601,7 @@ pub fn enabled(state: &crate::app::TesseraApp, run: Run) -> bool {
                     )
                 })
         }
+        Run::ExportSnippet => count > 0,
         Run::Place => doc.selection.single().is_some_and(|id| {
             matches!(
                 doc.document().frame(id).map(|f| &f.kind),
@@ -744,6 +762,20 @@ pub fn all() -> &'static [Action] {
         // Beside Export, because packaging is the other way a job leaves the
         // studio and somebody looking for one will look where the other is.
         a("Package…", Some("Ctrl+Alt+Shift+P"), Group::File, Package),
+        a("New library\u{2026}", None, Group::Libraries, NewLibrary),
+        a("Open library\u{2026}", None, Group::Libraries, OpenLibrary),
+        a(
+            "Export selection as snippet\u{2026}",
+            None,
+            Group::Libraries,
+            ExportSnippet,
+        ),
+        a(
+            "Place snippet\u{2026}",
+            None,
+            Group::Libraries,
+            PlaceSnippet,
+        ),
         //
         a("Undo", Some("Ctrl+Z"), Group::Edit, Command(Undo)),
         a("Redo", Some("Ctrl+Shift+Z"), Group::Edit, Command(Redo)),
@@ -1508,6 +1540,7 @@ pub fn all() -> &'static [Action] {
         a("Glyphs", None, Group::Window, ToggleGlyphs),
         a("Book", None, Group::Window, ToggleBook),
         a("Links", Some("Ctrl+Shift+D"), Group::Window, ToggleLinks),
+        a("Library", None, Group::Window, ToggleLibrary),
         // InDesign's is F8, which is Preflight's here.
         a("Info", None, Group::Window, ToggleInfo),
         a("Data merge", None, Group::Window, Run::DataMerge),
@@ -1723,6 +1756,17 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         Run::OpenSettings => state.settings.open = true,
         Run::ShowAbout => state.about_open = true,
         Run::FindFont => state.find_font.open = true,
+        Run::ToggleLibrary => {
+            state.library.open = !state.library.open;
+            if state.library.open {
+                state.rail_open = true;
+                state.prefs.docking.reveal("Library");
+            }
+        }
+        Run::NewLibrary => crate::view::library::new_library(state),
+        Run::OpenLibrary => crate::view::library::open_library(state),
+        Run::ExportSnippet => crate::view::library::export_snippet(state),
+        Run::PlaceSnippet => crate::view::library::place_snippet(state),
         Run::QuickApply => {
             state.palette.close();
             state.quick_apply.close();

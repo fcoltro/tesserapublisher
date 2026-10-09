@@ -42,10 +42,11 @@ pub enum Dock {
     Book,
     Links,
     Info,
+    Library,
 }
 
 impl Dock {
-    pub const ALL: [Dock; 11] = [
+    pub const ALL: [Dock; 12] = [
         Dock::Properties,
         Dock::Pages,
         Dock::Layers,
@@ -60,6 +61,8 @@ impl Dock {
         Dock::Console,
         // InDesign's Window > Info: read off rather than worked in.
         Dock::Info,
+        // InDesign's libraries: kept objects to place again.
+        Dock::Library,
     ];
 
     pub fn title(self) -> &'static str {
@@ -75,6 +78,7 @@ impl Dock {
             Dock::Book => "Book",
             Dock::Links => "Links",
             Dock::Info => "Info",
+            Dock::Library => "Library",
         }
     }
 
@@ -91,6 +95,7 @@ impl Dock {
             Dock::Book => Icon::Book,
             Dock::Links => Icon::Link2,
             Dock::Info => Icon::Info,
+            Dock::Library => Icon::Objects,
         }
     }
 
@@ -107,6 +112,7 @@ impl Dock {
             Self::Book => "Assemble documents into a book",
             Self::Links => "The artwork files this document points at",
             Self::Info => "Where the pointer is, and the numbers of what is chosen",
+            Self::Library => "Objects kept to place in any document",
         }
     }
 
@@ -128,6 +134,7 @@ impl Dock {
             Dock::Book => state.book.open,
             Dock::Links => state.links.open,
             Dock::Info => state.info_open,
+            Dock::Library => state.library.open,
         }
     }
 
@@ -144,6 +151,7 @@ impl Dock {
             Dock::Book => state.book.open = open,
             Dock::Links => state.links.open = open,
             Dock::Info => state.info_open = open,
+            Dock::Library => state.library.open = open,
         }
     }
 }
@@ -225,6 +233,7 @@ pub(crate) fn body(ui: &mut Ui, state: &mut TesseraApp, dock: Dock) {
         Dock::Book => crate::view::book::docked(ui, state),
         Dock::Links => crate::view::links::docked(ui, state),
         Dock::Info => crate::view::info::docked(ui, state),
+        Dock::Library => crate::view::library::docked(ui, state),
     }
 }
 
@@ -250,6 +259,7 @@ mod tests {
             Dock::Book,
             Dock::Links,
             Dock::Info,
+            Dock::Library,
         ] {
             assert!(!dock.is_open(&state), "{} starts shut", dock.title());
         }

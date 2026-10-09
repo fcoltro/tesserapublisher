@@ -1738,6 +1738,7 @@ mod tests {
                 "Glyphs",
                 "Book",
                 "Links",
+                "Library",
                 "Info",
                 "Data merge"
             ]

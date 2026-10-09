@@ -246,6 +246,24 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
             }
         }
 
+        Command::PlaceSnippet { snippet } => {
+            let centre = state
+                .current_page()
+                .and_then(|p| state.active().document().pages.get(p).map(|p| p.bounds))
+                .map_or(tessera_geometry::DocPoint { x: 0.0, y: 0.0 }, |b| {
+                    tessera_geometry::DocPoint {
+                        x: b.x + b.width / 2.0,
+                        y: b.y + b.height / 2.0,
+                    }
+                });
+            let layer = state.default_layer();
+            let placed = snippet.place(state.active_mut().document_mut(), layer, centre);
+            match placed {
+                Ok(placed) => state.active_mut().selection.replace_all(placed),
+                Err(message) => state.status = Some(crate::app::Status::error(message)),
+            }
+        }
+
         Command::UpdateLinkedContent { id } => {
             state.active_mut().document_mut().update_linked_content(id);
         }

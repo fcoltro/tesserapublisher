@@ -563,6 +563,11 @@ pub enum Command {
         id: FrameId,
         blend: tessera_document::blending::Blending,
     },
+    /// Objects from a library or a snippet file, copied onto the current
+    /// page, centred on it, and chosen.
+    PlaceSnippet {
+        snippet: Box<tessera_document::format::library::Snippet>,
+    },
     /// Whether an object's fill and stroke print over the inks beneath.
     SetOverprint {
         id: FrameId,
@@ -1417,6 +1422,7 @@ impl Command {
             | Command::CutSelection
             | Command::Paste
             | Command::PlaceFromConveyor { .. }
+            | Command::PlaceSnippet { .. }
             | Command::UpdateLinkedContent { .. }
             | Command::UnlinkContent { .. }
             | Command::MoveSelectionInZ { .. }
@@ -3972,6 +3978,40 @@ mod tests {
             panic!("a text frame shows a story");
         };
         (state, id, story)
+    }
+
+    #[test]
+    fn a_snippet_is_placed_centred_on_the_page_with_its_story_and_undone_in_one_step() {
+        use tessera_document::format::library::Snippet;
+        let (source, id, _) = a_text_frame("kept heading");
+        let snippet = Snippet::of(source.active().document(), &[id], "Heading").expect("made");
+
+        let mut state = TesseraApp::headless();
+        let before = state.active().document().frames.len();
+        apply(
+            &mut state,
+            Command::PlaceSnippet {
+                snippet: Box::new(snippet),
+            },
+        );
+        let placed = state
+            .active()
+            .selection
+            .single()
+            .expect("the copy is chosen");
+        let doc = state.active().document();
+        let frame = doc.frame(placed).expect("placed");
+        let FrameKind::Text { story, .. } = frame.kind else {
+            panic!("a text frame");
+        };
+        assert_eq!(doc.story(story).expect("story").text, "kept heading");
+        let page = doc.pages.values().next().expect("page").bounds;
+        let centre = frame.centre();
+        assert!((centre.x - (page.x + page.width / 2.0)).abs() < 1e-6);
+        assert!((centre.y - (page.y + page.height / 2.0)).abs() < 1e-6);
+
+        apply(&mut state, Command::Undo);
+        assert_eq!(state.active().document().frames.len(), before);
     }
 
     #[test]

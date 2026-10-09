@@ -449,7 +449,8 @@ mod tests {
                 "Glyphs",
                 "Preflight",
                 "AI Console",
-                "Info"
+                "Info",
+                "Library"
             ]
         );
     }
@@ -465,6 +466,7 @@ mod tests {
         docking.reconcile();
         // Kept as it was; a panel it never had is added at the end.
         chosen.push("Info".to_string());
+        chosen.push("Library".to_string());
         assert_eq!(docking.right[0].panels, chosen);
     }
 }
