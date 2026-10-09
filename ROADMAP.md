@@ -3656,6 +3656,10 @@ setting real work for press reaches for, in the order the user agreed.
 - [x] **Text frames that size themselves** (format 49): height only, width
   only, or both, from a reference point, with minimums; after every change,
   inside its undo step; read from IDML.
+- [x] **Find font** (Type ▸ Find font…): every family named, how often,
+  missing first; any replaced everywhere in one step.
+- [x] **Balanced columns** (format 50), in the frame a story ends in; read
+  from IDML.
 
 ### The last refusals, and faces taller than their leading — 2026-10-09
 

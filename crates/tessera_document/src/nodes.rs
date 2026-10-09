@@ -595,6 +595,12 @@ pub struct TextLayout {
     /// drawn, which is what every frame written before format 49 was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_size: Option<AutoSize>,
+    /// Whether the columns of the frame a story ends in are made even, as
+    /// InDesign's Balance Columns makes them: the text shared across them
+    /// rather than the first filled and the last left short. Left out of the
+    /// file when off, as every frame before format 50 was.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub balance: bool,
 }
 
 /// A text frame that fits itself to its text after every change.
@@ -651,6 +657,7 @@ impl Default for TextLayout {
             lock_to_grid: false,
             next: None,
             auto_size: None,
+            balance: false,
         }
     }
 }

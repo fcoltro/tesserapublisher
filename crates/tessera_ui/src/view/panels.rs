@@ -3182,6 +3182,19 @@ fn text_frame_controls(
     }
     changed |= a || b;
 
+    // Only with columns to balance: one column has nothing to even out.
+    if wanted.columns > 1 {
+        let mut balance = wanted.balance;
+        if ui
+            .checkbox(&mut balance, "Balance columns")
+            .on_hover_text("Where the story ends, share its lines evenly across the columns")
+            .changed()
+        {
+            wanted.balance = balance;
+            changed = true;
+        }
+    }
+
     changed |= linked_edges(
         ui,
         egui::Id::new(("inset-link", state.active, id)),

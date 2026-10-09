@@ -1097,6 +1097,7 @@ fn text_layout(node: Node) -> TextLayout {
         _ => layout.inset,
     };
     layout.auto_size = auto_size(pref);
+    layout.balance = attr(pref, "VerticalBalanceColumns") == Some("true");
     layout
 }
 
@@ -1259,9 +1260,12 @@ mod tests {
         assert_eq!(auto.min_height, Some(36.0));
         assert_eq!(auto.min_width, None);
 
-        let off = r#"<TextFrame><TextFramePreference AutoSizingType="Off"/></TextFrame>"#;
+        let off = r#"<TextFrame><TextFramePreference AutoSizingType="Off"
+            VerticalBalanceColumns="true"/></TextFrame>"#;
         let parsed = roxmltree::Document::parse(off).expect("parses");
-        assert!(text_layout(parsed.root_element()).auto_size.is_none());
+        let layout = text_layout(parsed.root_element());
+        assert!(layout.auto_size.is_none());
+        assert!(layout.balance, "and balanced columns are read beside it");
     }
 
     #[test]

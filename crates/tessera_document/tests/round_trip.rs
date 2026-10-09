@@ -882,8 +882,9 @@ fn the_format_version_is_twenty_six() {
     // style, none before; 45 a gradient feather, none before; 46 editorial
     // notes in the text, none before; 47 linked content, none before; 48 a
     // gradient's dragged span, the whole object before; 49 a text frame
-    // that sizes itself to its text, the size it was drawn before.
-    assert_eq!(format::FORMAT_VERSION, 49);
+    // that sizes itself to its text, the size it was drawn before; 50
+    // balanced columns, filled one after another before.
+    assert_eq!(format::FORMAT_VERSION, 50);
 }
 
 #[test]
@@ -1928,6 +1929,7 @@ fn a_columned_text_frame_round_trips() {
             min_width: Some(72.0),
             min_height: None,
         }),
+        balance: true,
     };
     let id = doc.add_frame(
         layer,

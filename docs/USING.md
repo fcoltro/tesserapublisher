@@ -98,6 +98,10 @@ width* both. *Grows from* is the point that holds still — the top centre by
 default — and a minimum height or width keeps it from shrinking below that
 (0 is none). A threaded frame is not sized; its text belongs to the thread.
 
+**Balanced columns.** A frame with more than one column offers **Balance
+columns**: in the frame a story ends in, its lines are shared evenly across
+the columns instead of filling the first and leaving the last short.
+
 **Flowing onto new pages.** **Object ▸ Flow onto new pages** carries the
 selected frame's thread on until its text fits: a page after the one the text
 ends on, with a frame in its margins threaded on from the last, and as many

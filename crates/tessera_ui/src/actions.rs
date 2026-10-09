@@ -297,6 +297,8 @@ pub enum Run {
     FlexLayout,
     /// Quick Apply: a style or a command, typed at.
     QuickApply,
+    /// Type ▸ Find font: every font named, any replaced everywhere.
+    FindFont,
     Package,
     TogglePreflight,
     ToggleConsole,
@@ -461,6 +463,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::ShowShortcuts
         | Run::ShowAbout
         | Run::QuickApply
+        | Run::FindFont
         | Run::ChooseOutputIntent
         | Run::TogglePreflight
         | Run::ToggleConsole
@@ -1380,12 +1383,15 @@ pub fn all() -> &'static [Action] {
             Group::Type,
             Run::FillPlaceholder,
         ),
+        // Under View, with the other things shown and hidden, so Type has a
+        // line for Find font; its key is InDesign's.
         a(
             "Show hidden characters",
             Some("Ctrl+Alt+I"),
-            Group::Type,
+            Group::View,
             Run::ToggleHiddenCharacters,
         ),
+        a("Find font\u{2026}", None, Group::Type, Run::FindFont),
         a(
             "Text variables\u{2026}",
             None,
@@ -1716,6 +1722,7 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         Run::Place => crate::file_ops::place(state),
         Run::OpenSettings => state.settings.open = true,
         Run::ShowAbout => state.about_open = true,
+        Run::FindFont => state.find_font.open = true,
         Run::QuickApply => {
             state.palette.close();
             state.quick_apply.close();

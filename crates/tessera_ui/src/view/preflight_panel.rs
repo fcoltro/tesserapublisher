@@ -875,7 +875,7 @@ fn problem_row(ui: &mut Ui, state: &mut TesseraApp, problem: &Problem) -> Option
 
 /// "Replace with…": every family this machine can set, the ones used lately
 /// first.
-fn family_menu(ui: &mut Ui, state: &mut TesseraApp, missing: &str) -> Option<String> {
+pub(crate) fn family_menu(ui: &mut Ui, state: &mut TesseraApp, missing: &str) -> Option<String> {
     let mut chosen = None;
     let recent: Vec<String> = state
         .recent_fonts

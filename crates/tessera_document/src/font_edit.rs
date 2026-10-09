@@ -41,6 +41,46 @@ impl Document {
         }
         changed
     }
+
+    /// Every family the document names, and in how many places — the
+    /// default, each style, each run, paragraph and footnote that asks for
+    /// it — sorted by name. What Find Font lists.
+    ///
+    /// Counted where [`Document::replace_family`] changes, so the number
+    /// beside a family is the number of places a replacement will touch.
+    pub fn families_used(&self) -> Vec<(String, usize)> {
+        let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
+        let mut count = |family: &Option<String>| {
+            if let Some(family) = family {
+                *counts.entry(family.clone()).or_default() += 1;
+            }
+        };
+        for style in self.character_styles.values() {
+            count(&style.format.family);
+        }
+        for style in self.paragraph_styles.values() {
+            count(&style.format.character.family);
+        }
+        for story in self.stories.values() {
+            story_families_read(story, &mut count);
+        }
+        count(&Some(self.text_default.family.clone()));
+        let mut used: Vec<(String, usize)> = counts.into_iter().collect();
+        used.sort_by_key(|(name, _)| name.to_lowercase());
+        used
+    }
+}
+
+fn story_families_read(story: &Story, count: &mut impl FnMut(&Option<String>)) {
+    for run in &story.runs {
+        count(&run.local.family);
+    }
+    for paragraph in &story.paragraphs {
+        count(&paragraph.local.character.family);
+    }
+    for footnote in &story.footnotes {
+        story_families_read(footnote, count);
+    }
 }
 
 fn story_families(story: &mut Story, swap: &mut impl FnMut(&mut Option<String>)) {
@@ -85,6 +125,11 @@ mod tests {
         story.footnotes.push(note);
         let id = doc.add_story(story);
         let revision = doc.revision();
+        assert_eq!(
+            doc.families_used(),
+            [("Gone Serif".to_string(), 4), ("Kept Sans".to_string(), 1)],
+            "counted where a replacement will reach"
+        );
 
         let changed = doc.replace_family("Gone Serif", "Found Serif");
         assert_eq!(changed, 4, "the default, the style, a run, the footnote");

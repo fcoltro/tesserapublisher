@@ -709,6 +709,8 @@ pub struct TesseraApp {
 
     /// The command palette's own state.
     pub palette: crate::view::palette::Palette,
+    /// Type ▸ Find font.
+    pub find_font: crate::view::find_font::FindFontWindow,
     /// Quick Apply's: the styles and commands, on Ctrl+Enter.
     pub quick_apply: crate::view::quick_apply::QuickApply,
 
@@ -834,6 +836,7 @@ impl TesseraApp {
             freehand_target: None,
             palette: crate::view::palette::Palette::default(),
             quick_apply: crate::view::quick_apply::QuickApply::default(),
+            find_font: crate::view::find_font::FindFontWindow::default(),
             prefs: crate::prefs::Preferences::default(),
             update_check: crate::update::Check::default(),
             recent_fonts: Vec::new(),

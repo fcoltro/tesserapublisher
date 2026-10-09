@@ -1026,10 +1026,14 @@ fn compose_frame(
     } else {
         usize::MAX
     };
+    // Balanced only where the story ends, and only across columns: there is
+    // nothing to even out in one, and a frame passing text on is full.
+    let balance = layout.balance && boxes.len() > 1 && !passes_on;
     loop {
         let shaped = shaper.shape_around_with_objects_until(
             story, &styles, measure, from, until, &obstacles, &anchored,
         );
+        let kept = balance.then(|| shaped.clone());
         let shaped_to = shaped_end(&story.text, from, until);
 
         // The footnotes, shaped at the column's measure and numbered as the
@@ -1067,7 +1071,18 @@ fn compose_frame(
             &note_layout,
         );
         if !bounded || shaped_to >= total {
-            return flowed;
+            return match kept {
+                Some(shaped) if flowed.overset_lines == 0 => balanced(
+                    &shaped,
+                    &boxes,
+                    vertical,
+                    grid,
+                    &notes,
+                    &note_layout,
+                    flowed,
+                ),
+                _ => flowed,
+            };
         }
         // Enough once the frame overflowed. The shaper lays out whole
         // paragraphs, so a frame with lines left over has the line after its
@@ -1080,6 +1095,54 @@ fn compose_frame(
         }
         until = from.saturating_add((until - from).saturating_mul(2));
     }
+}
+
+/// The text flowed into its columns made as short as they can be with all
+/// of it still set, so the lines share the columns evenly — the last
+/// shorter than the rest by at most a line, rather than the first full and
+/// the last nearly empty. Found by halving between nothing and the
+/// column's full height; `fitted` is the flow at full height, kept when
+/// nothing shorter holds it all.
+fn balanced(
+    shaped: &tessera_text::shape::ShapedText,
+    boxes: &[tessera_text::shape::Column],
+    vertical: tessera_text::shape::Vertical,
+    grid: Option<tessera_text::shape::Grid>,
+    notes: &[tessera_text::shape::Note],
+    layout: &tessera_text::shape::NoteLayout,
+    fitted: tessera_text::shape::Flowed,
+) -> tessera_text::shape::Flowed {
+    let full = boxes.iter().map(|b| b.height).fold(0.0, f64::max);
+    let at = |height: f64| {
+        let short: Vec<tessera_text::shape::Column> = boxes
+            .iter()
+            .map(|b| tessera_text::shape::Column {
+                height: b.height.min(height),
+                ..*b
+            })
+            .collect();
+        let flowed = tessera_text::shape::flow_with_notes(
+            shaped.clone(),
+            &short,
+            vertical,
+            grid,
+            notes,
+            layout,
+        );
+        (flowed.overset_lines == 0).then_some(flowed)
+    };
+    let (mut short, mut tall, mut best) = (0.0, full, fitted);
+    while tall - short > 0.25 {
+        let middle = (short + tall) / 2.0;
+        match at(middle) {
+            Some(flowed) => {
+                tall = middle;
+                best = flowed;
+            }
+            None => short = middle,
+        }
+    }
+    best
 }
 
 /// How much of a story a frame that passes text on lays out at first: a
@@ -3506,6 +3569,47 @@ The body of the chapter.",
                 .width,
             200.0
         );
+    }
+
+    #[test]
+    fn balanced_columns_share_the_lines_evenly() {
+        let mut doc = Document::new();
+        let layer = doc.default_layer().expect("layer");
+        let text: Vec<String> = (1..=10).map(|n| format!("line {n}")).collect();
+        let story = doc.add_story(tessera_text::story::Story::new(text.join("\n")));
+        let mut frame = rect(0.0, 0.0, 300.0, 600.0);
+        frame.kind = FrameKind::text(story);
+        if let FrameKind::Text { layout, .. } = &mut frame.kind {
+            layout.columns = 2;
+        }
+        let id = doc.add_frame(layer, frame);
+
+        // How many lines each column holds: told apart by where they start.
+        let per_column = |doc: &Document| {
+            let laid = resolve(doc, &mut Shaper::new());
+            let ResolvedKind::Text { shaped, .. } = &item_for(&laid, id).expect("drawn").kind
+            else {
+                panic!("text");
+            };
+            let starts: Vec<f64> = shaped
+                .lines
+                .iter()
+                .filter_map(|l| l.glyphs().next().map(|g| g.x))
+                .collect();
+            let left = starts.iter().filter(|x| **x < 150.0).count();
+            (left, starts.len() - left)
+        };
+        assert_eq!(
+            per_column(&doc),
+            (10, 0),
+            "unbalanced, the first takes them all"
+        );
+
+        if let Some(FrameKind::Text { layout, .. }) = doc.frame_mut(id).map(|f| &mut f.kind) {
+            layout.balance = true;
+        }
+        assert_eq!(per_column(&doc), (5, 5), "balanced, half each");
+        assert_eq!(overset_of(&doc, id), 0, "and nothing is lost");
     }
 
     #[test]
