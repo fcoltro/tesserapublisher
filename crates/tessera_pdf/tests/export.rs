@@ -943,24 +943,65 @@ fn pdf_x4_writes_its_version_key_and_embeds_the_profile() {
 }
 
 #[test]
-fn pdf_x1a_refuses_a_document_that_uses_transparency() {
-    // X-1a forbids it and Tessera does not flatten, so the claim cannot be
-    // honoured. Refusing is the whole point.
+fn pdf_x1a_flattens_transparency_into_an_opaque_picture() {
+    // X-1a forbids live transparency, so a half-clear black square over a
+    // cyan one is flattened: where they meet becomes a picture of how they
+    // composite, and the file claims X-1a with no transparency in it.
     use tessera_document::blending::{BlendMode, Blending};
 
-    let mut doc = black_rect(rect(10.0, 10.0, 50.0, 50.0));
-    doc.items[0].blend = Blending {
+    let cyan = Color::Cmyk {
+        c: 1.0,
+        m: 0.0,
+        y: 0.0,
+        k: 0.0,
+        a: 1.0,
+    };
+    let under = one(
+        ResolvedKind::Rectangle {
+            outline: None,
+            fill: Paint::Solid(cyan),
+            stroke: None,
+        },
+        rect(0.0, 0.0, 100.0, 100.0),
+    );
+    let mut over = black_rect(rect(50.0, 50.0, 100.0, 100.0));
+    over.items[0].blend = Blending {
         opacity: 0.5,
         mode: BlendMode::Normal,
     };
+    let mut doc = under;
+    doc.items.push(over.items.remove(0));
 
     let options = ExportOptions {
         standard: Standard::X1a,
-        intent: Some(an_intent()),
+        intent: Some(cmyk_intent()),
+        flatten_ppi: 72.0,
         ..Default::default()
     };
-    let error = tessera_pdf::export_with(&doc, &options).expect_err("must be refused");
-    assert!(format!("{error}").contains("transparency"));
+    let bytes = tessera_pdf::export_with(&doc, &options).expect("flattened, not refused");
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("PDF/X-1a:2003"));
+    assert!(!text.contains("/ca "), "no paint is left translucent");
+    assert!(!text.contains("/SMask"), "and no picture carries a mask");
+    assert!(text.contains("/Im0 Do"), "the area is drawn as a picture");
+
+    // Read back: cyan alone, the square half over it, and paper.
+    let shown = printed(&bytes, "flattened");
+    let cyanish = pixel(&shown, 25, 25);
+    let overlap = pixel(&shown, 75, 75);
+    let paper_under_half = pixel(&shown, 125, 125);
+    assert!(
+        cyanish[0] < 80 && cyanish[2] > 150,
+        "cyan stays cyan: {cyanish:?}"
+    );
+    assert!(
+        overlap[2] < cyanish[2] && overlap[0] < 60,
+        "half black over cyan is a dark cyan: {overlap:?}"
+    );
+    assert!(
+        (90..=170).contains(&paper_under_half[0]),
+        "half black over paper is grey: {paper_under_half:?}"
+    );
 }
 
 #[test]

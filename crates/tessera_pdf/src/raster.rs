@@ -655,7 +655,7 @@ pub fn cut_out(resolved: &ResolvedDocument, frames: &[FrameId]) -> Option<Resolv
 
 /// The box an item paints into: its frame turned as it is turned, out to
 /// where its stroke reaches, and out to where its shadow falls.
-fn painted(item: &ResolvedItem) -> DocRect {
+pub(crate) fn painted(item: &ResolvedItem) -> DocRect {
     let b = item.bounds;
     let reach = match &item.kind {
         // Each rule has its own weight; the widest reaches furthest.

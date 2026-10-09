@@ -350,6 +350,14 @@ pub fn export_with_progress(
     options: &ExportOptions,
     progress: &crate::Progress,
 ) -> Result<Vec<u8>, PdfError> {
+    // A standard that forbids transparency gets it flattened first.
+    let flattened;
+    let resolved = if options.standard.forbids_transparency() && uses_transparency(resolved) {
+        flattened = crate::flatten::flatten(resolved, options.flatten_ppi, progress)?;
+        &flattened.doc
+    } else {
+        resolved
+    };
     let refused = options.refusals(uses_transparency(resolved), has_artwork(resolved));
     if !refused.is_empty() {
         return Err(PdfError::CannotConform(refused));
@@ -359,8 +367,8 @@ pub fn export_with_progress(
 
 /// Whether anything in the document needs a transparency model to reproduce.
 ///
-/// Asked before an X-1a claim is allowed, because X-1a forbids it and Tessera
-/// does not flatten.
+/// Asked before an X-1a claim is allowed, because X-1a forbids it: it decides
+/// whether the document is flattened, and is asked again afterwards.
 /// Whether any placed artwork will actually be written.
 ///
 /// A frame with no file, or one whose file has gone, embeds nothing and so puts
@@ -379,15 +387,18 @@ fn has_artwork(resolved: &ResolvedDocument) -> bool {
 }
 
 fn uses_transparency(resolved: &ResolvedDocument) -> bool {
-    resolved.items.iter().any(|item| {
-        !item.blend.is_plain()
-            || item.shadow.is_some()
-            || item.feather.is_some()
-            || has_gradient_alpha(&item.kind)
-            || item_colours(&item.kind)
-                .iter()
-                .any(|c| (0.0..1.0).contains(&colour_alpha(c)) && colour_alpha(c) > 0.0)
-    })
+    resolved.items.iter().any(item_uses_transparency)
+}
+
+/// Whether this one item needs a transparency model to reproduce.
+pub(crate) fn item_uses_transparency(item: &tessera_layout::resolve::ResolvedItem) -> bool {
+    !item.blend.is_plain()
+        || item.shadow.is_some()
+        || item.feather.is_some()
+        || has_gradient_alpha(&item.kind)
+        || item_colours(&item.kind)
+            .iter()
+            .any(|c| (0.0..1.0).contains(&colour_alpha(c)) && colour_alpha(c) > 0.0)
 }
 
 fn colour_alpha(colour: &Color) -> f32 {

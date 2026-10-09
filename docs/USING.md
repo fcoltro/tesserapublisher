@@ -516,6 +516,14 @@ than claim it: a printer's preflight believes the file, so a document claiming
 X-1a it does not meet passes their check and fails on the press instead of in
 the studio.
 
+PDF/X-1a allows no transparency, so Tessera **flattens** it: each area that a
+shadow, a feather, a blend or anything see-through touches is made one opaque
+picture of how it composites, at the dialog's *Flatten at* resolution (300 ppi
+unless you say otherwise; 1200 keeps type sharp there). Everything else stays
+vector. Inside those areas text is pixels and overprint is lost, as with
+InDesign's flattener at one resolution — PDF/X-4 keeps transparency live and is
+the better choice when the printer accepts it.
+
 The dialog is laid out as InDesign's is: a *Preset* on top, then four
 sections down the side. Presets hold every choice but the pages — *Screen
 proof*, *Press, PDF/X-4*, *Press, PDF/X-1a*, *High quality print* and

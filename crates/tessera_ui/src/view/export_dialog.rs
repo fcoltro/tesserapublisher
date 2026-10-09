@@ -22,6 +22,10 @@ use crate::app::TesseraApp;
 use crate::theme::Theme;
 use crate::view::style_ui::{self, Segment};
 
+fn flatten_ppi() -> f64 {
+    300.0
+}
+
 fn yes() -> bool {
     true
 }
@@ -56,6 +60,9 @@ pub struct Preset {
     /// Solid black set to overprint, where the inks separate.
     #[serde(default = "yes")]
     pub overprint_black: bool,
+    /// What transparency is flattened at, where the standard forbids it.
+    #[serde(default = "flatten_ppi")]
+    pub flatten_ppi: f64,
     #[serde(default = "yes")]
     pub bookmarks: bool,
     #[serde(default = "yes")]
@@ -95,6 +102,7 @@ impl Preset {
             include_slug: false,
             convert: true,
             overprint_black: true,
+            flatten_ppi: flatten_ppi(),
             bookmarks: true,
             hyperlinks: true,
             compress: true,
@@ -221,6 +229,7 @@ pub struct ExportWindow {
     pub include_slug: bool,
     pub convert: bool,
     pub overprint_black: bool,
+    pub flatten_ppi: f64,
     pub bookmarks: bool,
     pub hyperlinks: bool,
     pub compress: bool,
@@ -249,6 +258,7 @@ impl Default for ExportWindow {
             include_slug: false,
             convert: true,
             overprint_black: true,
+            flatten_ppi: flatten_ppi(),
             bookmarks: true,
             hyperlinks: true,
             compress: true,
@@ -277,6 +287,7 @@ impl ExportWindow {
         self.include_slug = preset.include_slug;
         self.convert = preset.convert;
         self.overprint_black = preset.overprint_black;
+        self.flatten_ppi = preset.flatten_ppi;
         self.bookmarks = preset.bookmarks;
         self.hyperlinks = preset.hyperlinks;
         self.compress = preset.compress;
@@ -305,6 +316,7 @@ impl ExportWindow {
             slug: self.include_slug,
             convert: self.convert,
             overprint_black: self.overprint_black,
+            flatten_ppi: self.flatten_ppi,
             bookmarks: self.bookmarks,
             hyperlinks: self.hyperlinks,
             compress: self.compress,
@@ -438,6 +450,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) -> bool {
             w.include_slug,
             w.convert,
             w.overprint_black,
+            w.flatten_ppi.to_bits(),
             w.bookmarks,
             w.hyperlinks,
             w.compress,
@@ -701,6 +714,24 @@ fn output(ui: &mut Ui, state: &mut TesseraApp) {
             },
         );
     });
+    if window.standard.forbids_transparency() {
+        row(ui, "Flatten at", |ui| {
+            crate::icons::speak_as(
+                ui.add(
+                    egui::DragValue::new(&mut window.flatten_ppi)
+                        .range(72.0..=2400.0)
+                        .speed(1.0)
+                        .suffix(" ppi"),
+                ),
+                "Flattener resolution",
+            )
+            .on_hover_text(
+                "This standard allows no transparency, so each area a shadow, a feather \
+                 or anything see-through touches is made a picture this fine, with what \
+                 lies beneath it. 300 for photographs; 1200 keeps type sharp there.",
+            );
+        });
+    }
     row(ui, "Black", |ui| {
         ui.checkbox(&mut window.overprint_black, "Overprint solid black")
             .on_hover_text(

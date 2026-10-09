@@ -585,13 +585,14 @@ fn pdf_multiplies_fill_and_stroke_alpha_by_object_opacity() {
         }),
         ..Default::default()
     };
-    assert!(tessera_pdf::export_with(&resolved, &options).is_err());
-    // Even on an opaque object, fractional paint alpha prevents an X-1a claim.
+    // X-1a flattens it rather than claiming the standard over live alpha.
+    let flat = tessera_pdf::export_with(&resolved, &options).expect("flattened");
+    assert!(!String::from_utf8_lossy(&flat).contains("/ca "));
+    // Even on an opaque object, fractional paint alpha is flattened.
     d.frame_mut(id).unwrap().blend.opacity = 1.0;
-    assert!(
-        tessera_pdf::export_with(&tessera_layout::resolve(&d, &mut Shaper::new()), &options)
-            .is_err()
-    );
+    let flat = tessera_pdf::export_with(&tessera_layout::resolve(&d, &mut Shaper::new()), &options)
+        .expect("flattened");
+    assert!(!String::from_utf8_lossy(&flat).contains("/ca "));
 }
 
 #[test]

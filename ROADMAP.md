@@ -1944,9 +1944,8 @@ licence to pass the font on. See the packaging item.
     key: a file claiming a standard it does not meet passes their check and
     fails on the press instead of in the studio. A claim with nothing behind it
     is worse than no claim.
-  - X-1a is refused for a document using transparency. Tessera does not flatten,
-    so the claim could not be honoured, and X-4 exists precisely for that
-    document.
+  - X-1a flattens a document using transparency (see the flattener below);
+    anything left transparent after it is still refused. X-4 keeps it live.
   - Either standard is refused without an output intent, because PDF/X is a
     promise about *which* press and there is nothing to promise.
   - `/Trapped` is written as unknown, which is the only honest answer: Tessera
@@ -3669,6 +3668,12 @@ setting real work for press reaches for, in the order the user agreed.
   page, IDML. Not yet in such a frame: text wrap and vertical alignment.
 - [x] **Overprint** (format 53): fill and stroke per object, and solid
   black by the export's option, written only where inks separate; IDML.
+- [x] **Transparency flattened for PDF/X-1a**, which used to be refused: the
+  areas transparency touches, merged where they overlap, each rendered with
+  everything at or below its topmost transparent object into one opaque
+  picture drawn in that object's place; the rest stays vector. At the export
+  dialog's Flatten at resolution. Not done: keeping text vector inside a
+  flattened area, as InDesign's text-to-outlines option does.
 - [ ] **Overprint and separations preview** on screen: the canvas composites
   in RGB, and showing plates needs a CMYK compositing path of its own.
 

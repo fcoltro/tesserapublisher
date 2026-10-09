@@ -60,9 +60,9 @@ impl Standard {
 
     /// Whether this standard forbids live transparency.
     ///
-    /// X-1a does. Tessera does not flatten, so an X-1a export of a document
-    /// using opacity or a blend mode is a claim it cannot honour — and
-    /// [`ExportOptions::refusals`] says so rather than writing the claim.
+    /// X-1a does, so an export to it flattens the transparency first
+    /// (`flatten`). [`ExportOptions::refusals`] still refuses whatever is
+    /// left, so a claim is never written over transparency that slipped by.
     pub fn forbids_transparency(self) -> bool {
         matches!(self, Standard::X1a)
     }
@@ -227,6 +227,9 @@ pub struct ExportOptions {
     /// never shows a hairline of paper where the plates are out of register.
     /// Only a CMYK export separates, so only one is affected.
     pub overprint_black: bool,
+    /// The resolution transparency is flattened at, for a standard that
+    /// forbids it: each area it touches becomes a picture this fine.
+    pub flatten_ppi: f64,
     /// The document's title and author, as a reader's Properties show them.
     pub title: Option<String>,
     pub author: Option<String>,
@@ -250,6 +253,7 @@ impl Default for ExportOptions {
             compress: false,
             pictures: Pictures::default(),
             overprint_black: true,
+            flatten_ppi: 300.0,
             title: None,
             author: None,
             created: None,
@@ -350,9 +354,9 @@ mod tests {
 
     #[test]
     fn x1a_refuses_a_document_that_uses_transparency() {
-        // Tessera does not flatten. Claiming X-1a for a document with live
-        // transparency would be a claim it cannot honour, and a printer's
-        // preflight would believe it.
+        // What is left after flattening, if anything were: claiming X-1a for
+        // a document with live transparency would be a claim it cannot
+        // honour, and a printer's preflight would believe it.
         let options = ExportOptions {
             standard: Standard::X1a,
             intent: Some(an_intent()),
