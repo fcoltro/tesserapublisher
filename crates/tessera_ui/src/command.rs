@@ -563,6 +563,11 @@ pub enum Command {
         id: FrameId,
         blend: tessera_document::blending::Blending,
     },
+    /// Whether an object's fill and stroke print over the inks beneath.
+    SetOverprint {
+        id: FrameId,
+        overprint: tessera_document::nodes::Overprint,
+    },
 
     /// A new path frame wearing another frame's fill and stroke.
     ///
@@ -1521,6 +1526,7 @@ impl Command {
             | Command::SetFill { .. }
             | Command::ApplyAppearance { .. }
             | Command::SetBlending { .. }
+            | Command::SetOverprint { .. }
             | Command::SetShadow { .. }
             | Command::SetFeather { .. }
             | Command::SetOutputIntent { .. }
@@ -1839,6 +1845,7 @@ fn add(state: &mut TesseraApp, bounds: DocRect, kind: FrameKind, look: Look) {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
     state.active_mut().selection.set(id);
@@ -3824,6 +3831,7 @@ mod tests {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         };
         let a = state
             .active_mut()
@@ -3964,6 +3972,31 @@ mod tests {
             panic!("a text frame shows a story");
         };
         (state, id, story)
+    }
+
+    #[test]
+    fn an_object_set_to_overprint_is_one_step_to_undo() {
+        let (mut state, id, _) = a_text_frame("copy");
+        let overprint = tessera_document::nodes::Overprint {
+            fill: true,
+            stroke: false,
+        };
+        apply(&mut state, Command::SetOverprint { id, overprint });
+        let set = state
+            .active()
+            .document()
+            .frame(id)
+            .expect("frame")
+            .overprint;
+        assert_eq!(set, overprint);
+        apply(&mut state, Command::Undo);
+        let back = state
+            .active()
+            .document()
+            .frame(id)
+            .expect("frame")
+            .overprint;
+        assert!(back.is_none());
     }
 
     #[test]
@@ -5459,6 +5492,7 @@ mod tests {
                 style: None,
                 hidden: false,
                 locked: false,
+                overprint: Default::default(),
             },
         );
 
@@ -5814,6 +5848,7 @@ mod tests {
                 style: None,
                 hidden: false,
                 locked: false,
+                overprint: Default::default(),
             },
         );
         (master, item)

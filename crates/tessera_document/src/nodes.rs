@@ -260,6 +260,26 @@ pub struct Frame {
     /// object at a time rather than a layer at a time.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub locked: bool,
+    /// Whether the fill and stroke print over the inks beneath rather than
+    /// knocking them out: InDesign's Attributes ▸ Overprint. Left out of the
+    /// file when neither does, as every object before format 53.
+    #[serde(default, skip_serializing_if = "Overprint::is_none")]
+    pub overprint: Overprint,
+}
+
+/// Which of an object's paints overprint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Overprint {
+    #[serde(default)]
+    pub fill: bool,
+    #[serde(default)]
+    pub stroke: bool,
+}
+
+impl Overprint {
+    pub fn is_none(&self) -> bool {
+        !self.fill && !self.stroke
+    }
 }
 
 impl Frame {

@@ -156,6 +156,14 @@ is balanced across the columns above it, and the columns begin again below.
 **Split column** does the reverse: the paragraph divides into columns of its
 own — a list in two, say — balanced, with its own gutter.
 
+**Overprint.** Properties ▸ Effects has **Overprint fill** and **Overprint
+stroke**: the paint prints over the inks beneath instead of knocking them out.
+The PDF export's **Overprint solid black**, on by default as in InDesign, does
+the same for anything in 100% black, so black type over a tint never shows a
+hairline of paper where the plates are out of register. Both apply only where
+the colours are converted for a press; an RGB PDF has no plates to print over.
+There is no overprint or separations preview on screen yet.
+
 General also counts where the style is used. The arrows beside the count
 select each use on the page in turn, and the window stays open. A character
 style is previewed where the document first uses it, among the words around

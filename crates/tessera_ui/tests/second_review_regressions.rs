@@ -51,6 +51,7 @@ fn frame(bounds: DocRect, kind: FrameKind) -> Frame {
         style: None,
         hidden: false,
         locked: false,
+        overprint: Default::default(),
     }
 }
 fn add(doc: &mut Document, bounds: DocRect, kind: FrameKind) -> FrameId {

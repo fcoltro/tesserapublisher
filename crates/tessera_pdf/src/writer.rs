@@ -520,6 +520,11 @@ fn write(
     let page_ids: Vec<_> = pages.iter().map(|_| alloc()).collect();
     let fonts = collect_fonts(resolved, &mut alloc)?;
     let states = collect_states(resolved, &mut alloc);
+    // Overprint means something only where the inks are separated: in a
+    // CMYK export, with something set to overprint or black set to.
+    let overprints = (matches!(ink, Ink::Cmyk(_))
+        && (options.overprint_black || resolved.items.iter().any(|i| !i.overprint.is_none())))
+    .then(|| Overprints::new(&mut alloc));
     let pictures = collect_pictures(
         resolved,
         &mut alloc,
@@ -635,6 +640,7 @@ fn write(
                 page,
                 fonts: &fonts,
                 states: &states,
+                overprints: overprints.as_ref(),
                 shadings: &shadings,
                 feathers: &feathers,
                 pictures: &pictures,
@@ -692,12 +698,18 @@ fn write(
         }
         font_dict.finish();
         if !states.is_empty()
+            || overprints.is_some()
             || shadings.iter().flatten().any(|sh| sh.mask.is_some())
             || feathers.iter().any(Option::is_some)
         {
             let mut state_dict = resources.ext_g_states();
             for state in &states {
                 state_dict.pair(Name(state.resource.as_bytes()), state.id);
+            }
+            if let Some(overprints) = &overprints {
+                for (name, id) in overprints.named() {
+                    state_dict.pair(Name(name.as_bytes()), id);
+                }
             }
             for shading in shadings.iter().flatten().filter(|sh| sh.mask.is_some()) {
                 let mask = shading.mask.as_ref().expect("filtered mask");
@@ -773,6 +785,9 @@ fn write(
     for state in &states {
         write_state(&mut pdf, state);
     }
+    if let Some(overprints) = &overprints {
+        overprints.write(&mut pdf);
+    }
 
     if let (Some(profile), Some(intent)) = (profile_id, options.intent.as_ref()) {
         // The profile itself, embedded. A file that names a press without
@@ -784,6 +799,47 @@ fn write(
     }
 
     Ok(pdf.finish())
+}
+
+/// The four overprint states a separated export switches between: neither,
+/// the fill, the stroke, both. `/OPM 1` so a CMYK paint's zero components
+/// leave the plates beneath alone, which is what overprinting black means.
+struct Overprints {
+    ids: [Ref; 4],
+}
+
+impl Overprints {
+    const NAMES: [&'static str; 4] = ["OP0", "OPf", "OPs", "OPfs"];
+
+    fn new(alloc: &mut impl FnMut() -> Ref) -> Self {
+        Self {
+            ids: [alloc(), alloc(), alloc(), alloc()],
+        }
+    }
+
+    fn index(fill: bool, stroke: bool) -> usize {
+        usize::from(fill) | usize::from(stroke) << 1
+    }
+
+    fn name(fill: bool, stroke: bool) -> &'static str {
+        Self::NAMES[Self::index(fill, stroke)]
+    }
+
+    fn named(&self) -> impl Iterator<Item = (&'static str, Ref)> + '_ {
+        Self::NAMES.iter().copied().zip(self.ids)
+    }
+
+    fn write(&self, pdf: &mut Pdf) {
+        for (i, id) in self.ids.iter().enumerate() {
+            let (fill, stroke) = (i & 1 == 1, i & 2 == 2);
+            let mut state = pdf.indirect(*id).start::<ExtGraphicsState>();
+            state
+                .overprint_fill(fill)
+                .overprint(stroke)
+                .overprint_mode(pdf_writer::types::OverprintMode::IgnoreZeroChannel);
+            state.finish();
+        }
+    }
 }
 
 /// One `/ExtGState` the page will refer to by name.
@@ -1806,6 +1862,7 @@ struct Written<'a> {
     page: DocRect,
     fonts: &'a [EmbeddedFont],
     states: &'a [GraphicsState],
+    overprints: Option<&'a Overprints>,
     shadings: &'a [Option<Shading>],
     feathers: &'a [Option<GradientMask>],
     pictures: &'a [Picture],
@@ -1823,6 +1880,14 @@ struct Painting<'a> {
     states: &'a [GraphicsState],
     blend: Blending,
     has_paint_alpha: bool,
+    /// The overprint states, when this export separates and anything uses
+    /// them; what this object sets to overprint; whether solid black does.
+    overprints: Option<&'a Overprints>,
+    overprint: tessera_document::nodes::Overprint,
+    overprint_black: bool,
+    /// Which paints overprint as the content stands: each object begins in
+    /// a saved state with neither.
+    overprinting: std::cell::Cell<(bool, bool)>,
 }
 
 impl Painting<'_> {
@@ -1839,8 +1904,30 @@ impl Painting<'_> {
         }
     }
 
+    /// Switch the fill's or the stroke's overprint to what `colour` asks
+    /// for: the object's own setting, or solid black's.
+    fn overprint(&self, content: &mut Content, colour: &Color, fill: bool) {
+        if self.overprints.is_none() {
+            return;
+        }
+        let black = self.overprint_black
+            && self.ink.components(colour) == crate::ink::Components::Cmyk([0.0, 0.0, 0.0, 1.0])
+            && colour_alpha(colour) == 1.0;
+        let (mut f, mut s) = self.overprinting.get();
+        if fill {
+            f = self.overprint.fill || black;
+        } else {
+            s = self.overprint.stroke || black;
+        }
+        if (f, s) != self.overprinting.get() {
+            content.set_parameters(Name(Overprints::name(f, s).as_bytes()));
+            self.overprinting.set((f, s));
+        }
+    }
+
     fn fill(&self, content: &mut Content, colour: &Color) {
         self.alpha(content, colour_alpha(colour));
+        self.overprint(content, colour, true);
         if let Some(plate) = plate_for(colour, self.plates) {
             content.set_fill_color_space(pdf_writer::types::ColorSpaceOperand::Named(Name(
                 plate.resource.as_bytes(),
@@ -1857,6 +1944,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
         page,
         fonts,
         states,
+        overprints,
         shadings,
         feathers,
         pictures,
@@ -1892,6 +1980,10 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
                 let alpha = colour_alpha(c);
                 alpha > 0.0 && alpha < 1.0
             }),
+            overprints,
+            overprint: item.overprint,
+            overprint_black: options.overprint_black,
+            overprinting: std::cell::Cell::new((false, false)),
         };
         let shading = shadings.get(index).and_then(|s| s.as_ref());
         // An object at no opacity is not written, exactly as it is not drawn.
@@ -2300,6 +2392,7 @@ fn build_content(resolved: &ResolvedDocument, w: &Written<'_>) -> Result<Vec<u8>
 /// is the one thing this crate exists to prevent.
 fn apply_stroke(content: &mut Content, stroke: &Stroke, painting: &Painting<'_>) {
     painting.alpha(content, colour_alpha(&stroke.color));
+    painting.overprint(content, &stroke.color, false);
     match plate_for(&stroke.color, painting.plates) {
         Some(plate) => {
             let tint = crate::separation::tint_of(&stroke.color).unwrap_or(1.0);

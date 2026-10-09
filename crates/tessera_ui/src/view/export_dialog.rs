@@ -53,6 +53,9 @@ pub struct Preset {
     /// Into the press's inks, for a plain PDF; a PDF/X file always is.
     #[serde(default = "yes")]
     pub convert: bool,
+    /// Solid black set to overprint, where the inks separate.
+    #[serde(default = "yes")]
+    pub overprint_black: bool,
     #[serde(default = "yes")]
     pub bookmarks: bool,
     #[serde(default = "yes")]
@@ -91,6 +94,7 @@ impl Preset {
             include_bleed: true,
             include_slug: false,
             convert: true,
+            overprint_black: true,
             bookmarks: true,
             hyperlinks: true,
             compress: true,
@@ -216,6 +220,7 @@ pub struct ExportWindow {
     pub include_bleed: bool,
     pub include_slug: bool,
     pub convert: bool,
+    pub overprint_black: bool,
     pub bookmarks: bool,
     pub hyperlinks: bool,
     pub compress: bool,
@@ -243,6 +248,7 @@ impl Default for ExportWindow {
             include_bleed: true,
             include_slug: false,
             convert: true,
+            overprint_black: true,
             bookmarks: true,
             hyperlinks: true,
             compress: true,
@@ -270,6 +276,7 @@ impl ExportWindow {
         self.include_bleed = preset.include_bleed;
         self.include_slug = preset.include_slug;
         self.convert = preset.convert;
+        self.overprint_black = preset.overprint_black;
         self.bookmarks = preset.bookmarks;
         self.hyperlinks = preset.hyperlinks;
         self.compress = preset.compress;
@@ -297,6 +304,7 @@ impl ExportWindow {
             bleed: self.include_bleed,
             slug: self.include_slug,
             convert: self.convert,
+            overprint_black: self.overprint_black,
             bookmarks: self.bookmarks,
             hyperlinks: self.hyperlinks,
             compress: self.compress,
@@ -429,6 +437,7 @@ fn body(ui: &mut Ui, state: &mut TesseraApp) -> bool {
             w.include_bleed,
             w.include_slug,
             w.convert,
+            w.overprint_black,
             w.bookmarks,
             w.hyperlinks,
             w.compress,
@@ -691,6 +700,14 @@ fn output(ui: &mut Ui, state: &mut TesseraApp) {
                 (None, false) => "No press is named, so nothing is converted.".to_string(),
             },
         );
+    });
+    row(ui, "Black", |ui| {
+        ui.checkbox(&mut window.overprint_black, "Overprint solid black")
+            .on_hover_text(
+                "Black at 100% prints over the inks beneath, so black type over a tint \
+                 never shows paper where the plates are out of register. Only where the \
+                 colours are converted for a press.",
+            );
     });
 }
 

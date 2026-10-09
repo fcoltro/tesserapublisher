@@ -3067,6 +3067,7 @@ impl Document {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         });
 
         let layer = self.layers.get_mut(layer_id)?;
@@ -3643,6 +3644,7 @@ mod tests {
                     style: None,
                     hidden: false,
                     locked: false,
+                    overprint: Default::default(),
                 },
             )
         };
@@ -3741,6 +3743,7 @@ mod tests {
                 style: None,
                 hidden: false,
                 locked: false,
+                overprint: Default::default(),
             },
         );
         doc.set_page_size_of(page, bounds.width * 2.0, bounds.height);
@@ -4011,6 +4014,7 @@ mod tests {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         }
     }
 
@@ -4241,6 +4245,7 @@ mod tests {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         }
     }
 
@@ -4314,6 +4319,7 @@ mod tests {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         }
     }
 
@@ -4344,6 +4350,7 @@ mod tests {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         }
     }
 

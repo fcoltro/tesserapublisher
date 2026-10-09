@@ -3667,6 +3667,10 @@ setting real work for press reaches for, in the order the user agreed.
 - [x] **Span and split columns** (format 52): a frame holding one is set a
   stretch at a time, the text above a span balanced; Properties, the style
   page, IDML. Not yet in such a frame: text wrap and vertical alignment.
+- [x] **Overprint** (format 53): fill and stroke per object, and solid
+  black by the export's option, written only where inks separate; IDML.
+- [ ] **Overprint and separations preview** on screen: the canvas composites
+  in RGB, and showing plates needs a CMYK compositing path of its own.
 
 ### The last refusals, and faces taller than their leading — 2026-10-09
 

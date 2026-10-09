@@ -168,6 +168,7 @@ mod tests {
                 style: None,
                 hidden: false,
                 locked: false,
+                overprint: Default::default(),
             },
         );
         (doc, id)
@@ -208,6 +209,7 @@ mod tests {
                 style: None,
                 hidden: false,
                 locked: false,
+                overprint: Default::default(),
             },
         );
         let _ = id;

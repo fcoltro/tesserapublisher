@@ -124,6 +124,7 @@ fn a_document_with_a_rectangle_round_trips_exactly() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
 
@@ -240,6 +241,7 @@ fn any_frame() -> impl Strategy<Value = Frame> {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         })
 }
 
@@ -297,6 +299,7 @@ fn text_survives_a_save_and_load() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
 
@@ -351,6 +354,7 @@ fn a_version_1_document_still_opens() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
 
@@ -584,6 +588,7 @@ fn a_placement_survives_a_save_and_load() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
 
@@ -627,6 +632,7 @@ fn a_version_2_rotation_becomes_the_placement_that_means_the_same_thing() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
 
@@ -812,6 +818,7 @@ fn a_version_four_document_still_opens_and_gains_no_setup_it_never_had() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
 
@@ -885,8 +892,9 @@ fn the_format_version_is_twenty_six() {
     // that sizes itself to its text, the size it was drawn before; 50
     // balanced columns, filled one after another before; 51 nested, GREP
     // and line styles, none before; 52 a paragraph spanning or splitting
-    // columns, in one before.
-    assert_eq!(format::FORMAT_VERSION, 52);
+    // columns, in one before; 53 overprinting fills and strokes, knocked
+    // out before.
+    assert_eq!(format::FORMAT_VERSION, 53);
 }
 
 #[test]
@@ -921,6 +929,7 @@ fn type_on_a_path_survives_a_save_and_load() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
     let carried = PathText {
@@ -1165,6 +1174,7 @@ fn a_table_survives_a_round_trip_with_its_spans_intact() {
         style: None,
         hidden: false,
         locked: false,
+        overprint: Default::default(),
     };
     let json = serde_json::to_string(&frame).expect("writes");
     let back: tessera_document::nodes::Frame = serde_json::from_str(&json).expect("reads");
@@ -1201,6 +1211,7 @@ fn a_frame_written_before_corners_reads_as_square() {
         style: None,
         hidden: false,
         locked: false,
+        overprint: Default::default(),
     };
 
     let mut written: serde_json::Value = serde_json::to_value(&frame).expect("write");
@@ -1293,6 +1304,7 @@ fn object_styles_and_the_objects_following_them_round_trip() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
 
@@ -1380,6 +1392,7 @@ fn a_drop_shadow_round_trips() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
 
@@ -1444,6 +1457,7 @@ fn a_gradient_feather_survives_save_and_load() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
 
@@ -1510,6 +1524,7 @@ fn a_gradient_fill_round_trips() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
 
@@ -1565,6 +1580,7 @@ fn a_document_written_before_gradients_opens_with_its_colour_intact() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
     format::save(&doc, &path).expect("save");
@@ -1618,6 +1634,7 @@ fn an_objects_opacity_and_blend_mode_round_trip() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
 
@@ -1684,6 +1701,7 @@ fn placed_artwork_round_trips_as_a_link_rather_than_as_pixels() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
     // Absolute on whichever platform runs this: a link's path is kept as
@@ -1771,6 +1789,7 @@ fn swatches_and_the_objects_naming_them_round_trip() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
 
@@ -1885,6 +1904,7 @@ fn a_version_nine_text_frame_opens_as_a_single_column() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
 
@@ -1958,6 +1978,7 @@ fn a_columned_text_frame_round_trips() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
 
@@ -2006,6 +2027,7 @@ fn a_version_eight_document_opens_with_no_masters_and_no_overrides() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
 
@@ -2058,6 +2080,7 @@ fn a_master_and_its_overrides_survive_a_round_trip() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
     let page = doc.page_ids().next().expect("a page");
@@ -2128,6 +2151,7 @@ fn version_7_archive(path: &std::path::Path) -> serde_json::Value {
                 style: None,
                 hidden: false,
                 locked: false,
+                overprint: Default::default(),
             },
         );
     }

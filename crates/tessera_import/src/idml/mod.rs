@@ -668,6 +668,7 @@ impl Items<'_> {
                 style: None,
                 hidden: false,
                 locked: false,
+                overprint: Default::default(),
             },
         );
         if let Some(name) = attr(node, "Self") {
@@ -881,6 +882,11 @@ impl Items<'_> {
                 // InDesign's own Object ▸ Hide and Lock, as the item was left.
                 hidden: attr(node, "Visible") == Some("false"),
                 locked: attr(node, "Locked") == Some("true"),
+                // Attributes ▸ Overprint, as InDesign writes it on the object.
+                overprint: tessera_document::nodes::Overprint {
+                    fill: attr(node, "OverprintFill") == Some("true"),
+                    stroke: attr(node, "OverprintStroke") == Some("true"),
+                },
             },
         );
         if let Some(name) = attr(node, "Self") {

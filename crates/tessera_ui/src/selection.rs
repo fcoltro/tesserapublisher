@@ -131,6 +131,7 @@ mod tests {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         };
         let a = doc.add_frame(layer, frame());
         let b = doc.add_frame(layer, frame());

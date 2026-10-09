@@ -62,6 +62,7 @@ fn add_text(d: &mut Document, s: Story) -> FrameId {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     )
 }

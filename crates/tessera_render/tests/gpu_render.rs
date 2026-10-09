@@ -76,6 +76,7 @@ fn rect_doc(bounds: DocRect, fill: Color) -> ResolvedDocument {
                 fill: tessera_document::paint::Paint::Solid(fill),
                 stroke: None,
             },
+            overprint: Default::default(),
         }],
         pages: vec![resolved_page()],
     }
@@ -372,6 +373,7 @@ fn text_puts_dark_pixels_on_the_page() {
                     color: Color::BLACK,
                     overset_lines: 0,
                 },
+                overprint: Default::default(),
             }],
         },
         ViewTransform::default(),
@@ -435,6 +437,7 @@ fn text_on_a_path_marks_the_page_along_the_path_and_nowhere_else() {
                     stroke: None,
                     text: Some((placed, Color::BLACK)),
                 },
+                overprint: Default::default(),
             }],
         },
         ViewTransform::default(),
@@ -555,6 +558,7 @@ fn a_placed_picture_is_painted_where_its_frame_is() {
                     missing: false,
                     stroke: None,
                 },
+                overprint: Default::default(),
             }],
             pages: vec![resolved_page()],
         };

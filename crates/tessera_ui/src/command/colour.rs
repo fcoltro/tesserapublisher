@@ -49,6 +49,13 @@ pub(super) fn apply(state: &mut TesseraApp, command: Command) {
             state.active_mut().document_mut().touch();
         }
 
+        Command::SetOverprint { id, overprint } => {
+            if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
+                frame.overprint = overprint;
+            }
+            state.active_mut().document_mut().touch();
+        }
+
         Command::SetShadow { id, shadow } => {
             if let Some(frame) = state.active_mut().document_mut().frame_mut(id) {
                 frame.shadow = shadow;

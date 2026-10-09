@@ -333,6 +333,7 @@ mod tests {
                 style: None,
                 hidden: false,
                 locked: false,
+                overprint: Default::default(),
             },
         );
         let spread = doc.spread_of(page).expect("a spread");

@@ -46,6 +46,7 @@ fn filled(frame: FrameId, bounds: DocRect, colour: Color) -> ResolvedItem {
             fill: Paint::Solid(colour),
             stroke: None,
         },
+        overprint: Default::default(),
     }
 }
 

@@ -56,6 +56,7 @@ fn one(kind: ResolvedKind, bounds: DocRect) -> ResolvedDocument {
             feather: None,
             bounds,
             kind,
+            overprint: Default::default(),
         }],
     }
 }
@@ -207,6 +208,7 @@ fn hyperlinks_become_link_annotations_on_the_page_they_land_on() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
     let mut shaper = Shaper::new();
@@ -392,6 +394,7 @@ fn several_items_all_reach_the_content_stream() {
                     fill: Paint::Solid(Color::BLACK),
                     stroke: None,
                 },
+                overprint: Default::default(),
             },
             ResolvedItem {
                 frame: FrameId::default(),
@@ -407,6 +410,7 @@ fn several_items_all_reach_the_content_stream() {
                     fill: Paint::Solid(Color::BLACK),
                     stroke: None,
                 },
+                overprint: Default::default(),
             },
             ResolvedItem {
                 frame: FrameId::default(),
@@ -423,6 +427,7 @@ fn several_items_all_reach_the_content_stream() {
                     color: Color::BLACK,
                     overset_lines: 0,
                 },
+                overprint: Default::default(),
             },
         ],
     };
@@ -1083,6 +1088,7 @@ fn one_file_placed_twice_is_embedded_once() {
         feather: None,
         bounds,
         kind: placed(Some(source)),
+        overprint: Default::default(),
     };
     let doc = ResolvedDocument {
         bookmarks: Vec::new(),
@@ -1689,6 +1695,7 @@ fn one_ink_used_twice_is_one_plate() {
             fill: Paint::Solid(a_spot(tint)),
             stroke: None,
         },
+        overprint: Default::default(),
     };
     let doc = ResolvedDocument {
         bookmarks: Vec::new(),
@@ -2178,4 +2185,72 @@ fn an_export_reports_its_progress_and_stops_when_cancelled() {
         tessera_pdf::export_with_progress(&doc, &ExportOptions::default(), &stopped),
         Err(tessera_pdf::PdfError::Cancelled)
     ));
+}
+
+// --- overprint --------------------------------------------------------------
+
+fn filled_with(colour: Color) -> ResolvedDocument {
+    one(
+        ResolvedKind::Rectangle {
+            outline: None,
+            fill: Paint::Solid(colour),
+            stroke: None,
+        },
+        rect(10.0, 10.0, 50.0, 50.0),
+    )
+}
+
+fn for_press() -> ExportOptions {
+    ExportOptions {
+        intent: Some(cmyk_intent()),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn solid_black_overprints_in_a_separated_export_and_nothing_else_does() {
+    let text = text_of(&filled_with(Color::BLACK_INK), &for_press());
+    assert!(text.contains("/OPf gs"), "black's fill set to overprint");
+    assert!(text.contains("/op true"), "and the state says so");
+    assert!(text.contains("/OPM 1"), "leaving the other plates alone");
+
+    let cyan = Color::Cmyk {
+        c: 1.0,
+        m: 0.0,
+        y: 0.0,
+        k: 0.0,
+        a: 1.0,
+    };
+    let text = text_of(&filled_with(cyan.clone()), &for_press());
+    assert!(!text.contains("/OPf gs"), "a cyan fill knocks out");
+
+    // Asked not to, black knocks out too.
+    let options = ExportOptions {
+        overprint_black: false,
+        ..for_press()
+    };
+    let text = text_of(&filled_with(Color::BLACK_INK), &options);
+    assert!(!text.contains("/OPf gs"));
+}
+
+#[test]
+fn an_object_set_to_overprint_does_so_and_only_where_inks_separate() {
+    let cyan = Color::Cmyk {
+        c: 1.0,
+        m: 0.0,
+        y: 0.0,
+        k: 0.0,
+        a: 1.0,
+    };
+    let mut doc = filled_with(cyan);
+    doc.items[0].overprint = tessera_document::nodes::Overprint {
+        fill: true,
+        stroke: false,
+    };
+    let text = text_of(&doc, &for_press());
+    assert!(text.contains("/OPf gs"), "its fill overprints");
+
+    // A screen PDF has no plates to print over, so says nothing of it.
+    let text = text_of(&doc, &ExportOptions::default());
+    assert!(!text.contains("/OPf"), "an RGB export carries no overprint");
 }

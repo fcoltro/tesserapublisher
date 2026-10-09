@@ -38,6 +38,7 @@ fn frame_at(doc: &mut Document, x: f64, y: f64, story: StoryId) {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
 }
@@ -192,6 +193,7 @@ fn a_picture_goes_out_as_its_frame_shows_it() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
     let link = doc.add_link(tessera_document::links::Link::new(&path, (20.0, 10.0)));
@@ -284,6 +286,7 @@ fn a_table_goes_out_with_its_heading_row_spans_and_fills() {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         },
     );
 

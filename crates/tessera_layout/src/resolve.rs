@@ -145,6 +145,9 @@ pub struct ResolvedItem {
     /// different fact from a fill colour's alpha. Putting it on each kind would
     /// be four copies of one property and an invitation to forget one.
     pub blend: tessera_document::blending::Blending,
+    /// Whether its fill and stroke overprint the inks beneath, for an export
+    /// that separates them.
+    pub overprint: tessera_document::nodes::Overprint,
     /// The shadow this object casts, if any.
     ///
     /// On the item beside `blend` rather than inside `kind`, for the same
@@ -2075,6 +2078,7 @@ fn resolve_one<'a>(
         transform: frame.transform,
         spread_area: doc.spread_of_frame(id).and_then(|s| doc.spread_area(s)),
         blend: frame.blend,
+        overprint: frame.overprint,
         // The shadow's colour goes through the swatch table like every other,
         // so a shadow tinted with a named colour follows it.
         shadow: frame
@@ -2117,6 +2121,7 @@ mod tests {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         }
     }
 
@@ -2452,6 +2457,7 @@ mod tests {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         }
     }
 
@@ -4468,6 +4474,7 @@ pub(crate) mod tests_support {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         }
     }
 }

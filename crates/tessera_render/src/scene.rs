@@ -1597,6 +1597,7 @@ mod tests {
                 feather: None,
                 bounds,
                 kind,
+                overprint: Default::default(),
             }],
         }
     }

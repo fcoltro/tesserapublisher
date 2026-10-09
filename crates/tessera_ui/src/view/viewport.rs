@@ -5059,6 +5059,7 @@ mod tests {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         };
         let lower = document.add_frame(layer, box_at(400.0));
         let upper = document.add_frame(layer, box_at(100.0));
@@ -6129,6 +6130,7 @@ mod tests {
                 style: None,
                 hidden: false,
                 locked: false,
+                overprint: Default::default(),
             },
         );
         state.active_mut().selection.set(id);
@@ -6218,6 +6220,7 @@ mod tests {
                 style: None,
                 hidden: false,
                 locked: false,
+                overprint: Default::default(),
             },
         );
         state.active_mut().selection.toggle(second);

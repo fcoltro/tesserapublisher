@@ -56,6 +56,7 @@ fn crowded_document() -> Document {
                 style: None,
                 hidden: false,
                 locked: false,
+                overprint: Default::default(),
             },
         );
     }
@@ -161,6 +162,7 @@ fn wordy_document() -> Document {
                 style: None,
                 hidden: false,
                 locked: false,
+                overprint: Default::default(),
             },
         );
     }

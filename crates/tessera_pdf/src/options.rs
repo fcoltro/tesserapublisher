@@ -221,6 +221,12 @@ pub struct ExportOptions {
     pub compress: bool,
     /// How placed pictures are sampled and compressed.
     pub pictures: Pictures,
+    /// Set solid black — the black plate at 100% and nothing else — to
+    /// overprint wherever it fills or strokes, as InDesign's "Overprint
+    /// [Black] swatch at 100%" does by default: black text over a tint then
+    /// never shows a hairline of paper where the plates are out of register.
+    /// Only a CMYK export separates, so only one is affected.
+    pub overprint_black: bool,
     /// The document's title and author, as a reader's Properties show them.
     pub title: Option<String>,
     pub author: Option<String>,
@@ -243,6 +249,7 @@ impl Default for ExportOptions {
             hyperlinks: true,
             compress: false,
             pictures: Pictures::default(),
+            overprint_black: true,
             title: None,
             author: None,
             created: None,

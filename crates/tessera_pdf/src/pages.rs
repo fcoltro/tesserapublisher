@@ -301,6 +301,7 @@ mod tests {
                 stroke: None,
                 outline: None,
             },
+            overprint: Default::default(),
         });
         let cut = assemble(&doc, &[vec![1, 2]]);
         let targets: Vec<_> = cut.items[0]

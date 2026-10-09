@@ -2770,6 +2770,21 @@ fn effects_section(
 ) {
     use tessera_document::blending::BlendMode;
 
+    // Attributes ▸ Overprint: which paints print over the inks beneath. Only
+    // a CMYK export separates, which the hover says.
+    let mut overprint = frame.overprint;
+    let fill = ui
+        .checkbox(&mut overprint.fill, "Overprint fill")
+        .on_hover_text("Print the fill over the inks beneath rather than knocking them out")
+        .changed();
+    let stroke = ui
+        .checkbox(&mut overprint.stroke, "Overprint stroke")
+        .on_hover_text("Print the stroke over the inks beneath rather than knocking them out")
+        .changed();
+    if fill || stroke {
+        apply(state, Command::SetOverprint { id, overprint });
+    }
+
     let mut blend = frame.blend;
     let mut changed = false;
 
@@ -6896,6 +6911,7 @@ mod tests {
             style: None,
             hidden: false,
             locked: false,
+            overprint: Default::default(),
         }
     }
 
