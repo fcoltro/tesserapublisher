@@ -70,6 +70,13 @@ pub fn save(doc: &Document, path: &Path) -> Result<(), FormatError> {
 
 pub fn load(path: &Path) -> Result<Document, FormatError> {
     let bytes = std::fs::read(path).map_err(|_| FormatError::Read(path.to_path_buf()))?;
+    load_bytes(bytes, path)
+}
+
+/// [`load`], from the file's bytes already read. `path` is where they came
+/// from: relative links are resolved against its folder, and the file name
+/// and dates variables read it.
+pub fn load_bytes(bytes: Vec<u8>, path: &Path) -> Result<Document, FormatError> {
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes))
         .map_err(|e| FormatError::Archive(e.to_string()))?;
 

@@ -521,3 +521,99 @@ fn a_package_without_a_spine_is_refused_by_name() {
     let err = idml::import_bytes(bytes, Path::new("x.idml")).unwrap_err();
     assert!(matches!(err, tessera_import::ImportError::Missing(ref e) if e == "designmap.xml"));
 }
+
+// ---------------------------------------------------------------------------
+// Frozen documents: the book above, saved as a `.tsrdf` by the build of the
+// day and committed. Every migration test elsewhere down-stamps a file the
+// current writer just wrote; these are the only files an *older* build wrote,
+// so a format change that cannot read what was really saved fails here.
+//
+// When the format version moves, freeze the book again with
+//
+//     cargo test -p tessera_import --test idml_package -- --ignored freeze
+//
+// and commit the new file beside the old ones. Never rewrite an old one.
+
+fn frozen_folder() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/frozen")
+}
+
+#[test]
+#[ignore = "writes a fixture; run by hand when the format version moves"]
+fn freeze_the_book_at_the_current_format_version() {
+    let imported = idml::import_bytes(a_book(), Path::new("book.idml")).expect("import");
+    let folder = frozen_folder();
+    std::fs::create_dir_all(&folder).expect("folder");
+    let path = folder.join(format!(
+        "book-format-{}.tsrdf",
+        tessera_document::format::FORMAT_VERSION
+    ));
+    assert!(!path.exists(), "{} is frozen already", path.display());
+    tessera_document::format::save(&imported.document, &path).expect("save");
+}
+
+#[test]
+fn every_frozen_book_still_opens_as_the_book_it_was() {
+    let mut files: Vec<_> = std::fs::read_dir(frozen_folder())
+        .expect("tests/frozen")
+        .map(|entry| entry.expect("entry").path())
+        .filter(|path| path.extension().is_some_and(|e| e == "tsrdf"))
+        .collect();
+    files.sort();
+    assert!(!files.is_empty(), "no frozen documents");
+
+    for path in files {
+        let name = path.display();
+        let doc = tessera_document::format::load(&path)
+            .unwrap_or_else(|e| panic!("{name} no longer opens: {e}"));
+
+        let pages: Vec<_> = doc.page_ids().collect();
+        assert_eq!(pages.len(), 3, "{name}: pages");
+        assert!(doc.setup.facing_pages, "{name}: facing pages");
+        assert_eq!(doc.setup.bleed.top, 9.0, "{name}: bleed");
+        assert_eq!(doc.setup.margins.inside, 54.0, "{name}: margins");
+        assert_eq!(
+            doc.page_label(pages[0]).as_deref(),
+            Some("i"),
+            "{name}: sections"
+        );
+        assert_eq!(doc.page_label(pages[2]).as_deref(), Some("2"));
+
+        let master = doc.master_ids().next().expect("a parent");
+        assert_eq!(doc.masters[master].name, "A-Master", "{name}: parent");
+        assert_eq!(doc.pages[pages[2]].master, None, "{name}: unparented page");
+
+        let heading = doc
+            .paragraph_styles
+            .iter()
+            .find(|(_, s)| s.name == "Heading")
+            .map(|(_, s)| s.clone())
+            .unwrap_or_else(|| panic!("{name}: Heading"));
+        assert_eq!(heading.format.character.size, Some(24.0), "{name}");
+        assert!(heading.based_on.is_some(), "{name}: based on Body");
+        assert!(doc.swatch("Brand red").is_some(), "{name}: swatches");
+
+        let first = doc
+            .paint_order()
+            .into_iter()
+            .find(|f| {
+                doc.page_of_frame(*f) == Some(pages[0])
+                    && matches!(doc.frame(*f).map(|f| &f.kind), Some(FrameKind::Text { .. }))
+            })
+            .unwrap_or_else(|| panic!("{name}: body frame"));
+        assert_eq!(doc.thread_of(first).len(), 2, "{name}: the thread");
+        let FrameKind::Text { story, layout } = &doc.frame(first).unwrap().kind else {
+            panic!("{name}: not text")
+        };
+        assert_eq!(layout.columns, 2, "{name}: columns");
+        let text = &doc.story(*story).unwrap().text;
+        assert!(
+            text.starts_with("Chapter One\nIt was a bright cold day."),
+            "{name}: the story reads {text:?}"
+        );
+        assert!(
+            doc.anchors_in(*story).are_sound(2),
+            "{name}: anchored frames"
+        );
+    }
+}
