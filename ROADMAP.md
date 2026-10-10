@@ -3777,6 +3777,21 @@ Also that day: the toolchain is pinned to an exact Rust (1.98.1) in
 on since 2026-09-28; keyring 4 is linked through `keyring-core`; and a
 links-panel test that raced on macOS CI has a folder of its own.
 
+### Hardening — 2026-10-10
+
+- [x] **Fuzzing**: `fuzz/` holds a cargo-fuzz target for every reader of
+  somebody else's file — `.tsrdf`, IDML, DOCX, PSD, EPS bounding boxes,
+  `.ase` and CSV. The first runs found one fault: a multichannel PSD of no
+  channels read no pixel data and then asked for the whole claimed canvas,
+  so a 46-byte file could ask for petabytes. It is refused now.
+- [x] **A frozen document**: the IDML test book saved at format 55 and
+  committed (`tessera_import/tests/frozen`). It is the first file an older
+  build really wrote, and every later format must open it. Freeze another
+  one each time the version moves.
+- [x] **CI runs on its own**: nightly on all three platforms when `main`
+  moved that day, with a minute of each fuzz target; and on pull requests,
+  on Linux only. It still never runs on a push.
+
 ## Platforms — once every feature is built
 
 ### Tier 5 — checking by hand, Windows first
