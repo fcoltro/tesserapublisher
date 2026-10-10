@@ -1,0 +1,72 @@
+[package]
+name = "tessera_fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+# Not a member of the main workspace: libFuzzer needs a nightly compiler and
+# its own build flags, and the workspace is pinned to a stable one.
+[workspace]
+members = ["."]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+tessera_document = { path = "../crates/tessera_document" }
+tessera_import = { path = "../crates/tessera_import" }
+tessera_render = { path = "../crates/tessera_render" }
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "document"
+path = "fuzz_targets/document.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "idml"
+path = "fuzz_targets/idml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "docx"
+path = "fuzz_targets/docx.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "psd"
+path = "fuzz_targets/psd.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "eps"
+path = "fuzz_targets/eps.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "swatches"
+path = "fuzz_targets/swatches.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "delimited"
+path = "fuzz_targets/delimited.rs"
+test = false
+doc = false
+bench = false

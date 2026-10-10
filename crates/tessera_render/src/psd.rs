@@ -396,6 +396,14 @@ impl Header {
         if width == 0 || height == 0 {
             return Err(Unreadable::Unsupported("an empty canvas"));
         }
+        // Every other mode is caught by having fewer channels than its
+        // colours, but a multichannel file's colours *are* its channels, so
+        // none passed that and read no pixel data at all -- and then a canvas
+        // the size the header claimed was asked for, with nothing in the file
+        // to stop it. Found by fuzzing.
+        if channels == 0 {
+            return Err(Unreadable::Unsupported("no channels"));
+        }
         Ok(Header {
             version,
             channels,
@@ -1185,6 +1193,21 @@ pub(crate) mod tests {
         liar[14..18].copy_from_slice(&60_000u32.to_be_bytes());
         liar[18..22].copy_from_slice(&60_000u32.to_be_bytes());
         assert_eq!(read(&liar).err(), Some(Unreadable::Short));
+
+        // A multichannel file of no channels, its canvas claimed vast: there
+        // is no plane for the file to run out of, so it must be refused
+        // before a canvas is ever made for it.
+        let mut empty = Psd {
+            mode: 7,
+            ..Default::default()
+        }
+        .bytes();
+        empty[14..18].copy_from_slice(&60_000u32.to_be_bytes());
+        empty[18..22].copy_from_slice(&60_000u32.to_be_bytes());
+        assert_eq!(
+            read(&empty).err(),
+            Some(Unreadable::Unsupported("no channels"))
+        );
     }
 
     #[test]

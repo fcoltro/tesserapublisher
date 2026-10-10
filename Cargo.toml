@@ -16,6 +16,8 @@ members = [
     "crates/tessera_bridge",
     "apps/tessera_app",
 ]
+# Built on its own with a nightly compiler; see fuzz/README.md.
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.1.0"

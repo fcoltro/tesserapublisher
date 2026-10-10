@@ -1,0 +1,4 @@
+# libFuzzer's instrumentation needs a nightly compiler; the application itself
+# stays on the stable one pinned at the repository's root.
+[toolchain]
+channel = "nightly"

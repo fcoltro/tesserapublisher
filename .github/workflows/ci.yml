@@ -1,20 +1,48 @@
 name: CI
 
-# Run by hand only (Actions > CI > Run workflow), never on a push: the
-# checks are run locally before every push to main, and a push should not
-# start three machines building. Decided 2026-09-27.
+# Never on a push to main: the checks are run locally before every push, and a
+# push should not start three machines building (decided 2026-09-27).
+#
+# - By hand (Actions > CI > Run workflow): all three platforms.
+# - Nightly: all three platforms, but only when main moved in the last day,
+#   so a commit is never more than a day from its Windows and macOS build
+#   (29 commits went unbuilt there between 2026-10-01 and 2026-10-10). Then
+#   each fuzz target runs for a minute.
+# - On a pull request: Linux only, one machine, so a PR shows its checks.
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+  pull_request:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Whether there is anything new to build. Always yes except at night, when
+  # it is yes only if main has a commit from the last day.
+  fresh:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: check
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ] \
+             || [ -n "$(git log -1 --since='25 hours ago' --format=%H)" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
   test:
+    needs: fresh
+    if: needs.fresh.outputs.run == 'true'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "windows-latest", "macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -37,3 +65,28 @@ jobs:
       # alone: adapter acquisition deadlocks when two GPU test binaries
       # contend for the same adapter.
       - run: cargo test --workspace --lib --tests
+
+  # A minute of each fuzz target, at night. A crash fails the run and its
+  # input is kept as an artifact; reproduce it with
+  # `cargo fuzz run <target> <file>` in fuzz/.
+  fuzz:
+    needs: fresh
+    if: github.event_name == 'schedule' && needs.fresh.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz --locked
+      - working-directory: fuzz
+        run: |
+          for target in $(cargo fuzz list); do
+            cargo fuzz run "$target" -- -max_total_time=60 -rss_limit_mb=4096
+          done
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts
