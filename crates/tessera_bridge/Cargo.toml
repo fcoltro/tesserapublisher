@@ -22,7 +22,8 @@ tessera_pdf.workspace = true
 tessera_preflight.workspace = true
 tessera_render.workspace = true
 image.workspace = true
+tessera_import.workspace = true
+tessera_io.workspace = true
 
 [dev-dependencies]
-tessera_import.workspace = true
 zip.workspace = true

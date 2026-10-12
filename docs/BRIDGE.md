@@ -102,3 +102,19 @@ none.
 Tool calls through a real client, once one is logged in. The crate is `crates/tessera_bridge`; a tool is a name, a
 sentence, a schema and a function, and adding one is adding one entry to
 `tools::ALL`.
+
+## From a script
+
+The same tools answer a shell script, with no window and no model:
+
+```bash
+tessera_app --convert job.tsrdf job.pdf --standard x4   # or .idml, .html, .epub, .tsrdf
+tessera_app --convert from-indesign.idml job.tsrdf      # an IDML is an input too
+tessera_app --preflight job.tsrdf                       # the report as JSON
+```
+
+`--preflight` exits 1 when the report holds an error, so a build can stop
+on a job that would not print; a file that cannot be read or written exits
+2. On Windows the release build has no console, so run it from a shell that
+captures output (`tessera_app.exe --preflight job.tsrdf | more`) or read the
+exit code.
