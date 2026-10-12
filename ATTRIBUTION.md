@@ -126,8 +126,13 @@ The IJG licence is compatible with GPL-3.0-or-later.
 
 Parts of Tessera are adapted from [DesignCraft](https://github.com/storytold/designcraft)
 (commit `64f0ca8`), an open-source page-layout application by the ArtCraft
-Team, used under its MIT licence. Each adapted file says so at its head; so
-far that is the optical margin table in `crates/tessera_text/src/margin.rs`.
+Team, used under its MIT licence. What was adapted:
+
+- the optical margin table in `crates/tessera_text/src/margin.rs`;
+- how several IDML attributes map to settings, read from its IDML importer
+  (`crates/idml/src/import.rs`): paragraph rules, bullet characters, corner
+  options, anchored object settings and text on a path, in
+  `crates/tessera_import/src/idml/`. The code is Tessera's own.
 The ArtCraft name and logos are not part of that licence and are not used.
 
 > Copyright (c) 2026 ArtCraft Team and the DesignCraft contributors.

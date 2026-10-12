@@ -803,7 +803,16 @@ impl Items<'_> {
             _ => None,
         };
 
+        // Type on a path, on anything but a text frame.
+        let path_text = (kind_name != "TextFrame")
+            .then(|| child(node, "TextPath"))
+            .flatten()
+            .and_then(|tp| {
+                let story = attr(tp, "ParentStory").and_then(|s| self.stories.get(s))?;
+                Some((tp, *story))
+            });
         let kind = match kind_name {
+            "Rectangle" if path_text.is_some() => FrameKind::Path(bez_path(&points, local, false)),
             "TextFrame" => {
                 let Some(story) = attr(node, "ParentStory").and_then(|s| self.stories.get(s))
                 else {
@@ -851,6 +860,9 @@ impl Items<'_> {
                     None => FrameKind::Rectangle,
                 }
             }
+            // Text on an oval or a rectangle: Tessera carries text on a path
+            // frame only, so the shape is kept as the path it is.
+            "Oval" if path_text.is_some() => FrameKind::Path(bez_path(&points, local, false)),
             "Oval" => FrameKind::Ellipse,
             _ => FrameKind::Path(bez_path(
                 &points,
@@ -881,11 +893,10 @@ impl Items<'_> {
                 stroke,
                 wrap,
                 blend,
-                corners: tessera_document::corners::Corners::SQUARE,
+                corners: corner_options(node),
                 shadow,
                 feather,
-                anchor: anchored
-                    .map(|(story, index)| tessera_document::anchored::Anchored::new(story, index)),
+                anchor: anchored.map(|(story, index)| anchor_setting(node, story, index)),
                 style,
                 // InDesign's own Object ▸ Hide and Lock, as the item was left.
                 hidden: attr(node, "Visible") == Some("false"),
@@ -897,10 +908,113 @@ impl Items<'_> {
                 },
             },
         );
+        if let Some((tp, story)) = path_text
+            && let Some(FrameKind::Path(path)) = doc.frame(id).map(|f| f.kind.clone())
+        {
+            doc.set_path_text(id, Some(text_path(tp, story, &path)));
+        }
         if let Some(name) = attr(node, "Self") {
             self.frames.insert(name.to_owned(), id);
         }
     }
+}
+
+/// A frame's corners, as InDesign writes them: per corner since CS5
+/// (`TopLeftCornerOption`, `TopLeftCornerRadius`, …), or one option and
+/// radius for all four in older files. Tessera has one shape for the four,
+/// so the first corner that has one gives it; a corner with none is square.
+fn corner_options(node: Node) -> tessera_document::corners::Corners {
+    use tessera_document::corners::{CornerShape, Corners};
+    let names = ["TopLeft", "TopRight", "BottomRight", "BottomLeft"];
+    let per_corner = names
+        .iter()
+        .any(|n| attr(node, &format!("{n}CornerOption")).is_some());
+    let option = |n: &str| {
+        if per_corner {
+            attr(node, &format!("{n}CornerOption"))
+        } else {
+            attr(node, "CornerOption")
+        }
+    };
+    let radius = |n: &str| {
+        if per_corner {
+            attr_f64(node, &format!("{n}CornerRadius"))
+        } else {
+            attr_f64(node, "CornerRadius")
+        }
+    };
+    let shape_of = |option: Option<&str>| match option {
+        Some("RoundedCorner") => Some(CornerShape::Round),
+        Some("BevelCorner") => Some(CornerShape::Bevel),
+        Some("InverseRoundedCorner") => Some(CornerShape::Inverse),
+        // Fancy and inset have no Tessera shape; rounded is the nearest.
+        Some("FancyCorner") | Some("InsetCorner") => Some(CornerShape::Round),
+        _ => None,
+    };
+    let mut out = Corners::SQUARE;
+    let mut shape = None;
+    for (i, n) in names.iter().enumerate() {
+        let this = shape_of(option(n));
+        if this.is_some() {
+            shape = shape.or(this);
+            out.radii[i] = radius(n).unwrap_or(12.0).max(0.0);
+        }
+    }
+    out.shape = shape.unwrap_or(out.shape);
+    out
+}
+
+/// Where an anchored object sits, from its `AnchoredObjectSetting`: in the
+/// line, raised by its Y offset, or above the line. InDesign's custom
+/// position has no Tessera counterpart yet and is read as inline.
+fn anchor_setting(
+    node: Node,
+    story: StoryId,
+    index: usize,
+) -> tessera_document::anchored::Anchored {
+    use tessera_document::anchored::{AnchorKind, Anchored};
+    let mut anchored = Anchored::new(story, index);
+    let Some(setting) = child(node, "AnchoredObjectSetting") else {
+        return anchored;
+    };
+    match attr(setting, "AnchoredPosition") {
+        Some("AboveLine") => anchored.kind = AnchorKind::Above,
+        _ => {
+            // InDesign's Y offset moves an inline object down the page;
+            // Tessera's baseline shift raises it.
+            anchored.baseline_shift = -attr_f64(setting, "AnchorYoffset").unwrap_or(0.0);
+        }
+    }
+    anchored
+}
+
+/// Type on a path: where along it the text starts and ends, which part of
+/// the type rides it, and whether it runs the other way. The brackets are
+/// read as distances along the path, as DesignCraft reads them.
+fn text_path(
+    tp: Node,
+    story: StoryId,
+    path: &kurbo::BezPath,
+) -> tessera_document::path_text::PathText {
+    use kurbo::ParamCurveArclen;
+    use tessera_document::path_text::{PathText, PathTextAlign};
+    let length: f64 = path.segments().map(|s| s.arclen(0.01)).sum();
+    let along = |name: &str, or: f64| {
+        attr_f64(tp, name)
+            .filter(|_| length > 0.0)
+            .map_or(or, |d| (d / length).clamp(0.0, 1.0))
+    };
+    let mut text = PathText::new(story);
+    text.start = along("StartBracket", 0.0);
+    text.end = along("EndBracket", 1.0);
+    text.align = match attr(tp, "TextAlignment") {
+        Some("AscenderAlignment") => PathTextAlign::Ascender,
+        Some("DescenderAlignment") => PathTextAlign::Descender,
+        Some("CenterAlignment") => PathTextAlign::Centre,
+        _ => PathTextAlign::Baseline,
+    };
+    text.flip = attr(tp, "FlipPathEffect") == Some("Flipped");
+    text
 }
 
 pub(crate) fn tinted(colour: Color, tint: Option<f64>) -> Color {
