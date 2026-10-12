@@ -1037,6 +1037,10 @@ struct Unit {
     width: f64,
     /// The hyphen this unit would draw if the line broke after it.
     hyphen: f64,
+    /// How far it may stand outside the measure with optical margin
+    /// alignment on, in points: (left edge, right edge). See
+    /// [`crate::margin`].
+    hang: (f64, f64),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1061,6 +1065,7 @@ fn units_of(layout: &mut parley::Layout<Brush>, shaped_text: &str) -> Vec<Unit> 
                     kind: UnitKind::Text,
                     width: f64::from(b.width),
                     hyphen: 0.0,
+                    hang: (0.0, 0.0),
                 }),
                 parley::PositionedLayoutItem::GlyphRun(run) => {
                     let inner = run.run();
@@ -1083,10 +1088,20 @@ fn units_of(layout: &mut parley::Layout<Brush>, shaped_text: &str) -> Vec<Unit> 
                             }
                             _ => 0.0,
                         };
+                        let width = f64::from(cluster.advance());
+                        let hang = match kind {
+                            UnitKind::Text => {
+                                let (left, right) =
+                                    text.chars().next().map_or((0.0, 0.0), crate::margin::hang);
+                                (left * width, right * width)
+                            }
+                            _ => (0.0, 0.0),
+                        };
                         units.push(Unit {
                             kind,
-                            width: f64::from(cluster.advance()),
+                            width,
                             hyphen,
+                            hang,
                         });
                     }
                 }
@@ -1106,6 +1121,36 @@ struct Composition<'a> {
     /// Whether to weigh the whole paragraph's breaks together rather than
     /// take each line as it comes.
     total_fit: bool,
+    /// Whether a line's end characters may stand outside the measure:
+    /// optical margin alignment.
+    optical: bool,
+}
+
+/// How far the line of `units[start..end]` may stand outside its measure,
+/// left and right, with optical margin alignment on: its first character's
+/// left hang and its last ink's right hang — the hyphen's, when it breaks at
+/// one. Zero both sides when the paragraph does not ask for it.
+fn protrusion(
+    units: &[Unit],
+    start: usize,
+    end: usize,
+    hyphenated: bool,
+    composition: &Composition<'_>,
+) -> (f64, f64) {
+    if !composition.optical || start >= end {
+        return (0.0, 0.0);
+    }
+    let left = units[start].hang.0;
+    let right = if hyphenated {
+        units[end - 1].hyphen * crate::margin::hang('-').1
+    } else {
+        units[start..end]
+            .iter()
+            .rev()
+            .find(|u| u.kind == UnitKind::Text)
+            .map_or(0.0, |u| u.hang.1)
+    };
+    (left, right)
 }
 
 /// One line a plan has chosen: units taken, ink width, spaces, hyphenated.
@@ -1203,6 +1248,8 @@ fn plan_total_fit(
                     || start.hyphens < composition.hyphen_limit;
                 let take = j + 1 - i;
                 let last = j + 1 == n;
+                let (left, right) = protrusion(units, i, j + 1, hyphenated, composition);
+                let room = room + left + right;
                 let slack = room - ink;
                 let min_ink = ink - spaces as f64 * space_width * squeeze - ink * glyph_squeeze;
                 let fits = min_ink <= room + 1e-6;
@@ -1454,6 +1501,15 @@ fn break_lines_with_room(
         let mut best: Option<(usize, f64, usize, bool)> = None;
         let mut j = i;
         let mut hard = false;
+        // With optical margins, what the line's ends may hang outside the
+        // room: its first character's left share, fixed, and the right
+        // share of whatever ink a break would leave last.
+        let hang_left = if composition.optical {
+            units[i].hang.0
+        } else {
+            0.0
+        };
+        let mut hang_right = 0.0f64;
         let may_hyphenate =
             composition.hyphen_limit == 0 || hyphens_in_a_row < composition.hyphen_limit;
         while j < units.len() {
@@ -1464,7 +1520,7 @@ fn break_lines_with_room(
                     // before it fits; otherwise at the last break that did.
                     let fits =
                         width - spaces as f64 * space_width * squeeze - width * glyph_squeeze
-                            <= room + 1e-6;
+                            <= room + hang_left + hang_right + 1e-6;
                     if fits || best.is_none() {
                         best = Some((j + 1 - i, width, spaces, false));
                         hard = true;
@@ -1475,7 +1531,7 @@ fn break_lines_with_room(
                     // A break after this space: the space itself hangs.
                     let fits =
                         width - spaces as f64 * space_width * squeeze - width * glyph_squeeze
-                            <= room + 1e-6;
+                            <= room + hang_left + hang_right + 1e-6;
                     if fits || best.is_none() {
                         best = Some((j + 1 - i, width, spaces, false));
                     }
@@ -1488,10 +1544,15 @@ fn break_lines_with_room(
                 }
                 UnitKind::SoftHyphen => {
                     let with_hyphen = width + unit.hyphen;
+                    let hyphen_hang = if composition.optical {
+                        unit.hyphen * crate::margin::hang('-').1
+                    } else {
+                        0.0
+                    };
                     let fits = with_hyphen
                         - spaces as f64 * space_width * squeeze
                         - with_hyphen * glyph_squeeze
-                        <= room + 1e-6;
+                        <= room + hang_left + hyphen_hang + 1e-6;
                     if may_hyphenate && (fits || best.is_none()) {
                         best = Some((j + 1 - i, with_hyphen, spaces, true));
                     }
@@ -1501,9 +1562,12 @@ fn break_lines_with_room(
                 }
                 UnitKind::Text => {
                     width += unit.width;
+                    if composition.optical {
+                        hang_right = unit.hang.1;
+                    }
                     let fits =
                         width - spaces as f64 * space_width * squeeze - width * glyph_squeeze
-                            <= room + 1e-6;
+                            <= room + hang_left + hang_right + 1e-6;
                     // Past the room with somewhere to break: break there. With
                     // nowhere, the word stays whole and overhangs, as parley
                     // has it — a word broken where no one said it could be is
@@ -1540,6 +1604,22 @@ fn break_lines_with_room(
         };
         let is_last = i + take >= units.len();
         hyphens_in_a_row = if hyphenated { hyphens_in_a_row + 1 } else { 0 };
+
+        // Optical margins: the line starts as far left of its room as its
+        // first character hangs, and its room grows by both hangs, so that
+        // alignment and justification put the hanging ink outside.
+        let (out_left, out_right) = protrusion(
+            &units,
+            i,
+            (i + take).min(units.len()),
+            hyphenated,
+            composition,
+        );
+        let room = room + out_left + out_right;
+        if out_left != 0.0 || out_right != 0.0 {
+            breaker.state_mut().set_line_x((x - out_left) as f32);
+            breaker.state_mut().set_line_max_advance(room as f32);
+        }
 
         // What the line does with its slack.
         let slack = room - ink;
@@ -3440,6 +3520,7 @@ impl Shaper {
                             rules: &justification,
                             hyphen_limit: hyphenation.limit,
                             total_fit: format.composer == Some(crate::story::Composer::Paragraph),
+                            optical: format.optical_margin == Some(true),
                         },
                     );
                     (layout, spacings, rows)
@@ -5382,6 +5463,65 @@ mod tests {
         assert!((second_x(&stated) - second_x(&absent)).abs() < 1e-6);
     }
 
+    #[test]
+    fn optical_margins_hang_punctuation_outside_the_measure() {
+        // An opening quote at the left edge and a full stop at the right
+        // stand out in the margin with optical margins on, by the share of
+        // their advance the table gives, and sit inside it with them off.
+        use crate::story::{Alignment, CharacterFormat, ParagraphFormat};
+
+        let shape = |text: &str, alignment: Alignment, optical: Option<bool>| {
+            let mut story = Story::new(text);
+            story.apply_character_format(
+                0..text.len(),
+                &CharacterFormat {
+                    size: Some(20.0),
+                    ..CharacterFormat::default()
+                },
+            );
+            story.apply_paragraph_format(
+                0..text.len(),
+                &ParagraphFormat {
+                    alignment: Some(alignment),
+                    optical_margin: optical,
+                    ..ParagraphFormat::default()
+                },
+            );
+            Shaper::new().shape(&story, &NoStyles::default(), 300.0)
+        };
+
+        let flush = shape("\u{201C}Hello", Alignment::Left, None);
+        let hung = shape("\u{201C}Hello", Alignment::Left, Some(true));
+        let quote = hung.lines[0].glyphs().next().unwrap();
+        assert!(flush.lines[0].glyphs().next().unwrap().x.abs() < 1e-6);
+        assert!(
+            (quote.x + quote.advance).abs() < 0.05,
+            "the quote hangs its whole width left of the edge: x {}",
+            quote.x
+        );
+        let h_flush = flush.lines[0].glyphs().nth(1).unwrap().x;
+        let h_hung = hung.lines[0].glyphs().nth(1).unwrap().x;
+        assert!(
+            h_hung < 0.05,
+            "the H stands on the edge: {h_hung} (was {h_flush})"
+        );
+
+        let end = |shaped: &ShapedText| {
+            let last = shaped.lines[0].glyphs().last().unwrap();
+            (last.x + last.advance, last.advance)
+        };
+        let (right_flush, _) = end(&shape("Hello.", Alignment::Right, Some(false)));
+        let (right_hung, stop) = end(&shape("Hello.", Alignment::Right, Some(true)));
+        assert!(
+            (right_flush - 300.0).abs() < 0.05,
+            "flush right at the measure: {right_flush}"
+        );
+        assert!(
+            (right_hung - 300.0 - stop).abs() < 0.05,
+            "the full stop stands wholly outside: {right_hung}"
+        );
+    }
+
     // --- OpenType features ---------------------------------------------------
 
     #[test]
@@ -5739,6 +5879,7 @@ mod tests {
             kind,
             width,
             hyphen: 3.0,
+            hang: (0.0, 0.0),
         }
     }
 
@@ -5778,6 +5919,7 @@ mod tests {
             rules: &rules,
             hyphen_limit: 0,
             total_fit: true,
+            optical: false,
         };
         let room = 30.0;
         let plan = plan_total_fit(&units, &|_| room, &composition, 1.0, 0.2);

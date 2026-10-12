@@ -591,6 +591,9 @@ pub(crate) fn paragraph_format(node: Node, colours: &Colours) -> ParagraphFormat
         .filter(|n| *n > 1);
     f.drop_cap_characters = attr_f32(node, "DropCapCharacters").map(|n| n as u8);
     f.column_span = column_span(node);
+    // Opting out of the story's Optical Margin Alignment; opting in is the
+    // story's to say (see `optical_margins` in the package reader).
+    f.optical_margin = (attr(node, "IgnoreOpticalMargin") == Some("true")).then_some(false);
 
     let with_next = attr_f32(node, "KeepWithNext").is_some_and(|n| n > 0.0);
     let together = if attr(node, "KeepLinesTogether") == Some("true") {

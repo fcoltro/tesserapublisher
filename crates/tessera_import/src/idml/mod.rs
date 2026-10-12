@@ -192,7 +192,8 @@ fn import_package(mut package: Package) -> Result<Imported, ImportError> {
             let Some(name) = attr(node, "Self") else {
                 continue;
             };
-            let read = story::read(node, &styles, &colours, &links);
+            let mut read = story::read(node, &styles, &colours, &links);
+            optical_margins(node, &mut read.story, &doc);
             let id = doc.add_story(read.story);
             stories.insert(name.to_owned(), id);
             for (index, item) in read.inline {
@@ -1256,6 +1257,29 @@ fn percent_decode(s: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// InDesign keeps Optical Margin Alignment on the story, in its
+/// `StoryPreference`, and lets a paragraph or its style opt out with
+/// `IgnoreOpticalMargin`; Tessera keeps it on the paragraph. So a story that
+/// turns it on gives it to every paragraph that does not, by itself or by its
+/// style, refuse it.
+fn optical_margins(node: Node, story: &mut tessera_text::Story, doc: &Document) {
+    let on = children(node, "StoryPreference")
+        .any(|p| attr(p, "OpticalMarginAlignment") == Some("true"));
+    if !on {
+        return;
+    }
+    let refused: Vec<bool> = story
+        .paragraphs
+        .iter()
+        .map(|p| story.resolve_paragraph(p, doc).optical_margin == Some(false))
+        .collect();
+    for (paragraph, refused) in story.paragraphs.iter_mut().zip(refused) {
+        if !refused {
+            paragraph.local.optical_margin = Some(true);
+        }
+    }
 }
 
 #[cfg(test)]

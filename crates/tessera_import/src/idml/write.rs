@@ -540,6 +540,9 @@ impl<'d> Writer<'d> {
             };
             let _ = write!(attrs, " BulletsAndNumberingListType=\"{said}\"");
         }
+        if f.optical_margin == Some(false) {
+            attrs.push_str(" IgnoreOpticalMargin=\"true\"");
+        }
         if let Some(span) = f.column_span {
             match span {
                 ColumnSpan::Single => attrs.push_str(" SpanColumnType=\"SingleColumn\""),
@@ -950,10 +953,17 @@ impl<'d> Writer<'d> {
         } else {
             self.story_body(story, false)
         };
+        // InDesign keeps Optical Margin Alignment on the story; on when any of
+        // its paragraphs asks for it, and those that state they do not say
+        // so with `IgnoreOpticalMargin`.
+        let optical = story
+            .paragraphs
+            .iter()
+            .any(|p| story.resolve_paragraph(p, self.doc).optical_margin == Some(true));
         let xml = format!(
             "{HEAD}<idPkg:Story xmlns:idPkg=\"{PKG}\" DOMVersion=\"{DOM}\">\n\
              <Story Self=\"{self_}\" AppliedTOCStyle=\"n\" TrackChanges=\"false\" StoryTitle=\"$ID/\" AppliedNamedGrid=\"n\">\n\
-             <StoryPreference OpticalMarginAlignment=\"false\" OpticalMarginSize=\"12\" FrameType=\"TextFrameType\" \
+             <StoryPreference OpticalMarginAlignment=\"{optical}\" OpticalMarginSize=\"12\" FrameType=\"TextFrameType\" \
              StoryOrientation=\"Horizontal\" StoryDirection=\"LeftToRightDirection\"/>\n\
              <InCopyExportOption IncludeGraphicProxies=\"true\" IncludeAllResources=\"false\"/>\n\
              {body}\n</Story>\n</idPkg:Story>\n"
@@ -2188,6 +2198,50 @@ mod tests {
         // The picture, linked where it was.
         let link = back.links.values().next().expect("a link");
         assert_eq!(link.path, std::path::PathBuf::from("/pictures/a photo.jpg"));
+    }
+
+    #[test]
+    fn optical_margins_go_out_on_the_story_and_come_back_on_its_paragraphs() {
+        // InDesign keeps the setting on the story; a paragraph that refuses
+        // it says IgnoreOpticalMargin. Turned on for the body and refused by
+        // the heading, both come back as they were.
+        let (mut doc, _) = a_document();
+        let story = doc
+            .stories
+            .values_mut()
+            .find(|s| s.text.starts_with("A heading"))
+            .expect("the story");
+        let heading = story.paragraphs[0].range.clone();
+        let body = story.paragraphs[1].range.clone();
+        story.apply_paragraph_format(
+            heading,
+            &ParagraphFormat {
+                optical_margin: Some(false),
+                ..ParagraphFormat::default()
+            },
+        );
+        story.apply_paragraph_format(
+            body,
+            &ParagraphFormat {
+                optical_margin: Some(true),
+                ..ParagraphFormat::default()
+            },
+        );
+        let written = write(&doc).expect("written");
+        let back = crate::idml::import_bytes(written.bytes, std::path::Path::new("x.idml"))
+            .expect("read back")
+            .document;
+        let story = back
+            .stories
+            .values()
+            .find(|s| s.text.starts_with("A heading"))
+            .expect("the story");
+        let optical: Vec<Option<bool>> = story
+            .paragraphs
+            .iter()
+            .map(|p| story.resolve_paragraph(p, &back).optical_margin)
+            .collect();
+        assert_eq!(optical, vec![Some(false), Some(true)]);
     }
 
     #[test]
