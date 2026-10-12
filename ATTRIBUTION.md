@@ -129,6 +129,7 @@ Parts of Tessera are adapted from [DesignCraft](https://github.com/storytold/des
 Team, used under its MIT licence. What was adapted:
 
 - the optical margin table in `crates/tessera_text/src/margin.rs`;
+- the CJK character ranges and kinsoku sets in `crates/tessera_text/src/cjk.rs`;
 - how several IDML attributes map to settings, read from its IDML importer
   (`crates/idml/src/import.rs`): paragraph rules, bullet characters, corner
   options, anchored object settings and text on a path, in

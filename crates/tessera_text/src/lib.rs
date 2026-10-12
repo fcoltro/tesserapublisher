@@ -11,6 +11,7 @@
 
 pub mod automatic;
 pub mod caret;
+pub mod cjk;
 pub mod edit;
 pub mod margin;
 pub mod optical;

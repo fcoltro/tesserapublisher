@@ -1041,6 +1041,9 @@ struct Unit {
     /// alignment on, in points: (left edge, right edge). See
     /// [`crate::margin`].
     hang: (f64, f64),
+    /// Whether a line may end after it with no space: between two
+    /// ideographs, as Chinese and Japanese are set. See [`crate::cjk`].
+    breaks_after: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1058,15 +1061,21 @@ enum UnitKind {
 fn units_of(layout: &mut parley::Layout<Brush>, shaped_text: &str) -> Vec<Unit> {
     layout.break_all_lines(None);
     let mut units = Vec::new();
+    // Each unit's first and last character, for where ideographs may break.
+    let mut ends: Vec<(Option<char>, Option<char>)> = Vec::new();
     for line in layout.lines() {
         for item in line.items() {
             match item {
-                parley::PositionedLayoutItem::InlineBox(b) => units.push(Unit {
-                    kind: UnitKind::Text,
-                    width: f64::from(b.width),
-                    hyphen: 0.0,
-                    hang: (0.0, 0.0),
-                }),
+                parley::PositionedLayoutItem::InlineBox(b) => {
+                    units.push(Unit {
+                        kind: UnitKind::Text,
+                        width: f64::from(b.width),
+                        hyphen: 0.0,
+                        hang: (0.0, 0.0),
+                        breaks_after: false,
+                    });
+                    ends.push((None, None));
+                }
                 parley::PositionedLayoutItem::GlyphRun(run) => {
                     let inner = run.run();
                     let font = inner.font();
@@ -1102,10 +1111,22 @@ fn units_of(layout: &mut parley::Layout<Brush>, shaped_text: &str) -> Vec<Unit> 
                             width,
                             hyphen,
                             hang,
+                            breaks_after: false,
                         });
+                        ends.push((text.chars().next(), text.chars().next_back()));
                     }
                 }
             }
+        }
+    }
+    // Chinese and Japanese: a line may end between two characters with no
+    // space, where one is an ideograph and kinsoku allows it.
+    for k in 0..units.len().saturating_sub(1) {
+        if units[k].kind == UnitKind::Text
+            && units[k + 1].kind == UnitKind::Text
+            && let (Some(a), Some(b)) = (ends[k].1, ends[k + 1].0)
+        {
+            units[k].breaks_after = crate::cjk::break_between(a, b);
         }
     }
     units
@@ -1233,6 +1254,8 @@ fn plan_total_fit(
             let candidate: Option<(f64, bool)> = match unit.kind {
                 UnitKind::Space | UnitKind::Hard => Some((width, false)),
                 UnitKind::SoftHyphen => Some((width + unit.hyphen, true)),
+                // Between two ideographs: the line ends with this one on it.
+                UnitKind::Text if unit.breaks_after => Some((width + unit.width, false)),
                 UnitKind::Text => None,
             };
             let is_last = j + 1 == n;
@@ -1574,6 +1597,10 @@ fn break_lines_with_room(
                     // a worse fault than a long line.
                     if !fits && best.is_some() {
                         break;
+                    }
+                    // Chinese and Japanese break between their characters.
+                    if unit.breaks_after {
+                        best = Some((j + 1 - i, width, spaces, false));
                     }
                 }
             }
@@ -5522,6 +5549,49 @@ mod tests {
         );
     }
 
+    #[test]
+    fn chinese_and_japanese_wrap_between_characters_and_keep_kinsoku() {
+        // No spaces, and still lines: every line but the last fills the
+        // measure within a character's width, none overhangs, and none
+        // begins with a full stop or comma — kinsoku pushes the character
+        // before it down with it.
+        let text = "日本語の文章は単語の間に空白を入れないので、行は文字と文字の間で折り返される。";
+        let story = Story::new(text);
+        let shaped = Shaper::new().shape(&story, &NoStyles::default(), 100.0);
+        assert!(
+            shaped.lines.len() > 3,
+            "wrapped: {} lines",
+            shaped.lines.len()
+        );
+        for line in &shaped.lines {
+            let last = line.glyphs().last().expect("a glyph");
+            assert!(last.x + last.advance <= 100.0 + 0.5, "no line overhangs");
+        }
+        for line in shaped.lines.iter().skip(1) {
+            let first = &text[line.range.clone()].chars().next().expect("text");
+            assert!(!"、。".contains(*first), "a line began with {first}");
+        }
+        // The paragraph composer finds the same places.
+        let mut story = Story::new(text);
+        story.apply_paragraph_format(
+            0..text.len(),
+            &crate::story::ParagraphFormat {
+                composer: Some(crate::story::Composer::Paragraph),
+                alignment: Some(crate::story::Alignment::Justify),
+                ..Default::default()
+            },
+        );
+        let planned = Shaper::new().shape(&story, &NoStyles::default(), 100.0);
+        assert!(planned.lines.len() > 3, "the paragraph composer wraps too");
+        // Latin text with no spaces still does not break in the middle.
+        let latin = Shaper::new().shape(
+            &Story::new("Supercalifragilisticexpialidocious"),
+            &NoStyles::default(),
+            100.0,
+        );
+        assert_eq!(latin.lines.len(), 1);
+    }
+
     // --- OpenType features ---------------------------------------------------
 
     #[test]
@@ -5880,6 +5950,7 @@ mod tests {
             width,
             hyphen: 3.0,
             hang: (0.0, 0.0),
+            breaks_after: false,
         }
     }
 

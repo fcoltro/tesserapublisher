@@ -219,6 +219,7 @@ person reaches for once they start setting copy, and none of it had a row:
 | Kerning control, optical kerning | ✅ manual kern at the caret; Metrics or Optical on a range or a style | — | done, M9; optical 2026-09-17 |
 | H&J parameters | ✅ word spacing, letter spacing, glyph scaling, own breaker | — | done, M9; glyph scaling 2026-09-17 |
 | Optical margin alignment | ✅ Properties and the paragraph style's Justification page: punctuation and the lighter capitals hang past the measure, in both composers and every alignment; read from and written to IDML (`OpticalMarginAlignment` on the story, `IgnoreOpticalMargin` on a paragraph). No size setting: the hang is a share of each character's own advance | — | done 2026-10-12 |
+| Chinese and Japanese line breaking | ✅ lines break between ideographs and kana with no spaces, in both composers, with InDesign's default kinsoku: no line starts with closing punctuation, small kana or ー, none ends with an opening bracket. Korean breaks at its spaces. **Not built:** kinsoku sets of one's own, mojikumi, ruby, warichu, vertical text, tate-chu-yoko, Arabic kashida | — | done 2026-10-12 |
 | Auto page number, sections, section marker | ✅ | — | done, M10 |
 | Text variables; running header (paragraph style) | ✅ custom text and running header | — | done, M10 |
 | Footnotes, endnotes | ✅ reference, note at the column foot (splitting across columns) or gathered at the end by Layout ▸ Endnotes…, box to edit it, document footnote options | — | done, M11; split + endnotes 2026-09-17 |
