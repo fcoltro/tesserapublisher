@@ -172,7 +172,10 @@ something that is already a few hundred bytes of text and one existing parser.
 
 ### D8 — Light and dark, and a pasteboard that does not lie.
 
-Both themes ship, with text contrast meeting WCAG AA. In **Preview** screen
+Both themes ship, with text contrast meeting WCAG AA. Since 2026-10-13 they
+are the two ends of five: dark, medium dark, medium light, light, and high
+contrast, after InDesign's brightness levels by way of DesignCraft's, and every
+one is held to the same contrast tests. In **Preview** screen
 mode the pasteboard and page surround are painted a fixed neutral grey in both
 themes.
 

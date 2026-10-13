@@ -133,7 +133,11 @@ Team, used under its MIT licence. What was adapted:
 - how several IDML attributes map to settings, read from its IDML importer
   (`crates/idml/src/import.rs`): paragraph rules, bullet characters, corner
   options, anchored object settings and text on a path, in
-  `crates/tessera_import/src/idml/`. The code is Tessera's own.
+  `crates/tessera_import/src/idml/`. The code is Tessera's own;
+- the medium dark, medium light and high-contrast interface colours in
+  `crates/tessera_ui/src/theme.rs`, started from its brightness tokens
+  (`crates/ui-egui/src/theme.rs`) and then adjusted to Tessera's contrast tests.
+
 The ArtCraft name and logos are not part of that licence and are not used.
 
 > Copyright (c) 2026 ArtCraft Team and the DesignCraft contributors.

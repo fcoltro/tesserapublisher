@@ -451,9 +451,13 @@ fn general(ui: &mut Ui, state: &mut TesseraApp) {
 fn appearance(ui: &mut Ui, state: &mut TesseraApp) {
     heading(ui, "Theme");
     let mut theme = state.prefs.theme;
-    ui.horizontal(|ui| {
-        for (choice, label) in [(ThemeChoice::Dark, "Dark"), (ThemeChoice::Light, "Light")] {
-            if ui.selectable_label(theme == choice, label).clicked() {
+    ui.horizontal_wrapped(|ui| {
+        for choice in ThemeChoice::ALL {
+            if ui
+                .selectable_label(theme == choice, choice.label())
+                .on_hover_text(choice.purpose())
+                .clicked()
+            {
                 theme = choice;
             }
         }
@@ -835,6 +839,18 @@ fn note(ui: &mut Ui, text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_theme_can_be_chosen_by_clicking_its_name() {
+        use egui_kittest::kittest::Queryable;
+        let mut ui = crate::clicking::harness(TesseraApp::headless(), appearance);
+        ui.run();
+        for choice in ThemeChoice::ALL {
+            ui.get_by_label(choice.label()).click();
+            ui.run();
+            assert_eq!(ui.state().prefs.theme, choice);
+        }
+    }
 
     #[test]
     fn the_window_keeps_the_height_it_was_given_rather_than_growing_to_the_screen() {

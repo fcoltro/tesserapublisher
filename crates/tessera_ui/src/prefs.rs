@@ -6,11 +6,60 @@ use serde::{Deserialize, Serialize};
 use tessera_geometry::Unit;
 use tessera_io::{IoError, write_atomic};
 
+/// How bright the interface is: InDesign's four brightness levels, and a
+/// high-contrast one.
+///
+/// `Dark` and `Light` keep their names, so a preferences file written before
+/// the other three existed still reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ThemeChoice {
     #[default]
     Dark,
+    MediumDark,
+    MediumLight,
     Light,
+    HighContrast,
+}
+
+impl ThemeChoice {
+    /// Every choice, darkest first, as the settings offer them.
+    pub const ALL: [ThemeChoice; 5] = [
+        ThemeChoice::Dark,
+        ThemeChoice::MediumDark,
+        ThemeChoice::MediumLight,
+        ThemeChoice::Light,
+        ThemeChoice::HighContrast,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ThemeChoice::Dark => "Dark",
+            ThemeChoice::MediumDark => "Medium dark",
+            ThemeChoice::MediumLight => "Medium light",
+            ThemeChoice::Light => "Light",
+            ThemeChoice::HighContrast => "High contrast",
+        }
+    }
+
+    pub fn purpose(self) -> &'static str {
+        match self {
+            ThemeChoice::Dark => "Charcoal panels. The page is the brightest thing on screen.",
+            ThemeChoice::MediumDark => "Mid-grey panels, a step lighter than dark.",
+            ThemeChoice::MediumLight => "Light-grey panels, a step darker than light.",
+            ThemeChoice::Light => "Near-white panels.",
+            ThemeChoice::HighContrast => {
+                "Black panels, white text and lines, a yellow accent. For low vision."
+            }
+        }
+    }
+
+    /// Whether the panels are dark and the text light.
+    pub fn is_dark(self) -> bool {
+        matches!(
+            self,
+            ThemeChoice::Dark | ThemeChoice::MediumDark | ThemeChoice::HighContrast
+        )
+    }
 }
 
 /// How tightly the interface is packed.
