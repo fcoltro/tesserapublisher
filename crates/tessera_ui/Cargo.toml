@@ -60,6 +60,7 @@ windows-native-keyring-store = { version = "1", default-features = false }
 apple-native-keyring-store = { version = "1", features = ["keychain"] }
 
 [dev-dependencies]
+egui_kittest.workspace = true
 zip.workspace = true
 serde_json.workspace = true
 kurbo.workspace = true

@@ -99,6 +99,9 @@ egui      = "0.36"
 # eframe's defaults do not include glow, so there was nothing to save.
 eframe    = "0.36"
 egui-wgpu = "0.36"
+# Interface tests that press, drag and type through AccessKit, the way a
+# person does, and find each control by its accessible name. Dev only.
+egui_kittest = "0.36"
 
 # Document surface. Must resolve to the same wgpu as egui-wgpu — the shared
 # device in decision D2 depends on it — and it does: both are on wgpu 30.
