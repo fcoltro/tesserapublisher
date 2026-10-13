@@ -348,6 +348,16 @@ pub struct Preferences {
     #[serde(default = "yes")]
     pub show_rulers: bool,
 
+    /// Whether the canvas toolbar follows the selection (View > Show canvas
+    /// toolbar, or Hide in its own ••• menu).
+    #[serde(default = "yes")]
+    pub show_canvas_toolbar: bool,
+
+    /// Where the canvas toolbar was dragged to, from the canvas's top-left
+    /// corner, in points. `None` while it follows the selection.
+    #[serde(default)]
+    pub canvas_toolbar_pin: Option<[f32; 2]>,
+
     /// Where the rulers count from: the spread's corner, the page's, or the
     /// spine — InDesign's Ruler per spread, per page and on spine.
     #[serde(default)]
@@ -440,6 +450,8 @@ impl Default for Preferences {
             swatch_tiles: false,
             show_hidden_characters: false,
             show_rulers: true,
+            show_canvas_toolbar: true,
+            canvas_toolbar_pin: None,
             ruler_origin: RulerOrigin::Spread,
             saved_queries: Vec::new(),
         }
@@ -662,6 +674,8 @@ mod tests {
             swatch_tiles: true,
             show_hidden_characters: true,
             show_rulers: false,
+            show_canvas_toolbar: false,
+            canvas_toolbar_pin: Some([12.0, 34.0]),
             ruler_origin: RulerOrigin::Spine,
             saved_queries: vec![SavedQuery {
                 name: "Double spaces".into(),

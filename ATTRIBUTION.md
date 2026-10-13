@@ -137,6 +137,9 @@ Team, used under its MIT licence. What was adapted:
 - the medium dark, medium light and high-contrast interface colours in
   `crates/tessera_ui/src/theme.rs`, started from its brightness tokens
   (`crates/ui-egui/src/theme.rs`) and then adjusted to Tessera's contrast tests.
+- the canvas toolbar's grip, pinning and hiding, and the egui_kittest
+  interface tests, after its Contextual Task Bar (`crates/ui-egui/src/taskbar.rs`)
+  and the tests beside it. The code is Tessera's own.
 
 The ArtCraft name and logos are not part of that licence and are not used.
 

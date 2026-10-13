@@ -986,6 +986,8 @@ mod tests {
             swatch_tiles: true,
             show_hidden_characters: false,
             show_rulers: true,
+            show_canvas_toolbar: true,
+            canvas_toolbar_pin: None,
             ruler_origin: crate::prefs::RulerOrigin::Spread,
             saved_queries: Vec::new(),
             flow_placed_text: false,

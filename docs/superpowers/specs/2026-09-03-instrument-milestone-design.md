@@ -105,6 +105,16 @@ Actions whose result is a change of position or orientation are judged by
 looking at the object, so the control belongs next to the object. Nothing
 appears in both places, so the two surfaces cannot disagree.
 
+*Amended 2026-10-13, after InDesign 2026's Contextual Task Bar (by way of
+DesignCraft's).* The bar also shows for a single object, with the verbs one
+object takes: flip, rotate, bring to front and send to back, and for a lone
+picture frame or text frame, fitting. Its menus are grouped by kind rather
+than counted against six buttons. A grip at its left end drags it aside, and it
+stays pinned there until its ••• menu puts it back; the same menu hides it, and
+View › Show canvas toolbar shows it again. The owner chose to keep it to verbs
+rather than add InDesign's font, size and colour fields: values stay in the
+rail.
+
 *Rejected: putting these actions in the inspector too.* Two routes to one
 outcome is the duplication that makes InDesign's transform story confusing.
 *Also rejected: no canvas toolbar at all.* Alignment is the most frequent
@@ -192,7 +202,7 @@ scale X/Y as percentages, rotation, shear), Fill, Stroke (weight, style,
 alignment, cap, join, colour), Text, Frame. Numeric fields keep the existing
 drag-to-scrub behaviour and gain unit parsing.
 
-**Canvas toolbar** — the six spatial verbs of D2.
+**Canvas toolbar** — the spatial verbs of D2, for one object or several.
 
 **Command palette** — D3.
 
