@@ -19,6 +19,12 @@ fn main() -> eframe::Result<()> {
     // When a window is already up it is relayed to, so the model works on
     // the document somebody is looking at; otherwise this process is a
     // headless Tessera of its own.
+    // `tessera_app --convert IN OUT`, `--preflight IN`: a script's Tessera,
+    // no window either, and an exit code that says how it went.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = tessera_bridge::batch::run(&args) {
+        std::process::exit(code);
+    }
     if std::env::args().skip(1).any(|a| a == "--mcp") {
         match bridge_port_file() {
             Some(file) => tessera_bridge::live::serve_or_relay_stdio(&file),

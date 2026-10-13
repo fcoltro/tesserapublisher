@@ -11,6 +11,8 @@ pub mod background;
 pub mod book_ops;
 pub mod camera;
 pub mod catalogue;
+#[cfg(test)]
+pub(crate) mod clicking;
 pub mod clock;
 pub mod colour_theme;
 pub mod command;

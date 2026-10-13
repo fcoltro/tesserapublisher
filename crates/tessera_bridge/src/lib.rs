@@ -25,6 +25,7 @@ use tessera_ui::TesseraApp;
 use tessera_ui::command::{Command, apply};
 
 pub mod assistant;
+pub mod batch;
 pub mod catalogue;
 pub mod console;
 pub mod dialogs;

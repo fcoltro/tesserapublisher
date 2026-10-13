@@ -121,3 +121,46 @@ since parts of it derive from their work:
 > This software is based in part on the work of the Independent JPEG Group.
 
 The IJG licence is compatible with GPL-3.0-or-later.
+
+## DesignCraft
+
+Parts of Tessera are adapted from [DesignCraft](https://github.com/storytold/designcraft)
+(commit `64f0ca8`), an open-source page-layout application by the ArtCraft
+Team, used under its MIT licence. What was adapted:
+
+- the optical margin table in `crates/tessera_text/src/margin.rs`;
+- the CJK character ranges and kinsoku sets in `crates/tessera_text/src/cjk.rs`;
+- how several IDML attributes map to settings, read from its IDML importer
+  (`crates/idml/src/import.rs`): paragraph rules, bullet characters, corner
+  options, anchored object settings and text on a path, in
+  `crates/tessera_import/src/idml/`. The code is Tessera's own;
+- the medium dark, medium light and high-contrast interface colours in
+  `crates/tessera_ui/src/theme.rs`, started from its brightness tokens
+  (`crates/ui-egui/src/theme.rs`) and then adjusted to Tessera's contrast tests.
+- the canvas toolbar's grip, pinning and hiding, and the egui_kittest
+  interface tests, after its Contextual Task Bar (`crates/ui-egui/src/taskbar.rs`)
+  and the tests beside it. The code is Tessera's own.
+
+The ArtCraft name and logos are not part of that licence and are not used.
+
+> Copyright (c) 2026 ArtCraft Team and the DesignCraft contributors.
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
+The MIT licence is compatible with GPL-3.0-or-later.

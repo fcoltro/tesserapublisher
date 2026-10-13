@@ -339,6 +339,7 @@ pub enum Run {
     ToggleDynamicSpelling,
     ToggleHiddenCharacters,
     ToggleRulers,
+    ToggleCanvasToolbar,
     ToggleInfo,
     FillPlaceholder,
     /// Whether a layout follows its page's size and margins. A preference.
@@ -506,6 +507,7 @@ pub fn guard(run: Run) -> Guard {
         | Run::ToggleDynamicSpelling
         | Run::ToggleHiddenCharacters
         | Run::ToggleRulers
+        | Run::ToggleCanvasToolbar
         | Run::ToggleAdjustLayout
         | Run::SelectContainer
         | Run::SelectContent
@@ -1574,6 +1576,12 @@ pub fn all() -> &'static [Action] {
         a("Soft proof", Some("Ctrl+Y"), Group::View, ToggleSoftProof),
         a("Snap to guides", None, Group::View, ToggleSnapping),
         a("Show rulers", Some("Ctrl+R"), Group::View, ToggleRulers),
+        a(
+            "Show canvas toolbar",
+            None,
+            Group::View,
+            ToggleCanvasToolbar,
+        ),
         a("Show hyperlinks", None, Group::View, ToggleHyperlinks),
         //
         a(
@@ -1876,6 +1884,10 @@ pub fn run(state: &mut crate::app::TesseraApp, run: Run) {
         }
         Run::ToggleRulers => {
             state.prefs.show_rulers = !state.prefs.show_rulers;
+            crate::prefs::remember(state);
+        }
+        Run::ToggleCanvasToolbar => {
+            state.prefs.show_canvas_toolbar = !state.prefs.show_canvas_toolbar;
             crate::prefs::remember(state);
         }
         Run::ToggleHiddenCharacters => {

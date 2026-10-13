@@ -16,9 +16,8 @@
 //! ## What is not written
 //!
 //! The same rule as the importer's: **what cannot be carried is said.**
-//! Tables, text on a path, objects anchored in text, rounded corners, gradient
-//! feathers and hyperlinks are listed in [`Written::dropped`] rather than left
-//! out quietly.
+//! Tables, gradient feathers and hyperlinks are listed in [`Written::dropped`]
+//! rather than left out quietly.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -31,8 +30,9 @@ use tessera_document::nodes::{Frame, FrameKind, TextWrap, VerticalJustify, WrapT
 use tessera_document::paint::{Paint, Ramp};
 use tessera_geometry::{DocPoint, DocRect};
 use tessera_text::story::{
-    Alignment, Case, CharacterFormat, CharacterStyleId, ColumnSpan, KeepTogether, Kerning,
-    ListKind, ParagraphFormat, ParagraphStyleId, Story, TabAlignment,
+    Alignment, Case, CharacterFormat, CharacterStyleId, ColumnSpan, Composer, FigureCase,
+    FigureWidth, KeepTogether, Kerning, ListKind, Numbering, ParagraphFormat, ParagraphStyleId,
+    RuleWidth, SingleWord, Story, TabAlignment,
 };
 use tessera_text::variables::Marker;
 
@@ -378,6 +378,9 @@ struct Writer<'d> {
     fonts: Vec<(String, Vec<String>)>,
     count: usize,
     masters_self: HashMap<tessera_document::ids::MasterId, String>,
+    /// The anchored objects being written into their story's text just now,
+    /// which [`Writer::item`] writes rather than leaving to the story.
+    writing_anchored: Vec<FrameId>,
 }
 
 impl<'d> Writer<'d> {
@@ -470,6 +473,23 @@ impl<'d> Writer<'d> {
             };
             let _ = write!(attrs, " KerningMethod=\"{said}\"");
         }
+        if f.figure_case.is_some() || f.figure_width.is_some() {
+            let width = match f.figure_width {
+                Some(FigureWidth::Tabular) => "Tabular",
+                _ => "Proportional",
+            };
+            let case = match f.figure_case {
+                Some(FigureCase::OldStyle) => "Oldstyle",
+                _ => "Lining",
+            };
+            let _ = write!(attrs, " OTFFigureStyle=\"{width}{case}\"");
+        }
+        if let Some(d) = f.discretionary_ligatures {
+            let _ = write!(attrs, " OTFDiscretionaryLigature=\"{d}\"");
+        }
+        if let Some(fr) = f.fractions {
+            let _ = write!(attrs, " OTFFraction=\"{fr}\"");
+        }
         if let Some(name) = f.language.as_deref().and_then(language_name) {
             let _ = write!(attrs, " AppliedLanguage=\"{}\"", esc(name));
         }
@@ -539,6 +559,96 @@ impl<'d> Writer<'d> {
                 _ => "NoList",
             };
             let _ = write!(attrs, " BulletsAndNumberingListType=\"{said}\"");
+            if list.restart {
+                attrs.push_str(" NumberingContinue=\"false\"");
+            }
+            let _ = write!(
+                props,
+                "<BulletChar BulletCharacterType=\"UnicodeOnly\" BulletCharacterValue=\"{}\"/>",
+                u32::from(list.bullet)
+            );
+            let format = match list.numbering {
+                Numbering::Arabic => "1, 2, 3, 4...",
+                Numbering::LowerAlpha => "a, b, c, d...",
+                Numbering::UpperAlpha => "A, B, C, D...",
+                Numbering::LowerRoman => "i, ii, iii, iv...",
+                Numbering::UpperRoman => "I, II, III, IV...",
+            };
+            let _ = write!(
+                props,
+                "<NumberingFormat type=\"string\">{format}</NumberingFormat>\
+                 <NumberingExpression type=\"string\">^#{}^t</NumberingExpression>",
+                esc(&list.suffix)
+            );
+        }
+        for (rule, which) in [(&f.rule_above, "RuleAbove"), (&f.rule_below, "RuleBelow")] {
+            let Some(rule) = rule else { continue };
+            let _ = write!(
+                attrs,
+                " {which}=\"{}\" {which}LineWeight=\"{}\" {which}Offset=\"{}\" \
+                 {which}LeftIndent=\"{}\" {which}RightIndent=\"{}\" {which}Width=\"{}\"",
+                rule.on,
+                n(f64::from(rule.weight)),
+                n(f64::from(rule.offset)),
+                n(f64::from(rule.indent_left)),
+                n(f64::from(rule.indent_right)),
+                match rule.width {
+                    RuleWidth::Text => "TextWidth",
+                    RuleWidth::Column => "ColumnWidth",
+                }
+            );
+            match &rule.colour {
+                Some(colour) => attrs.push_str(&self.palette.paint(
+                    self.doc,
+                    &Paint::Solid(colour.clone()),
+                    which,
+                    &mut self.dropped,
+                )),
+                None => {
+                    let _ = write!(attrs, " {which}Color=\"Text Color\"");
+                }
+            }
+        }
+        if let Some(j) = f.justification {
+            for (value, name) in [
+                (j.word_min, "MinimumWordSpacing"),
+                (j.word_desired, "DesiredWordSpacing"),
+                (j.word_max, "MaximumWordSpacing"),
+                (j.letter_min, "MinimumLetterSpacing"),
+                (j.letter_desired, "DesiredLetterSpacing"),
+                (j.letter_max, "MaximumLetterSpacing"),
+                (j.glyph_min, "MinimumGlyphScaling"),
+                (j.glyph_desired, "DesiredGlyphScaling"),
+                (j.glyph_max, "MaximumGlyphScaling"),
+            ] {
+                let _ = write!(attrs, " {name}=\"{}\"", n(f64::from(value)));
+            }
+            let said = match j.single_word {
+                SingleWord::Full => "FullyJustified",
+                SingleWord::Left => "LeftAlign",
+                SingleWord::Centre => "CenterAlign",
+                SingleWord::Right => "RightAlign",
+            };
+            let _ = write!(attrs, " SingleWordJustification=\"{said}\"");
+        }
+        if let Some(h) = f.hyphenation {
+            let _ = write!(
+                attrs,
+                " HyphenateWordsLongerThan=\"{}\" HyphenateAfterFirst=\"{}\" \
+                 HyphenateBeforeLast=\"{}\" HyphenateLadderLimit=\"{}\" \
+                 HyphenateCapitalizedWords=\"{}\"",
+                h.min_word, h.min_before, h.min_after, h.limit, h.capitalised
+            );
+        }
+        if let Some(c) = f.composer {
+            let said = match c {
+                Composer::SingleLine => "HL Single",
+                Composer::Paragraph => "HL Composer",
+            };
+            let _ = write!(attrs, " Composer=\"{said}\"");
+        }
+        if f.optical_margin == Some(false) {
+            attrs.push_str(" IgnoreOpticalMargin=\"true\"");
         }
         if let Some(span) = f.column_span {
             match span {
@@ -604,9 +714,6 @@ impl<'d> Writer<'d> {
                 props.push_str("</ListItem>");
             }
             props.push_str("</TabList>");
-        }
-        if f.rule_above.is_some() || f.rule_below.is_some() {
-            self.dropped.note("paragraph rules");
         }
         let (a, p) = self.character(&f.character, size);
         attrs.push_str(&a);
@@ -829,6 +936,14 @@ impl<'d> Writer<'d> {
         let mut out = String::new();
         let text = &story.text;
         let mut footnotes = story.footnotes.iter();
+        // The objects set into this story, by marker, in reading order.
+        let anchors = doc
+            .stories
+            .iter()
+            .find(|(_, s)| std::ptr::eq(*s, story))
+            .map(|(id, _)| doc.anchors_in(id))
+            .unwrap_or_default();
+        let mut marker = 0usize;
         for para in &story.paragraphs {
             let size = story
                 .runs
@@ -893,8 +1008,17 @@ impl<'d> Writer<'d> {
                         continue;
                     }
                     if c == tessera_document::anchored::MARKER {
-                        self.dropped
-                            .note("objects anchored in text (their places were kept empty)");
+                        // The object goes in the text where its marker is,
+                        // with where it sits on the line.
+                        flush(&mut content, &mut out);
+                        let frame = anchors.frame_at(marker);
+                        marker += 1;
+                        match frame {
+                            Some(id) => out.push_str(&self.anchored_item(id)),
+                            None => self
+                                .dropped
+                                .note("an anchor marker with no object (its place was kept empty)"),
+                        }
                         continue;
                     }
                     match Marker::of(c) {
@@ -950,10 +1074,17 @@ impl<'d> Writer<'d> {
         } else {
             self.story_body(story, false)
         };
+        // InDesign keeps Optical Margin Alignment on the story; on when any of
+        // its paragraphs asks for it, and those that state they do not say
+        // so with `IgnoreOpticalMargin`.
+        let optical = story
+            .paragraphs
+            .iter()
+            .any(|p| story.resolve_paragraph(p, self.doc).optical_margin == Some(true));
         let xml = format!(
             "{HEAD}<idPkg:Story xmlns:idPkg=\"{PKG}\" DOMVersion=\"{DOM}\">\n\
              <Story Self=\"{self_}\" AppliedTOCStyle=\"n\" TrackChanges=\"false\" StoryTitle=\"$ID/\" AppliedNamedGrid=\"n\">\n\
-             <StoryPreference OpticalMarginAlignment=\"false\" OpticalMarginSize=\"12\" FrameType=\"TextFrameType\" \
+             <StoryPreference OpticalMarginAlignment=\"{optical}\" OpticalMarginSize=\"12\" FrameType=\"TextFrameType\" \
              StoryOrientation=\"Horizontal\" StoryDirection=\"LeftToRightDirection\"/>\n\
              <InCopyExportOption IncludeGraphicProxies=\"true\" IncludeAllResources=\"false\"/>\n\
              {body}\n</Story>\n</idPkg:Story>\n"
@@ -1067,14 +1198,35 @@ impl<'d> Writer<'d> {
 
     /// One frame and, for a group, its members, in spread space whose origin
     /// is `so` in the document.
+    /// An object set into text: the same element as on a spread, with its
+    /// origin at its own top-left, since the text puts it where it goes.
+    fn anchored_item(&mut self, id: FrameId) -> String {
+        let Some(origin) = self.doc.frame(id).map(|f| DocPoint {
+            x: f.bounds.x,
+            y: f.bounds.y,
+        }) else {
+            return String::new();
+        };
+        if matches!(
+            self.doc.frame(id).map(|f| &f.kind),
+            Some(FrameKind::Table(_) | FrameKind::TablePart { .. })
+        ) {
+            self.dropped.note("tables");
+            return String::new();
+        }
+        self.writing_anchored.push(id);
+        let out = self.item(id, origin);
+        self.writing_anchored.retain(|f| *f != id);
+        out
+    }
+
     fn item(&mut self, id: FrameId, so: DocPoint) -> String {
         let doc = self.doc;
         let Some(frame) = doc.frame(id) else {
             return String::new();
         };
-        if frame.anchor.is_some() {
-            self.dropped
-                .note("objects anchored in text (their places were kept empty)");
+        if frame.anchor.is_some() && !self.writing_anchored.contains(&id) {
+            // Written where its marker is, by the story; not on the spread.
             return String::new();
         }
         let self_ = self.frames.get(&id).cloned().unwrap_or_else(|| self.id());
@@ -1151,8 +1303,24 @@ impl<'d> Writer<'d> {
             let _ = write!(attrs, " AppliedObjectStyle=\"{}\"", esc(style));
         }
         if !frame.corners.is_square() {
-            self.dropped
-                .note("rounded and fancy corners (written square)");
+            use tessera_document::corners::CornerShape;
+            let option = match frame.corners.shape {
+                CornerShape::Round => "RoundedCorner",
+                CornerShape::Bevel => "BevelCorner",
+                CornerShape::Inverse => "InverseRoundedCorner",
+            };
+            for (i, corner) in ["TopLeft", "TopRight", "BottomRight", "BottomLeft"]
+                .iter()
+                .enumerate()
+            {
+                let radius = frame.corners.radii[i];
+                let option = if radius > 0.0 { option } else { "None" };
+                let _ = write!(
+                    attrs,
+                    " {corner}CornerOption=\"{option}\" {corner}CornerRadius=\"{}\"",
+                    n(radius)
+                );
+            }
         }
         if frame.feather.is_some() {
             self.dropped.note("gradient feathers");
@@ -1309,8 +1477,44 @@ impl<'d> Writer<'d> {
             }
             FrameKind::Group(_) => unreachable!("groups are written above"),
         };
-        if doc.path_texts.contains_key(id) {
-            self.dropped.note("text on a path");
+        if let (Some(text), FrameKind::Path(path)) = (doc.path_text(id), &frame.kind) {
+            use kurbo::ParamCurveArclen;
+            use tessera_document::path_text::PathTextAlign;
+            let length: f64 = path.segments().map(|s| s.arclen(0.01)).sum();
+            let story = self
+                .stories
+                .get(&text.story)
+                .cloned()
+                .unwrap_or_else(|| "n".to_owned());
+            let align = match text.align {
+                PathTextAlign::Baseline => "BaselineAlignment",
+                PathTextAlign::Centre => "CenterAlignment",
+                PathTextAlign::Ascender => "AscenderAlignment",
+                PathTextAlign::Descender => "DescenderAlignment",
+            };
+            let path_self = self.id();
+            let _ = write!(
+                inner,
+                "<TextPath Self=\"{path_self}\" ParentStory=\"{story}\" StartBracket=\"{}\" \
+                 EndBracket=\"{}\" TextAlignment=\"{align}\" PathAlignment=\"CenterPathAlignment\" \
+                 PathEffect=\"RainbowPathEffect\" FlipPathEffect=\"{}\" \
+                 PreviousTextFrame=\"n\" NextTextFrame=\"n\"/>",
+                n(text.start * length),
+                n(text.end * length),
+                if text.flip { "Flipped" } else { "NotFlipped" }
+            );
+        }
+        if let Some(anchor) = frame.anchor {
+            use tessera_document::anchored::AnchorKind;
+            let position = match anchor.kind {
+                AnchorKind::Above => "AboveLine",
+                AnchorKind::Inline => "InlinePosition",
+            };
+            let _ = write!(
+                inner,
+                "<AnchoredObjectSetting AnchoredPosition=\"{position}\" AnchorYoffset=\"{}\"/>",
+                n(-anchor.baseline_shift)
+            );
         }
 
         // Effects.
@@ -1536,6 +1740,7 @@ pub fn write(doc: &Document) -> Result<Written, String> {
         fonts: Vec::new(),
         count: 0,
         masters_self: HashMap::new(),
+        writing_anchored: Vec::new(),
     };
 
     // Every name an item may point at, made before anything is written.
@@ -1549,14 +1754,18 @@ pub fn write(doc: &Document) -> Result<Written, String> {
     }
     let mut used_stories: Vec<StoryId> = Vec::new();
     for id in &frame_ids {
-        if let Some(Frame {
-            kind: FrameKind::Text { story, .. },
-            anchor: None,
-            ..
-        }) = doc.frame(*id)
-            && !used_stories.contains(story)
+        // A text frame's story, set in the text or not, and a path's.
+        let story = match doc.frame(*id) {
+            Some(Frame {
+                kind: FrameKind::Text { story, .. },
+                ..
+            }) => Some(*story),
+            _ => doc.path_text(*id).map(|t| t.story),
+        };
+        if let Some(story) = story
+            && !used_stories.contains(&story)
         {
-            used_stories.push(*story);
+            used_stories.push(story);
         }
     }
     for story in &used_stories {
@@ -2188,6 +2397,243 @@ mod tests {
         // The picture, linked where it was.
         let link = back.links.values().next().expect("a link");
         assert_eq!(link.path, std::path::PathBuf::from("/pictures/a photo.jpg"));
+    }
+
+    #[test]
+    fn optical_margins_go_out_on_the_story_and_come_back_on_its_paragraphs() {
+        // InDesign keeps the setting on the story; a paragraph that refuses
+        // it says IgnoreOpticalMargin. Turned on for the body and refused by
+        // the heading, both come back as they were.
+        let (mut doc, _) = a_document();
+        let story = doc
+            .stories
+            .values_mut()
+            .find(|s| s.text.starts_with("A heading"))
+            .expect("the story");
+        let heading = story.paragraphs[0].range.clone();
+        let body = story.paragraphs[1].range.clone();
+        story.apply_paragraph_format(
+            heading,
+            &ParagraphFormat {
+                optical_margin: Some(false),
+                ..ParagraphFormat::default()
+            },
+        );
+        story.apply_paragraph_format(
+            body,
+            &ParagraphFormat {
+                optical_margin: Some(true),
+                ..ParagraphFormat::default()
+            },
+        );
+        let written = write(&doc).expect("written");
+        let back = crate::idml::import_bytes(written.bytes, std::path::Path::new("x.idml"))
+            .expect("read back")
+            .document;
+        let story = back
+            .stories
+            .values()
+            .find(|s| s.text.starts_with("A heading"))
+            .expect("the story");
+        let optical: Vec<Option<bool>> = story
+            .paragraphs
+            .iter()
+            .map(|p| story.resolve_paragraph(p, &back).optical_margin)
+            .collect();
+        assert_eq!(optical, vec![Some(false), Some(true)]);
+    }
+
+    #[test]
+    fn a_style_s_rules_spacing_hyphenation_list_and_figures_survive_the_trip() {
+        use tessera_text::story::{
+            Composer, FigureCase, FigureWidth, Hyphenation, Justification, ListFormat, ListKind,
+            Numbering, ParagraphRule, RuleWidth, SingleWord,
+        };
+        let (mut doc, _) = a_document();
+        let format = ParagraphFormat {
+            rule_above: Some(ParagraphRule {
+                on: true,
+                weight: 2.0,
+                colour: None,
+                offset: 4.0,
+                width: RuleWidth::Text,
+                indent_left: 3.0,
+                indent_right: 1.0,
+            }),
+            justification: Some(Justification {
+                word_min: 85.0,
+                word_max: 120.0,
+                single_word: SingleWord::Centre,
+                ..Justification::default()
+            }),
+            hyphenation: Some(Hyphenation {
+                min_word: 7,
+                limit: 2,
+                capitalised: false,
+                ..Hyphenation::default()
+            }),
+            composer: Some(Composer::Paragraph),
+            list: Some(ListFormat {
+                kind: ListKind::Number,
+                numbering: Numbering::UpperRoman,
+                suffix: ")".to_owned(),
+                restart: true,
+                ..ListFormat::default()
+            }),
+            character: CharacterFormat {
+                figure_case: Some(FigureCase::OldStyle),
+                figure_width: Some(FigureWidth::Tabular),
+                fractions: Some(true),
+                ..CharacterFormat::default()
+            },
+            ..ParagraphFormat::default()
+        };
+        doc.add_paragraph_style(ParagraphStyle {
+            name: "Everything".to_owned(),
+            based_on: None,
+            format: format.clone(),
+        });
+        let written = write(&doc).expect("written");
+        let back = crate::idml::import_bytes(written.bytes, std::path::Path::new("x.idml"))
+            .expect("read back")
+            .document;
+        let got = &back
+            .paragraph_styles
+            .values()
+            .find(|s| s.name == "Everything")
+            .expect("the style")
+            .format;
+        assert_eq!(got.rule_above, format.rule_above);
+        assert_eq!(got.justification, format.justification);
+        assert_eq!(got.hyphenation, format.hyphenation);
+        assert_eq!(got.composer, format.composer);
+        assert_eq!(got.list, format.list);
+        assert_eq!(got.character.figure_case, Some(FigureCase::OldStyle));
+        assert_eq!(got.character.figure_width, Some(FigureWidth::Tabular));
+        assert_eq!(got.character.fractions, Some(true));
+    }
+
+    #[test]
+    fn corners_anchored_objects_and_text_on_a_path_survive_the_trip() {
+        use tessera_document::anchored::{AnchorKind, Anchored};
+        use tessera_document::corners::{CornerShape, Corners};
+        use tessera_document::path_text::{PathText, PathTextAlign};
+
+        let (mut doc, ids) = a_document();
+        let layer = doc.default_layer().expect("layer");
+        // The boxed rectangle gets bevelled corners.
+        let boxed = ids[2];
+        doc.frames[boxed].corners = Corners {
+            shape: CornerShape::Bevel,
+            radii: [6.0, 6.0, 0.0, 6.0],
+        };
+        // A story with an object set into it, above the line, and one in
+        // the line, raised.
+        let marker = tessera_document::anchored::MARKER;
+        let story = doc.add_story(Story::new(format!("Before {marker} middle {marker} after")));
+        let p1 = doc.pages[doc.page_ids().next().expect("page")].bounds;
+        doc.add_frame(
+            layer,
+            frame(
+                rect(p1.x + 300.0, p1.y + 50.0, 200.0, 100.0),
+                FrameKind::Text {
+                    story,
+                    layout: Default::default(),
+                },
+            ),
+        );
+        let mut above = frame(rect(0.0, 0.0, 40.0, 20.0), FrameKind::Rectangle);
+        above.anchor = Some(Anchored {
+            kind: AnchorKind::Above,
+            ..Anchored::new(story, 0)
+        });
+        doc.add_frame(layer, above);
+        let mut inline = frame(rect(0.0, 0.0, 10.0, 10.0), FrameKind::Ellipse);
+        inline.anchor = Some(Anchored {
+            baseline_shift: 3.0,
+            ..Anchored::new(story, 1)
+        });
+        doc.add_frame(layer, inline);
+        // Text along a line, the second half of it, hanging from it.
+        let along = doc.add_story(Story::new("Along the line"));
+        let mut line = kurbo::BezPath::new();
+        line.move_to((0.0, 0.0));
+        line.line_to((200.0, 0.0));
+        let path = doc.add_frame(
+            layer,
+            frame(
+                rect(p1.x + 50.0, p1.y + 600.0, 200.0, 1.0),
+                FrameKind::Path(line),
+            ),
+        );
+        doc.set_path_text(
+            path,
+            Some(PathText {
+                start: 0.5,
+                align: PathTextAlign::Ascender,
+                flip: true,
+                ..PathText::new(along)
+            }),
+        );
+
+        let written = write(&doc).expect("written");
+        assert!(
+            !written.dropped.0.iter().any(|d| d.contains("corners")
+                || d.contains("anchored")
+                || d.contains("on a path")),
+            "none of these is dropped now: {:?}",
+            written.dropped.0
+        );
+        let back = crate::idml::import_bytes(written.bytes, std::path::Path::new("x.idml"))
+            .expect("read back")
+            .document;
+
+        let bevelled = back
+            .frames
+            .values()
+            .find(|f| f.corners.shape == CornerShape::Bevel)
+            .expect("the bevelled frame");
+        assert_eq!(bevelled.corners.radii, [6.0, 6.0, 0.0, 6.0]);
+
+        let (story_id, _) = back
+            .stories
+            .iter()
+            .find(|(_, s)| s.text.starts_with("Before"))
+            .expect("the story with objects in it");
+        let anchors = back.anchors_in(story_id);
+        assert_eq!(
+            anchors.frames.len(),
+            2,
+            "both objects are in the text again"
+        );
+        let first = back
+            .frame(anchors.frame_at(0).expect("first"))
+            .expect("frame");
+        let second = back
+            .frame(anchors.frame_at(1).expect("second"))
+            .expect("frame");
+        assert_eq!(first.anchor.map(|a| a.kind), Some(AnchorKind::Above));
+        assert!(matches!(second.kind, FrameKind::Ellipse));
+        assert!((second.anchor.expect("anchored").baseline_shift - 3.0).abs() < 1e-6);
+        assert!((first.bounds.width - 40.0).abs() < 1e-6);
+
+        let (path, text) = back
+            .path_texts
+            .iter()
+            .next()
+            .expect("text on a path came back");
+        assert!(matches!(
+            back.frame(path).map(|f| &f.kind),
+            Some(FrameKind::Path(_))
+        ));
+        assert_eq!(
+            back.story(text.story).map(|s| s.text.as_str()),
+            Some("Along the line")
+        );
+        assert!((text.start - 0.5).abs() < 1e-3, "start {}", text.start);
+        assert!((text.end - 1.0).abs() < 1e-3, "end {}", text.end);
+        assert_eq!(text.align, PathTextAlign::Ascender);
+        assert!(text.flip);
     }
 
     #[test]

@@ -837,6 +837,7 @@ fn clear_paragraph_page(page: StylePage, f: &mut ParagraphFormat) {
         StylePage::Justification => {
             f.composer = None;
             f.justification = None;
+            f.optical_margin = None;
         }
         StylePage::DropCapsAndLists => {
             f.drop_cap_lines = None;
@@ -2181,6 +2182,7 @@ fn basic_paragraph(state: &TesseraApp) -> ParagraphFormat {
         drop_cap_lines: Some(0),
         drop_cap_characters: Some(1),
         composer: Some(Composer::SingleLine),
+        optical_margin: Some(false),
         character: CharacterFormat {
             tracking: Some(0.0),
             kerning: Some(Kerning::Metrics),
@@ -2293,6 +2295,9 @@ fn paragraph_terms(f: &ParagraphFormat) -> Vec<(StylePage, String)> {
             Composer::Paragraph => "paragraph composer",
         };
         put(P::Justification, said.to_string());
+    }
+    if f.optical_margin == Some(true) {
+        put(P::Justification, "optical margin alignment".to_string());
     }
     if let Some(j) = f.justification {
         put(
@@ -3168,6 +3173,12 @@ fn paragraph_page(
                         ("Single-line", Composer::SingleLine),
                         ("Paragraph", Composer::Paragraph),
                     ],
+                );
+                optional_flag(
+                    ui,
+                    "Optical margin alignment",
+                    &mut format.optical_margin,
+                    &lineage.find(|f| f.optical_margin),
                 );
             });
             style_ui::card(ui, Some("Spacing limits"), |ui| {
@@ -4822,6 +4833,7 @@ mod tests {
             grep: Some(Vec::new()),
             line_styles: Some(Vec::new()),
             column_span: Some(tessera_text::story::ColumnSpan::Single),
+            optical_margin: Some(true),
             character: every_character_property(),
         };
         let terms = paragraph_terms(&full);
@@ -5123,6 +5135,7 @@ mod tests {
             grep: Some(Vec::new()),
             line_styles: Some(Vec::new()),
             column_span: Some(tessera_text::story::ColumnSpan::Single),
+            optical_margin: Some(true),
             character: every_character_property(),
         };
         let mut emptied = full.clone();

@@ -5288,6 +5288,25 @@ fn text_section(
                 }
             });
         }
+        // Optical margins: punctuation hung outside the measure.
+        let mut optical = paragraph.optical_margin == Some(true);
+        if ui
+            .checkbox(&mut optical, "Optical margin alignment")
+            .on_hover_text(
+                "Punctuation at a line's ends hangs into the margin, so the edge looks straight",
+            )
+            .clicked()
+        {
+            set_paragraph(
+                state,
+                story,
+                target.clone(),
+                ParagraphFormat {
+                    optical_margin: Some(optical),
+                    ..ParagraphFormat::default()
+                },
+            );
+        }
         if paragraph.hyphenate == Some(true) {
             let mut hyphenation = paragraph.hyphenation;
             if hyphenation_editor(ui, &mut hyphenation, false) {

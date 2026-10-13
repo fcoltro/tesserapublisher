@@ -829,6 +829,11 @@ pub struct ParagraphFormat {
     /// own into several: InDesign's Span Columns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub column_span: Option<ColumnSpan>,
+    /// Whether punctuation and the lighter capitals at a line's ends are set
+    /// a little past the measure, so the edge looks straight: InDesign's
+    /// Optical Margin Alignment. See [`crate::margin`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub optical_margin: Option<bool>,
     /// What every run in the paragraph inherits before its own style speaks.
     #[serde(default)]
     pub character: CharacterFormat,
@@ -869,6 +874,7 @@ impl ParagraphFormat {
                 .clone()
                 .or_else(|| base.line_styles.clone()),
             column_span: self.column_span.or(base.column_span),
+            optical_margin: self.optical_margin.or(base.optical_margin),
             character: self.character.over(&base.character),
         }
     }

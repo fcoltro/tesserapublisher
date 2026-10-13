@@ -11,9 +11,10 @@ use roxmltree::Node;
 use tessera_color::Color;
 use tessera_document::document::Document;
 use tessera_text::story::{
-    Alignment, Case, CharacterFormat, CharacterStyle, CharacterStyleId, Decoration, KeepOptions,
-    KeepTogether, Kerning, ListFormat, ListKind, ParagraphFormat, ParagraphStyle, ParagraphStyleId,
-    TabAlignment, TabStop,
+    Alignment, Case, CharacterFormat, CharacterStyle, CharacterStyleId, Composer, Decoration,
+    FigureCase, FigureWidth, Hyphenation, Justification, KeepOptions, KeepTogether, Kerning,
+    ListFormat, ListKind, Numbering, ParagraphFormat, ParagraphRule, ParagraphStyle,
+    ParagraphStyleId, RuleWidth, SingleWord, TabAlignment, TabStop,
 };
 
 use crate::xml::{attr, attr_f32, attr_f64, child, children, numbers, property};
@@ -531,7 +532,44 @@ pub(crate) fn character_format(
     if let Some(language) = attr(node, "AppliedLanguage") {
         f.language = language_code(language);
     }
+    // OpenType, as the Character panel's OpenType menu sets it.
+    match attr(node, "OTFFigureStyle") {
+        Some("TabularLining") => {
+            f.figure_case = Some(FigureCase::Lining);
+            f.figure_width = Some(FigureWidth::Tabular);
+        }
+        Some("ProportionalLining") => {
+            f.figure_case = Some(FigureCase::Lining);
+            f.figure_width = Some(FigureWidth::Proportional);
+        }
+        Some("TabularOldstyle") => {
+            f.figure_case = Some(FigureCase::OldStyle);
+            f.figure_width = Some(FigureWidth::Tabular);
+        }
+        Some("ProportionalOldstyle") => {
+            f.figure_case = Some(FigureCase::OldStyle);
+            f.figure_width = Some(FigureWidth::Proportional);
+        }
+        _ => {}
+    }
+    f.discretionary_ligatures = flag(node, "OTFDiscretionaryLigature");
+    f.fractions = flag(node, "OTFFraction");
     f
+}
+
+/// A `true` or `false` attribute; anything else, or absent, is unsaid.
+fn flag(node: Node, name: &str) -> Option<bool> {
+    match attr(node, name) {
+        Some("true") => Some(true),
+        Some("false") => Some(false),
+        _ => None,
+    }
+}
+
+/// An attribute, or the same name in the node's `Properties`, where IDML
+/// puts a value that is a reference or a list.
+fn prop<'a>(node: Node<'a, '_>, name: &str) -> Option<&'a str> {
+    attr(node, name).or_else(|| property(node, name))
 }
 
 /// "$ID/English: USA" → "en", "$ID/German: Reformed" → "de".
@@ -591,6 +629,9 @@ pub(crate) fn paragraph_format(node: Node, colours: &Colours) -> ParagraphFormat
         .filter(|n| *n > 1);
     f.drop_cap_characters = attr_f32(node, "DropCapCharacters").map(|n| n as u8);
     f.column_span = column_span(node);
+    // Opting out of the story's Optical Margin Alignment; opting in is the
+    // story's to say (see `optical_margins` in the package reader).
+    f.optical_margin = (attr(node, "IgnoreOpticalMargin") == Some("true")).then_some(false);
 
     let with_next = attr_f32(node, "KeepWithNext").is_some_and(|n| n > 0.0);
     let together = if attr(node, "KeepLinesTogether") == Some("true") {
@@ -628,9 +669,161 @@ pub(crate) fn paragraph_format(node: Node, colours: &Colours) -> ParagraphFormat
         _ => None,
     };
 
+    if let Some(list) = f.list.as_mut() {
+        list_details(node, list);
+    }
+    f.rule_above = rule(node, colours, "RuleAbove");
+    f.rule_below = rule(node, colours, "RuleBelow");
+    f.justification = justification(node);
+    f.hyphenation = hyphenation(node);
+    // "HL Composer" and "HL Single" in IDML, the World-Ready composers by
+    // their full names: any single-line one is single-line.
+    f.composer = prop(node, "Composer").map(|c| {
+        if c.contains("Single") {
+            Composer::SingleLine
+        } else {
+            Composer::Paragraph
+        }
+    });
+
     f.tab_stops = tab_stops(node);
     f.character = character_format(node, colours, None);
     f
+}
+
+/// A list item's bullet, numbering and restart, as a paragraph or its
+/// style states them beside `BulletsAndNumberingListType`.
+fn list_details(node: Node, list: &mut ListFormat) {
+    if let Some(bullet) = child(node, "Properties").and_then(|p| child(p, "BulletChar")) {
+        // A glyph picked from a font by its id has no character to say.
+        let unicode = matches!(
+            attr(bullet, "BulletCharacterType"),
+            Some("UnicodeOnly") | Some("UnicodeWithFont")
+        );
+        if let Some(c) = attr(bullet, "BulletCharacterValue")
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .and_then(char::from_u32)
+            .filter(|_| unicode)
+        {
+            list.bullet = c;
+        }
+    }
+    // "1, 2, 3, 4..." and its kind: the first of the examples says which.
+    if let Some(format) = prop(node, "NumberingFormat") {
+        list.numbering = match format.split(',').next().unwrap_or("").trim() {
+            "a" => Numbering::LowerAlpha,
+            "A" => Numbering::UpperAlpha,
+            "i" => Numbering::LowerRoman,
+            "I" => Numbering::UpperRoman,
+            _ => Numbering::Arabic,
+        };
+    }
+    // "^#.^t": what follows the number, up to the tab InDesign puts after it.
+    if let Some(expression) = prop(node, "NumberingExpression")
+        && let Some(after) = expression.strip_prefix("^#")
+    {
+        let suffix: String = after.split("^t").next().unwrap_or("").to_owned();
+        if !suffix.contains('^') {
+            list.suffix = suffix;
+        }
+    }
+    if prop(node, "NumberingContinue") == Some("false") {
+        list.restart = true;
+    }
+}
+
+/// A paragraph rule, `RuleAbove` or `RuleBelow`, and its weight, colour,
+/// offset, width and indents. Unsaid unless the paragraph or style states
+/// the rule on or off or its weight.
+fn rule(node: Node, colours: &Colours, k: &str) -> Option<ParagraphRule> {
+    let on = flag(node, k);
+    let weight = attr_f32(node, &format!("{k}LineWeight"));
+    if on.is_none() && weight.is_none() {
+        return None;
+    }
+    let mut r = ParagraphRule {
+        on: on.unwrap_or(false),
+        weight: weight.unwrap_or(1.0),
+        ..ParagraphRule::default()
+    };
+    // "Text Color" is the text's own, which is what `None` says.
+    let reference = prop(node, &format!("{k}Color"));
+    if let Some(colour) = colours.get(reference) {
+        r.colour = Some(super::tinted(colour, attr_f64(node, &format!("{k}Tint"))));
+    }
+    r.offset = attr_f32(node, &format!("{k}Offset")).unwrap_or(0.0);
+    r.width = match attr(node, &format!("{k}Width")) {
+        Some("TextWidth") => RuleWidth::Text,
+        _ => RuleWidth::Column,
+    };
+    r.indent_left = attr_f32(node, &format!("{k}LeftIndent")).unwrap_or(0.0);
+    r.indent_right = attr_f32(node, &format!("{k}RightIndent")).unwrap_or(0.0);
+    Some(r)
+}
+
+/// The Justification dialog: word and letter spacing and glyph scaling,
+/// minimum, desired and maximum, and what a single-word line does. Unsaid
+/// unless one of them is stated; those not stated are InDesign's defaults.
+fn justification(node: Node) -> Option<Justification> {
+    let names = [
+        "MinimumWordSpacing",
+        "DesiredWordSpacing",
+        "MaximumWordSpacing",
+        "MinimumLetterSpacing",
+        "DesiredLetterSpacing",
+        "MaximumLetterSpacing",
+        "MinimumGlyphScaling",
+        "DesiredGlyphScaling",
+        "MaximumGlyphScaling",
+        "SingleWordJustification",
+    ];
+    if !names.iter().any(|n| attr(node, n).is_some()) {
+        return None;
+    }
+    let d = Justification::default();
+    let get = |name: &str, or: f32| attr_f32(node, name).unwrap_or(or);
+    Some(Justification {
+        word_min: get("MinimumWordSpacing", d.word_min),
+        word_desired: get("DesiredWordSpacing", d.word_desired),
+        word_max: get("MaximumWordSpacing", d.word_max),
+        letter_min: get("MinimumLetterSpacing", d.letter_min),
+        letter_desired: get("DesiredLetterSpacing", d.letter_desired),
+        letter_max: get("MaximumLetterSpacing", d.letter_max),
+        glyph_min: get("MinimumGlyphScaling", d.glyph_min),
+        glyph_desired: get("DesiredGlyphScaling", d.glyph_desired),
+        glyph_max: get("MaximumGlyphScaling", d.glyph_max),
+        single_word: match attr(node, "SingleWordJustification") {
+            Some("LeftAlign") => SingleWord::Left,
+            Some("CenterAlign") => SingleWord::Centre,
+            Some("RightAlign") => SingleWord::Right,
+            Some("FullyJustified") => SingleWord::Full,
+            _ => d.single_word,
+        },
+    })
+}
+
+/// The Hyphenation dialog: shortest word, letters each side of the break,
+/// hyphens in a row, and capitalised words. Unsaid unless one is stated.
+fn hyphenation(node: Node) -> Option<Hyphenation> {
+    let names = [
+        "HyphenateWordsLongerThan",
+        "HyphenateAfterFirst",
+        "HyphenateBeforeLast",
+        "HyphenateLadderLimit",
+        "HyphenateCapitalizedWords",
+    ];
+    if !names.iter().any(|n| attr(node, n).is_some()) {
+        return None;
+    }
+    let d = Hyphenation::default();
+    let count = |name: &str, or: u8| attr_f32(node, name).map_or(or, |n| n.clamp(0.0, 255.0) as u8);
+    Some(Hyphenation {
+        min_word: count("HyphenateWordsLongerThan", d.min_word),
+        min_before: count("HyphenateAfterFirst", d.min_before),
+        min_after: count("HyphenateBeforeLast", d.min_after),
+        limit: count("HyphenateLadderLimit", d.limit),
+        capitalised: flag(node, "HyphenateCapitalizedWords").unwrap_or(d.capitalised),
+    })
 }
 
 /// `<TabList type="list"><ListItem type="record">…` into tab stops.
@@ -779,6 +972,80 @@ fn automatic_rules(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn para(xml: &str) -> ParagraphFormat {
+        let graphic = roxmltree::Document::parse("<Graphic/>").unwrap();
+        let colours = Colours::read(graphic.root_element());
+        let doc = roxmltree::Document::parse(xml).unwrap();
+        paragraph_format(doc.root_element(), &colours)
+    }
+
+    #[test]
+    fn rules_justification_hyphenation_and_the_composer_are_read() {
+        let f = para(
+            r#"<ParagraphStyle RuleAbove="true" RuleAboveLineWeight="2" RuleAboveOffset="4"
+                 RuleAboveWidth="TextWidth" RuleAboveLeftIndent="3" RuleBelow="false"
+                 MinimumWordSpacing="85" MaximumWordSpacing="120" DesiredGlyphScaling="100"
+                 SingleWordJustification="CenterAlign" HyphenateWordsLongerThan="7"
+                 HyphenateLadderLimit="2" HyphenateCapitalizedWords="false">
+               <Properties><Composer type="string">HL Composer</Composer></Properties>
+             </ParagraphStyle>"#,
+        );
+        let above = f.rule_above.expect("a rule above");
+        assert!(above.on);
+        assert_eq!(
+            (above.weight, above.offset, above.indent_left),
+            (2.0, 4.0, 3.0)
+        );
+        assert_eq!(above.width, RuleWidth::Text);
+        assert!(!f.rule_below.expect("stated off").on);
+        let j = f.justification.expect("spacing");
+        assert_eq!(
+            (j.word_min, j.word_desired, j.word_max),
+            (85.0, 100.0, 120.0)
+        );
+        assert_eq!(j.single_word, SingleWord::Centre);
+        let h = f.hyphenation.expect("hyphenation");
+        assert_eq!((h.min_word, h.min_before, h.limit), (7, 2, 2));
+        assert!(!h.capitalised);
+        assert_eq!(f.composer, Some(Composer::Paragraph));
+        assert_eq!(
+            para(
+                r#"<P><Properties><Composer>Adobe Single-line Composer</Composer></Properties></P>"#
+            )
+            .composer,
+            Some(Composer::SingleLine)
+        );
+        assert!(para("<P/>").justification.is_none(), "unsaid stays unsaid");
+    }
+
+    #[test]
+    fn a_list_s_bullet_numbering_and_suffix_are_read() {
+        let bullet = para(
+            r#"<P BulletsAndNumberingListType="BulletList"><Properties>
+                 <BulletChar BulletCharacterType="UnicodeOnly" BulletCharacterValue="8211"/>
+               </Properties></P>"#,
+        );
+        assert_eq!(bullet.list.expect("list").bullet, '\u{2013}');
+        let numbered = para(
+            r#"<P BulletsAndNumberingListType="NumberedList" NumberingContinue="false"><Properties>
+                 <NumberingFormat type="string">i, ii, iii, iv...</NumberingFormat>
+                 <NumberingExpression type="string">^#)^t</NumberingExpression>
+               </Properties></P>"#,
+        );
+        let list = numbered.list.expect("list");
+        assert_eq!(list.numbering, Numbering::LowerRoman);
+        assert_eq!(list.suffix, ")");
+        assert!(list.restart);
+    }
+
+    #[test]
+    fn opentype_figures_and_fractions_are_read() {
+        let f = para(r#"<P OTFFigureStyle="TabularOldstyle" OTFFraction="true"/>"#);
+        assert_eq!(f.character.figure_case, Some(FigureCase::OldStyle));
+        assert_eq!(f.character.figure_width, Some(FigureWidth::Tabular));
+        assert_eq!(f.character.fractions, Some(true));
+    }
 
     #[test]
     fn span_and_split_columns_are_read_from_a_paragraph() {

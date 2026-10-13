@@ -73,11 +73,20 @@ static ACTIVE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0)
 /// Called when the preference changes rather than every frame: the constants
 /// below read the value, so nothing has to be rebuilt.
 pub fn use_palette(choice: crate::prefs::ThemeChoice) {
-    let which = match choice {
-        crate::prefs::ThemeChoice::Dark => 0,
-        crate::prefs::ThemeChoice::Light => 1,
-    };
+    let which = crate::prefs::ThemeChoice::ALL
+        .iter()
+        .position(|c| *c == choice)
+        .unwrap_or(0) as u8;
     ACTIVE.store(which, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The theme in force.
+pub fn choice() -> crate::prefs::ThemeChoice {
+    let which = usize::from(ACTIVE.load(std::sync::atomic::Ordering::Relaxed));
+    crate::prefs::ThemeChoice::ALL
+        .get(which)
+        .copied()
+        .unwrap_or_default()
 }
 
 /// How tightly the interface is packed at the moment.
@@ -129,13 +138,21 @@ fn hold_the_screen() -> std::sync::MutexGuard<'static, ()> {
 
 /// The palette in force.
 pub fn palette() -> Palette {
-    match ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
-        1 => Palette::LIGHT,
-        _ => Palette::DARK,
-    }
+    Palette::of(choice())
 }
 
 impl Palette {
+    /// The palette a theme choice draws from.
+    pub const fn of(choice: crate::prefs::ThemeChoice) -> Self {
+        match choice {
+            crate::prefs::ThemeChoice::Dark => Self::DARK,
+            crate::prefs::ThemeChoice::MediumDark => Self::MEDIUM_DARK,
+            crate::prefs::ThemeChoice::MediumLight => Self::MEDIUM_LIGHT,
+            crate::prefs::ThemeChoice::Light => Self::LIGHT,
+            crate::prefs::ThemeChoice::HighContrast => Self::HIGH_CONTRAST,
+        }
+    }
+
     /// One step of the scale, numbered 1 to 12 as the scale is written.
     pub const fn step(&self, n: usize) -> Color32 {
         self.steps[n - 1]
@@ -215,6 +232,114 @@ impl Palette {
         // read against white paper, and it carries a white tick.
         ok: Color32::from_rgb(0x1E, 0x7A, 0x44),
     };
+
+    // The three below follow DesignCraft's brightness levels
+    // (`crates/ui-egui/src/theme.rs`, MIT), laid onto this scale's roles and
+    // then moved where the contrast tests below asked.
+
+    // InDesign's mid-grey panels, between dark and medium light. The 0x53
+    // panel and its 0x74 field border are DesignCraft's measurement; the
+    // focus ring, the accent and the labels are lifted until they clear the
+    // same minimums the dark palette does on a lighter ground.
+    pub const MEDIUM_DARK: Self = Self {
+        steps: [
+            Color32::from_rgb(0x42, 0x42, 0x42),
+            Color32::from_rgb(0x53, 0x53, 0x53),
+            Color32::from_rgb(0x58, 0x58, 0x58),
+            Color32::from_rgb(0x5E, 0x5E, 0x5E),
+            Color32::from_rgb(0x64, 0x64, 0x64),
+            Color32::from_rgb(0x6C, 0x6C, 0x6C),
+            Color32::from_rgb(0x74, 0x74, 0x74),
+            Color32::from_rgb(0xA8, 0xA8, 0xA8),
+            Color32::from_rgb(0x93, 0xBB, 0xF9),
+            Color32::from_rgb(0xB0, 0xCD, 0xFB),
+            Color32::from_rgb(0xEA, 0xEA, 0xEA),
+            Color32::from_rgb(0xFF, 0xFF, 0xFF),
+        ],
+        canvas_bg: Color32::from_rgb(0x5E, 0x5E, 0x5E),
+        field_bg: Color32::from_rgb(0x45, 0x45, 0x45),
+        accent: Color32::from_rgb(0x93, 0xBB, 0xF9),
+        accent_hover: Color32::from_rgb(0xB0, 0xCD, 0xFB),
+        error: Color32::from_rgb(0xFF, 0xB4, 0xAB),
+        ok: Color32::from_rgb(0x2E, 0x9E, 0x5B),
+    };
+
+    // Light-grey panels, between medium dark and light: DesignCraft's 0xB8
+    // panel, raised to 0xBE so a selected row stays light enough for black
+    // text under the accent's wash, with a pasteboard a step darker still.
+    pub const MEDIUM_LIGHT: Self = Self {
+        steps: [
+            Color32::from_rgb(0xCA, 0xCA, 0xCA),
+            Color32::from_rgb(0xBE, 0xBE, 0xBE),
+            Color32::from_rgb(0xBA, 0xBA, 0xBA),
+            Color32::from_rgb(0xB6, 0xB6, 0xB6),
+            Color32::from_rgb(0xB2, 0xB2, 0xB2),
+            Color32::from_rgb(0xA6, 0xA6, 0xA6),
+            Color32::from_rgb(0x8C, 0x8C, 0x8C),
+            Color32::from_rgb(0x4A, 0x4A, 0x4A),
+            Color32::from_rgb(0x17, 0x3C, 0x85),
+            Color32::from_rgb(0x12, 0x30, 0x6E),
+            Color32::from_rgb(0x1E, 0x1E, 0x1E),
+            Color32::from_rgb(0x00, 0x00, 0x00),
+        ],
+        canvas_bg: Color32::from_rgb(0x96, 0x96, 0x96),
+        field_bg: Color32::from_rgb(0xD6, 0xD6, 0xD6),
+        accent: Color32::from_rgb(0x17, 0x3C, 0x85),
+        accent_hover: Color32::from_rgb(0x12, 0x30, 0x6E),
+        error: Color32::from_rgb(0x7A, 0x12, 0x0A),
+        ok: Color32::from_rgb(0x1E, 0x7A, 0x44),
+    };
+
+    // Black panels, white text and white lines, and a yellow accent: the
+    // high-contrast scheme an operating system offers, which is DesignCraft's
+    // too. Every line is meant to be seen, so the rules and borders that the
+    // other palettes keep quiet are bright here. The focus ring is white
+    // rather than the accent so the scale still climbs one way.
+    pub const HIGH_CONTRAST: Self = Self {
+        steps: [
+            Color32::from_rgb(0x00, 0x00, 0x00),
+            Color32::from_rgb(0x05, 0x05, 0x05),
+            Color32::from_rgb(0x12, 0x12, 0x12),
+            Color32::from_rgb(0x1F, 0x1F, 0x1F),
+            Color32::from_rgb(0x2E, 0x2E, 0x2E),
+            Color32::from_rgb(0xB4, 0xB4, 0xB4),
+            Color32::from_rgb(0xD8, 0xD8, 0xD8),
+            Color32::from_rgb(0xFF, 0xFF, 0xFF),
+            Color32::from_rgb(0xFF, 0xEB, 0x3B),
+            Color32::from_rgb(0xFF, 0xD6, 0x00),
+            Color32::from_rgb(0xF0, 0xF0, 0xF0),
+            Color32::from_rgb(0xFF, 0xFF, 0xFF),
+        ],
+        canvas_bg: Color32::from_rgb(0x1A, 0x1A, 0x1A),
+        field_bg: Color32::from_rgb(0x00, 0x00, 0x00),
+        accent: Color32::from_rgb(0xFF, 0xEB, 0x3B),
+        accent_hover: Color32::from_rgb(0xFF, 0xD6, 0x00),
+        error: Color32::from_rgb(0xFF, 0x8A, 0x80),
+        ok: Color32::from_rgb(0x69, 0xF0, 0xAE),
+    };
+
+    /// Every palette, with the name the tests report it by and the choice
+    /// that draws it.
+    #[cfg(test)]
+    pub const ALL: [(&'static str, Self, crate::prefs::ThemeChoice); 5] = [
+        ("dark", Self::DARK, crate::prefs::ThemeChoice::Dark),
+        (
+            "medium dark",
+            Self::MEDIUM_DARK,
+            crate::prefs::ThemeChoice::MediumDark,
+        ),
+        (
+            "medium light",
+            Self::MEDIUM_LIGHT,
+            crate::prefs::ThemeChoice::MediumLight,
+        ),
+        ("light", Self::LIGHT, crate::prefs::ThemeChoice::Light),
+        (
+            "high contrast",
+            Self::HIGH_CONTRAST,
+            crate::prefs::ThemeChoice::HighContrast,
+        ),
+    ];
 }
 
 /// A channel's share of perceived luminance, per WCAG 2.1.
@@ -559,11 +684,7 @@ impl Theme {
 /// comparison is against what is *in force* rather than against a remembered
 /// copy, so there is one description of which theme is showing.
 pub fn follow(ctx: &Context, choice: crate::prefs::ThemeChoice) {
-    let already = match ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
-        1 => crate::prefs::ThemeChoice::Light,
-        _ => crate::prefs::ThemeChoice::Dark,
-    };
-    if already == choice {
+    if self::choice() == choice {
         return;
     }
     use_palette(choice);
@@ -798,7 +919,7 @@ pub fn apply(ctx: &Context) {
     ctx.all_styles_mut(|style| {
         // The application palette can differ from the OS-selected egui style.
         // Use coverage correction for the actual surface behind the glyphs.
-        style.visuals.text_options.color_transfer_function = if palette() == Palette::DARK {
+        style.visuals.text_options.color_transfer_function = if choice().is_dark() {
             egui::epaint::FontColorTransferFunction::DARK_MODE_DEFAULT
         } else {
             egui::epaint::FontColorTransferFunction::LIGHT_MODE_DEFAULT
@@ -923,7 +1044,7 @@ mod tests {
         // Asserting the palette relationship does not catch that on its own.
         // What it does catch is the other half: that the colour chosen for a
         // field is one its text can be read on, in whichever theme.
-        for (name, p) in [("dark", Palette::DARK), ("light", Palette::LIGHT)] {
+        for (name, p, _) in Palette::ALL {
             let ratio = contrast_ratio(p.step(12), p.field_bg);
             assert!(
                 ratio >= 4.5,
@@ -937,7 +1058,7 @@ mod tests {
         // A control the same value as its surround is identified only by its
         // border, and a border loud enough to do that alone is a border you
         // notice all day.
-        for (name, p) in [("dark", Palette::DARK), ("light", Palette::LIGHT)] {
+        for (name, p, _) in Palette::ALL {
             assert_ne!(
                 p.field_bg,
                 p.step(2),
@@ -948,15 +1069,13 @@ mod tests {
 
     #[test]
     fn selected_text_stays_readable() {
+        let _screen = hold_the_screen();
         // The bug this replaces: the selection wash and the active widget's
         // background were both the solid accent. Check both the neutral UI
         // selection and the translucent accent retained for document overlays.
-        for (name, p) in [("dark", Palette::DARK), ("light", Palette::LIGHT)] {
+        for (name, p, choice) in Palette::ALL {
             let wash = {
-                crate::theme::use_palette(match name {
-                    "light" => crate::prefs::ThemeChoice::Light,
-                    _ => crate::prefs::ThemeChoice::Dark,
-                });
+                crate::theme::use_palette(choice);
                 Theme::selection()
             };
             assert!(
@@ -1012,7 +1131,7 @@ mod tests {
 
     #[test]
     fn every_palette_reads_at_wcag_aa() {
-        for (name, p) in [("dark", Palette::DARK), ("light", Palette::LIGHT)] {
+        for (name, p, _) in Palette::ALL {
             for (label, fg, bg) in [
                 ("values on panel", p.step(12), p.step(2)),
                 ("values on raised", p.step(12), p.step(3)),
@@ -1051,6 +1170,8 @@ mod tests {
 
     #[test]
     fn the_existing_constants_still_name_the_dark_palette() {
+        let _screen = hold_the_screen();
+        use_palette(crate::prefs::ThemeChoice::Dark);
         // The named roles are the scale, and this is what says which is which.
         // Described in a doc comment it would drift; asserted, it cannot.
         assert_eq!(Theme::canvas_bg(), Palette::DARK.canvas_bg);
@@ -1090,10 +1211,7 @@ mod tests {
     fn a_chosen_chip_is_the_accent_and_its_text_still_reads() {
         // The soft accent is what says "chosen" rather than "hovered"; it
         // has to be visibly the accent and still a ground for primary text.
-        for choice in [
-            crate::prefs::ThemeChoice::Dark,
-            crate::prefs::ThemeChoice::Light,
-        ] {
+        for choice in crate::prefs::ThemeChoice::ALL {
             let _held = hold_the_screen();
             use_palette(choice);
             let soft = Theme::accent_soft();
@@ -1106,8 +1224,17 @@ mod tests {
                 contrast_ratio(soft, Theme::panel_bg()) >= 1.3,
                 "{choice:?}: the chosen chip does not stand off the panel"
             );
-            let (r, g, b) = (soft.r(), soft.g(), soft.b());
-            assert!(b > r && b > g, "{choice:?}: the chip is not blue: {soft:?}");
+            // Blue where the accent is blue, yellow in high contrast: the
+            // chip leans the way its accent does.
+            let strongest = |c: Color32| {
+                let channels = [c.r(), c.g(), c.b()];
+                (0..3).max_by_key(|i| channels[*i])
+            };
+            assert_eq!(
+                strongest(soft),
+                strongest(Theme::accent()),
+                "{choice:?}: the chip is not the accent's hue: {soft:?}"
+            );
             use_palette(crate::prefs::ThemeChoice::Dark);
         }
     }
@@ -1191,10 +1318,8 @@ mod tests {
         // light palette) breaks every role built on the scale: a hover wash
         // would sit under the surface it washes, a border under its field.
         // The accent steps are excluded — 9 and 10 are a hue, not a rung.
-        for (name, p, rising) in [
-            ("dark", Palette::DARK, true),
-            ("light", Palette::LIGHT, false),
-        ] {
+        for (name, p, choice) in Palette::ALL {
+            let rising = choice.is_dark();
             for pair in [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8)] {
                 let (a, b) = (
                     relative_luminance(p.step(pair.0)),
@@ -1218,12 +1343,12 @@ mod tests {
     fn chrome_has_only_a_restrained_charcoal_tint() {
         // The prototype has a slight cool tint in its dark surfaces. Keep it
         // restrained; the separate proof surround must remain neutral.
-        for (name, p) in [("dark", Palette::DARK), ("light", Palette::LIGHT)] {
+        for (name, p, choice) in Palette::ALL {
             for n in 1..=8 {
                 let c = p.step(n);
                 let spread = c.r().max(c.g()).max(c.b()) - c.r().min(c.g()).min(c.b());
                 assert!(
-                    spread <= if name == "dark" { 8 } else { 2 },
+                    spread <= if choice.is_dark() { 8 } else { 2 },
                     "{name}: step {n} is tinted ({}, {}, {})",
                     c.r(),
                     c.g(),
@@ -1241,7 +1366,7 @@ mod tests {
         // grey around a proof for exactly this reason, so the pasteboard is
         // neutral in both themes while everything further from the page is
         // free to be the blue the design asks for.
-        for (name, p) in [("dark", Palette::DARK), ("light", Palette::LIGHT)] {
+        for (name, p, _) in Palette::ALL {
             let c = p.canvas_bg;
             let spread = c.r().max(c.g()).max(c.b()) - c.r().min(c.g()).min(c.b());
             assert!(
@@ -1279,7 +1404,7 @@ mod tests {
         // a saturated hue sitting at about the luminance of a mid grey by
         // definition. That is a real trade, and this is which side of it.
         const SEPARATED: f64 = 1.5;
-        for (name, p) in [("dark", Palette::DARK), ("light", Palette::LIGHT)] {
+        for (name, p, _) in Palette::ALL {
             let ratio = contrast_ratio(p.canvas_bg, Color32::WHITE);
             assert!(
                 ratio >= SEPARATED,

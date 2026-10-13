@@ -61,6 +61,10 @@ pub enum Icon {
     /// One icon for all eight resize handles, turned to point along the
     /// handle's own normal. See [`paint_rotated`].
     Scale,
+    /// The handle a floating bar is dragged by.
+    Grip,
+    /// More of what is here, in a menu.
+    More,
     TextCursor,
     /// The type tool before anything is drawn: a frame waiting to be
     /// dragged, its edge dashed and lines of text inside.
@@ -290,6 +294,21 @@ impl Icon {
             // handle's outward normal, so a rotated frame gets a cursor that
             // actually points the way the edge will travel.
             Self::Scale => &["m18 8 4 4-4 4", "M2 12h20", "m6 8-4 4 4 4"],
+            // lucide: grip-vertical, its six circles written out as paths.
+            Self::Grip => &[
+                "M9 11a1 1 0 1 0 0 2a1 1 0 1 0 0-2z",
+                "M9 4a1 1 0 1 0 0 2a1 1 0 1 0 0-2z",
+                "M9 18a1 1 0 1 0 0 2a1 1 0 1 0 0-2z",
+                "M15 11a1 1 0 1 0 0 2a1 1 0 1 0 0-2z",
+                "M15 4a1 1 0 1 0 0 2a1 1 0 1 0 0-2z",
+                "M15 18a1 1 0 1 0 0 2a1 1 0 1 0 0-2z",
+            ],
+            // lucide: ellipsis, its three circles written out as paths.
+            Self::More => &[
+                "M12 11a1 1 0 1 0 0 2a1 1 0 1 0 0-2z",
+                "M19 11a1 1 0 1 0 0 2a1 1 0 1 0 0-2z",
+                "M5 11a1 1 0 1 0 0 2a1 1 0 1 0 0-2z",
+            ],
             // lucide: text-cursor
             Self::TextCursor => &[
                 "M17 22h-1a4 4 0 0 1-4-4V6a4 4 0 0 1 4-4h1",
@@ -609,6 +628,8 @@ impl Icon {
             | Self::Rotate
             | Self::Move
             | Self::Scale
+            | Self::Grip
+            | Self::More
             | Self::TextCursor
             | Self::TextFrame
             | Self::Crosshair
@@ -909,6 +930,8 @@ impl Icon {
             Self::ViewGrid => s2!("ViewGrid"),
             // Page-layout ideas Spectrum has no picture of: drawn here.
             Self::Scale
+            | Self::Grip
+            | Self::More
             | Self::Eraser
             | Self::Collect
             | Self::Info
@@ -1292,7 +1315,9 @@ fn texture(ctx: &egui::Context, icon: Icon, side: u32, degrees: f32) -> egui::Te
 /// **An icon missing from this list is missing from its own tests.** Seventeen
 /// were once, and three more — `Book`, `Pipette`, `Pi` — until the move to
 /// Spectrum, when a count taken by hand matched a list that was short.
-pub const ALL: [Icon; 165] = [
+pub const ALL: [Icon; 167] = [
+    Icon::Grip,
+    Icon::More,
     Icon::StrokeWeight,
     Icon::Disclosure,
     Icon::Book,
@@ -1666,6 +1691,6 @@ mod tests {
         // count is what is checked, and it is the enum's own count.
         let unique: std::collections::HashSet<_> = ALL.iter().collect();
         assert_eq!(unique.len(), ALL.len(), "an icon is listed twice");
-        assert_eq!(ALL.len(), 165);
+        assert_eq!(ALL.len(), 167);
     }
 }

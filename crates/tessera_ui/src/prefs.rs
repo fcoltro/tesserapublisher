@@ -6,11 +6,60 @@ use serde::{Deserialize, Serialize};
 use tessera_geometry::Unit;
 use tessera_io::{IoError, write_atomic};
 
+/// How bright the interface is: InDesign's four brightness levels, and a
+/// high-contrast one.
+///
+/// `Dark` and `Light` keep their names, so a preferences file written before
+/// the other three existed still reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ThemeChoice {
     #[default]
     Dark,
+    MediumDark,
+    MediumLight,
     Light,
+    HighContrast,
+}
+
+impl ThemeChoice {
+    /// Every choice, darkest first, as the settings offer them.
+    pub const ALL: [ThemeChoice; 5] = [
+        ThemeChoice::Dark,
+        ThemeChoice::MediumDark,
+        ThemeChoice::MediumLight,
+        ThemeChoice::Light,
+        ThemeChoice::HighContrast,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ThemeChoice::Dark => "Dark",
+            ThemeChoice::MediumDark => "Medium dark",
+            ThemeChoice::MediumLight => "Medium light",
+            ThemeChoice::Light => "Light",
+            ThemeChoice::HighContrast => "High contrast",
+        }
+    }
+
+    pub fn purpose(self) -> &'static str {
+        match self {
+            ThemeChoice::Dark => "Charcoal panels. The page is the brightest thing on screen.",
+            ThemeChoice::MediumDark => "Mid-grey panels, a step lighter than dark.",
+            ThemeChoice::MediumLight => "Light-grey panels, a step darker than light.",
+            ThemeChoice::Light => "Near-white panels.",
+            ThemeChoice::HighContrast => {
+                "Black panels, white text and lines, a yellow accent. For low vision."
+            }
+        }
+    }
+
+    /// Whether the panels are dark and the text light.
+    pub fn is_dark(self) -> bool {
+        matches!(
+            self,
+            ThemeChoice::Dark | ThemeChoice::MediumDark | ThemeChoice::HighContrast
+        )
+    }
 }
 
 /// How tightly the interface is packed.
@@ -299,6 +348,16 @@ pub struct Preferences {
     #[serde(default = "yes")]
     pub show_rulers: bool,
 
+    /// Whether the canvas toolbar follows the selection (View > Show canvas
+    /// toolbar, or Hide in its own ••• menu).
+    #[serde(default = "yes")]
+    pub show_canvas_toolbar: bool,
+
+    /// Where the canvas toolbar was dragged to, from the canvas's top-left
+    /// corner, in points. `None` while it follows the selection.
+    #[serde(default)]
+    pub canvas_toolbar_pin: Option<[f32; 2]>,
+
     /// Where the rulers count from: the spread's corner, the page's, or the
     /// spine — InDesign's Ruler per spread, per page and on spine.
     #[serde(default)]
@@ -391,6 +450,8 @@ impl Default for Preferences {
             swatch_tiles: false,
             show_hidden_characters: false,
             show_rulers: true,
+            show_canvas_toolbar: true,
+            canvas_toolbar_pin: None,
             ruler_origin: RulerOrigin::Spread,
             saved_queries: Vec::new(),
         }
@@ -613,6 +674,8 @@ mod tests {
             swatch_tiles: true,
             show_hidden_characters: true,
             show_rulers: false,
+            show_canvas_toolbar: false,
+            canvas_toolbar_pin: Some([12.0, 34.0]),
             ruler_origin: RulerOrigin::Spine,
             saved_queries: vec![SavedQuery {
                 name: "Double spaces".into(),

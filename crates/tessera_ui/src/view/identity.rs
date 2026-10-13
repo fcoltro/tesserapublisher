@@ -8,7 +8,10 @@ use crate::prefs::ThemeChoice;
 use crate::theme::Theme;
 
 pub fn theme_switch(ui: &mut Ui, state: &mut TesseraApp) {
-    let dark = state.prefs.theme == ThemeChoice::Dark;
+    // Between the two ends of the scale. Someone on one of the middle
+    // levels, or on high contrast, chose it in the settings; this button
+    // only flips which side of the scale they are on.
+    let dark = state.prefs.theme.is_dark();
     let (icon, target, label) = if dark {
         (Icon::Sun, ThemeChoice::Light, "Switch to light theme")
     } else {
